@@ -1,0 +1,95 @@
+{
+ "manifest": {
+  "name": "Scenix (bundled fixtures)",
+  "version": "0.1-p1",
+  "theme": "scenix-dark",
+  "rows": [
+   "hero",
+   "continue",
+   "top10",
+   "justadded",
+   "newreleases",
+   "live",
+   "punjabiclassics",
+   "kids_yt",
+   "kids_school"
+  ],
+  "cards": [
+   "poster",
+   "continue",
+   "channel",
+   "hero"
+  ],
+  "rules": [
+   "dedupe",
+   "hiderows",
+   "kids",
+   "riskorder"
+  ],
+  "providers": [
+   "adaptive",
+   "live",
+   "youtube",
+   "torrent"
+  ],
+  "subs": [
+   "adaptive",
+   "torrent"
+  ],
+  "addons": [
+   {
+    "id": "library",
+    "name": "Titles library",
+    "origin": "native",
+    "kinds": [
+     "movie",
+     "series"
+    ],
+    "count": 1420,
+    "lastError": ""
+   },
+   {
+    "id": "live",
+    "name": "Live TV",
+    "origin": "native",
+    "kinds": [
+     "channel"
+    ],
+    "count": 61,
+    "lastError": ""
+   },
+   {
+    "id": "kids",
+    "name": "Kids",
+    "origin": "native",
+    "kinds": [
+     "video"
+    ],
+    "count": 310,
+    "lastError": ""
+   },
+   {
+    "id": "user-1",
+    "name": "Punjabi music videos",
+    "origin": "user",
+    "kinds": [
+     "video"
+    ],
+    "count": 88,
+    "lastError": ""
+   },
+   {
+    "id": "user-2",
+    "name": "Sports replays",
+    "origin": "user",
+    "kinds": [
+     "movie",
+     "video"
+    ],
+    "count": 0,
+    "lastError": "timed out fetching index"
+   }
+  ],
+  "_note": "torrent sources are listed but not playable on this TV: no engine on 2 GB / armeabi-v7a"
+ }
+}

@@ -1,0 +1,200 @@
+{
+ "id": "scenix-dark",
+ "brandMark": "G",
+ "_read": "Every number here is a pixel measured on the 1920x1080 mockup in design/netflix-ui.html. Theme.load() scales every length by min(screenW/1920, screenH/1080), so a 720p TV gets the same design, not a different one. A new plugin may add its own group here without touching Theme.kt, and read it with theme.token(group, key, fallback).",
+ "canvas": {
+  "width": 1920,
+  "height": 1080
+ },
+ "colors": {
+  "bg": "#141414",
+  "surface": "#181818",
+  "surface2": "#232323",
+  "line": "#262626",
+  "ink": "#FFFFFF",
+  "ink1": "#E8E8E8",
+  "ink2": "#B3B3B3",
+  "ink3": "#7D7D7D",
+  "brand": "#E50914",
+  "brandDeep": "#B00710",
+  "match": "#46D369",
+  "kids": "#F2C33A",
+  "kidsDeep": "#D9A22B",
+  "live": "#E50914",
+  "warn": "#F2C33A",
+  "focusRing": "#FFFFFF",
+  "scrim": "#BF000000",
+  "scrimInk": "#EB141414",
+  "scrimMid": "#8C141414",
+  "modalScrim": "#E6000000",
+  "btnGrey": "#B36D6D6E",
+  "lineStrong": "#8FFFFFFF",
+  "track": "#47FFFFFF",
+  "chipBg": "#33FFFFFF",
+  "surfHover": "#2F2F2F",
+  "keyBg": "#66000000",
+  "key": "#2A2A2A",
+  "navIdle": "#CCFFFFFF",
+  "numeralFill": "#141414",
+  "numeralStroke": "#6F6F6F",
+  "panelScrim": "#E6000000",
+  "panelRow": "#1FFFFFFF",
+  "panelValue": "#F2C33A"
+ },
+ "spacing": {
+  "gutter": 64,
+  "gap": 16,
+  "rowGap": 34,
+  "captionGap": 12,
+  "metaGap": 6,
+  "navHeight": 96,
+  "billboardHeight": 760,
+  "chipTop": 788,
+  "navGap": 40,
+  "chipGap": 14,
+  "buttonGap": 22,
+  "heroBottom": 78,
+  "panelPad": 28,
+  "panelPadV": 24,
+  "panelRowGap": 10,
+  "listItem": 14
+ },
+ "radii": {
+  "card": 6,
+  "badge": 4,
+  "chip": 6,
+  "button": 6,
+  "listItem": 6,
+  "field": 8,
+  "key": 6,
+  "modal": 10,
+  "avatar": 10,
+  "panel": 10
+ },
+ "type": {
+  "brand": 34,
+  "nav": 22,
+  "nmark": 40,
+  "h1": 104,
+  "h2": 56,
+  "h3": 34,
+  "sub": 24,
+  "matLine": 19,
+  "button": 26,
+  "chip": 20,
+  "rowTitle": 26,
+  "explore": 18,
+  "caption": 19,
+  "meta": 17,
+  "badge": 15,
+  "li": 22,
+  "liMeta": 20,
+  "readout": 20,
+  "searchField": 22,
+  "profileName": 24,
+  "avatarText": 64,
+  "key": 34,
+  "pinDot": 20,
+  "modalWidth": 780,
+  "keyWidth": 110,
+  "keyHeight": 96,
+  "avatar": 176,
+  "lockGlyph": 52,
+  "playerKey": 64,
+  "panelTitle": 26,
+  "panelRow": 23,
+  "panelNote": 18
+ },
+ "focus": {
+  "ringWidth": 4,
+  "scale": 1.05,
+  "durationMs": 200,
+  "shadowElevation": 12
+ },
+ "anim": {
+  "cardFadeInMs": 220,
+  "rowScrollMs": 320,
+  "screenFadeMs": 180
+ },
+ "cards": {
+  "poster": {
+   "width": 300,
+   "aspect": 1.5,
+   "caption": true,
+   "fullBleed": false
+  },
+  "channel": {
+   "width": 300,
+   "aspect": 0.5667,
+   "caption": true,
+   "fullBleed": false
+  },
+  "continue": {
+   "width": 300,
+   "aspect": 0.5667,
+   "caption": true,
+   "fullBleed": false
+  },
+  "hero": {
+   "width": 1792,
+   "aspect": 0.4241,
+   "caption": false,
+   "fullBleed": true
+  },
+  "_top10": "The giant numeral is sized off the art height, so it scales with whatever card size the row uses. Mockup: 210 px text on a 300 px tall art, -26 px overlap, 7 px outline.",
+  "numeralTextRatio": 0.7,
+  "numeralWidthRatio": 0.5,
+  "numeralOverlapRatio": 0.087,
+  "numeralStrokePx": 7
+ },
+ "rows": {
+  "exploreThreshold": 6,
+  "maxRows": 30
+ },
+ "chips": {
+  "max": 8
+ },
+ "kids": {
+  "maxAge": 7,
+  "navHeight": 110,
+  "rowGap": 36
+ },
+ "pin": {
+  "length": 4,
+  "keysPerRow": 3
+ },
+ "player": {
+  "maxVideoWidth": 1920,
+  "maxVideoHeight": 1080,
+  "maxBitrateBps": 10000000,
+  "minVideoWidth": 320,
+  "minVideoHeight": 180,
+  "backBufferMs": 30000,
+  "forwardBufferMs": 120000,
+  "minBufferMs": 15000,
+  "playbackBufferMs": 5000,
+  "progressPostMs": 10000,
+  "seekBackMs": 10000,
+  "seekForwardMs": 30000,
+  "controlsHideMs": 3500,
+  "torrentMaxBitrate": 4000000,
+  "stallFailoverMs": 6000
+ },
+ "panel": {
+  "width": 560,
+  "pad": 28,
+  "padV": 24,
+  "radius": 10,
+  "rowGap": 10,
+  "rowHeight": 68
+ },
+ "detail": {
+  "maxSources": 6.0,
+  "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
+ },
+ "preview": {
+  "enabled": 1.0,
+  "delayMs": 1400.0,
+  "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
+ }
+}

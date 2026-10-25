@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GHARTV — Netflix-style UI (1920x1080 Android TV)</title>
+<style>
+/* ================= Netflix visual system ================= */
+:root{
+  --bg:#141414; --surf:#181818; --surf2:#232323; --line:rgba(255,255,255,.14);
+  --ink:#fff; --ink2:#b3b3b3; --ink3:#7d7d7d;
+  --red:#E50914; --green:#46d369; --kids:#F2C33A; --live:#E50914;
+  --focus:0 0 0 4px #fff, 0 20px 44px rgba(0,0,0,.75);
+  --pad:64px;                    /* Netflix TV uses ~5% side gutter */
+  --g:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;color:var(--ink);font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:22px;line-height:1.35}
+.screen{display:none;width:1920px;height:1080px;position:relative;overflow:hidden;background:var(--bg)}
+.screen:target{display:block}
+body:has(.screen:target) .screen:not(:target){display:none}
+body:not(:has(.screen:target)) .screen:first-child{display:block}
+.ico{width:30px;height:30px;flex:none;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.ico.solid{fill:currentColor;stroke:none}
+
+/* ---------- top nav (Netflix: transparent over billboard) ---------- */
+.topnav{position:absolute;top:0;left:0;right:0;height:96px;display:flex;align-items:center;gap:40px;padding:0 var(--pad);
+  background:linear-gradient(180deg,rgba(0,0,0,.85),rgba(0,0,0,.35) 60%,transparent);z-index:5}
+.logo{font-size:34px;font-weight:900;letter-spacing:.02em;color:var(--red)}
+.topnav ul{display:flex;gap:34px;list-style:none}
+.topnav li{font-size:22px;color:#e5e5e5;font-weight:400}
+.topnav li.on{font-weight:700}
+.topnav li.f{box-shadow:var(--focus);border-radius:4px;padding:6px 12px}
+.right{margin-left:auto;display:flex;align-items:center;gap:26px;color:#e5e5e5}
+.pav{width:44px;height:44px;border-radius:6px;background:linear-gradient(135deg,#5b6472,#2b3038)}
+
+/* ---------- billboard ---------- */
+.billboard{position:absolute;inset:0 0 auto 0;height:760px;
+  background:linear-gradient(115deg,#0b1a2e 0%,#12324f 30%,#5b2b1a 62%,#1a1a1a 100%);overflow:hidden}
+.billboard::before{content:"";position:absolute;right:6%;top:6%;width:520px;height:520px;border-radius:50%;
+  background:radial-gradient(circle at 40% 35%,rgba(255,196,120,.55),transparent 62%)}
+.billboard::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,rgba(20,20,20,.92) 6%,rgba(20,20,20,.55) 42%,transparent 72%),
+             linear-gradient(0deg,var(--bg) 4%,rgba(20,20,20,.6) 30%,transparent 62%)}
+.bb{position:absolute;left:var(--pad);bottom:78px;width:900px;z-index:3}
+.bb .nmark{font-size:40px;font-weight:900;color:var(--red);margin-bottom:10px}
+.bb h1{font-size:104px;font-weight:800;letter-spacing:-.02em;line-height:.95;text-shadow:0 4px 22px rgba(0,0,0,.7)}
+.bb .sub{margin-top:20px;font-size:24px;color:#e8e8e8;max-width:760px}
+.bb .mat{display:flex;gap:14px;align-items:center;margin:20px 0 26px;font-size:20px;color:#dcdcdc}
+.mat .box{border:1px solid rgba(255,255,255,.45);padding:2px 12px;font-size:19px}
+.mat .hd{border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:2px 8px;font-size:15px;font-weight:700}
+.bbbtns{display:flex;gap:16px;align-items:center}
+.b{display:inline-flex;align-items:center;gap:14px;padding:16px 34px;border-radius:6px;font-size:26px;font-weight:700;
+  border:0;cursor:pointer;color:#fff;background:rgba(109,109,110,.7)}
+.b.play{background:#fff;color:#000}
+.b.red{background:var(--red)}
+.b.f{box-shadow:var(--focus)}
+.b.line{border:2px solid rgba(255,255,255,.5);background:transparent}
+.round{width:58px;height:58px;border-radius:50%;border:2px solid rgba(255,255,255,.55);display:grid;place-content:center;background:rgba(20,20,20,.55)}
+
+/* ---------- category chips (reference UI) ---------- */
+.chips{position:absolute;left:var(--pad);right:var(--pad);top:788px;display:flex;gap:14px;z-index:4}
+.chip{padding:10px 24px;border-radius:6px;background:rgba(255,255,255,.09);border:1px solid var(--line);font-size:20px;color:#e6e6e6;display:flex;gap:10px;align-items:center}
+.chip.on{background:#fff;color:#000;border-color:#fff;font-weight:700}
+.chip.f{box-shadow:var(--focus)}
+
+/* ---------- rows ---------- */
+.rows{position:absolute;left:0;right:0;top:884px;z-index:4}
+.row{padding:0 var(--pad);margin-bottom:34px}
+.row h3{font-size:26px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:12px}
+.row h3 .all{margin-left:auto;font-size:18px;color:var(--ink2);font-weight:400;opacity:0}
+.row:hover h3 .all,.row.showall h3 .all{opacity:1}
+.cards{display:flex;gap:var(--g)}
+.card{width:300px;flex:none;position:relative}
+.card .art{width:100%;height:170px;border-radius:6px;background:linear-gradient(150deg,#2b3a4a,#0f1620);position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.06)}
+.card.p .art{height:300px}                        /* portrait 2:3 */
+.card .cap{margin-top:12px;font-size:19px;color:#e8e8e8;line-height:1.3}
+.card .meta{margin-top:6px;display:flex;gap:12px;align-items:center;font-size:17px;color:var(--ink2)}
+.card .meta .mt{color:var(--green);font-weight:700}
+.card .meta .yr{margin-left:auto}
+.card.f .art{box-shadow:var(--focus);transform:scale(1.05)}
+.prog{position:absolute;left:0;right:0;bottom:0;height:5px;background:rgba(255,255,255,.28)}
+.prog i{display:block;height:100%;background:var(--red)}
+.badge{position:absolute;top:12px;left:12px;font-size:15px;font-weight:700;padding:5px 10px;border-radius:4px;background:rgba(0,0,0,.75);border:1px solid var(--line)}
+.badge.new{background:var(--red);border-color:transparent}
+.badge.live{background:var(--red);border-color:transparent;display:flex;gap:8px;align-items:center}
+.badge.live i{width:9px;height:9px;border-radius:50%;background:#fff}
+.exp{position:absolute;inset:auto 0 0 0;background:rgba(0,0,0,.72);padding:14px;display:flex;gap:12px;align-items:center}
+.exp .r{width:44px;height:44px;border-radius:50%;border:2px solid rgba(255,255,255,.55);display:grid;place-content:center}
+.exp .r.w{background:#fff;border-color:#fff;color:#000}
+.t10{display:flex;align-items:flex-end;gap:0}
+.t10 .num{font-size:210px;font-weight:900;line-height:.72;color:var(--bg);-webkit-text-stroke:7px #6f6f6f;margin-right:-26px}
+
+/* ---------- profiles ---------- */
+.pwrap{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;background:var(--bg)}
+.pwrap h1{font-size:56px;font-weight:400;margin-bottom:56px}
+.pfs{display:flex;gap:44px}
+.pf{width:250px;text-align:center}
+.pf .a{width:250px;height:250px;border-radius:8px;position:relative;display:grid;place-content:center;background:#2a2a2a}
+.pf .a i{width:120px;height:120px;border-radius:8px;background:linear-gradient(135deg,#7a8493,#33383f)}
+.pf.k .a i{background:linear-gradient(135deg,#F2C33A,#b8860b)}
+.pf .nm{margin-top:18px;font-size:24px;color:var(--ink2)}
+.pf.f .a{box-shadow:var(--focus)}
+.pf .lock{position:absolute;bottom:12px;right:12px;width:40px;height:40px;border-radius:6px;background:rgba(0,0,0,.6);display:grid;place-content:center}
+.pf.add .a{background:transparent;border:2px dashed rgba(255,255,255,.35)}
+.manage{margin-top:48px;font-size:22px;color:var(--ink2);border:1px solid var(--ink2);padding:10px 26px;letter-spacing:.06em}
+
+/* ---------- detail ---------- */
+.dt{position:absolute;left:var(--pad);right:var(--pad);top:560px;z-index:4}
+.dedupe{display:inline-flex;gap:14px;align-items:center;padding:14px 22px;border-radius:6px;background:rgba(70,211,105,.12);border:1px solid rgba(70,211,105,.4);color:#8ff0ac;font-size:20px;margin-bottom:26px}
+.srclist{margin-top:22px;display:grid;gap:12px;max-width:1120px}
+.src{display:flex;align-items:center;gap:18px;padding:18px 22px;border-radius:6px;background:var(--surf);border:1px solid var(--line)}
+.src.f{box-shadow:var(--focus)}
+.src .q{margin-left:auto;display:flex;gap:10px}
+.tagq{font-size:17px;padding:6px 12px;border-radius:4px;background:rgba(255,255,255,.1);border:1px solid var(--line)}
+.tagq.g{color:var(--green)}
+.tagq.y{color:#f1c40f}
+.blurb{position:absolute;left:var(--pad);right:640px;top:470px;z-index:4}
+.sect{position:absolute;left:var(--pad);right:var(--pad);top:930px;z-index:4}
+
+/* ---------- player ---------- */
+.ply{position:absolute;inset:0;background:#000}
+.ply .frame{position:absolute;inset:0;background:linear-gradient(115deg,#20303f,#0b0f14 70%);opacity:.55}
+.ply .hud{position:absolute;top:56px;left:var(--pad);right:var(--pad);display:flex;align-items:flex-start}
+.ply .bar{position:absolute;left:var(--pad);right:var(--pad);bottom:64px}
+.trk{height:8px;border-radius:4px;background:rgba(255,255,255,.28);position:relative;margin-bottom:26px}
+.trk .buf{position:absolute;inset:0;width:58%;background:rgba(255,255,255,.45)}
+.trk .pl{position:absolute;inset:0;width:34%;background:var(--red)}
+.trk .kn{position:absolute;left:34%;top:50%;width:22px;height:22px;border-radius:50%;background:#fff;transform:translate(-50%,-50%)}
+.ctl{display:flex;align-items:center;gap:34px;font-size:22px;color:#e6e6e6}
+.ctl .it{display:flex;gap:12px;align-items:center;padding:10px 16px;border-radius:6px}
+.ctl .it.f{box-shadow:var(--focus);background:rgba(255,255,255,.08)}
+.ctl .rt{margin-left:auto;color:var(--green);font-size:20px}
+.skip{position:absolute;right:var(--pad);bottom:220px;padding:14px 32px;border-radius:6px;background:rgba(255,255,255,.92);color:#000;font-weight:700;font-size:22px}
+
+/* ---------- kids (Netflix Kids: bright, chunky, icon nav) ---------- */
+.kbg{position:absolute;inset:0;background:linear-gradient(180deg,#1b2a4a,#0f1a2e)}
+.knav{position:absolute;top:0;left:0;right:0;height:110px;display:flex;align-items:center;gap:44px;padding:0 var(--pad);background:rgba(0,0,0,.35)}
+.knav .kl{font-size:32px;font-weight:900;color:var(--kids)}
+.knav .ki{width:96px;height:96px;border-radius:16px;background:#fff;display:grid;place-content:center;color:#12233f;font-weight:800;font-size:16px;text-align:center}
+.knav .ki.f{box-shadow:0 0 0 4px #fff,0 18px 34px rgba(0,0,0,.6)}
+.krow{padding:0 var(--pad);margin-bottom:36px}
+.krow h3{font-size:32px;font-weight:800;margin-bottom:16px}
+.kc{width:400px;flex:none;border-radius:20px;overflow:hidden;position:relative;background:#fff;box-shadow:0 10px 24px rgba(0,0,0,.4)}
+.kc .a{height:224px;background:linear-gradient(140deg,#F2C33A,#c8791a)}
+.kc.b .a{background:linear-gradient(140deg,#57C7EE,#1c5f86)}
+.kc .n{padding:14px 18px;font-size:22px;font-weight:800;color:#132339;background:#fff}
+.kc.f{box-shadow:0 0 0 4px #fff,0 0 0 9px var(--kids),0 18px 34px rgba(0,0,0,.55)}
+.ktime{margin-left:auto;display:flex;gap:14px}
+.kchip{background:var(--kids);color:#132339;font-weight:800;padding:12px 22px;border-radius:999px;font-size:20px}
+.kchip.o{background:rgba(255,255,255,.18);color:#fff}
+
+/* ---------- pin modal + manage profiles ---------- */
+.modal{position:absolute;inset:0;background:rgba(0,0,0,.78);display:grid;place-content:center;justify-items:center}
+.mbox{width:760px;background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:44px 48px;text-align:center}
+.mbox h2{font-size:34px;font-weight:700;margin-bottom:10px}
+.mbox p{color:var(--ink2);font-size:20px;margin-bottom:26px}
+.dots{display:flex;gap:20px;justify-content:center;margin-bottom:28px}
+.dots i{width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.25)}
+.dots i.on{background:#fff}
+.p9{display:grid;grid-template-columns:repeat(3,110px);gap:14px;justify-content:center}
+.p9 div{height:96px;border-radius:6px;background:#2a2a2a;border:1px solid var(--line);display:grid;place-content:center;font-size:34px}
+.p9 div.f{background:#fff;color:#000;box-shadow:var(--focus)}
+.side{position:absolute;right:var(--pad);top:150px;width:640px;display:grid;gap:12px}
+.li{display:flex;align-items:center;gap:18px;padding:20px 24px;border-radius:6px;background:var(--surf);border:1px solid var(--line);font-size:22px}
+.li .v{margin-left:auto;color:var(--ink2);font-size:20px;text-align:right;max-width:400px}
+.li.f{box-shadow:var(--focus)}
+.sw{width:64px;height:32px;border-radius:999px;background:rgba(255,255,255,.22);position:relative;margin-left:auto;flex:none}
+.sw.on{background:var(--red)}
+.sw i{position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:50%;background:#fff}
+.sw.on i{left:36px}
+.foot{position:absolute;left:var(--pad);right:var(--pad);bottom:20px;font-size:18px;color:var(--ink3)}
+/* ---- Netflix vertical rhythm: billboard ~52%, chips, then rows that peek ---- */
+#home .billboard,#live .billboard{height:520px}
+#home .bb{top:196px;left:var(--pad);bottom:auto;width:920px}
+#home .bb .nmark{display:none}
+#home .bb h1{font-size:76px;line-height:.95}
+#home .bb .sub{font-size:21px;max-width:840px;margin-top:14px}
+#home .bb .mat{margin:12px 0 18px;font-size:19px}
+#home .b{padding:14px 30px;font-size:24px}
+#home .chips{top:556px}
+#home .rows{top:632px}
+#home .row{margin-bottom:26px}
+#home .row h3{font-size:26px;margin-bottom:12px}
+#home .card .art{height:150px}
+#home .card .cap{margin-top:10px;font-size:19px}
+#home .card .meta{font-size:17px}
+#home .card.p .art{height:246px}
+#home .t10 .num{font-size:168px;-webkit-text-stroke:6px #6f6f6f;margin-right:-20px}
+#home .round{width:50px;height:50px}
+#live .bb{top:120px;width:1040px;bottom:auto}
+#live .chips{top:470px}
+#live .rows{top:548px}
+#live .row{margin-bottom:26px}
+#live .card .art{height:150px}
+#live .card .cap{margin-top:10px;font-size:19px}
+#live .card.p .art{height:246px}
+#title .billboard{height:600px}
+#title .blurb{top:430px}
+#title .dt{top:700px}
+#title .src{padding:12px 18px}
+#title .srclist{gap:8px;margin-top:16px}
+#pin .mbox{width:660px;padding:36px 40px}
+#pin .side{width:520px;right:56px;top:132px;gap:10px}
+#pin .li{padding:16px 20px;font-size:20px}
+#pin .p9 div{height:84px;font-size:30px}
+#home .foot,#live .foot{display:none}
+#title .blurb h1{font-size:58px}
+#title .blurb{top:440px;right:760px}
+#title .dt{top:690px}
+#kids .krow h3{font-size:30px}
+
+</style>
+</head>
+<body>
+
+<!-- ===================== 1 · WHO IS WATCHING ===================== -->
+<section class="screen" id="profiles">
+  <div class="pwrap">
+    <h1>Who's watching?</h1>
+    <div class="pfs">
+      <div class="pf f"><div class="a"><i></i><div class="lock"><svg class="ico" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div></div><div class="nm">Raj</div></div>
+      <div class="pf"><div class="a"><i></i></div><div class="nm">Nagraj</div></div>
+      <div class="pf k"><div class="a"><i></i></div><div class="nm">Aarav (Kids)</div></div>
+      <div class="pf k"><div class="a"><i></i></div><div class="nm">Meera (Kids)</div></div>
+      <div class="pf add"><div class="a"><svg class="ico" viewBox="0 0 24 24" style="width:70px;height:70px"><path d="M12 5v14M5 12h14"/></svg></div><div class="nm">Add profile</div></div>
+    </div>
+    <div class="manage">MANAGE PROFILES</div>
+  </div>
+</section>
+
+<!-- ===================== 2 · BROWSE / HOME ===================== -->
+<section class="screen" id="home">
+  <div class="billboard"></div>
+  <div class="topnav">
+    <div class="logo">GHARTV</div>
+    <ul><li class="on">Home</li><li>Series</li><li>Movies</li><li>New &amp; Popular</li><li>Live TV</li><li>My List</li></ul>
+    <div class="right"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <svg class="ico" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+      <div class="pav"></div></div>
+  </div>
+  <div class="bb">
+    <div class="nmark">N</div>
+    <h1>Title of<br>the Week</h1>
+    <div class="mat"><span class="box">16+</span><span class="hd">HD</span><span>2026 · 2h 14m · Hindi · English · Punjabi</span></div>
+    <div class="sub">Ranked #1 in India today — highlighted because it opened in the last 8 weeks.</div>
+    <div class="bbbtns" style="margin-top:26px">
+      <button class="b play"><svg class="ico solid" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>Play</button>
+      <button class="b f"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>More Info</button>
+      <div class="round"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+      <div class="round"><svg class="ico" viewBox="0 0 24 24"><path d="M7 11v8H4v-8zM7 11l4-8c1.5 0 2 1 2 2.5V9h5.5c1.4 0 2 1.6 1.4 2.8l-2.6 6.7c-.4 1-1.3 1.5-2.2 1.5H7"/></svg></div>
+    </div>
+  </div>
+  <div class="chips">
+    <div class="chip on"><svg class="ico solid" viewBox="0 0 24 24"><path d="M12 3l2.2 6.4H21l-5.3 3.9 2 6.4L12 16l-5.7 3.7 2-6.4L3 9.4h6.8z"/></svg>All</div>
+    <div class="chip">Movies</div><div class="chip">Series</div><div class="chip f">Live TV</div>
+    <div class="chip">Hindi</div><div class="chip">Punjabi</div><div class="chip">Kids</div><div class="chip">Sports</div>
+  </div>
+  <div class="rows">
+    <div class="row showall">
+      <h3>Continue Watching for Raj <span class="all">Explore all &#8250;</span></h3>
+      <div class="cards">
+        <div class="card"><div class="art"><span class="badge">48 min left</span><div class="prog"><i style="width:62%"></i></div></div><div class="cap">Some Film You Started</div></div>
+        <div class="card"><div class="art"><span class="badge">S1 E4</span><div class="prog"><i style="width:22%"></i></div></div><div class="cap">Series You Started</div></div>
+        <div class="card"><div class="art"><span class="badge">6 min left</span><div class="prog"><i style="width:88%"></i></div></div><div class="cap">Documentary</div></div>
+        <div class="card"><div class="art"><span class="badge">2h 01m left</span><div class="prog"><i style="width:9%"></i></div></div><div class="cap">Punjabi Film</div></div>
+        <div class="card"><div class="art"><span class="badge">44 min left</span><div class="prog"><i style="width:45%"></i></div></div><div class="cap">Stand-up Special</div></div>
+      </div>
+    </div>
+    <div class="row">
+      <h3>Top 10 in India Today</h3>
+      <div class="cards t10">
+        <div class="card p"><div class="num">1</div><div class="art"></div><div class="cap">Top Title One</div></div>
+        <div class="card p"><div class="num">2</div><div class="art"></div><div class="cap">Top Title Two</div></div>
+        <div class="card p f"><div class="num">3</div><div class="art"><div class="exp"><div class="r w"><svg class="ico solid" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></div><div class="r"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div><div class="r"><svg class="ico" viewBox="0 0 24 24"><path d="M7 11v8H4v-8zM7 11l4-8c1.5 0 2 1 2 2.5V9h5.5c1.4 0 2 1.6 1.4 2.8l-2.6 6.7c-.4 1-1.3 1.5-2.2 1.5H7"/></svg></div></div></div><div class="cap">Top Title Three<div class="meta"><span class="mt">98% Match</span><span>16+</span><span>2h 14m</span><span class="yr">2026</span></div></div></div>
+        <div class="card p"><div class="num">4</div><div class="art"></div><div class="cap">Top Title Four</div></div>
+        <div class="card p"><div class="num">5</div><div class="art"></div><div class="cap">Top Title Five</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot">▼ this screen scrolls — next rows: <b>New Releases</b> · <b>Just Added</b> · <b>Watch in Hindi</b> · <b>Live now (444 channels)</b>. Focus = white ring + lift, exactly like Netflix on TV.</div>
+</section>
+
+<!-- ===================== 3 · LIVE TV (Netflix language, our channels) ===================== -->
+<section class="screen" id="live">
+  <div class="billboard" style="background:linear-gradient(115deg,#122a1a,#0f2233 45%,#101010)"></div>
+  <div class="topnav">
+    <div class="logo">GHARTV</div>
+    <ul><li>Home</li><li>Series</li><li>Movies</li><li>New &amp; Popular</li><li class="on f">Live TV</li><li>My List</li></ul>
+    <div class="right"><span style="font-size:20px;color:#e6e6e6">Hindi · English · Punjabi</span><div class="pav"></div></div>
+  </div>
+  <div class="bb" style="bottom:auto;top:200px;width:1080px">
+    <h1 style="font-size:72px">Live now</h1>
+    <div class="sub">444 channels from your own server. Same tiles, same rows as movies — no separate app, no separate look.</div>
+    <div class="bbbtns" style="margin-top:22px"><button class="b play"><svg class="ico solid" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>Resume last channel</button><button class="b">Guide</button></div>
+  </div>
+  <div class="chips">
+    <div class="chip on">All</div><div class="chip">News</div><div class="chip f">Sports</div><div class="chip">Kids</div><div class="chip">Music</div><div class="chip">Punjabi</div><div class="chip">Hindi</div><div class="chip">English</div>
+  </div>
+  <div class="rows">
+    <div class="row">
+      <h3>Continue watching live</h3>
+      <div class="cards">
+        <div class="card f"><div class="art" style="height:200px"><span class="badge live"><i></i>LIVE</span></div><div class="cap">Sony TEN 1 HD</div><div class="meta"><span class="mt">Now: Match</span><span class="yr">720p HLS</span></div></div>
+        <div class="card"><div class="art" style="height:200px"><span class="badge live"><i></i>LIVE</span></div><div class="cap">PTC Punjabi</div><div class="meta"><span class="mt">Now: Music</span><span class="yr">480p HLS</span></div></div>
+        <div class="card"><div class="art" style="height:200px"><span class="badge live"><i></i>LIVE</span></div><div class="cap">Cartoon Network Hindi</div><div class="meta"><span class="mt">Now: Episode</span><span class="yr">576p HLS</span></div></div>
+        <div class="card"><div class="art" style="height:200px"><span class="badge live"><i></i>LIVE</span></div><div class="cap">DD Sports</div><div class="meta"><span class="mt">Now: Highlights</span><span class="yr">480p HLS</span></div></div>
+        <div class="card"><div class="art" style="height:200px"><span class="badge live"><i></i>LIVE</span></div><div class="cap">Discovery Kids Hindi</div><div class="meta"><span class="mt">Now: Learning</span><span class="yr">576p HLS</span></div></div>
+      </div>
+    </div>
+    <div class="row">
+      <h3>Just added to your library <span class="badge new" style="position:static">NEW</span></h3>
+      <div class="cards">
+        <div class="card p"><div class="art" style="height:220px"><span class="badge new">ADDED 2d</span></div><div class="cap">New Arrival A</div><div class="meta"><span class="mt">3 sources</span><span>2026</span><span class="yr">Hindi</span></div></div>
+        <div class="card p"><div class="art" style="height:220px"><span class="badge new">ADDED 4d</span></div><div class="cap">New Arrival B</div><div class="meta"><span class="mt">2 sources</span><span>2026</span><span class="yr">English</span></div></div>
+        <div class="card p"><div class="art" style="height:220px"><span class="badge new">ADDED 5d</span></div><div class="cap">New Arrival C</div><div class="meta"><span class="mt">4 sources</span><span>2025</span><span class="yr">Punjabi</span></div></div>
+        <div class="card p"><div class="art" style="height:220px"><span class="badge new">ADDED 6d</span></div><div class="cap">New Arrival D</div><div class="meta"><span class="mt">1 source</span><span>2026</span><span class="yr">Hindi</span></div></div>
+        <div class="card p"><div class="art" style="height:220px"><span class="badge new">ADDED 9d</span></div><div class="cap">New Arrival E</div><div class="meta"><span class="mt">2 sources</span><span>2026</span><span class="yr">English</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot">"Just Added" = the day our server first saw the title. Sources merged by IMDb id, so one tile — never five.</div>
+</section>
+
+<!-- ===================== 4 · TITLE DETAIL ===================== -->
+<section class="screen" id="title">
+  <div class="billboard" style="height:640px"></div>
+  <div class="topnav"><div class="logo">GHARTV</div><ul><li>Home</li><li>Series</li><li class="on">Movies</li></ul><div class="right"><div class="pav"></div></div></div>
+  <div class="blurb">
+    <h1 style="font-size:64px;font-weight:800">The Film You Want To Watch</h1>
+    <div class="mat" style="margin:14px 0 0"><span class="mt" style="color:var(--green);font-weight:700">98% Match</span><span>2026</span><span class="box">16+</span><span>2h 14m</span><span class="hd">HD</span><span>Hindi · English · Punjabi</span></div>
+  </div>
+  <div class="dt">
+    <div class="dedupe"><svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><b>One tile, not five.</b>&nbsp;Cinemeta + WatchHub + Torrentio merged by <span style="font-family:ui-monospace,monospace">imdb:tt1234567</span></div>
+    <div class="bbbtns">
+      <button class="b play"><svg class="ico solid" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>Play</button>
+      <button class="b f">Resume 00:12:40</button>
+      <div class="round"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+      <div class="round"><svg class="ico" viewBox="0 0 24 24"><path d="M7 11v8H4v-8zM7 11l4-8c1.5 0 2 1 2 2.5V9h5.5c1.4 0 2 1.6 1.4 2.8l-2.6 6.7c-.4 1-1.3 1.5-2.2 1.5H7"/></svg></div>
+    </div>
+    <h3 style="font-size:26px;margin-top:28px">Play from <span style="font-weight:400;color:var(--ink2)">· 3 sources for this one title</span></h3>
+    <div class="srclist">
+      <div class="src f"><svg class="ico solid" viewBox="0 0 24 24" style="color:var(--red)"><path d="M7 4l13 8-13 8z"/></svg>
+        <div><div style="font-weight:700">Adaptive — recommended</div><div style="font-size:18px;color:var(--ink2)">bitrate follows your Wi-Fi · no buffering</div></div>
+        <div class="q"><span class="tagq">Auto ≤720p</span><span class="tagq">2.4 Mbps</span><span class="tagq g">1.0× realtime</span></div></div>
+      <div class="src"><svg class="ico" viewBox="0 0 24 24"><path d="M4 12h16M12 4v16"/></svg>
+        <div><div style="font-weight:700">YouTube (official)</div><div style="font-size:18px;color:var(--ink2)">resolved on your server · in-stream ads</div></div>
+        <div class="q"><span class="tagq">720p</span><span class="tagq">3.1 Mbps</span></div></div>
+      <div class="src"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
+        <div><div style="font-weight:700">Torrent — size-capped</div><div style="font-size:18px;color:var(--ink2)">≤4 GB · no ladder · only if nothing else plays</div></div>
+        <div class="q"><span class="tagq">1080p</span><span class="tagq">3.9 GB</span><span class="tagq y">0.7× risk</span></div></div>
+    </div>
+  </div>
+  <div class="foot">Netflix layout, our mechanics: match %, maturity, "Play from" instead of a single CDN.</div>
+</section>
+
+<!-- ===================== 5 · PLAYER ===================== -->
+<section class="screen" id="player">
+  <div class="ply"><div class="frame"></div>
+    <div class="hud">
+      <div><div style="font-size:34px;font-weight:700">The Film You Want To Watch</div>
+        <div style="color:#cfcfcf;font-size:20px;margin-top:8px">Hindi audio · English subtitles · Auto ≤720p</div></div>
+      <div style="margin-left:auto;display:flex;gap:14px"><span class="tagq g">buffer healthy · 1.0× realtime</span><span class="tagq">kids-safe session</span></div>
+    </div>
+    <div class="skip">Skip Intro &#8250;</div>
+    <div class="bar">
+      <div class="trk"><div class="buf"></div><div class="pl"></div><div class="kn"></div></div>
+      <div style="display:flex;justify-content:space-between;color:#dcdcdc;font-size:19px;margin-bottom:22px"><span>00:45:10</span><span>-01:28:50</span></div>
+      <div class="ctl">
+        <div class="it f"><svg class="ico solid" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg></div>
+        <div class="it"><svg class="ico" viewBox="0 0 24 24"><path d="M11 19l-8-7 8-7v14zM20 19l-8-7 8-7v14z"/></svg>10s</div>
+        <div class="it"><svg class="ico" viewBox="0 0 24 24"><path d="M13 5l8 7-8 7V5zM4 5l8 7-8 7V5z"/></svg>10s</div>
+        <div class="it"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>English [CC]</div>
+        <div class="it"><svg class="ico" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Hindi</div>
+        <div class="it">Auto ≤720p</div>
+        <div class="it">Next episode &#8250;</div>
+        <div class="rt">2.4 Mbps · 30s buffer</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 6 · KIDS PROFILE ===================== -->
+<section class="screen" id="kids">
+  <div class="kbg"></div>
+  <div class="knav">
+    <div class="kl">GHARTV <span style="font-weight:400;color:#fff">Kids</span></div>
+    <div class="ki f">Home</div><div class="ki">Shows</div><div class="ki">Movies</div><div class="ki">Live</div>
+    <div class="ktime"><span class="kchip">1h 12m left today</span><span class="kchip o">curfew 8:00 pm</span><span class="kchip o" style="display:flex;gap:10px;align-items:center"><svg class="ico" viewBox="0 0 24 24" style="width:22px;height:22px"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>grown-ups</span></div>
+  </div>
+  <div style="position:absolute;left:0;right:0;top:150px">
+    <div class="krow">
+      <h3>Because Aarav watched Cocomelon</h3>
+      <div class="cards">
+        <div class="kc f"><div class="a"></div><div class="n">Cocomelon — Thankful for Vegetables</div></div>
+        <div class="kc"><div class="a"></div><div class="n">Chhota Bheem — Hindi</div></div>
+        <div class="kc"><div class="a"></div><div class="n">Motu Patlu — Hindi</div></div>
+        <div class="kc"><div class="a"></div><div class="n">Punjabi Toons</div></div>
+        <div class="kc"><div class="a"></div><div class="n">Super Simple Songs — English</div></div>
+      </div>
+    </div>
+    <div class="krow">
+      <h3>Learning &amp; live channels</h3>
+      <div class="cards">
+        <div class="kc b"><div class="a"></div><div class="n">Discovery Kids Hindi · LIVE</div></div>
+        <div class="kc b"><div class="a"></div><div class="n">DD Gyan Darshan · LIVE</div></div>
+        <div class="kc b"><div class="a"></div><div class="n">Disney Junior Hindi · LIVE</div></div>
+        <div class="kc b"><div class="a"></div><div class="n">Nick JR · LIVE</div></div>
+        <div class="kc b"><div class="a"></div><div class="n">Sony YAY! · LIVE</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot" style="color:#cfd8e3">No free search, no settings, only the hub's allow-lists: 8 curated YouTube channels + 29 kids channels. Rows can be hidden per profile.</div>
+</section>
+
+<!-- ===================== 7 · PIN + MANAGE PROFILES ===================== -->
+<section class="screen" id="pin">
+  <div class="pwrap" style="filter:blur(0)">
+    <div class="pfs" style="opacity:.25">
+      <div class="pf"><div class="a"><i></i></div><div class="nm">Raj</div></div>
+      <div class="pf"><div class="a"><i></i></div><div class="nm">Nagraj</div></div>
+      <div class="pf k"><div class="a"><i></i></div><div class="nm">Aarav (Kids)</div></div>
+    </div>
+  </div>
+  <div class="modal">
+    <div class="mbox">
+      <h2>Profile lock</h2>
+      <p>Enter the adult PIN to leave Aarav's kids profile</p>
+      <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+      <div class="p9"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div><div>9</div><div style="font-size:20px">Clear</div><div>0</div><div class="f">OK</div></div>
+    </div>
+  </div>
+  <div class="side">
+    <div class="li"><b>Raj</b> · adult<div class="sw on"><i></i></div></div>
+    <div class="li"><b>Nagraj</b> · adult (no PIN)<div class="sw"><i></i></div></div>
+    <div class="li"><b>Aarav</b> · kids<div class="sw"><i></i></div></div>
+    <div class="li">Languages<span class="v">Hindi · English · Punjabi</span></div>
+    <div class="li">Max quality (kids)<span class="v">720p · 6 Mbps</span></div>
+    <div class="li f">Daily limit · curfew<span class="v">90 min · 8:00 pm</span></div>
+    <div class="li">Hide "Learning" row<span class="v">off</span></div>
+  </div>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!-- App configuration. Overridable at launch with the "hub_url" and "fixture" string extras
+     (see MainActivity): am start -n com.scenix.tv/.MainActivity -e hub_url http://host:8788
+     The default hub_url is the always-on server from kids-app-plan.md section 6. -->
+<resources>
+    <string name="hub_url" translatable="false">http://<hub-host>:8788</string>
+    <!-- Player ceilings, mirrored into assets/theme.json "player" so the look and the player
+         move together. Kept here as well because config.xml is the documented app switch. -->
+    <integer name="player_max_video_width" translatable="false">1280</integer>
+    <integer name="player_max_video_height" translatable="false">720</integer>
+    <integer name="player_max_bitrate_bps" translatable="false">6000000</integer>
+    <integer name="player_back_buffer_ms" translatable="false">30000</integer>
+    <integer name="player_forward_buffer_ms" translatable="false">120000</integer>
+    <bool name="kids_default_profile" translatable="false">true</bool>
+</resources>

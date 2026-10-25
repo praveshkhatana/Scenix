@@ -1,0 +1,11 @@
+# GharTV — P1 skeleton (Sony BRAVIA, Android 11, armeabi-v7a, 2 GB)
+Build: `export JAVA_HOME=<jdk17>` then `./gradlew --no-daemon assembleDebug` → `build/outputs/apk/debug/app-debug.apk`. Nothing is installed or deployed from here.
+**Hub-side (content is data):** a new row of titles is one row in the hub (`work/iptv/hub`); it shows up on Home with no app change. The app only speaks the contract: `GET /app/v1/home|manifest|meta/<id>|search|profiles|addons|subs/<id>|prefs`, `POST /app/v1/play|progress|prefs`.
+**App-side (presentation is plugins):** one file per behaviour under `src/main/java/com/ghartv/tv/plugins/` — `rows/`, `cards/`, `rules/`, `player/`, `nav/` — each an `object` implementing `RowPlugin`, `CardPlugin`, `RulePlugin`, `PlayerPlugin` or `ScreenPlugin`.
+**Adding a feature = one new plugin file + one line in `plugins/PluginCatalog.kt`.** Nothing existing is edited: registries are keyed by id and sorted by `order`, an unknown card id renders as `poster`, an unknown player kind falls back to `http`.
+Row: `rowId/layout/decorate/fetchFrom/explore/rowGutter` · Card: `cardType/create/bind/unbind` · Rule: `applyItem/applyRow` · Player: `kind/configure/openable/external/openExternally` · Screen: `route/scope/showInNav/render/onBack/onLeave`.
+Capability = the players registry: a source plays only if `registries.players.get(kind)` exists and `openable()` is true; `external()` means the tap hands off to another app and never reaches Media3. Torrents are listed; a hub answer with `mode:"gateway"` is played as ordinary seekable HTTP.
+Every source the hub sends is pre-ranked (`score`, `why[]`): playback auto-fails over to the next source when one stalls or errors, and the player's Settings panel exposes the same list under **Source**.
+Visual tokens live in `src/main/assets/theme.json`; a new plugin may add its own group and read it with `theme.token(group, key, fallback)` — `Theme.kt` is never edited for a new feature.
+Offline: if the hub does not answer, `assets/fixtures/home.json` (with its own `subs`, `prefs`, `manifest`) renders the whole app behind a "hub offline — retrying" chip.
+Stubbed in P1: audio boost (row says *not available on this TV*), episode/season lists, ratings, hub-synced My List, voice search, full EPG, and disk image caching.

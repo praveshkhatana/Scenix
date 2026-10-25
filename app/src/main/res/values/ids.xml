@@ -1,0 +1,5 @@
+<resources>
+    <!-- View tags used by ImageLoader (request token) and by the row renderer. -->
+    <item name="scenix_img_req" type="id" />
+    <item name="scenix_card_ctx" type="id" />
+</resources>

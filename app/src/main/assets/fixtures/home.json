@@ -1,0 +1,1684 @@
+{
+ "_read": [
+  "Offline fallback catalogue, same shapes as GET /app/v1/home.",
+  "The live hub is the real source; this is what the TV shows when the hub is not answering.",
+  "play: identity -> the answer POST /app/v1/play would give.",
+  "subs: identity -> the answer GET /app/v1/subs/<identity> would give (files under fixtures/subs).",
+  "prefs.json (same folder) is what GET /app/v1/prefs would answer."
+ ],
+ "rows": [
+  {
+   "id": "hero",
+   "title": "",
+   "card": "hero",
+   "scope": "all",
+   "order": 0,
+   "items": [
+    {
+     "identity": "norm:yaar-jatt-de-2024",
+     "type": "movie",
+     "title": "Yaar Jatt De",
+     "year": 2024,
+     "poster": "https://picsum.photos/seed/yaarjatt/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy",
+      "Family"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "hls",
+       "quality": "up to 1080p",
+       "risk": "adaptive",
+       "score": 8.5,
+       "why": [
+        "up to 1080p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages"
+       ]
+      },
+      {
+       "provider": "adaptive",
+       "label": "Adaptive — 1080p",
+       "kind": "http",
+       "quality": "1080p",
+       "sizeBytes": 2800000000,
+       "risk": "direct",
+       "score": 7.1,
+       "why": [
+        "1080p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "2 GB file"
+       ]
+      },
+      {
+       "provider": "torrent",
+       "label": "Torrent — 4K remux",
+       "kind": "torrent",
+       "quality": "2160p",
+       "sizeBytes": 34000000000,
+       "risk": "torrent",
+       "score": 9.9,
+       "why": [
+        "2160p copy",
+        "highest quality copy",
+        "needs a stream engine on this TV",
+        "31 GB file",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/yaarjatt-wide/1280/720",
+     "match": 94,
+     "maturity": "U/A 13+",
+     "durationMs": 8400000,
+     "addedAt": 1761313600,
+     "releasedAt": 1757944000,
+     "inCinemas": true
+    }
+   ]
+  },
+  {
+   "id": "continue",
+   "title": "Continue Watching",
+   "card": "continue",
+   "scope": "all",
+   "order": 1,
+   "items": [
+    {
+     "identity": "imdb:tt10958128",
+     "type": "movie",
+     "title": "Carri Onda Taaing De",
+     "year": 2019,
+     "poster": "https://picsum.photos/seed/carri/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive — 1080p",
+       "kind": "http",
+       "quality": "1080p",
+       "sizeBytes": 2400000000,
+       "risk": "direct",
+       "score": 9.9,
+       "why": [
+        "1080p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "2 GB file",
+        "ranked first by the hub"
+       ]
+      },
+      {
+       "provider": "youtube",
+       "label": "YouTube",
+       "kind": "yt",
+       "quality": "1080p",
+       "risk": "signed link",
+       "score": 8.5,
+       "why": [
+        "1080p copy",
+        "official channel upload",
+        "signed link expires in about 4 h"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/carri-wide/1280/720",
+     "match": 91,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000,
+     "progress": {
+      "positionMs": 3120000,
+      "watchedMs": 3120000
+     }
+    },
+    {
+     "identity": "norm:justice-ek-haqeeqat-2020",
+     "type": "series",
+     "title": "Justice — Ek Haqeeqat",
+     "year": 2020,
+     "poster": "https://picsum.photos/seed/justice/300/450",
+     "genres": [
+      "Punjabi",
+      "Crime",
+      "Series"
+     ],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "hls",
+       "quality": "up to 1080p",
+       "risk": "adaptive",
+       "score": 9.9,
+       "why": [
+        "up to 1080p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      },
+      {
+       "provider": "torrent",
+       "label": "Torrent — Season 1",
+       "kind": "torrent",
+       "quality": "1080p",
+       "sizeBytes": 18000000000,
+       "risk": "torrent",
+       "score": 8.5,
+       "why": [
+        "1080p copy",
+        "highest quality copy",
+        "needs a stream engine on this TV",
+        "16 GB file"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/justice-wide/1280/720",
+     "match": 78,
+     "maturity": "U/A 16+",
+     "durationMs": 2520000,
+     "addedAt": 1760622400,
+     "progress": {
+      "positionMs": 940000,
+      "watchedMs": 940000
+     }
+    },
+    {
+     "identity": "norm:postto-2023",
+     "type": "movie",
+     "title": "Posto",
+     "year": 2023,
+     "poster": "https://picsum.photos/seed/posto/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive — 720p",
+       "kind": "http",
+       "quality": "720p",
+       "sizeBytes": 1200000000,
+       "risk": "direct",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "1 GB file",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/posto-wide/1280/720",
+     "match": 69,
+     "maturity": "U/A 13+",
+     "durationMs": 6900000,
+     "addedAt": 1760968000,
+     "progress": {
+      "positionMs": 480000,
+      "watchedMs": 480000
+     }
+    },
+    {
+     "identity": "norm:chal-pindi-lau-de-2023",
+     "type": "movie",
+     "title": "Chal Pindi Lau De",
+     "year": 2023,
+     "poster": "https://picsum.photos/seed/chalpindi/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy",
+      "Road"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "youtube",
+       "label": "YouTube",
+       "kind": "yt",
+       "quality": "1080p",
+       "risk": "signed link",
+       "score": 9.9,
+       "why": [
+        "1080p copy",
+        "official channel upload",
+        "signed link expires in about 4 h",
+        "ranked first by the hub"
+       ]
+      },
+      {
+       "provider": "adaptive",
+       "label": "Adaptive — 1080p",
+       "kind": "http",
+       "quality": "1080p",
+       "sizeBytes": 2600000000,
+       "risk": "direct",
+       "score": 8.5,
+       "why": [
+        "1080p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "2 GB file"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/chalpindi-wide/1280/720",
+     "match": 71,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1761227200,
+     "progress": {
+      "positionMs": 1180000,
+      "watchedMs": 1180000
+     }
+    }
+   ]
+  },
+  {
+   "id": "top10",
+   "title": "Top 10 in India Today",
+   "card": "poster",
+   "scope": "all",
+   "order": 2,
+   "max": 10,
+   "items": [
+    {
+     "identity": "imdb:tt10958128",
+     "type": "movie",
+     "title": "Carri Onda Taaing De",
+     "year": 2019,
+     "poster": "https://picsum.photos/seed/carri/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/carri-wide/1280/720",
+     "match": 91,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt8465434",
+     "type": "movie",
+     "title": "Golak Bugni Bank Te Batua",
+     "year": 2018,
+     "poster": "https://picsum.photos/seed/golak/300/450",
+     "genres": [
+      "Punjabi",
+      "Drama",
+      "Crime"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/golak-wide/1280/720",
+     "match": 88,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt7174262",
+     "type": "movie",
+     "title": "Lahoriye",
+     "year": 2017,
+     "poster": "https://picsum.photos/seed/lahoriye/300/450",
+     "genres": [
+      "Punjabi",
+      "Romance"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/lahoriye-wide/1280/720",
+     "match": 86,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt6107630",
+     "type": "movie",
+     "title": "Bambukat",
+     "year": 2016,
+     "poster": "https://picsum.photos/seed/bambukat/300/450",
+     "genres": [
+      "Punjabi",
+      "Dance"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/bambukat-wide/1280/720",
+     "match": 84,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt6025394",
+     "type": "movie",
+     "title": "Nikka Zaildar",
+     "year": 2016,
+     "poster": "https://picsum.photos/seed/nikka1/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy",
+      "Romance"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/nikka1-wide/1280/720",
+     "match": 83,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt7325770",
+     "type": "movie",
+     "title": "Nikka Zaildar 2",
+     "year": 2017,
+     "poster": "https://picsum.photos/seed/nikka2/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/nikka2-wide/1280/720",
+     "match": 80,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt3911278",
+     "type": "movie",
+     "title": "Punjab 1984",
+     "year": 2014,
+     "poster": "https://picsum.photos/seed/p1984/300/450",
+     "genres": [
+      "Punjabi",
+      "History",
+      "Drama"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/p1984-wide/1280/720",
+     "match": 79,
+     "maturity": "U/A 16+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt4791376",
+     "type": "movie",
+     "title": "Sardaar Ji",
+     "year": 2015,
+     "poster": "https://picsum.photos/seed/sardaar1/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy",
+      "Fantasy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/sardaar1-wide/1280/720",
+     "match": 76,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt9516590",
+     "type": "movie",
+     "title": "Sardaar Ji 2",
+     "year": 2019,
+     "poster": "https://picsum.photos/seed/sardaar2/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/sardaar2-wide/1280/720",
+     "match": 74,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    },
+    {
+     "identity": "imdb:tt7728804",
+     "type": "movie",
+     "title": "Manjeeta",
+     "year": 2017,
+     "poster": "https://picsum.photos/seed/manjeeta/300/450",
+     "genres": [
+      "Punjabi",
+      "Biography",
+      "Sports"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/manjeeta-wide/1280/720",
+     "match": 72,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1758808000
+    }
+   ]
+  },
+  {
+   "id": "justadded",
+   "title": "Recently Added",
+   "card": "poster",
+   "scope": "all",
+   "order": 3,
+   "items": [
+    {
+     "identity": "norm:yaar-jatt-de-2024",
+     "type": "movie",
+     "title": "Yaar Jatt De",
+     "year": 2024,
+     "poster": "https://picsum.photos/seed/yaarjatt/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "hls",
+       "quality": "up to 1080p",
+       "risk": "adaptive",
+       "score": 9.9,
+       "why": [
+        "up to 1080p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/yaarjatt-wide/1280/720",
+     "match": 88,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1761313600
+    },
+    {
+     "identity": "norm:mastaan-2022",
+     "type": "movie",
+     "title": "Mastaan",
+     "year": 2022,
+     "poster": "https://picsum.photos/seed/mastaan/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/mastaan-wide/1280/720",
+     "match": 81,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1761140800
+    },
+    {
+     "identity": "norm:bakala-2023",
+     "type": "movie",
+     "title": "Bakala",
+     "year": 2023,
+     "poster": "https://picsum.photos/seed/bakala/300/450",
+     "genres": [
+      "Punjabi",
+      "Drama"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/bakala-wide/1280/720",
+     "match": 77,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1761054400
+    },
+    {
+     "identity": "norm:chakvi-da-police-2022",
+     "type": "movie",
+     "title": "Chakvi Da Police",
+     "year": 2022,
+     "poster": "https://picsum.photos/seed/chakvi/300/450",
+     "genres": [
+      "Punjabi",
+      "Crime"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/chakvi-wide/1280/720",
+     "match": 73,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1760881600
+    },
+    {
+     "identity": "imdb:tt10958128",
+     "type": "movie",
+     "title": "Carri Onda Taaing De",
+     "year": 2019,
+     "poster": "https://picsum.photos/seed/carri/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/carri-wide/1280/720",
+     "match": 91,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1760795200
+    },
+    {
+     "identity": "norm:jeeto-pakistan-special-2021",
+     "type": "movie",
+     "title": "Jeeto Pakistan Special",
+     "year": 2021,
+     "poster": "https://picsum.photos/seed/jeeto/300/450",
+     "genres": [
+      "Punjabi",
+      "Music"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/jeeto-wide/1280/720",
+     "match": 66,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1760708800
+    }
+   ]
+  },
+  {
+   "id": "newreleases",
+   "title": "New & Popular",
+   "card": "poster",
+   "scope": "all",
+   "order": 4,
+   "items": [
+    {
+     "identity": "norm:yaar-jatt-de-2024",
+     "type": "movie",
+     "title": "Yaar Jatt De",
+     "year": 2024,
+     "poster": "https://picsum.photos/seed/yaarjatt/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/yaarjatt-wide/1280/720",
+     "match": 88,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1761313600,
+     "releasedAt": 1757944000,
+     "inCinemas": true
+    },
+    {
+     "identity": "norm:sarpanch-2025",
+     "type": "movie",
+     "title": "Sarpanch",
+     "year": 2025,
+     "poster": "https://picsum.photos/seed/sarpanch/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/sarpanch-wide/1280/720",
+     "match": 85,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1761227200,
+     "releasedAt": 1759672000,
+     "inCinemas": true
+    },
+    {
+     "identity": "norm:verry-ta-verry-2024",
+     "type": "movie",
+     "title": "Verry Ta Verry",
+     "year": 2024,
+     "poster": "https://picsum.photos/seed/verry/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/verry-wide/1280/720",
+     "match": 79,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1760363200,
+     "releasedAt": 1753624000
+    },
+    {
+     "identity": "norm:heer-ranjha-2024",
+     "type": "movie",
+     "title": "Heer Ranjha",
+     "year": 2024,
+     "poster": "https://picsum.photos/seed/heer24/300/450",
+     "genres": [
+      "Punjabi",
+      "Romance",
+      "Tragedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/heer24-wide/1280/720",
+     "match": 78,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1760190400,
+     "releasedAt": 1751032000
+    },
+    {
+     "identity": "imdb:tt8465434",
+     "type": "movie",
+     "title": "Golak Bugni Bank Te Batua",
+     "year": 2018,
+     "poster": "https://picsum.photos/seed/golak/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/golak-wide/1280/720",
+     "match": 88,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1756216000,
+     "releasedAt": 1554040000
+    },
+    {
+     "identity": "imdb:tt3911278",
+     "type": "movie",
+     "title": "Punjab 1984",
+     "year": 2014,
+     "poster": "https://picsum.photos/seed/p1984/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/p1984-wide/1280/720",
+     "match": 79,
+     "maturity": "U/A 16+",
+     "durationMs": 7200000,
+     "addedAt": 1753624000,
+     "releasedAt": 1415800000
+    }
+   ]
+  },
+  {
+   "id": "live",
+   "title": "Live TV",
+   "card": "channel",
+   "scope": "all",
+   "order": 5,
+   "items": [
+    {
+     "identity": "norm:chardikla-time-tv-live",
+     "type": "channel",
+     "title": "Chardikla Time TV",
+     "year": 0,
+     "poster": "https://picsum.photos/seed/chardikla/300/450",
+     "genres": [],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "live",
+       "label": "Live",
+       "kind": "hls",
+       "quality": "1080i",
+       "risk": "live",
+       "score": 9.9,
+       "why": [
+        "1080i copy",
+        "on air now",
+        "quality follows the feed",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "logo": "https://picsum.photos/seed/chardikla-logo/200/80",
+     "live": {
+      "now": "Prime Time Punjabi News",
+      "quality": "1080i"
+     }
+    },
+    {
+     "identity": "norm:9x-tashan-live",
+     "type": "channel",
+     "title": "9X Tashan",
+     "year": 0,
+     "poster": "https://picsum.photos/seed/9xtashan/300/450",
+     "genres": [],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "live",
+       "label": "Live",
+       "kind": "hls",
+       "quality": "576i",
+       "risk": "live",
+       "score": 9.9,
+       "why": [
+        "576i copy",
+        "on air now",
+        "quality follows the feed",
+        "ranked first by the hub"
+       ]
+      }
+     ]
+    },
+    {
+     "identity": "norm:ptv-home-live",
+     "type": "channel",
+     "title": "PTV Home",
+     "year": 0,
+     "poster": "https://picsum.photos/seed/ptvhome/300/450",
+     "genres": [],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "live",
+       "label": "Live",
+       "kind": "hls",
+       "quality": "576i",
+       "risk": "live",
+       "score": 9.9,
+       "why": [
+        "576i copy",
+        "on air now",
+        "quality follows the feed",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "live": {
+      "now": null,
+      "quality": "576i"
+     }
+    },
+    {
+     "identity": "norm:ptv-sports-live",
+     "type": "channel",
+     "title": "PTV Sports",
+     "year": 0,
+     "poster": "https://picsum.photos/seed/ptvsports/300/450",
+     "genres": [],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "live",
+       "label": "Live",
+       "kind": "hls",
+       "quality": "720p",
+       "risk": "live",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "on air now",
+        "quality follows the feed",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "live": {
+      "now": "Kabaddi: Punjab vs Services",
+      "quality": "720p"
+     }
+    },
+    {
+     "identity": "norm:samaa-tv-live",
+     "type": "channel",
+     "title": "SAMAA TV",
+     "year": 0,
+     "poster": "https://picsum.photos/seed/samaa/300/450",
+     "genres": [],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "http",
+       "quality": "576i",
+       "risk": "direct",
+       "score": 9.9,
+       "why": [
+        "576i copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "live": {
+      "now": "Aaj Kamran Khan Ke Naam",
+      "quality": "576i"
+     }
+    },
+    {
+     "identity": "norm:dil-tv-live",
+     "type": "channel",
+     "title": "Dil TV",
+     "year": 0,
+     "poster": "https://picsum.photos/seed/diltv/300/450",
+     "genres": [],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "live",
+       "label": "Live",
+       "kind": "hls",
+       "quality": "576i",
+       "risk": "live",
+       "score": 9.9,
+       "why": [
+        "576i copy",
+        "on air now",
+        "quality follows the feed",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "live": {
+      "now": "",
+      "quality": ""
+     }
+    }
+   ]
+  },
+  {
+   "id": "punjabiclassics",
+   "title": "Punjabi Classics",
+   "card": "poster",
+   "scope": "adult",
+   "order": 6,
+   "items": [
+    {
+     "identity": "imdb:tt4163654",
+     "type": "movie",
+     "title": "Angrej",
+     "year": 2015,
+     "poster": "https://picsum.photos/seed/angrej/300/450",
+     "genres": [
+      "Punjabi",
+      "Classic",
+      "Romance"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/angrej-wide/1280/720",
+     "match": 90,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1744120000
+    },
+    {
+     "identity": "norm:payal-ki-jhalar-1996",
+     "type": "movie",
+     "title": "Payal Ki Jhalar",
+     "year": 1996,
+     "poster": "https://picsum.photos/seed/payal/300/450",
+     "genres": [
+      "Punjabi",
+      "Classic"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/payal-wide/1280/720",
+     "match": 74,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1743256000
+    },
+    {
+     "identity": "norm:nawab-sharif-1979",
+     "type": "movie",
+     "title": "Nawab Sharif",
+     "year": 1979,
+     "poster": "https://picsum.photos/seed/nawab/300/450",
+     "genres": [
+      "Punjabi",
+      "Classic"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/nawab-wide/1280/720",
+     "match": 68,
+     "maturity": "U/A",
+     "durationMs": 7200000,
+     "addedAt": 1742392000
+    },
+    {
+     "identity": "norm:heer-ranjha-1970",
+     "type": "movie",
+     "title": "Heer Ranjha",
+     "year": 1970,
+     "poster": "https://picsum.photos/seed/heer70/300/450",
+     "genres": [
+      "Punjabi",
+      "Classic"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/heer70-wide/1280/720",
+     "match": 66,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1741528000
+    },
+    {
+     "identity": "norm:yar-da-dil-1968-archive",
+     "type": "movie",
+     "title": "Yaar Da Dil (archive print)",
+     "year": 1968,
+     "poster": "https://picsum.photos/seed/yar1968/300/450",
+     "genres": [
+      "Punjabi",
+      "Classic"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "torrent",
+       "label": "Torrent — 2160p archive scan",
+       "kind": "torrent",
+       "quality": "2160p",
+       "sizeBytes": 41000000000,
+       "risk": "unverified file",
+       "score": 9.9,
+       "why": [
+        "2160p copy",
+        "highest quality copy",
+        "needs a stream engine on this TV",
+        "38 GB file",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/yar1968-wide/1280/720",
+     "match": 61,
+     "maturity": "U/A",
+     "durationMs": 7200000,
+     "addedAt": 1740664000
+    },
+    {
+     "identity": "imdb:tt3911278",
+     "type": "movie",
+     "title": "Punjab 1984",
+     "year": 2014,
+     "poster": "https://picsum.photos/seed/p1984/300/450",
+     "genres": [
+      "Punjabi",
+      "Comedy"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/p1984-wide/1280/720",
+     "match": 79,
+     "maturity": "U/A 16+",
+     "durationMs": 7200000,
+     "addedAt": 1740664000
+    },
+    {
+     "identity": "norm:mukhma-1990",
+     "type": "movie",
+     "title": "Mukhma",
+     "year": 1990,
+     "poster": "https://picsum.photos/seed/mukhma/300/450",
+     "genres": [
+      "Punjabi",
+      "Classic"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [],
+     "backdrop": "https://picsum.photos/seed/mukhma-wide/1280/720",
+     "match": 63,
+     "maturity": "U/A 13+",
+     "durationMs": 7200000,
+     "addedAt": 1739800000
+    }
+   ]
+  },
+  {
+   "id": "kids_yt",
+   "title": "Kids · Cartoons",
+   "card": "poster",
+   "scope": "kids",
+   "order": 7,
+   "items": [
+    {
+     "identity": "norm:kids-yt-masha",
+     "type": "video",
+     "title": "Masha and the Bear",
+     "year": 2019,
+     "poster": "https://picsum.photos/seed/masha/300/450",
+     "genres": [
+      "Kids",
+      "Animation"
+     ],
+     "languages": [
+      "hi",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "youtube",
+       "label": "YouTube",
+       "kind": "yt",
+       "quality": "720p",
+       "risk": "signed link",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "official channel upload",
+        "signed link expires in about 4 h",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/masha-wide/1280/720",
+     "match": 95,
+     "maturity": "U",
+     "durationMs": 360000,
+     "addedAt": 1761227200,
+     "kids": true
+    },
+    {
+     "identity": "norm:kids-yt-chhota-bheem",
+     "type": "video",
+     "title": "Chhota Bheem",
+     "year": 2020,
+     "poster": "https://picsum.photos/seed/bheem/300/450",
+     "genres": [
+      "Kids",
+      "Animation"
+     ],
+     "languages": [
+      "hi"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "hls",
+       "quality": "720p",
+       "risk": "adaptive",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/bheem-wide/1280/720",
+     "match": 90,
+     "maturity": "U",
+     "durationMs": 720000,
+     "addedAt": 1761140800,
+     "kids": true
+    },
+    {
+     "identity": "norm:kids-yt-motopat",
+     "type": "video",
+     "title": "Motu Patlu",
+     "year": 2021,
+     "poster": "https://picsum.photos/seed/motopat/300/450",
+     "genres": [
+      "Kids",
+      "Comedy"
+     ],
+     "languages": [
+      "hi"
+     ],
+     "sources": [
+      {
+       "provider": "youtube",
+       "label": "YouTube",
+       "kind": "yt",
+       "quality": "480p",
+       "risk": "signed link",
+       "score": 9.9,
+       "why": [
+        "480p copy",
+        "official channel upload",
+        "signed link expires in about 4 h",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/motopat-wide/1280/720",
+     "match": 84,
+     "maturity": "U",
+     "durationMs": 600000,
+     "addedAt": 1761054400,
+     "kids": true
+    },
+    {
+     "identity": "norm:kids-yt-giddha",
+     "type": "video",
+     "title": "Punjabi Giddha for Kids",
+     "year": 2022,
+     "poster": "https://picsum.photos/seed/giddha/300/450",
+     "genres": [
+      "Kids",
+      "Music",
+      "Punjabi"
+     ],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "http",
+       "quality": "720p",
+       "risk": "direct",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/giddha-wide/1280/720",
+     "match": 80,
+     "maturity": "U",
+     "durationMs": 300000,
+     "addedAt": 1760968000,
+     "kids": true
+    }
+   ]
+  },
+  {
+   "id": "kids_school",
+   "title": "Kids · School Time",
+   "card": "poster",
+   "scope": "kids",
+   "order": 8,
+   "items": [
+    {
+     "identity": "norm:kids-school-varnamala",
+     "type": "video",
+     "title": "Punjabi Varnmala — Letters",
+     "year": 2021,
+     "poster": "https://picsum.photos/seed/varnamala/300/450",
+     "genres": [
+      "Kids",
+      "Education",
+      "Punjabi"
+     ],
+     "languages": [
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "http",
+       "quality": "720p",
+       "risk": "direct",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/varnamala-wide/1280/720",
+     "match": 88,
+     "maturity": "U",
+     "durationMs": 900000,
+     "addedAt": 1760536000,
+     "kids": true
+    },
+    {
+     "identity": "norm:kids-school-ganit",
+     "type": "video",
+     "title": "Ganit — Counting to 100",
+     "year": 2021,
+     "poster": "https://picsum.photos/seed/ganit/300/450",
+     "genres": [
+      "Kids",
+      "Education"
+     ],
+     "languages": [
+      "hi",
+      "pa"
+     ],
+     "sources": [
+      {
+       "provider": "adaptive",
+       "label": "Adaptive",
+       "kind": "hls",
+       "quality": "720p",
+       "risk": "adaptive",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "adaptive ladder — walks down by itself on a bad Wi-Fi",
+        "matches this profile's languages",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/ganit-wide/1280/720",
+     "match": 82,
+     "maturity": "U",
+     "durationMs": 1200000,
+     "addedAt": 1760449600,
+     "kids": true
+    },
+    {
+     "identity": "norm:kids-school-faal",
+     "type": "video",
+     "title": "Faal Fakriyaan — Science",
+     "year": 2022,
+     "poster": "https://picsum.photos/seed/faal/300/450",
+     "genres": [
+      "Kids",
+      "Education"
+     ],
+     "languages": [
+      "pa",
+      "en"
+     ],
+     "sources": [
+      {
+       "provider": "youtube",
+       "label": "YouTube",
+       "kind": "yt",
+       "quality": "720p",
+       "risk": "signed link",
+       "score": 9.9,
+       "why": [
+        "720p copy",
+        "official channel upload",
+        "signed link expires in about 4 h",
+        "ranked first by the hub"
+       ]
+      }
+     ],
+     "backdrop": "https://picsum.photos/seed/faal-wide/1280/720",
+     "match": 79,
+     "maturity": "U",
+     "durationMs": 1080000,
+     "addedAt": 1760363200,
+     "kids": true
+    }
+   ]
+  }
+ ],
+ "play": {
+  "norm:yaar-jatt-de-2024": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+   "kind": "torrent",
+   "mode": "gateway",
+   "why": [
+    "the hub fetched the torrent copy",
+    "served on as ordinary seekable HTTP"
+   ]
+  },
+  "norm:yar-da-dil-1968-archive": {
+   "url": "magnet:?xt=urn:btih:0f1e2d3c4b5a69788796a5b4c3d2e1f0a1b2c3d4&dn=Yaar+Da+Dil+1968+2160p",
+   "kind": "torrent",
+   "mode": "direct"
+  },
+  "imdb:tt10958128": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+   "kind": "http"
+  },
+  "imdb:tt8465434": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+   "kind": "http"
+  },
+  "imdb:tt7174262": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+   "kind": "http"
+  },
+  "imdb:tt6107630": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+   "kind": "http"
+  },
+  "imdb:tt6025394": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+   "kind": "http"
+  },
+  "imdb:tt7325770": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4",
+   "kind": "http"
+  },
+  "imdb:tt3911278": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+   "kind": "http"
+  },
+  "imdb:tt4791376": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+   "kind": "http"
+  },
+  "imdb:tt9516590": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4",
+   "kind": "http"
+  },
+  "imdb:tt7728804": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
+   "kind": "http"
+  },
+  "imdb:tt4163654": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4",
+   "kind": "http"
+  },
+  "norm:justice-ek-haqeeqat-2020": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:postto-2023": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/WhatWeDidOnOurVacation.mp4",
+   "kind": "http"
+  },
+  "norm:chal-pindi-lau-de-2023": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+   "kind": "yt"
+  },
+  "norm:chardikla-time-tv-live": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:9x-tashan-live": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:ptv-home-live": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:ptv-sports-live": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:samaa-tv-live": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+   "kind": "http"
+  },
+  "norm:dil-tv-live": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:kids-yt-masha": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+   "kind": "yt"
+  },
+  "norm:kids-yt-chhota-bheem": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:kids-yt-motopat": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
+   "kind": "yt"
+  },
+  "norm:kids-yt-giddha": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4",
+   "kind": "http"
+  },
+  "norm:kids-school-varnamala": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+   "kind": "http"
+  },
+  "norm:kids-school-ganit": {
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
+  },
+  "norm:kids-school-faal": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+   "kind": "yt"
+  },
+  "norm:mastaan-2022": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+   "kind": "http"
+  },
+  "norm:bakala-2023": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+   "kind": "http"
+  },
+  "norm:chakvi-da-police-2022": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+   "kind": "http"
+  },
+  "norm:jeeto-pakistan-special-2021": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+   "kind": "http"
+  },
+  "norm:sarpanch-2025": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+   "kind": "http"
+  },
+  "norm:verry-ta-verry-2024": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+   "kind": "http"
+  },
+  "norm:heer-ranjha-2024": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+   "kind": "http"
+  },
+  "norm:payal-ki-jhalar-1996": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+   "kind": "http"
+  },
+  "norm:nawab-sharif-1979": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+   "kind": "http"
+  },
+  "norm:heer-ranjha-1970": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+   "kind": "http"
+  },
+  "norm:mukhma-1990": {
+   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+   "kind": "http"
+  }
+ },
+ "subs": {
+  "imdb:tt10958128": [
+   {
+    "id": "tt10958128-eng",
+    "addon": "Built-in subtitle pack",
+    "lang": "eng",
+    "label": "English",
+    "url": "file:///android_asset/fixtures/subs/eng.vtt"
+   },
+   {
+    "id": "tt10958128-hin",
+    "addon": "Built-in subtitle pack",
+    "lang": "hin",
+    "label": "Hindi",
+    "url": "file:///android_asset/fixtures/subs/hin.vtt"
+   },
+   {
+    "id": "tt10958128-pan",
+    "addon": "Built-in subtitle pack",
+    "lang": "pan",
+    "label": "Punjabi",
+    "url": "file:///android_asset/fixtures/subs/pan.vtt"
+   }
+  ],
+  "imdb:tt8465434": [
+   {
+    "id": "tt8465434-eng",
+    "addon": "Built-in subtitle pack",
+    "lang": "eng",
+    "label": "English",
+    "url": "file:///android_asset/fixtures/subs/eng.vtt"
+   },
+   {
+    "id": "tt8465434-hin",
+    "addon": "Built-in subtitle pack",
+    "lang": "hin",
+    "label": "Hindi",
+    "url": "file:///android_asset/fixtures/subs/hin.vtt"
+   }
+  ],
+  "imdb:tt7174262": [
+   {
+    "id": "tt7174262-eng",
+    "addon": "Built-in subtitle pack",
+    "lang": "eng",
+    "label": "English",
+    "url": "file:///android_asset/fixtures/subs/eng.vtt"
+   }
+  ]
+ }
+}

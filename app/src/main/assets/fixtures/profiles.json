@@ -1,0 +1,60 @@
+{
+ "profiles": [
+  {
+   "id": "raj",
+   "name": "Raj",
+   "isKids": false,
+   "hasPin": false,
+   "audioLanguages": [
+    "hin",
+    "eng"
+   ],
+   "subtitleLanguages": [
+    "eng"
+   ]
+  },
+  {
+   "id": "nagraj",
+   "name": "Nagraj",
+   "isKids": false,
+   "hasPin": false,
+   "languages": [
+    "pa",
+    "en"
+   ],
+   "audioLanguages": [
+    "pa",
+    "hin",
+    "en"
+   ],
+   "subtitleLanguages": [
+    "eng",
+    "pan"
+   ]
+  },
+  {
+   "id": "meera",
+   "name": "Meera",
+   "isKids": false,
+   "hasPin": true,
+   "audioLanguages": [
+    "pa",
+    "en"
+   ],
+   "subtitleLanguages": [
+    "en"
+   ]
+  },
+  {
+   "id": "aarav",
+   "name": "Aarav",
+   "isKids": true,
+   "hasPin": true,
+   "audioLanguages": [
+    "en",
+    "hin"
+   ],
+   "subtitleLanguages": []
+  }
+ ]
+}

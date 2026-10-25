@@ -1,0 +1,15 @@
+# build output
+app/build/
+app/.gradle/
+app/local.properties
+*.apk
+
+# the hub's runtime state: cache, ratings DB, profiles, addon list, keys
+hub/data/
+*.log
+
+# family profile names live in hub/profiles.json (gitignored); profiles.example.json is the template
+hub/profiles.json
+
+.idea/
+.DS_Store

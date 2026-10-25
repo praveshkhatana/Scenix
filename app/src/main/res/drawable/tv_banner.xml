@@ -1,0 +1,31 @@
+<!-- Android TV banner (320x180 as required by LEANBACK_LAUNCHER). Placeholder brand mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#141414"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M50,38h16v104h-16z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M66,38h14v16h-14z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M66,126h14v16h-14z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M232,38h16v104h-16z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M206,38h26v16h-26z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M206,126h26v16h-26z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M126,58l52,32l-52,32z" />
+</vector>

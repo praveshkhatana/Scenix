@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GharTV — UI mockup (1920x1080, 10-foot UI)</title>
+<style>
+/* ---------- tokens (dark cinematic, spacious, TV-safe) ---------- */
+:root{
+  --bg:#0B0B12; --bg2:#11111B; --card:#1A1A28; --card2:#232334; --line:rgba(255,255,255,.09);
+  --ink:#F5F6FA; --muted:#9AA3B2; --dim:#6B7280;
+  --brand:#E11D48; --brand-ink:#FFFFFF; --kids:#F59E0B; --live:#EF4444; --ok:#22C55E; --sky:#38BDF8;
+  --r:16px;
+  --sp-1:8px; --sp-2:16px; --sp-3:24px; --sp-4:32px; --sp-6:48px; --sp-8:64px;
+  --safe:96px;              /* 5% TV title-safe on 1920 */
+  --focus:0 0 0 4px #fff, 0 0 0 8px var(--brand), 0 18px 40px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#05050A;color:var(--ink);font-family:-apple-system,"SF Pro Display",Roboto,Inter,sans-serif;
+  font-size:24px;line-height:1.4;-webkit-font-smoothing:antialiased}
+.screen{display:none;width:1920px;height:1080px;position:relative;overflow:hidden;background:var(--bg)}
+.screen:target{display:block}
+body:has(.screen:target) .screen:not(:target){display:none}
+body:not(:has(.screen:target)) .screen:first-child{display:block}
+.pad{position:absolute;inset:0;padding:56px var(--safe) 40px}
+h1{font-size:44px;font-weight:700;letter-spacing:-.02em}
+.mut{color:var(--muted)} .dim{color:var(--dim)}
+.pill{display:inline-flex;align-items:center;gap:10px;padding:8px 16px;border-radius:999px;
+  border:1px solid var(--line);background:rgba(255,255,255,.05);font-size:20px;font-weight:600}
+.pill.new{background:var(--brand);border-color:transparent;color:#fff}
+.pill.live{color:#fff;background:rgba(239,68,68,.16);border-color:rgba(239,68,68,.4)}
+.pill.ok{color:#86EFAC;background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.35)}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--live);box-shadow:0 0 0 4px rgba(239,68,68,.25)}
+.ico{width:34px;height:34px;flex:none;fill:none;stroke:currentColor;stroke-width:2}
+/* ---------- top nav ---------- */
+.nav{display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-6)}
+.nav .mark{font-size:30px;font-weight:800;letter-spacing:.06em}
+.nav .mark b{color:var(--brand)}
+.nav ul{display:flex;gap:var(--sp-4);list-style:none;align-items:center}
+.nav li{font-size:26px;color:var(--muted);font-weight:600;padding:12px 6px;position:relative}
+.nav li.on{color:var(--ink)}
+.nav li.on::after{content:"";position:absolute;left:0;right:0;bottom:0;height:4px;border-radius:4px;background:var(--brand)}
+.who{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:22px;color:var(--muted)}
+.ava{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#475569,#1E293B)}
+/* ---------- hero ---------- */
+.hero{display:grid;grid-template-columns:1040px 1fr;gap:var(--sp-8);align-items:center;margin-bottom:var(--sp-6)}
+.heroart{height:420px;border-radius:var(--r);position:relative;overflow:hidden;
+  background:linear-gradient(120deg,#7F1D1D,#111827 55%,#0B0B12),radial-gradient(80% 120% at 20% 0,#B91C1C,transparent 60%)}
+.heroart .t{position:absolute;left:40px;bottom:36px;font-size:64px;font-weight:800;letter-spacing:-.03em}
+.heroart .ribbon{position:absolute;top:24px;left:24px;z-index:2}
+.heroart::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(11,11,18,.85),transparent 60%)}
+.hero .txt h2{font-size:44px;font-weight:800;letter-spacing:-.03em;margin-bottom:var(--sp-2);line-height:1.15}
+.meta{display:flex;gap:12px;flex-wrap:wrap;margin:var(--sp-2) 0 var(--sp-4)}
+.cta{display:flex;gap:var(--sp-2);margin-top:var(--sp-3)}
+.btn{display:inline-flex;align-items:center;gap:12px;padding:18px 34px;border-radius:14px;font-size:26px;font-weight:700;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--ink)}
+.btn.pri{background:var(--brand);border-color:transparent;color:#fff}
+/* ---------- rows ---------- */
+.row{margin-bottom:var(--sp-6)}
+.row h3{font-size:32px;font-weight:700;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:14px}
+.cards{display:flex;gap:var(--sp-2)}
+.card{width:300px;flex:none;border-radius:14px;position:relative;overflow:hidden;background:var(--card);border:1px solid var(--line)}
+.card .art{height:450px;background:linear-gradient(160deg,#334155,#0F172A)}
+.card .cap{position:absolute;left:0;right:0;bottom:0;padding:16px;background:linear-gradient(0deg,rgba(0,0,0,.9),transparent)}
+.card .cap .n{font-size:22px;font-weight:650;line-height:1.25}
+.card .cap .s{font-size:18px;color:var(--muted);margin-top:4px}
+.card.wide{width:360px} .card.wide .art{height:202px;background:linear-gradient(120deg,#1E293B,#3B0764)}
+.card.f{transform:scale(1.06);box-shadow:var(--focus);z-index:3}
+.tag{position:absolute;top:14px;right:14px;padding:6px 12px;border-radius:8px;font-size:16px;font-weight:800;letter-spacing:.06em}
+.tag.new{background:var(--brand);color:#fff} .tag.up{background:rgba(34,197,94,.18);color:#86EFAC;border:1px solid rgba(34,197,94,.4)}
+.prog{position:absolute;left:16px;right:16px;bottom:12px;height:6px;border-radius:6px;background:rgba(255,255,255,.18)}
+.prog i{display:block;height:100%;border-radius:6px;background:var(--brand)}
+.src{position:absolute;top:14px;left:14px;font-size:16px;color:#cbd5e1;background:rgba(0,0,0,.55);padding:6px 10px;border-radius:8px;border:1px solid var(--line)}
+/* ---------- profiles ---------- */
+.center{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:var(--sp-6)}
+.profiles{display:flex;gap:var(--sp-6)}
+.pf{width:280px;text-align:center}
+.pf .a{width:280px;height:280px;border-radius:24px;position:relative;display:grid;place-content:center;
+  background:linear-gradient(135deg,#1F2937,#0F172A);border:1px solid var(--line)}
+.pf .a .g{width:120px;height:120px;border-radius:28px;background:linear-gradient(135deg,#64748B,#334155)}
+.pf.k .a .g{background:linear-gradient(135deg,#F59E0B,#B45309)}
+.pf.f .a{box-shadow:var(--focus)}
+.pf .nm{margin-top:var(--sp-2);font-size:28px;font-weight:650}
+.pf .sub{font-size:19px;color:var(--muted);margin-top:6px}
+.badge{position:absolute;top:18px;right:18px;width:44px;height:44px;border-radius:12px;display:grid;place-content:center;
+  background:rgba(0,0,0,.5);border:1px solid var(--line);color:#e2e8f0}
+.badge.kids{background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.45);color:#FCD34D}
+.add .a{border-style:dashed;background:transparent}
+/* ---------- detail ---------- */
+.backdrop{position:absolute;inset:0 0 auto 0;height:640px;background:linear-gradient(120deg,#4C1D95,#0F172A 60%),radial-gradient(60% 100% at 80% 0,#B91C1C,transparent 60%)}
+.backdrop::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,var(--bg) 2%,transparent 70%)}
+.dtl{position:absolute;left:var(--safe);right:var(--safe);top:300px}
+.dedupe{display:flex;align-items:center;gap:14px;padding:16px 20px;border-radius:14px;background:rgba(34,197,94,.1);
+  border:1px solid rgba(34,197,94,.32);font-size:22px;color:#D1FAE5;margin-bottom:var(--sp-3)}
+.sources{display:grid;gap:12px;margin-top:var(--sp-3);max-width:1180px}
+.srcrow{display:flex;align-items:center;gap:16px;padding:20px 24px;border-radius:14px;background:var(--card);border:1px solid var(--line)}
+.srcrow.f{box-shadow:var(--focus)}
+.srcrow .q{margin-left:auto;display:flex;gap:10px;align-items:center}
+.k{font-size:18px;color:var(--muted)}
+/* ---------- player ---------- */
+.player{position:absolute;inset:0;background:#000}
+.pframe{position:absolute;inset:0;background:linear-gradient(120deg,#1F2937,#0B0B12 70%);opacity:.5}
+.pbar{position:absolute;left:var(--safe);right:var(--safe);bottom:56px}
+.track{height:10px;border-radius:10px;background:rgba(255,255,255,.2);position:relative;margin-bottom:var(--sp-3)}
+.track .buf{position:absolute;inset:0;width:62%;background:rgba(255,255,255,.32);border-radius:10px}
+.track .play{position:absolute;inset:0;width:38%;background:var(--brand);border-radius:10px}
+.track .knob{position:absolute;left:38%;top:50%;width:26px;height:26px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);box-shadow:0 0 0 6px rgba(225,29,72,.35)}
+.pctl{display:flex;align-items:center;gap:var(--sp-3);font-size:22px;color:#cbd5e1}
+.pctl .grp{display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:12px;background:rgba(255,255,255,.08);border:1px solid var(--line)}
+.pctl .grp.f{box-shadow:var(--focus)}
+.pctl .rt{margin-left:auto;color:#86EFAC}
+.phead{position:absolute;top:56px;left:var(--safe);right:var(--safe);display:flex;align-items:flex-start;gap:var(--sp-3)}
+/* ---------- kids ---------- */
+.kidsbar{display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4)}
+.kidsbar ul.nav{list-style:none;margin:0;gap:var(--sp-4)}
+.kidsbar .mark{font-size:30px;font-weight:800} .kidsbar .mark b{color:var(--kids)}
+.ktime{margin-left:auto;display:flex;gap:12px;align-items:center}
+.kcard{width:420px;flex:none;border-radius:20px;position:relative;overflow:hidden;border:1px solid rgba(245,158,11,.25)}
+.kcard .art{height:236px;background:linear-gradient(140deg,#F59E0B,#7C2D12)}
+.kcard .art.b{background:linear-gradient(140deg,#38BDF8,#0C4A6E)}
+.kcard .cap{position:absolute;left:0;right:0;bottom:0;padding:18px;background:linear-gradient(0deg,rgba(0,0,0,.85),transparent)}
+.kcard .cap .n{font-size:24px;font-weight:700}
+.kcard .cap .s{font-size:18px;color:var(--muted);margin-top:4px}
+.kcard.f{box-shadow:0 0 0 4px #fff,0 0 0 8px var(--kids),0 18px 40px rgba(0,0,0,.6)}
+.locked{display:flex;align-items:center;gap:16px;padding:20px 26px;border-radius:16px;
+  border:1px dashed rgba(255,255,255,.22);color:var(--muted);background:rgba(255,255,255,.03)}
+/* ---------- settings + pin ---------- */
+.split{display:grid;grid-template-columns:560px 1fr;gap:var(--sp-8);align-items:start}
+.pad9{display:grid;grid-template-columns:repeat(3,120px);gap:16px;justify-content:center}
+.key{height:120px;border-radius:16px;display:grid;place-content:center;font-size:40px;font-weight:600;background:var(--card);border:1px solid var(--line)}
+.key.f{box-shadow:var(--focus)}
+.dots{display:flex;gap:18px;justify-content:center;margin-bottom:var(--sp-3)}
+.dots i{width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.22)}
+.dots i.on{background:var(--brand)}
+.list{display:grid;gap:12px}
+.li{display:flex;align-items:center;gap:20px;padding:20px 26px;border-radius:16px;background:var(--card);border:1px solid var(--line);font-size:24px}
+.li .v{margin-left:auto;color:var(--muted);font-size:22px;text-align:right;max-width:640px}
+.sw{width:76px;height:44px;border-radius:999px;background:rgba(255,255,255,.16);position:relative;margin-left:auto;flex:none}
+.sw.on{background:var(--brand)}
+.sw i{position:absolute;top:6px;left:6px;width:32px;height:32px;border-radius:50%;background:#fff}
+.sw.on i{left:38px}
+.li.f{box-shadow:var(--focus)}
+.note{position:absolute;left:var(--safe);right:var(--safe);bottom:24px;font-size:19px;color:var(--dim)}
+/* ---- home compaction: one hero + two full rows, third row peeks (it scrolls) ---- */
+#home .pad{padding:40px var(--safe) 24px}
+#home .nav{margin-bottom:20px}
+#home .hero{grid-template-columns:860px 1fr;gap:var(--sp-6);margin-bottom:24px}
+#home .heroart{height:240px}
+#home .heroart .t{font-size:40px;left:26px;bottom:22px}
+#home .hero .txt h2{font-size:34px}
+#home .meta{margin:12px 0 16px}
+#home .row{margin-bottom:26px}
+#home .row h3{font-size:30px;margin-bottom:12px}
+#home .card{width:288px}
+#home .card .art{height:162px}
+#home .card .cap{position:static;padding:14px 16px;background:#15151F}
+#home .card .prog{top:156px;left:0;right:0;bottom:auto}
+#home .card.wide{width:320px}
+#home .card.wide .art{height:162px}
+#home .note{display:none}
+#home::after{content:"\25BC  more rows below — this screen scrolls";position:absolute;right:var(--safe);bottom:18px;font-size:19px;color:var(--dim)}
+.kbd{display:flex;gap:12px;align-items:center;font-size:19px;color:var(--dim)}
+.kbd b{display:inline-grid;place-content:center;min-width:44px;height:36px;padding:0 10px;border-radius:8px;
+  background:rgba(255,255,255,.08);border:1px solid var(--line);font-size:17px;color:#cbd5e1;font-weight:600}
+</style>
+</head>
+<body>
+
+<!-- ============ 1. PROFILES ============ -->
+<section class="screen" id="profiles">
+  <div class="center">
+    <h1>Who's watching?</h1>
+    <div class="profiles">
+      <div class="pf f">
+        <div class="a"><div class="g"></div>
+          <div class="badge"><svg class="ico" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
+        </div>
+        <div class="nm">You</div><div class="sub">PIN protected · all sources</div>
+      </div>
+      <div class="pf">
+        <div class="a"><div class="g"></div></div>
+        <div class="nm">Adult 2</div><div class="sub">no PIN · all sources</div>
+      </div>
+      <div class="pf k">
+        <div class="a"><div class="g"></div>
+          <div class="badge kids"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg></div>
+        </div>
+        <div class="nm">Aarav</div><div class="sub">kids · 1h 30m/day · curfew 8pm</div>
+      </div>
+      <div class="pf k">
+        <div class="a"><div class="g"></div>
+          <div class="badge kids"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg></div>
+        </div>
+        <div class="nm">Meera</div><div class="sub">kids · Little row only</div>
+      </div>
+      <div class="pf add">
+        <div class="a"><div class="g" style="opacity:.25"></div>
+          <div class="badge"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+        </div>
+        <div class="nm">Add profile</div><div class="sub">kid or adult</div>
+      </div>
+    </div>
+    <div class="kbd"><b>&#9664; &#9654;</b> choose <b>OK</b> enter <b>&#9650;</b> edit &nbsp;·&nbsp; leaving a kids profile asks for the adult PIN only if you set one</div>
+  </div>
+</section>
+
+<!-- ============ 2. HOME (adult) ============ -->
+<section class="screen" id="home">
+  <div class="pad">
+    <div class="nav">
+      <div class="mark">GHAR<b>TV</b></div>
+      <ul><li class="on">Home</li><li>Live TV</li><li>Movies</li><li>Series</li><li>Kids</li><li>Search</li></ul>
+      <div class="who"><span>You</span><div class="ava"></div></div>
+    </div>
+
+    <div class="hero">
+      <div class="heroart"><span class="pill new ribbon">NEW &middot; IN CINEMAS</span><div class="t">Title of<br>the Week</div></div>
+      <div class="txt">
+        <h2>Highlighted because it released in the last 8 weeks</h2>
+        <div class="meta">
+          <span class="pill">2026</span><span class="pill">U/A 16+</span><span class="pill">Hindi &middot; English &middot; Punjabi</span>
+          <span class="pill">2h 14m</span><span class="pill">IMDb 7.8</span>
+        </div>
+        <div class="dim" style="font-size:22px">One tile per title &mdash; 3 sources behind it, merged by IMDb id.</div>
+        <div class="cta"><button class="btn pri"><svg class="ico" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg>Play</button><button class="btn">+ My List</button></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <h3>Continue watching <span class="pill">for You</span></h3>
+      <div class="cards">
+        <div class="card f"><div class="art"></div><span class="src">3 sources</span><div class="prog"><i style="width:62%"></i></div><div class="cap"><div class="n">Some Film You Started</div><div class="s">48 min left</div></div></div>
+        <div class="card"><div class="art"></div><span class="src">2 sources</span><div class="prog"><i style="width:21%"></i></div><div class="cap"><div class="n">Series &middot; S1 E4</div><div class="s">31 min left</div></div></div>
+        <div class="card"><div class="art"></div><span class="src">1 source</span><div class="prog"><i style="width:88%"></i></div><div class="cap"><div class="n">Documentary</div><div class="s">6 min left</div></div></div>
+        <div class="card"><div class="art"></div><span class="src">4 sources</span><div class="prog"><i style="width:9%"></i></div><div class="cap"><div class="n">Punjabi Film</div><div class="s">2h 01m left</div></div></div>
+        <div class="card"><div class="art"></div><span class="src">2 sources</span><div class="prog"><i style="width:45%"></i></div><div class="cap"><div class="n">Stand-up Special</div><div class="s">44 min left</div></div></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <h3>Just added to your library <span class="pill new">NEW</span></h3>
+      <div class="cards">
+        <div class="card"><div class="art"></div><span class="tag new">ADDED 2d</span><div class="cap"><div class="n">New Arrival A</div><div class="s">Hindi &middot; movie</div></div></div>
+        <div class="card"><div class="art"></div><span class="tag new">ADDED 4d</span><div class="cap"><div class="n">New Arrival B</div><div class="s">English &middot; series</div></div></div>
+        <div class="card"><div class="art"></div><span class="tag new">ADDED 5d</span><div class="cap"><div class="n">New Arrival C</div><div class="s">Punjabi &middot; movie</div></div></div>
+        <div class="card"><div class="art"></div><span class="tag new">ADDED 6d</span><div class="cap"><div class="n">New Arrival D</div><div class="s">Hindi &middot; series</div></div></div>
+        <div class="card"><div class="art"></div><span class="tag new">ADDED 9d</span><div class="cap"><div class="n">New Arrival E</div><div class="s">English &middot; movie</div></div></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <h3>Live now <span class="pill live"><span class="dot"></span>444 channels</span><span class="pill">Hindi &middot; English &middot; Punjabi</span></h3>
+      <div class="cards">
+        <div class="card wide"><div class="art"></div><span class="tag up">LIVE</span><div class="cap"><div class="n">Sony Ten 1 HD</div><div class="s">Now: Match &middot; 720p HLS</div></div></div>
+        <div class="card wide"><div class="art"></div><span class="tag up">LIVE</span><div class="cap"><div class="n">Cartoon Network Hindi</div><div class="s">Now: Episode &middot; 576p HLS</div></div></div>
+        <div class="card wide"><div class="art"></div><span class="tag up">LIVE</span><div class="cap"><div class="n">PTC Punjabi</div><div class="s">Now: Music &middot; 480p HLS</div></div></div>
+        <div class="card wide"><div class="art"></div><span class="tag up">LIVE</span><div class="cap"><div class="n">Discovery Kids Hindi</div><div class="s">Now: Learning &middot; 576p</div></div></div>
+        <div class="card wide"><div class="art"></div><span class="tag up">LIVE</span><div class="cap"><div class="n">DD Sports</div><div class="s">Now: Highlights &middot; 480p</div></div></div>
+      </div>
+    </div>
+    <div class="note"><div class="kbd"><b>&#9650;&#9660;&#9664;&#9654;</b> move <b>OK</b> select <b>BACK</b> up to nav, again to home <b>MENU</b> profile &amp; settings &nbsp;&mdash;&nbsp; every row is served by your own hub; nothing is ranked by a third party</div></div>
+  </div>
+</section>
+
+<!-- ============ 3. TITLE DETAIL (deduped) ============ -->
+<section class="screen" id="title">
+  <div class="backdrop"></div>
+  <div class="dtl">
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+      <span class="pill new">NEW &middot; IN CINEMAS</span><span class="pill">Movie</span><span class="pill">Hindi &middot; English &middot; Punjabi</span>
+    </div>
+    <h1 style="font-size:72px;font-weight:800;letter-spacing:-.03em">The Film You Want To Watch</h1>
+    <div class="meta" style="margin-top:16px">
+      <span class="pill">2026</span><span class="pill">U/A 16+</span><span class="pill">2h 14m</span><span class="pill">IMDb 7.8</span><span class="pill">Action &middot; Drama</span>
+    </div>
+    <div class="dedupe">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+      <div><b>One tile, not five.</b>&nbsp; Merged from Cinemeta + WatchHub + Torrentio by <span style="font-family:ui-monospace,monospace">imdb:tt1234567</span> &mdash; duplicates collapse at the hub, never in the UI.</div>
+    </div>
+    <div class="cta">
+      <button class="btn pri"><svg class="ico" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg>Play best free source</button>
+      <button class="btn">Resume 00:12:40</button>
+      <button class="btn">+ My List</button>
+      <button class="btn"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>Report for kids</button>
+    </div>
+    <h3 style="font-size:28px;margin-top:var(--sp-4)">Play from</h3>
+    <div class="sources">
+      <div class="srcrow f"><svg class="ico" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z" fill="currentColor" stroke="none"/></svg>
+        <div><div style="font-weight:700">Adaptive (recommended)</div><div class="k">HLS ladder &middot; auto-picks a bitrate that fits your Wi-Fi &middot; no buffering</div></div>
+        <div class="q"><span class="pill">Auto &le;720p</span><span class="pill">2.4 Mbps</span><span class="pill ok">1.0&times; realtime</span></div></div>
+      <div class="srcrow"><svg class="ico" viewBox="0 0 24 24"><path d="M4 12h16M12 4v16"/></svg>
+        <div><div style="font-weight:700">YouTube (official)</div><div class="k">resolved on your hub at play time &middot; has in-stream ads</div></div>
+        <div class="q"><span class="pill">720p</span><span class="pill">3.1 Mbps</span></div></div>
+      <div class="srcrow"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
+        <div><div style="font-weight:700">Torrent (size-capped)</div><div class="k">&le;4 GB &middot; no bitrate ladder &middot; use only when nothing else exists</div></div>
+        <div class="q"><span class="pill">1080p</span><span class="pill">3.9 GB</span><span class="pill" style="color:#FCD34D">0.7&times; risk</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. PLAYER ============ -->
+<section class="screen" id="player">
+  <div class="player"><div class="pframe"></div>
+    <div class="phead">
+      <div>
+        <div style="font-size:30px;font-weight:700">The Film You Want To Watch</div>
+        <div class="k" style="margin-top:6px">Adaptive &middot; auto &le;720p &middot; Hindi audio &middot; English subtitles</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:12px"><span class="pill live"><span class="dot"></span>buffer healthy</span><span class="pill ok">kids-safe session</span></div>
+    </div>
+    <div class="pbar">
+      <div class="track"><div class="buf"></div><div class="play"></div><div class="knob"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:20px;color:#cbd5e1;margin-bottom:var(--sp-2)">
+        <span>00:48:12</span><span class="dim">buffered to 01:15:20</span><span>02:14:00</span>
+      </div>
+      <div class="pctl">
+        <div class="grp f"><svg class="ico" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor" stroke="none"/></svg>Pause</div>
+        <div class="grp">&minus;10s</div><div class="grp">+10s</div>
+        <div class="grp"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Subtitles: EN</div>
+        <div class="grp"><svg class="ico" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Audio: Hindi</div>
+        <div class="grp">Quality: Auto &le;720p</div>
+        <div class="grp">Next episode</div>
+        <div class="rt">delivered 1.0&times; realtime &middot; 2.4 Mbps</div>
+      </div>
+    </div>
+    <div class="note"><div class="kbd"><b>OK</b> pause <b>&#9664;&#9654;</b> &plusmn;10s <b>&#9650;</b> show this bar <b>BACK</b> hide bar, again to exit &nbsp;&mdash;&nbsp; the 720p ceiling and buffer window are yours to change in Settings</div></div>
+  </div>
+</section>
+
+<!-- ============ 5. KIDS HOME ============ -->
+<section class="screen" id="kids">
+  <div class="pad">
+    <div class="kidsbar">
+      <div class="mark">GHAR<b>TV</b> <span style="color:var(--kids)">&middot; Kids</span></div>
+      <ul class="nav" style="margin:0;gap:var(--sp-4)"><li class="on">Home</li><li>Live TV</li></ul>
+      <div class="ktime"><span class="pill" style="border-color:rgba(245,158,11,.4);color:#FCD34D">1h 12m left today</span><span class="pill">curfew 8:00 pm</span></div>
+    </div>
+
+    <div class="row">
+      <h3 style="font-size:36px">Little <span class="pill">cartoons &middot; no search</span></h3>
+      <div class="cards">
+        <div class="kcard f"><div class="art"></div><div class="cap"><div class="n">Cocomelon &mdash; Thankful for Vegetables</div><div class="s">YouTube &middot; curated channel</div></div></div>
+        <div class="kcard"><div class="art"></div><div class="cap"><div class="n">Chhota Bheem</div><div class="s">Hindi &middot; 22 min</div></div></div>
+        <div class="kcard"><div class="art"></div><div class="cap"><div class="n">Motu Patlu</div><div class="s">Hindi &middot; 11 min</div></div></div>
+        <div class="kcard"><div class="art"></div><div class="cap"><div class="n">Punjabi Toons</div><div class="s">Punjabi &middot; 9 min</div></div></div>
+        <div class="kcard"><div class="art"></div><div class="cap"><div class="n">Super Simple Songs</div><div class="s">English &middot; 4 min</div></div></div>
+      </div>
+    </div>
+
+    <div class="row">
+      <h3 style="font-size:36px">School <span class="pill">learning channels &middot; live</span></h3>
+      <div class="cards">
+        <div class="kcard"><div class="art b"></div><div class="cap"><div class="n">Discovery Kids Hindi</div><div class="s">LIVE &middot; 576p HLS</div></div></div>
+        <div class="kcard"><div class="art b"></div><div class="cap"><div class="n">DD Gyan Darshan</div><div class="s">LIVE &middot; 480p HLS</div></div></div>
+        <div class="kcard"><div class="art b"></div><div class="cap"><div class="n">Disney Junior Hindi</div><div class="s">LIVE &middot; 576p HLS</div></div></div>
+        <div class="kcard"><div class="art b"></div><div class="cap"><div class="n">Nick JR</div><div class="s">LIVE &middot; 576p HLS</div></div></div>
+        <div class="kcard"><div class="art b"></div><div class="cap"><div class="n">Next: 20 min</div><div class="s">auto-preview off for kids</div></div></div>
+      </div>
+    </div>
+
+    <div class="locked">
+      <svg class="ico" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
+      <div><b>Grown-ups</b> &mdash; no movies, no free search, no settings here. Press OK to ask for the adult PIN.</div>
+    </div>
+    <div class="note"><div class="kbd">Kid rows come only from the hub's allow-lists: 29 live kids channels + 8 curated YouTube channels. A hidden row is a per-profile switch, not a rebuild.</div></div>
+  </div>
+</section>
+
+<!-- ============ 6. PIN + PROFILE SETTINGS ============ -->
+<section class="screen" id="settings">
+  <div class="pad">
+    <div class="nav" style="margin-bottom:var(--sp-4)">
+      <div class="mark">GHAR<b>TV</b></div>
+      <ul><li>Home</li><li class="on">Settings</li></ul>
+      <div class="who"><span>You &middot; adult</span><div class="ava"></div></div>
+    </div>
+    <div class="split">
+      <div>
+        <h1 style="font-size:34px;margin-bottom:12px">Adult PIN required to leave <span style="color:var(--kids)">Aarav</span>'s profile</h1>
+        <div class="k" style="margin-bottom:var(--sp-3)">4 digits &middot; a wrong PIN just shakes, no lockout you can get stuck on</div>
+        <div class="dots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+        <div class="pad9">
+          <div class="key">1</div><div class="key">2</div><div class="key f">3</div>
+          <div class="key">4</div><div class="key">5</div><div class="key">6</div>
+          <div class="key">7</div><div class="key">8</div><div class="key">9</div>
+          <div class="key" style="font-size:22px">Clear</div><div class="key">0</div><div class="key" style="font-size:22px">OK</div>
+        </div>
+      </div>
+      <div class="list">
+        <div class="li"><svg class="ico" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>Require a PIN on this profile<div class="sw on"><i></i></div></div>
+        <div class="li">Languages allowed<span class="v">Hindi &middot; English &middot; Punjabi</span></div>
+        <div class="li">Max quality (kids)<span class="v">720p &middot; 6 Mbps ceiling</span></div>
+        <div class="li">Daily watching limit<span class="v">90 min</span></div>
+        <div class="li">Curfew<span class="v">8:00 pm &ndash; 6:00 am</span></div>
+        <div class="li f">Hide "School" row for this profile<div class="sw"><i></i></div></div>
+        <div class="li">Sources enabled<span class="v">Live TV &middot; Kids YouTube &middot; Cinemeta &middot; Torrent (&le;4 GB)</span></div>
+        <div class="li">Hub<span class="v">http://&lt;server ip&gt;:8788 &middot; 444 channels &middot; 41 kids videos</span></div>
+        <div class="li">App licence<span class="v">MIT &middot; no GPL code &middot; no analytics</span></div>
+      </div>
+    </div>
+    <div class="note"><div class="kbd">Settings live on the hub, not in the APK &mdash; change a rule once and every profile and TV in the house follows it.</div></div>
+  </div>
+</section>
+
+</body>
+</html>

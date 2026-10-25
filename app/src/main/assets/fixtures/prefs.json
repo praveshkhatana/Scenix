@@ -1,0 +1,21 @@
+{
+ "prefs": {
+  "profile": "raj",
+  "audioLanguages": [
+   "hin",
+   "eng"
+  ],
+  "subtitleLanguages": [
+   "eng"
+  ],
+  "quality": "1080",
+  "maxFileSizeBytes": 2000000000,
+  "maxBitrateBps": 6000000,
+  "why": [
+   "prefers Hindi, then English audio",
+   "caps at 1080p",
+   "refuses files over 2 GB",
+   "refuses streams over 6.0 Mbps"
+  ]
+ }
+}

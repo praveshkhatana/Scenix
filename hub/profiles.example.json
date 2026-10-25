@@ -1,0 +1,68 @@
+{
+  "profiles": [
+    {
+      "id": "adult1",
+      "name": "Adult",
+      "kind": "adult",
+      "pinRequired": true,
+      "rules": {}
+    },
+    {
+      "id": "adult2",
+      "name": "Adult",
+      "kind": "adult",
+      "pinRequired": false,
+      "rules": {
+        "size-cap": {
+          "maxBytes": 4000000000
+        }
+      }
+    },
+    {
+      "id": "kid3",
+      "name": "Kid",
+      "kind": "kids",
+      "age": 15,
+      "pinRequired": false,
+      "languages": [
+        "hin",
+        "eng",
+        "pan"
+      ],
+      "rules": {
+        "language-allowlist": {
+          "allow": [
+            "hin",
+            "eng",
+            "pan"
+          ]
+        },
+        "kids-allowlist": {
+          "maxAge": 15
+        }
+      }
+    },
+    {
+      "id": "kid4",
+      "name": "Kid",
+      "kind": "kids",
+      "age": 11,
+      "pinRequired": false,
+      "languages": [
+        "hin",
+        "eng"
+      ],
+      "rules": {
+        "language-allowlist": {
+          "allow": [
+            "hin",
+            "eng"
+          ]
+        },
+        "kids-allowlist": {
+          "maxAge": 11
+        }
+      }
+    }
+  ]
+}
