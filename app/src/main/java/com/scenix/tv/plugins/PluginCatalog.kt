@@ -47,6 +47,9 @@ object PluginCatalog {
 
         // ---- screens: the nav is this list, filtered by profile scope.
         reg.screens.register(com.scenix.tv.plugins.nav.ProfilesScreen)
+        // The front door of a TV that has no backend yet: never in the nav, opened only by
+        // MainActivity.startup when the watcher finds nothing paired.
+        reg.screens.register(com.scenix.tv.plugins.nav.PairingScreen)
         reg.screens.register(com.scenix.tv.plugins.nav.HomeScreen)
         reg.screens.register(com.scenix.tv.plugins.nav.MoviesScreen)
         reg.screens.register(com.scenix.tv.plugins.nav.SeriesScreen)

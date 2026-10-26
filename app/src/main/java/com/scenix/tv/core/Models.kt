@@ -362,6 +362,11 @@ data class Addon(
 /**
  * `GET /app/v1/manifest` — rows, cards, rules, providers, theme id. The Settings screen renders
  * this read-only; the app never depends on its contents to draw anything.
+ *
+ * `capabilities` is the one exception, and the only place the app is allowed to ask what its backend
+ * can do: a hub that streams from an engine lists things this app hosting itself cannot (`live-tv`,
+ * a torrent gateway), and a screen that would only fail gets hidden rather than shown broken.
+ * `null` means the backend predates the field, which means "everything" — an older hub loses nothing.
  */
 data class Manifest(
     val version: String = "",
@@ -372,6 +377,7 @@ data class Manifest(
     val rules: List<String> = emptyList(),
     val providers: List<String> = emptyList(),
     val addons: List<Addon> = emptyList(),   // optional section; absent on older hubs
+    val capabilities: List<String>? = null,  // null = not stated, so nothing is hidden
     val raw: JSONObject = JSONObject(),
 ) {
     companion object {
@@ -382,8 +388,9 @@ data class Manifest(
             rows = ids(o.optJSONArray("rows")),
             cards = ids(o.optJSONArray("cards")),
             rules = ids(o.optJSONArray("rules")),
-            providers = ids(o.optJSONArray("providers")),
+            providers = ids(o.optJSONArray("players") ?: o.optJSONArray("providers")),
             addons = Addon.list(o.optJSONArray("addons")),
+            capabilities = o.optJSONArray("capabilities")?.let { jsonStrings(it) },
             raw = o,
         )
 

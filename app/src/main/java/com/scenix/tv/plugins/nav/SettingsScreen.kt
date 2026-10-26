@@ -16,13 +16,17 @@ import com.scenix.tv.core.Focus
 import com.scenix.tv.core.FixtureHub
 import com.scenix.tv.core.Format
 import com.scenix.tv.core.HttpHub
+import com.scenix.tv.core.HubDiscovery
 import com.scenix.tv.core.HubError
 import com.scenix.tv.core.HubPrefs
+import com.scenix.tv.core.LocalHub
 import com.scenix.tv.core.NavBar
 import com.scenix.tv.core.PinPad
 import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.core.ScreenPlugin
 import com.scenix.tv.core.Views
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Settings-lite: the handful of switches that change how the app behaves on this TV, plus a dump of
@@ -61,29 +65,49 @@ object SettingsScreen : ScreenPlugin {
         scroll.addView(col)
 
         section(ctx, col, "Connection")
-        textRow(ctx, col, "Hub address", ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url)), editable = true) { value ->
-            ctx.prefs.setHubUrl(value.trim())
-            // Typing an address means "show me the real library", so it drops the offline-preview pin as
-            // well. Without that the rows on screen keep coming from the bundled samples and the new
-            // address looks like it did nothing at all.
-            ctx.prefs.setFixture("")
-            ctx.hub = HttpHub(ctx.app, ctx.prefs)
-            host.toast("Hub set to ${value.trim()}")
-            host.show("settings")
-        }
-        val fixture = ctx.prefs.fixture()
-        actionRow(
-            ctx, col, "Offline preview",
-            // The bundled sample library is a development aid, not a mode a household should sit in:
-            // it has last month's rows and no live artwork, so the state is spelled out here.
-            if (fixture.isNullOrBlank()) "off \u2014 streaming from the hub" else "on \u2014 bundled sample library",
-            if (fixture.isNullOrBlank()) "Use the bundled samples (no network)" else "Go back to the hub",
-        ) {
-            val turnOn = fixture.isNullOrBlank()
-            ctx.prefs.setFixture(if (turnOn) "fixtures/home.json" else "")
-            ctx.hub = if (turnOn) FixtureHub(ctx.app, "fixtures/home.json") else HttpHub(ctx.app, ctx.prefs)
-            host.toast(if (turnOn) "Bundled samples on" else "Streaming from the hub")
-            host.show("home")
+        if (ctx.prefs.standalone()) {
+            infoRow(ctx, col, "Backend", "this TV, on its own \u2014 no hub to reach")
+            actionRow(ctx, col, "Stream from a hub instead", "the hub\u2019s library replaces this one", "Choose a hub") {
+                ctx.prefs.setBackendChoice("hub")
+                ctx.prefs.setStandalone(false)
+                ctx.hub = HttpHub(ctx.app, ctx.prefs)
+                ctx.capabilities = null
+                ctx.watch?.rechoose()
+                host.show("pairing")
+            }
+        } else {
+            textRow(ctx, col, "Hub address", ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url)), editable = true) { value ->
+                // A typed address goes through the same door as an announced one: `host:8788` written on
+                // the remote is as good as a full URL.
+                val url = HubDiscovery.normalise(value) ?: value.trim()
+                ctx.prefs.setHubUrl(url)
+                // Typing an address means "show me the real library", so it drops the offline-preview pin as
+                // well. Without that the rows on screen keep coming from the bundled samples and the new
+                // address looks like it did nothing at all.
+                ctx.prefs.setFixture("")
+                ctx.prefs.setBackendChoice("hub")
+                ctx.prefs.setStandalone(false)
+                ctx.hub = HttpHub(ctx.app, ctx.prefs)
+                ctx.capabilities = null
+                ctx.watch?.rechoose()
+                host.toast("Hub set to $url")
+                host.refresh()
+            }
+            val fixture = ctx.prefs.fixture()
+            actionRow(
+                ctx, col, "Offline preview",
+                // The bundled sample library is a development aid, not a mode a household should sit in:
+                // it has last month's rows and no live artwork, so the state is spelled out here.
+                if (fixture.isNullOrBlank()) "off \u2014 streaming from the hub" else "on \u2014 bundled sample library",
+                if (fixture.isNullOrBlank()) "Use the bundled samples (no network)" else "Go back to the hub",
+            ) {
+                val turnOn = fixture.isNullOrBlank()
+                ctx.prefs.setFixture(if (turnOn) "fixtures/home.json" else "")
+                ctx.hub = if (turnOn) FixtureHub(ctx.app, "fixtures/home.json") else HttpHub(ctx.app, ctx.prefs)
+                host.toast(if (turnOn) "Bundled samples on" else "Streaming from the hub")
+                host.show("home")
+            }
+            hubSearch(ctx, col, host)
         }
         textRow(ctx, col, "Data client", ctx.hub.label, editable = false, onChange = {})
 
@@ -132,7 +156,7 @@ object SettingsScreen : ScreenPlugin {
             toggleRow(ctx, col, row.title.ifBlank { row.id }, row.id)
         }
 
-        addonsSection(ctx, col)
+        if (ctx.prefs.standalone()) localAddonsSection(ctx, col, host) else addonsSection(ctx, col)
         prefsSection(ctx, host, col)
 
         section(ctx, col, "Loaded plugins (PluginCatalog.kt)")
@@ -219,7 +243,7 @@ object SettingsScreen : ScreenPlugin {
             block,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
-        section(ctx, block, "Playback preference (stored on the hub)")
+        section(ctx, block, "Playback preference (stored ${if (ctx.prefs.standalone()) "on this TV" else "on the hub"})")
         val body = LinearLayout(ctx.app)
         body.orientation = LinearLayout.VERTICAL
         block.addView(
@@ -247,12 +271,12 @@ object SettingsScreen : ScreenPlugin {
 
     private fun drawPrefs(ctx: AppContext, host: ScreenHost, body: LinearLayout, prefs: HubPrefs) {
         adoptPrefs(ctx, prefs)
-        val audio = prefs.audioLanguages.ifEmpty {
-            ctx.profile?.languages?.ifEmpty { listOf("hin", "eng") } ?: listOf("hin", "eng")
-        }
+        // Nothing is preselected: which languages this household listens in is not a fact about the app,
+        // and an unset order means "whatever the source offers first".
+        val audio = prefs.audioLanguages.ifEmpty { ctx.profile?.audioLanguages ?: emptyList() }
 
-        actionRow(ctx, body, "Audio language order", audio.joinToString(" \u2192 "), "Reorder") {
-            savePrefs(ctx, host, body, prefs.copy(audioLanguages = rotate(audio)))
+        textRow(ctx, body, "Audio language order (codes, in order)", audio.joinToString(", "), editable = true) { value ->
+            savePrefs(ctx, host, body, prefs.copy(audioLanguages = codes(value)))
         }
         actionRow(ctx, body, "Quality preference", qualityLabel(prefs.quality), "Change") {
             savePrefs(ctx, host, body, prefs.copy(quality = nextQuality(prefs.quality)))
@@ -337,8 +361,9 @@ object SettingsScreen : ScreenPlugin {
     private fun nextBitrate(cur: Int): Int =
         BITRATES[(BITRATES.indexOf(cur) + 1 + BITRATES.size) % BITRATES.size]
 
-    private fun rotate(list: List<String>): List<String> =
-        if (list.size < 2) list else list.drop(1) + list.first()
+    /** Typed language codes, kept in the order typed: `hin, eng` -> ["hin", "eng"]. */
+    private fun codes(value: String): List<String> =
+        value.split(',', ';', ' ').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
 
     private fun qualityLabel(q: String): String = when (q.lowercase()) {
         "", "auto" -> "auto"

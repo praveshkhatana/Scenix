@@ -209,6 +209,15 @@ interface ScreenPlugin : Plugin {
     /** Show this screen in the top nav row. */
     val showInNav: Boolean get() = true
 
+    /**
+     * A capability this screen needs from the backend, named as the backend names it in its manifest
+     * (`live-tv`, `search`, …). Null means any backend can host this screen. A screen whose whole
+     * subject this backend cannot supply is hidden from the nav instead of shown broken — this is the
+     * only branching the UI does between a hub and standalone mode (design/deployment-modes.md
+     * Rule 2).
+     */
+    val requires: String? get() = null
+
     /** Build the screen into `host.container()`. */
     fun render(host: ScreenHost)
 

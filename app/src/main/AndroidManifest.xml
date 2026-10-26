@@ -1,16 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The app is a client of the hub: HTTP JSON only, no other network use. -->
+    <!-- The app is a client of the hub: HTTP JSON only, plus one UDP announcement search
+         (core/HubDiscovery.kt). No other network use. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The multicast lock is what lets a hub's LAN announcement reach this TV at all; without it
+         most Wi-Fi firmwares drop group traffic. Held only for the length of one search. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- TV-only: this app is never a phone app. -->
     <uses-feature android:name="android.software.leanback" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <!-- The hub is a machine in the same house: http://192.168.x.x:8788 is the normal answer.
-         Android blocks cleartext by default, which would silently leave the app on its offline
-         fixtures. HTTPS works too and needs nothing here. -->
+    <!-- A paired hub is usually http://&lt;hub-host&gt;:8788 on the same network, and standalone mode
+         serves the same contract from this app. Android blocks cleartext by default, which would
+         silently leave the app on its offline fixtures. HTTPS works too and needs nothing here. -->
     <application
         android:name=".ScenixApp"
         android:allowBackup="false"
@@ -51,11 +55,13 @@
         </activity>
 
         <!--
-            The hybrid shell: the hub's web interface in a WebView, with media3 underneath it. Not the
-            launcher, and it has no intent filter, so nothing lands here by accident — it is started by
-            name while the two front ends are compared on the same panel:
+            The hybrid shell: the same web interface in a WebView, with media3 underneath it. Hub mode
+            loads the page from the hub; standalone mode loads it from this app's own server
+            (core/LocalServer.kt) out of assets/web/. Not the launcher, and it has no intent filter, so
+            nothing lands here by accident — it is started by name while the two front ends are compared
+            on the same panel:
                 adb shell am start -n com.scenix.tv/.WebShellActivity
-            A string extra named `url` overrides which hub UI to load. configChanges keeps the WebView
+            A string extra named `url` overrides which page to load. configChanges keeps the WebView
             and its video surface alive through the orientation and density changes Android TV makes on
             its own.
         -->

@@ -1,10 +1,16 @@
 <!-- App configuration. Overridable at launch with the "hub_url" and "fixture" string extras
-     (see MainActivity): am start -n com.scenix.tv/.MainActivity -e hub_url http://host:8788
-     The hub is an ordinary Node process the owner can run on any machine, so hub_urls lists every
-     address this TV should try, in order; whichever one last answered is tried first next boot. -->
+     (see MainActivity): am start -n com.scenix.tv/.MainActivity -e hub_url http://&lt;hub-host&gt;:8788
+     A build names no machine. The hub is an ordinary Node process the owner can run anywhere, so the
+     address is learned rather than shipped: hubs answering the LAN announcement are offered by name,
+     whichever one last answered is tried first next boot, and hub_urls is only a placeholder an owner
+     may pre-seed with a comma-separated list. Shipped empty. -->
 <resources>
-    <string name="hub_url" translatable="false">http://<hub-host>:8788</string>
-    <string name="hub_urls" translatable="false">http://<hub-host>:8788,http://<hub-tailscale-host>:8788</string>
+    <string name="hub_url" translatable="false"></string>
+    <string name="hub_urls" translatable="false"></string>
+    <!-- The LAN announcement this TV listens for (an SSDP search target — a protocol name, not an
+         address) and how long one search waits for answers. -->
+    <string name="ssdp_search_target" translatable="false">ssdp:scenix-hub</string>
+    <integer name="ssdp_search_ms" translatable="false">3000</integer>
     <!-- Player ceilings. assets/theme.json "player" is what the player actually reads; these match
          it so the documented switch never disagrees with the running values. -->
     <integer name="player_max_video_width" translatable="false">1920</integer>

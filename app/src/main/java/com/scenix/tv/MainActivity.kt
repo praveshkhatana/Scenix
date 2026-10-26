@@ -15,6 +15,7 @@ import com.scenix.tv.core.Item
 import com.scenix.tv.core.Profile
 import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.core.ScreenPlugin
+import com.scenix.tv.core.clientFor
 
 /**
  * The whole app is one activity: a container and a stack of screens, where a screen is a
@@ -23,8 +24,14 @@ import com.scenix.tv.core.ScreenPlugin
  * force: the profile picker and the player).
  *
  * Two launch switches, both read here and nowhere else:
- *  - `--es hub_url http://host:8788`  → which hub to talk to
+ *  - `--es hub_url http://<hub-host>:8788`  → which hub to talk to
  *  - `--es fixture fixtures/home.json` → use the offline asset client instead of the network
+ *
+ * A build names no machine, so the first run of a fresh install has no hub to talk to: the health
+ * probe finds nothing, the LAN search finds nothing, and this activity opens the pairing screen
+ * ([com.scenix.tv.plugins.nav.PairingScreen]) which offers the hubs announcing themselves on the
+ * network, an address to type, or standalone mode. Nothing spins and nothing shows sample rows as
+ * though they were the family's library.
  *
  * A `tv://detail/<identity>` deep link lands on Detail once a profile is chosen.
  */
@@ -75,11 +82,14 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         // One health probe decides whether the whole app talks to the hub or to the bundled
         // fixtures, so the first screen never shows a blank page. It keeps retrying after that.
         watch = com.scenix.tv.core.HubWatch(this, ctx)
+        ctx.watch = watch
         watch.onChange = { online ->
             Log.i(TAG, if (online) "hub back, re-rendering" else "hub gone, re-rendering on fixtures")
+            // A different backend can do different things, so ask it again and let the nav follow.
+            readCapabilities()
             if (stack.isNotEmpty()) render(stack.last().screen)
         }
-        watch.start { startup() }
+        watch.start { online -> startup(online) }
     }
 
     /**
@@ -140,7 +150,14 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     }
 
     /** Called once the data client for this session is known. */
-    private fun startup() {
+    private fun startup(online: Boolean) {
+        // Nothing paired and no choice made yet: ask the viewer what this TV should be — a hub found
+        // on the network, an address typed in, or this app on its own — instead of sitting on the
+        // bundled samples or spinning on an empty network.
+        if (!online && watch.unpaired) {
+            show("pairing")
+            return
+        }
         val remembered = ctx.prefs.currentProfileId()
         if (!remembered.isNullOrBlank()) {
             ctx.hub.profiles { profiles, _ ->
@@ -151,6 +168,23 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             }
         } else {
             requireProfilePicker("startup")
+        }
+    }
+
+    /**
+     * Ask the backend what it can do. Nothing on screen waits for the answer: it fills the one switch
+     * the UI branches on (design/deployment-modes.md Rule 2), and a screen whose subject this backend
+     * cannot supply leaves the nav when it arrives. A backend that says nothing leaves the list null,
+     * which hides nothing — an older hub is not punished for not having the field yet.
+     */
+    private fun readCapabilities() {
+        ctx.hub.manifest { m, _ ->
+            if (m == null) return@manifest
+            val changed = ctx.capabilities != m.capabilities
+            ctx.capabilities = m.capabilities
+            if (!changed) return@manifest
+            Log.i(TAG, "backend capabilities: ${m.capabilities ?: "not stated"}")
+            runOnUiThread { if (stack.isNotEmpty()) render(stack.last().screen) }
         }
     }
 
@@ -169,12 +203,7 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             ctx.prefs.setFixture(it)
             Log.i(TAG, "fixture override: $it")
         }
-        val fixture = ctx.prefs.fixture()
-        ctx.hub = if (!fixture.isNullOrBlank()) {
-            FixtureHub(this, fixture)
-        } else {
-            HttpHub(this, ctx.prefs)
-        }
+        ctx.hub = clientFor(ctx.prefs, this)
     }
 
     // ---- ScreenHost ------------------------------------------------------------------------

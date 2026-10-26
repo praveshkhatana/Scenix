@@ -21,8 +21,9 @@ fun interface HubCb<T> {
 
 /**
  * The hub surface from plugin-architecture.md §2. Every screen and every plugin talks to this
- * interface, never to a URL, which is what lets `--es fixture …` swap in [FixtureHub] and keep
- * the whole UI alive with the hub down.
+ * interface, never to a URL, which is what lets `--es fixture …` swap in [FixtureHub] and keep the
+ * whole UI alive with the hub down, and what lets [LocalHub] host the same contract inside the app
+ * in standalone mode (design/deployment-modes.md Rule 2).
  */
 interface HubClient {
     val label: String
@@ -60,8 +61,9 @@ interface HubClient {
     fun addons(cb: HubCb<List<Addon>>) { cb.onResult(emptyList(), null) }
 
     /**
-     * `GET /app/v1/subs/<identity>?lang=hin,eng,pan` — subtitles the hub found for this title.
-     * Optional: a hub without it answers 404 and the player just has embedded tracks.
+     * `GET /app/v1/subs/<identity>?lang=<the profile's subtitle languages>` — subtitles the backend
+     * found for this title. Optional: a hub without it answers 404 and the player just has embedded
+     * tracks.
      */
     fun subs(identity: String, langs: List<String>, profileId: String?, cb: HubCb<List<Sub>>) {
         cb.onResult(emptyList(), null)

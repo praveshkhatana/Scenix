@@ -69,9 +69,16 @@ class Registries {
     fun playerFor(kind: String?): PlayerPlugin? = players.resolve(kind)
     fun rowFor(rowId: String?): RowPlugin? = rows.get(rowId)
 
-    /** Screens the top nav should render for this profile — nav is registry-driven, not hardcoded. */
-    fun navFor(profile: Profile?): List<ScreenPlugin> = screens.all().filter { s ->
+    /**
+     * Screens the top nav should render for this profile — nav is registry-driven, not hardcoded.
+     *
+     * `has` answers whether the backend a screen is talking to can supply what that screen shows. A
+     * screen that needs a capability the current backend does not advertise is left out; a backend
+     * that states no capabilities at all (an older hub) leaves everything in.
+     */
+    fun navFor(profile: Profile?, has: (String) -> Boolean = { true }): List<ScreenPlugin> = screens.all().filter { s ->
         if (!s.showInNav) return@filter false
+        if (s.requires != null && !has(s.requires!!)) return@filter false
         when (profile?.isKids) {
             true -> s.scope == "all" || s.scope == "kids"
             else -> s.scope == "all" || s.scope == "adult"

@@ -23,6 +23,13 @@ class AppContext(
     /** Replaced by MainActivity when `--es fixture …` asks for the offline asset client. */
     var hub: HubClient = HttpHub(app, prefs)
 
+    /**
+     * The watcher that keeps [hub] pointed at something that answers, installed once by MainActivity.
+     * The pairing screen and Settings reach through it when the viewer picks a backend, so the choice
+     * takes effect now rather than at the next scheduled probe.
+     */
+    var watch: HubWatch? = null
+
     /** The signed-in profile for this session; null on the profile picker. */
     var profile: Profile? = null
 
@@ -31,6 +38,19 @@ class AppContext(
 
     /** True while HubWatch has fallen back to the bundled fixtures. Screens show a small chip. */
     var offline: Boolean = false
+
+    /**
+     * What the current backend said it can do — `capabilities` in its manifest. Null until a manifest
+     * has been read, and null also means the backend predates the field, so nothing is hidden.
+     *
+     * This is the one switch the UI branches on between a hub and this app hosting itself
+     * (design/deployment-modes.md Rule 2): a screen whose subject this backend cannot supply is left
+     * out of the nav, and a source whose kind it cannot serve is never offered a Play button.
+     */
+    var capabilities: List<String>? = null
+
+    /** Whether to offer something that needs this capability. Unknown backend = assume it can. */
+    fun hasCapability(name: String): Boolean = capabilities?.contains(name) ?: true
 
     /**
      * Source capability. The players registry IS the capability list — a source whose `kind` has no
@@ -130,8 +150,8 @@ interface ScreenHost {
 
     fun toast(msg: String)
 
-    /** Screens currently registered in the nav, for this profile. */
-    fun navScreens(): List<ScreenPlugin> = app.registries.navFor(app.profile)
+    /** Screens currently registered in the nav, for this profile and for what this backend offers. */
+    fun navScreens(): List<ScreenPlugin> = app.registries.navFor(app.profile) { app.hasCapability(it) }
 
     /** The id of the screen on top, used by the nav bar to mark the current one. */
     fun currentScreenId(): String
