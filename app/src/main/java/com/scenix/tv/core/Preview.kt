@@ -10,7 +10,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 
 /**
- * The Netflix move: while a title holds the eye, the billboard's artwork quietly becomes a muted
+ * The Scenix move: while a title holds the eye, the billboard's artwork quietly becomes a muted
  * looping clip of THAT title. One implementation, two callers — the Home billboard and the Detail
  * header — which is why the two can never drift apart.
  *

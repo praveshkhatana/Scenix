@@ -251,7 +251,7 @@ object Focus {
     }
 
     /**
-     * The first card of the first shelf — where Netflix has focus when a browse screen opens, so one
+     * The first card of the first shelf — where Scenix has focus when a browse screen opens, so one
      * press of OK opens something and Up reaches the billboard.
      */
     fun firstShelfCard(rv: RecyclerView): View? {

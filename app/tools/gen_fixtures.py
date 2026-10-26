@@ -452,9 +452,9 @@ profiles = {
 
 manifest = {
     "manifest": {
-        "name": "GharTV (bundled fixtures)",
+        "name": "Scenix (bundled fixtures)",
         "version": "0.1-p1",
-        "theme": "ghartv-dark",
+        "theme": "scenix-dark",
         "rows": ["hero", "continue", "top10", "justadded", "newreleases", "live",
                  "punjabiclassics", "kids_yt", "kids_school"],
         "cards": ["poster", "continue", "channel", "hero"],

@@ -9,7 +9,7 @@ import com.scenix.tv.core.ScreenHost
 /**
  * The MENU key on a focused card — the one key on a TV remote that has never had anything on the
  * other end of it in this app. What a viewer wants here is not a settings screen, it is the two
- * answers Netflix gives: this is finished, and I do not want to see this again.
+ * answers Scenix gives: this is finished, and I do not want to see this again.
  *
  * Both are honest about where they live. "Mark as watched" is the hub's own progress endpoint at
  * position 0 (the same thing the player posts when a title ends), and the rules drop finished titles

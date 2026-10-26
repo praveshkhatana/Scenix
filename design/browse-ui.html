@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>GHARTV — Netflix-style UI (1920x1080 Android TV)</title>
+<title>SCENIX — Scenix-style UI (1920x1080 Android TV)</title>
 <style>
-/* ================= Netflix visual system ================= */
+/* ================= Scenix visual system ================= */
 :root{
   --bg:#141414; --surf:#181818; --surf2:#232323; --line:rgba(255,255,255,.14);
   --ink:#fff; --ink2:#b3b3b3; --ink3:#7d7d7d;
   --red:#E50914; --green:#46d369; --kids:#F2C33A; --live:#E50914;
   --focus:0 0 0 4px #fff, 0 20px 44px rgba(0,0,0,.75);
-  --pad:64px;                    /* Netflix TV uses ~5% side gutter */
+  --pad:64px;                    /* the reference 10-foot app uses ~5% side gutter */
   --g:16px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -22,7 +22,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
 .ico{width:30px;height:30px;flex:none;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
 .ico.solid{fill:currentColor;stroke:none}
 
-/* ---------- top nav (Netflix: transparent over billboard) ---------- */
+/* ---------- top nav (transparent over the billboard) ---------- */
 .topnav{position:absolute;top:0;left:0;right:0;height:96px;display:flex;align-items:center;gap:40px;padding:0 var(--pad);
   background:linear-gradient(180deg,rgba(0,0,0,.85),rgba(0,0,0,.35) 60%,transparent);z-index:5}
 .logo{font-size:34px;font-weight:900;letter-spacing:.02em;color:var(--red)}
@@ -132,7 +132,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
 .ctl .rt{margin-left:auto;color:var(--green);font-size:20px}
 .skip{position:absolute;right:var(--pad);bottom:220px;padding:14px 32px;border-radius:6px;background:rgba(255,255,255,.92);color:#000;font-weight:700;font-size:22px}
 
-/* ---------- kids (Netflix Kids: bright, chunky, icon nav) ---------- */
+/* ---------- kids (Kids mode: bright, chunky, icon nav) ---------- */
 .kbg{position:absolute;inset:0;background:linear-gradient(180deg,#1b2a4a,#0f1a2e)}
 .knav{position:absolute;top:0;left:0;right:0;height:110px;display:flex;align-items:center;gap:44px;padding:0 var(--pad);background:rgba(0,0,0,.35)}
 .knav .kl{font-size:32px;font-weight:900;color:var(--kids)}
@@ -169,7 +169,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
 .sw i{position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:50%;background:#fff}
 .sw.on i{left:36px}
 .foot{position:absolute;left:var(--pad);right:var(--pad);bottom:20px;font-size:18px;color:var(--ink3)}
-/* ---- Netflix vertical rhythm: billboard ~52%, chips, then rows that peek ---- */
+/* ---- Scenix vertical rhythm: billboard ~52%, chips, then rows that peek ---- */
 #home .billboard,#live .billboard{height:520px}
 #home .bb{top:196px;left:var(--pad);bottom:auto;width:920px}
 #home .bb .nmark{display:none}
@@ -232,7 +232,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
 <section class="screen" id="home">
   <div class="billboard"></div>
   <div class="topnav">
-    <div class="logo">GHARTV</div>
+    <div class="logo">SCENIX</div>
     <ul><li class="on">Home</li><li>Series</li><li>Movies</li><li>New &amp; Popular</li><li>Live TV</li><li>My List</li></ul>
     <div class="right"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <svg class="ico" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
@@ -277,14 +277,14 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
       </div>
     </div>
   </div>
-  <div class="foot">▼ this screen scrolls — next rows: <b>New Releases</b> · <b>Just Added</b> · <b>Watch in Hindi</b> · <b>Live now (444 channels)</b>. Focus = white ring + lift, exactly like Netflix on TV.</div>
+  <div class="foot">▼ this screen scrolls — next rows: <b>New Releases</b> · <b>Just Added</b> · <b>Watch in Hindi</b> · <b>Live now (444 channels)</b>. Focus = white ring + lift, exactly as on a 10-foot app.</div>
 </section>
 
-<!-- ===================== 3 · LIVE TV (Netflix language, our channels) ===================== -->
+<!-- ===================== 3 · LIVE TV (Scenix language, our channels) ===================== -->
 <section class="screen" id="live">
   <div class="billboard" style="background:linear-gradient(115deg,#122a1a,#0f2233 45%,#101010)"></div>
   <div class="topnav">
-    <div class="logo">GHARTV</div>
+    <div class="logo">SCENIX</div>
     <ul><li>Home</li><li>Series</li><li>Movies</li><li>New &amp; Popular</li><li class="on f">Live TV</li><li>My List</li></ul>
     <div class="right"><span style="font-size:20px;color:#e6e6e6">Hindi · English · Punjabi</span><div class="pav"></div></div>
   </div>
@@ -324,7 +324,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
 <!-- ===================== 4 · TITLE DETAIL ===================== -->
 <section class="screen" id="title">
   <div class="billboard" style="height:640px"></div>
-  <div class="topnav"><div class="logo">GHARTV</div><ul><li>Home</li><li>Series</li><li class="on">Movies</li></ul><div class="right"><div class="pav"></div></div></div>
+  <div class="topnav"><div class="logo">SCENIX</div><ul><li>Home</li><li>Series</li><li class="on">Movies</li></ul><div class="right"><div class="pav"></div></div></div>
   <div class="blurb">
     <h1 style="font-size:64px;font-weight:800">The Film You Want To Watch</h1>
     <div class="mat" style="margin:14px 0 0"><span class="mt" style="color:var(--green);font-weight:700">98% Match</span><span>2026</span><span class="box">16+</span><span>2h 14m</span><span class="hd">HD</span><span>Hindi · English · Punjabi</span></div>
@@ -350,7 +350,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
         <div class="q"><span class="tagq">1080p</span><span class="tagq">3.9 GB</span><span class="tagq y">0.7× risk</span></div></div>
     </div>
   </div>
-  <div class="foot">Netflix layout, our mechanics: match %, maturity, "Play from" instead of a single CDN.</div>
+  <div class="foot">our layout, our mechanics: match %, maturity, "Play from" instead of a single CDN.</div>
 </section>
 
 <!-- ===================== 5 · PLAYER ===================== -->
@@ -383,7 +383,7 @@ body:not(:has(.screen:target)) .screen:first-child{display:block}
 <section class="screen" id="kids">
   <div class="kbg"></div>
   <div class="knav">
-    <div class="kl">GHARTV <span style="font-weight:400;color:#fff">Kids</span></div>
+    <div class="kl">SCENIX <span style="font-weight:400;color:#fff">Kids</span></div>
     <div class="ki f">Home</div><div class="ki">Shows</div><div class="ki">Movies</div><div class="ki">Live</div>
     <div class="ktime"><span class="kchip">1h 12m left today</span><span class="kchip o">curfew 8:00 pm</span><span class="kchip o" style="display:flex;gap:10px;align-items:center"><svg class="ico" viewBox="0 0 24 24" style="width:22px;height:22px"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>grown-ups</span></div>
   </div>

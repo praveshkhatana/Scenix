@@ -75,7 +75,7 @@ interface HubClient {
 
     /**
      * `GET /app/v1/trailer/<identity>` — a short clip to play behind the billboard while the viewer
-     * looks at a title, the way Netflix previews. Optional: a hub without it answers 404 and the
+     * looks at a title, the way Scenix previews. Optional: a hub without it answers 404 and the
      * billboard simply keeps its still artwork.
      */
     fun trailer(identity: String, cb: HubCb<String?>) { cb.onResult(null, null) }

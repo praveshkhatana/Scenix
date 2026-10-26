@@ -1,4 +1,4 @@
-// GharTV — single-module build: this directory IS the :app module, so the APK lands in
+// Scenix — single-module build: this directory IS the :app module, so the APK lands in
 // app/build/outputs/apk/debug/app-debug.apk.
 pluginManagement {
     repositories {
@@ -14,4 +14,4 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = 'ghartv-tv'
+rootProject.name = 'scenix-tv'

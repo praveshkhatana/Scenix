@@ -11,7 +11,7 @@ import androidx.recyclerview.widget.RecyclerView
  * band the viewer can actually see, and the page only moves down when the row sits below that band.
  *
  * This lives in core because every row is a RecyclerView and every screen may want it — no plugin
- * has to know how scroll math works to behave like Netflix.
+ * has to know how scroll math works to behave like Scenix.
  *
  * Deliberately conservative: a row never scrolls up to re-centre (that would pull the billboard off
  * screen the moment a card takes focus), and the row list never scrolls while the viewer is typing

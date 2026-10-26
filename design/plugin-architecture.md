@@ -62,7 +62,7 @@ Auto-loaded by directory scan — **adding a file is the whole integration step*
 
 ```
 hub/
-  index.js          http server + /app/v1 + stremio compat routes   (never edited for new plugins)
+  index.js          http server + /app/v1 + addon-bridge compat routes   (never edited for new plugins)
   core/registry.js  readdir providers|rows|rules, validate, sort     (never edited)
   core/store.js     JSON persistence: addedAt, progress, profiles
   core/merge.js     dedupe by identity, rank sources
@@ -99,10 +99,10 @@ module.exports = {
 
 Rows to ship: `continue` (10), `top10` (20), `justadded` (30), `newreleases` (40), `live` (50),
 `kids.yt` (20/kids), `kids.school` (30/kids). Rules: `language-allowlist`, `kids-allowlist`, `size-cap`.
-Providers: `iptv-org`, `hub-yt` (the existing YouTube code, moved), `stremio` (proxy to Cinemeta /
+Providers: `iptv-org`, `hub-yt` (the existing YouTube code, moved), `addon-bridge` (proxy to Cinemeta /
 size-capped Torrentio / WatchHub for titles, configured by a URL list).
 
-HTTP surface (the Stremio addon routes stay, so Stremio keeps working untouched):
+HTTP surface (the community addon routes stay, so any addon-protocol client keeps working untouched):
 
 ```
 GET  /app/v1/manifest                 rows, cards, rules, providers, theme id
@@ -128,7 +128,7 @@ plugins/ rows/   RowPlugin(id, cardType, layout, fetch)
          rules/  RulePlugin(applyItem | applyRow)          client-side: hide-rows, dedupe guard
          player/ PlayerPlugin(kind)                        hls | dash | http | torrent
          nav/    ScreenPlugin(id, title, route)            Home | Live | Movies | Series | Kids | Search
-         theme/theme.json                                  Netflix-dark tokens
+         theme/theme.json                                  Scenix-dark tokens
 PluginCatalog.kt  <- the ONE file naming built-ins; new plugin = new file + one line here
 ```
 

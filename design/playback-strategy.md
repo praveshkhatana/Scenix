@@ -1,8 +1,8 @@
-# Playback strategy — making free sources feel like Netflix
+# Playback strategy — making free sources feel like Scenix
 
 Written after the owner asked: *"magnets can't play on a 2 GB TV without a torrent engine — why?
-how does Stremio handle it? can a PlayerPlugin do it better? use players that already exist."*
-Plus their content preference and a reference web player (`framextv.cc`).
+how do the existing apps handle it? can a PlayerPlugin do it better? use players that already exist."*
+Plus their content preference and a reference web player (`a reference web player`).
 
 ## 1. What a magnet actually is
 
@@ -14,23 +14,22 @@ held by some number of peers, go get them."* To play it you need an **engine** t
 3. keeps a buffer ahead of the playhead,
 4. exposes the result as a **seekable stream** (HTTP with byte ranges) to an ordinary video player.
 
-That engine is the whole product in apps like TorrServe, Nova Video Player, or Stremio's own
-`stremio-core`. It is CPU/RAM work (hashing every piece, managing peer connections) and it is
+That engine is the whole product in apps like TorrServe, Nova Video Player, or the desktop apps' own core. It is CPU/RAM work (hashing every piece, managing peer connections) and it is
 **at the mercy of uploaders**: if peers collectively send 0.69× realtime, no player on earth can
 play it smoothly. That is exactly what we measured on this TV (0.69×, 8.5 MB/s) — the engine
 worked, the swarm didn't.
 
 Second structural gap: a torrent is **one fixed file**. There is no adaptive ladder, so there is
-no "drop to 540p when Wi-Fi dips". Adaptive bitrate is what makes Netflix survive a bad network,
+no "drop to 540p when Wi-Fi dips". Adaptive bitrate is what makes Scenix survive a bad network,
 and a single 4.2 GB MKV cannot provide it.
 
 ## 2. How the existing ecosystem solves it
 
 | Approach | Mechanism | Licence | Fit for us |
 |---|---|---|---|
-| **In-process core** (Stremio desktop/Android) | `stremio-core` (Rust) runs the torrent engine inside the app and hands the player a `127.0.0.1` URL | MIT | Proven, but it means a Rust torrent engine living inside our 2 GB / 32-bit app, competing with the HW decoder |
-| **Companion engine app** (TorrServe pattern, used by Nova / Just Player / Stremio's `proxyUrl`) | a separate app runs the engine + local HTTP server; players just open `http://127.0.0.1:PORT/…` | GPL-family for the well-known ones | **Best fit**: zero licence contamination (separate app, no linking), reuses an engine that already works on Android TV |
-| **Server-side gateway** | the *hub host* runs the engine and serves the torrent to clients as an ordinary seekable HTTP stream | ours | **The Netflix-like answer**: the hub box is x86 with 32 GB and 85 Mbps wired; the TV then plays plain HTTP with no torrent code at all |
+| **In-process core** (desktop apps) | an in-app Rust core runs the torrent engine inside the app and hands the player a `127.0.0.1` URL | MIT | Proven, but it means a Rust torrent engine living inside our 2 GB / 32-bit app, competing with the HW decoder |
+| **Companion engine app** (companion-engine pattern, used by companion player apps) | a separate app runs the engine + local HTTP server; players just open `http://127.0.0.1:PORT/…` | GPL-family for the well-known ones | **Best fit**: zero licence contamination (separate app, no linking), reuses an engine that already works on Android TV |
+| **Server-side gateway** | the *hub host* runs the engine and serves the torrent to clients as an ordinary seekable HTTP stream | ours | **The Scenix-like answer**: the hub box is x86 with 32 GB and 85 Mbps wired; the TV then plays plain HTTP with no torrent code at all |
 | **Player with built-in torrent demuxer** (mpv/ffmpeg + libtorrent) | the demuxer speaks `magnet:` directly | LGPL/GPL | Good on desktop; on 32-bit Android TV it is a heavy native dependency |
 
 ## 3. Our answer: four layers, each one a plugin
@@ -52,9 +51,9 @@ have no ladder. One tap = one play; the "Play from" list is the ranked array, no
 
 **Layer 1 — prefer sources that are already streams.** Community addons that return direct
 HTTP/HLS (WatchHub-style scrapers, our live playlists, curated YouTube) *are* adaptive and
-*are* what makes playback feel like Netflix. Torrents are the fallback that widens the library.
+*are* what makes playback feel like Scenix. Torrents are the fallback that widens the library.
 
-**Layer 2 — failover in the player (the `framextv` "Mirror 1…5" pattern).**
+**Layer 2 — failover in the player (the multi-source failover pattern).**
 The reference player offers `Auto`, `Auto (Mirror 1)`…`Auto (Mirror 5)`: the same title from
 several sources, with automatic switching. We copy it with our word — **Source**:
 if a stall exceeds ~6 s or Media3 reports an unsupported/fatal format, switch to the

@@ -122,7 +122,7 @@ object PlayerScreen : ScreenPlugin {
     private var generation = 0            // a superseded open() must not touch the screen
     private var hubSubs: List<Sub> = emptyList()
 
-    // ---- panel state (the framextv "Playback Settings" sheet, in D-pad form) ------------------
+    // ---- panel state (the "Playback Settings" sheet, in D-pad form) ------------------
     private var panelLayer: FrameLayout? = null
     private var panel: PlaybackPanel? = null
     private var speed = 1.0f
@@ -643,7 +643,7 @@ object PlayerScreen : ScreenPlugin {
     private data class Cap(val width: Int, val height: Int, val bitrate: Int, val label: String)
 
     /**
-     * The ladder the viewer can pick from, Netflix order: Auto first, then rung by rung down.
+     * The ladder the viewer can pick from, Scenix order: Auto first, then rung by rung down.
      * `Auto` is the profile ceiling and lets the player walk down by itself when the network gets
      * bad; a named rung pins the top so a bigger variant is never even requested.
      *

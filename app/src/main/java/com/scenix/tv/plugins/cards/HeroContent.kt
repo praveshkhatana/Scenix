@@ -26,7 +26,7 @@ import com.scenix.tv.core.Views
  * header. That is why the Home billboard and the Detail hero cannot drift apart, and why a trailer
  * that starts on the billboard behaves exactly like one that starts on the title page.
  *
- * Netflix's geometry, from the mockup: Play is a fixed 320 x 72 white pill that turns brand red
+ * Scenix's geometry, from the mockup: Play is a fixed 320 x 72 white pill that turns brand red
  * under the eye, More Info is the same height in translucent white, and the whole text column is a
  * bounded box, so the info line ellipsizes at the edge of the hero instead of running off a 1920 px
  * screen — the "2h 20m · PA · E" clipping the screenshot showed.
@@ -101,7 +101,7 @@ object HeroContent {
         val title = Views.text(ctx, if (compact) "h2" else "h1", if (compact) 56f else 104f, theme.ink, item.title, bold = true, maxLines = 2)
         replaceText(col, "title", title)
 
-        // Info line, in Netflix's order: match, maturity box, runtime, then the format marks.
+        // Info line, in Scenix's order: match, maturity box, runtime, then the format marks.
         // The last field is the only one allowed to shrink, and it is the least important one.
         val chips = LinearLayout(ctx.app)
         chips.orientation = LinearLayout.HORIZONTAL

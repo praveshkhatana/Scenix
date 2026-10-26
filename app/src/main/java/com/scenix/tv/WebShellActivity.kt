@@ -206,7 +206,7 @@ class WebShellActivity : Activity() {
 
         /**
          * Reported, not fixed. The page decides whether to reload the same URL at the current position
-         * (raffi's one silent retry) or to ask the viewer to pick another stream — the same decision the
+         * (one silent reload at the current position) or to ask the viewer to pick another stream — the same decision the
          * browser build makes, so the behaviour is identical on both.
          */
         override fun onPlayerError(error: PlaybackException) {

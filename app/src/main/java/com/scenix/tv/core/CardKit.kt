@@ -212,7 +212,7 @@ class CardHolder(
 
     /**
      * The card's entrance: 600 ms fade-up, staggered by position. Only the first time a row is
-     * filled — a card that re-animated on every scroll step is the difference between "Netflix" and
+     * filled — a card that re-animated on every scroll step is the difference between "Scenix" and
      * a screensaver.
      */
     fun animateIn(staggerIndex: Int) {

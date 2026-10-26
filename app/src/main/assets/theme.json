@@ -1,7 +1,7 @@
 {
  "id": "scenix-dark",
  "brandMark": "G",
- "_read": "Every number here is a pixel measured on the 1920x1080 mockup in design/netflix-ui.html. Theme.load() scales every length by min(screenW/1920, screenH/1080), so a 720p TV gets the same design, not a different one. A new plugin may add its own group here without touching Theme.kt, and read it with theme.token(group, key, fallback).",
+ "_read": "Every number here is a pixel measured on the 1920x1080 mockup in design/browse-ui.html. Theme.load() scales every length by min(screenW/1920, screenH/1080), so a 720p TV gets the same design, not a different one. A new plugin may add its own group here without touching Theme.kt, and read it with theme.token(group, key, fallback).",
  "canvas": {
   "width": 1920,
   "height": 1080

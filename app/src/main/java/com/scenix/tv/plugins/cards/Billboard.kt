@@ -18,7 +18,7 @@ import com.scenix.tv.core.Item
  * The billboard as Home and the "explore" screens use it: one hero card, the items that qualify for
  * it, and a timer that walks them.
  *
- * Rotation is not decoration — it is why a hub that sends no `hero` row still looks like Netflix.
+ * Rotation is not decoration — it is why a hub that sends no `hero` row still looks like Scenix.
  * The items come from the caller (a real hero row, or the first row with usable artwork), and this
  * file only decides when to show the next one.
  *
@@ -26,7 +26,7 @@ import com.scenix.tv.core.Item
  * buttons (nothing should move out from under a press), and a card preview or dwell owning the hero
  * (the trailer of the title being looked at outranks the billboard's).
  *
- * The dots at the bottom right are Netflix's: one per item, and the active one fills across the
+ * The dots at the bottom right are Scenix's: one per item, and the active one fills across the
  * rotation interval, so the wait is visible instead of mysterious.
  */
 class Billboard(private val ctx: AppContext, private val host: ScreenHost) {

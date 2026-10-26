@@ -76,7 +76,7 @@ object DetailScreen : ScreenPlugin {
                 show(host, container, root, adapter, item)
                 moreLikeThis(ctx, host, adapter, item)
 
-                // Netflix opens a title page standing on Play. The hero's Play button carries the
+                // Scenix opens a title page standing on Play. The hero's Play button carries the
                 // tag "play" (set by the hero card plugin), so this stays true for whatever the card
                 // plugin renders — the screen does not know or care how the button is built.
                 // unconditional: the hero art can already hold focus, and then Play was never reached,

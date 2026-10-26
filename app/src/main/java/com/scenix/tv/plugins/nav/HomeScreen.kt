@@ -95,7 +95,7 @@ object HomeScreen : ScreenPlugin {
                 val rows = ctx.applyRules(incoming)
                 ctx.lastHome = incoming
                 // A row the hub answered with nothing gets no header: a shelf with no cards under it
-                // ("Continue watching" before anyone has watched anything) reads as broken, and Netflix
+                // ("Continue watching" before anyone has watched anything) reads as broken, and Scenix
                 // does not print it either.
                 val heroes = rows.filter { it.card == "hero" && it.items.isNotEmpty() }
                 val rest = rows.filter { it.card != "hero" && it.items.isNotEmpty() }
@@ -109,7 +109,7 @@ object HomeScreen : ScreenPlugin {
                 }
                 adapter.submit(headers, rest)
 
-                // Netflix: when the screen opens the viewer is already standing on the first card of
+                // Scenix: when the screen opens the viewer is already standing on the first card of
                 // the first shelf, so one press of OK opens something and Up reaches the billboard.
                 // Only when nothing has focus yet — a refresh must never yank focus away from wherever
                 // the viewer is standing.

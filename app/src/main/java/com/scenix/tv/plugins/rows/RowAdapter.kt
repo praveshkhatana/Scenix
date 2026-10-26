@@ -238,7 +238,7 @@ class RowAdapter(
             val item = items.getOrElse(position) { return }
             holder.boundItem = item
 
-            // One focus listener, three Netflix behaviours: the trailer dwell, the camera that frames
+            // One focus listener, three Scenix behaviours: the trailer dwell, the camera that frames
             // the card, and MENU on a card the viewer is standing on.
             Focus.setCardHooks(
                 holder.root,

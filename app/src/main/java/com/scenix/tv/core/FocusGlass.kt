@@ -9,7 +9,7 @@ import com.scenix.tv.R
 /**
  * The selection highlight as one object that travels, instead of one ring per card.
  *
- * The cleanyourtv launcher does this and it is the reason its grid feels sleek: the highlight does
+ * This is what makes a grid of tiles feel sleek: the highlight does
  * not fade out here and fade in there, it *moves* — a critically damped glide that lands on the next
  * tile without swinging past it, at whatever speed the keys are being held. A per-card ring cannot
  * do that: two cards' animations cross-fade and the eye reads it as a flicker.
