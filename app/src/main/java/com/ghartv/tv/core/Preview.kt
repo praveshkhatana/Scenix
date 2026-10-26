@@ -1,5 +1,8 @@
 package com.scenix.tv.core
 
+import android.os.Handler
+import android.os.Looper
+import android.view.View
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -7,62 +10,175 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 
 /**
- * The Netflix move: while a title sits under the eye, its artwork quietly becomes a muted looping
- * clip. Only the hero ever does this, and only after the card has been on screen long enough that
- * the viewer is clearly looking at it — a fast scroll past twenty posters must not open a decoder
- * twenty times.
+ * The Netflix move: while a title holds the eye, the billboard's artwork quietly becomes a muted
+ * looping clip of THAT title. One implementation, two callers — the Home billboard and the Detail
+ * header — which is why the two can never drift apart.
  *
- * The clip comes from the hub (`GET /app/v1/trailer/<identity>`), so which trailer, from where, and
- * whether one exists at all stays hub policy. A hub that has no trailers answers nothing and the
- * artwork simply stays a still picture: the feature is additive, never required.
+ * There is exactly one preview in the app at a time, and it always draws in the hero: a second
+ * decoder on a 2 GB TV is how a browse screen starts dropping frames. The hero hands its
+ * [PlayerView] over with [setSurface], and every later request — the billboard's own title, or the
+ * card the viewer is standing on — plays into that same view.
  *
- * Releasing is not optional on this hardware. One TV, 2 GB RAM, and a full-screen decoder already
- * reserved for real playback — so a preview dies when its card is re-bound or leaves the window.
+ * Nothing here is required from the hub. `GET /app/v1/trailer/<identity>` may answer nothing, and
+ * the artwork simply stays a still picture. URLs are remembered for the session, so the twentieth
+ * pass over a row asks once, not twenty times.
+ *
+ * Releasing is not optional: the preview dies when its surface leaves the window, when the screen
+ * is left, and the moment real playback starts.
  */
 object Preview {
 
-    /** Per-view state: a rebind bumps `token`, which cancels a clip still travelling from the hub. */
-    private class Session {
-        var token = 0
-        var player: ExoPlayer? = null
-        var pending: Runnable? = null
-    }
+    private val main = Handler(Looper.getMainLooper())
 
-    fun start(pv: PlayerView, ctx: AppContext, item: Item) {
-        stop(pv)
-        val theme = ctx.theme
-        if (theme.token("preview", "enabled", 1.0) < 0.5) return
+    /** Trailer URLs for this session. A null value means "asked, and the hub has none". */
+    private val urls = HashMap<String, String?>()
+    private val asking = HashSet<String>()
 
-        val s = Session()
-        pv.tag = s
-        val token = ++s.token
+    private var surface: PlayerView? = null
+    private var player: ExoPlayer? = null
+    private var dwell: Runnable? = null
+    private var token = 0
+    private var playingIdentity = ""
+    private var previewFromCard = false
+    private var headline: Item? = null
 
-        // Leaving the window (a screen change, the viewer pressing Play) must free the decoder.
-        pv.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: android.view.View) = Unit
-            override fun onViewDetachedFromWindow(v: android.view.View) { if (pv.tag === s) stop(pv) }
-        })
+    // ---- the surface ----------------------------------------------------------------------
 
-        ctx.hub.trailer(item.identity) { url, _ ->
-            val clip = url?.takeIf { it.isNotBlank() } ?: return@trailer
-            // Hub callbacks arrive off the main thread; this post is both the thread hop and the
-            // "hovered long enough" timer.
-            val fire = Runnable {
-                if (pv.tag !== s || s.token != token || !pv.isAttachedToWindow) return@Runnable
-                begin(pv, s, clip, theme)
+    /**
+     * The hero gives us its [PlayerView]. Home's billboard and Detail's header both do this through
+     * [com.scenix.tv.plugins.cards.HeroContent], so "the preview area" is always whatever the theme
+     * says the hero is.
+     */
+    fun setSurface(pv: PlayerView) {
+        if (surface === pv) return
+        if (surface != null) release()
+        surface = pv
+        playingIdentity = ""
+        if (pv.tag !is View.OnAttachStateChangeListener) {
+            val l = object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = Unit
+                override fun onViewDetachedFromWindow(v: View) { if (surface === v) release() }
             }
-            s.pending = fire
-            pv.postDelayed(fire, theme.token("preview", "delayMs", 1400.0).toLong())
+            pv.tag = l
+            pv.addOnAttachStateChangeListener(l)
         }
     }
 
-    private fun begin(pv: PlayerView, s: Session, url: String, theme: Theme) {
-        s.player?.let { old -> runCatching { old.stop(); old.release() } }
+    /** The hero is going away (recycled or the screen left): free the decoder and forget the view. */
+    fun clearSurface(pv: PlayerView) {
+        if (surface !== pv) return
+        release()
+        surface = null
+        headline = null
+    }
+
+    /** The item the billboard is showing, so a preview can fall back to it when focus leaves a card. */
+    fun setHeadline(item: Item?) {
+        headline = item
+    }
+
+    // ---- dwell on a card ------------------------------------------------------------------
+
+    /**
+     * A card under the eye for `preview.delayMs` gets its trailer in the hero. Focus moving, a key
+     * press or a scroll cancels what has not started, so a clip never opens under a card the viewer
+     * has already left, and never mid-scroll.
+     */
+    fun onCardFocus(ctx: AppContext, item: Item?, hasFocus: Boolean) {
+        cancelPending()
+        if (!hasFocus || item == null || item.identity.isBlank()) return
+        if (surface == null) return
+        val delay = ctx.theme.token("preview", "delayMs", 1500.0).toLong()
+        if (delay <= 0L) return
+        val r = Runnable {
+            dwell = null
+            previewFromCard = true
+            show(ctx, item)
+        }
+        dwell = r
+        main.postDelayed(r, delay)
+    }
+
+    /** Focus left a card: go back to the billboard's own title, once, and only if nothing else won. */
+    fun onCardUnfocus(ctx: AppContext) {
+        cancelPending()
+        if (!previewFromCard) return
+        val back = headline ?: return
+        val wait = (ctx.theme.token("preview", "delayMs", 1500.0) / 2.0).toLong().coerceAtLeast(300L)
+        val r = Runnable {
+            dwell = null
+            previewFromCard = false
+            show(ctx, back)
+        }
+        dwell = r
+        main.postDelayed(r, wait)
+    }
+
+    /** Something moved (a key press, a scroll): whatever has not started yet must not start. */
+    fun cancelPending() {
+        dwell?.let { main.removeCallbacks(it) }
+        dwell = null
+    }
+
+    fun isDwelling(): Boolean = dwell != null
+
+    /** True while a card's clip — not the billboard's own — owns the hero. Rotation waits for this. */
+    fun isCardPreview(): Boolean = previewFromCard && (dwell != null || player != null)
+
+    // ---- playback -------------------------------------------------------------------------
+
+    /** Play this item's trailer in the hero. Safe to call for the same item twice. */
+    fun show(ctx: AppContext, item: Item) {
+        val pv = surface ?: return
+        if (!pv.isAttachedToWindow) return
+        if (ctx.theme.token("preview", "enabled", 1.0) < 0.5) return
+        if (item.identity.isBlank()) return
+        if (playingIdentity == item.identity && playerActive()) return
+
+        val mine = ++token
+        url(ctx, item.identity) { clip ->
+            main.post {
+                // A newer request, a different surface or a detached hero wins over this answer.
+                if (mine != token || surface !== pv || !pv.isAttachedToWindow) return@post
+                if (clip.isNullOrBlank()) {
+                    // No trailer: the still artwork stays, and the hero is not left black.
+                    releasePlayer()
+                    return@post
+                }
+                begin(pv, clip, item.identity)
+            }
+        }
+    }
+
+    private fun playerActive(): Boolean = player?.let { it.isPlaying || it.playbackState == Player.STATE_BUFFERING } == true
+
+    /** The hub lookup, cached. A transport failure is not an answer, so it is retried later. */
+    private fun url(ctx: AppContext, identity: String, cb: (String?) -> Unit) {
+        if (urls.containsKey(identity)) {
+            cb(urls[identity])
+            return
+        }
+        if (!asking.add(identity)) return
+        ctx.hub.trailer(identity, ctx.profile?.id) { value, error ->
+            main.post {
+                asking.remove(identity)
+                if (urls.size > 300) urls.clear()
+                val v = value?.takeIf { it.isNotBlank() }
+                if (error != null) urls.remove(identity) else urls[identity] = v
+                cb(if (error != null) null else v)
+            }
+        }
+    }
+
+    private fun begin(pv: PlayerView, url: String, identity: String) {
+        releasePlayer()
+        playingIdentity = identity
         val exo = ExoPlayer.Builder(pv.context).build()
         exo.volume = 0f                                     // silent: sound stays a deliberate choice
         exo.repeatMode = Player.REPEAT_MODE_ONE             // loop the clip while the card is up
+        exo.playWhenReady = true                            // without this Media3 never actually starts
         pv.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM  // fill the frame, crop the edges
-        pv.alpha = 0f
+        pv.alpha = 0f                                       // the poster stays until the first frame
         pv.player = exo
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -71,23 +187,25 @@ object Preview {
         })
         exo.setMediaItem(MediaItem.fromUri(url))
         exo.prepare()
-        s.player = exo
+        player = exo
     }
 
-    fun stop(pv: PlayerView) {
-        (pv.tag as? Session)?.let { s ->
-            s.token++                                   // cancels a clip that has not fired yet
-            s.pending?.let { pv.removeCallbacks(it) }
-            s.player?.let { old ->
-                old.stop()
-                runCatching { old.release() }
-            }
-            s.player = null
+    private fun releasePlayer() {
+        player?.let { p -> runCatching { p.stop(); p.release() } }
+        player = null
+        playingIdentity = ""
+        surface?.let { pv ->
+            pv.animate().alpha(0f).setDuration(220L)
+                .withEndAction { if (surface === pv) pv.player = null }
+                .start()
         }
-        pv.tag = null
-        if (pv.player != null) {
-            pv.player = null
-            pv.alpha = 0f                               // back to the still artwork
-        }
+    }
+
+    /** Stop the clip and free the decoder. Called on screen leave, on Play, and on app stop. */
+    fun release() {
+        cancelPending()
+        token++
+        previewFromCard = false
+        releasePlayer()
     }
 }

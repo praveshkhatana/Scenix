@@ -26,6 +26,14 @@ object Views {
         maxLines: Int = 1,
     ): TextView {
         val tv = TextView(ctx.app)
+        // Labels are not controls. A TextView that can take focus becomes a D-pad stop you can press,
+        // and on Android TV a focused label shows a selection highlight — which is what made moving
+        // up and down feel like it was selecting text instead of cards.
+        tv.isFocusable = false
+        tv.isFocusableInTouchMode = false
+        tv.isClickable = false
+        tv.isLongClickable = false
+        tv.setTextIsSelectable(false)
         tv.includeFontPadding = false
         tv.setSingleLine(maxLines == 1)
         tv.maxLines = maxLines

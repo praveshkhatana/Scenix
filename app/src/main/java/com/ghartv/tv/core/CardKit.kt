@@ -36,6 +36,12 @@ class CardHolder(
     /** The item currently bound — set by the row renderer, read by the click/focus handlers. */
     var boundItem: Item? = null
 
+    /**
+     * True until this holder's first bind. A row fades up once, when it first appears; a holder that
+     * is reused by scrolling keeps this false, so scrolling sideways never re-triggers the entrance.
+     */
+    var needsEntrance = true
+
     /** Art radius for this card, from the theme. */
     val artRadiusPx: Int get() = ctx.theme.radius("card", 6f)
 
@@ -102,16 +108,21 @@ class CardHolder(
         return d
     }
 
-    /** Bottom red progress bar for `continue`-style cards. */
+    /**
+     * Bottom progress bar for `continue`-style cards — 8 px of brand red on the theme's track, the
+     * mockup's `.trk`/`.pl`. It is a child of the art, so it is clipped by the art's rounded corners
+     * and survives recycling because `part()` hands back the same instance.
+     */
     fun progressBar(key: String, fraction: Float, color: Int, trackColor: Int): View {
+        val h = ctx.theme.px(8f)
         val bar = part(key, art) {
             FrameLayout(ctx.app).apply {
-                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ctx.theme.px(5f), Gravity.BOTTOM)
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h, Gravity.BOTTOM)
             }
         }
-        bar.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ctx.theme.px(5f), Gravity.BOTTOM)
+        bar.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h, Gravity.BOTTOM)
         bar.setBackgroundColor(trackColor)
-        val fill = (bar as FrameLayout).let { fl ->
+        val fill = bar.let { fl ->
             if (fl.childCount == 0) {
                 val v = View(ctx.app)
                 fl.addView(v, FrameLayout.LayoutParams(0, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -122,6 +133,99 @@ class CardHolder(
         fill.layoutParams = FrameLayout.LayoutParams(w, FrameLayout.LayoutParams.MATCH_PARENT)
         fill.setBackgroundColor(color)
         return bar
+    }
+
+    /**
+     * A small chip in the bottom-right of the art. Unlike [badge] this is not a name — it is a
+     * capability the viewer is about to use (HD, 4K, CC), so it sits opposite the title, the way the
+     * mockup puts the format marks at the far end of the row.
+     */
+    fun flag(key: String, label: String): TextView {
+        val theme = ctx.theme
+        val tv = part(key, overlay) {
+            val t = TextView(ctx.app)
+            t.includeFontPadding = false
+            t.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, theme.type("badge", 15f))
+            t.setTextColor(theme.color("hdInk", "#E0E0E0"))
+            t.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+            t.gravity = Gravity.CENTER
+            val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.gravity = Gravity.BOTTOM or Gravity.END
+            lp.setMargins(0, 0, theme.px(10f), theme.px(10f))
+            t.layoutParams = lp
+            t
+        }
+        tv.text = label
+        tv.visibility = if (label.isEmpty()) View.GONE else View.VISIBLE
+        tv.background = if (label.isEmpty()) null else Views.rounded(theme.color("scrim", "#8C141414"), theme.radius("badge", 4f))
+        return tv
+    }
+
+    /**
+     * The hub's source list carries the quality words; the viewer only needs to know the best one
+     * this TV can actually reach. Nothing is claimed that the hub did not say.
+     */
+    fun qualityFlag(item: Item): String {
+        val q = item.sources.map { it.quality.lowercase() }
+        return when {
+            q.any { it.contains("4k") || it.contains("2160") || it.contains("uhd") } -> "4K"
+            q.any { it.contains("hd") || it.contains("1080") || it.contains("720") } -> "HD"
+            else -> ""
+        }
+    }
+
+    /** CC only when the hub says which subtitle languages exist for this title. */
+    fun subtitleFlag(item: Item): String = if (item.subtitleLanguages.isNotEmpty()) "CC" else ""
+
+    /**
+     * A name drawn INSIDE the art, for the rows whose artwork is only a logo (live channels). The
+     * viewer asked for no text under the card, so the text that a channel genuinely needs rides on
+     * the artwork instead, over its own scrim.
+     */
+    fun overlayTitle(value: String) {
+        val theme = ctx.theme
+        val scrim = part("titleScrim", overlay) {
+            View(ctx.app).apply {
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f), Gravity.BOTTOM)
+                background = Views.gradient(intArrayOf(0x00000000, theme.color("scrimInk", "#EB000000")), 0)
+            }
+        }
+        scrim.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+        val tv = textPart("overlayTitle", overlay, "caption", 19f, theme.ink, bold = true)
+        tv.text = value
+        tv.maxLines = 1
+        tv.ellipsize = android.text.TextUtils.TruncateAt.END
+        tv.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+        val lp = tv.layoutParams as FrameLayout.LayoutParams
+        lp.gravity = Gravity.BOTTOM or Gravity.START
+        lp.width = layout.artWidth - 2 * theme.px(14f)
+        lp.setMargins(theme.px(14f), 0, theme.px(14f), theme.px(12f))
+        tv.layoutParams = lp
+    }
+
+    /** A recycled card must never keep the alpha/offset of an entrance animation. */
+    fun resetMotion() {
+        root.animate().cancel()
+        root.alpha = 1f
+        root.translationY = 0f
+    }
+
+    /**
+     * The card's entrance: 600 ms fade-up, staggered by position. Only the first time a row is
+     * filled — a card that re-animated on every scroll step is the difference between "Netflix" and
+     * a screensaver.
+     */
+    fun animateIn(staggerIndex: Int) {
+        val theme = ctx.theme
+        val ms = theme.animMs("fadeUpMs", 600)
+        if (ms <= 0 || staggerIndex < 0) return
+        val shift = ctx.theme.px(ctx.theme.token("anim", "fadeUpShift", 20.0).toFloat()).toFloat()
+        root.alpha = 0f
+        root.translationY = shift
+        root.animate().alpha(1f).translationY(0f)
+            .setStartDelay((staggerIndex * ctx.theme.animMs("fadeUpStagger", 70)).toLong())
+            .setDuration(ms.toLong())
+            .start()
     }
 
     /** Load the right artwork for this card's aspect, through the shared [ImageLoader]. */
@@ -139,9 +243,16 @@ class CardHolder(
          * Build the generic skeleton: art (image + overlay) with an optional caption block below.
          *
          * `cardFocusable` is false for billboard-style cards, where the buttons inside the card are
-         * the D-pad stops instead of the card itself.
+         * the D-pad stops instead of the card itself. `onOpen` says what a press means: Detail for
+         * everything the viewer has not started yet, the player for "continue watching".
          */
-        fun build(ctx: AppContext, layout: RowLayout, host: ScreenHost, cardFocusable: Boolean = true): CardHolder {
+        fun build(
+            ctx: AppContext,
+            layout: RowLayout,
+            host: ScreenHost,
+            cardFocusable: Boolean = true,
+            onOpen: ((Item) -> Unit)? = null,
+        ): CardHolder {
             val theme = ctx.theme
             val root = FrameLayout(ctx.app)
             root.layoutParams = RecyclerView.LayoutParams(
@@ -184,8 +295,17 @@ class CardHolder(
 
             // D-pad: the whole card is one focusable thing; the ring goes on the art.
             if (cardFocusable) {
-                Focus.attach(root, art, ctx, theme.radius("card", 6f), scale = true, onClick = {
-                    holder.boundItem?.let { host.openDetail(it.identity, it) }
+                // Nothing inside a card is a focus stop: the card is the thing the remote is on, and
+                // its artwork carries the selection frame.
+                root.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                // With the travelling frame (FocusGlass) the card draws no ring of its own: two
+                // highlights on one card is the flicker this replaces.
+                val ringOn = if (FocusGlass.enabled(ctx)) null else art
+                Focus.attach(root, ringOn, ctx, theme.radius("card", 6f), scale = true, onClick = {
+                    holder.boundItem?.let { item ->
+                        val open = onOpen
+                        if (open != null) open(item) else host.openDetail(item.identity, item)
+                    }
                 })
             } else {
                 // Buttons inside the card are the focus stops; the art still lights up.

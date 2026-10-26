@@ -14,7 +14,7 @@
   "ink": "#FFFFFF",
   "ink1": "#E8E8E8",
   "ink2": "#B3B3B3",
-  "ink3": "#7D7D7D",
+  "ink3": "#737373",
   "brand": "#E50914",
   "brandDeep": "#B00710",
   "match": "#46D369",
@@ -27,28 +27,34 @@
   "scrimInk": "#EB141414",
   "scrimMid": "#8C141414",
   "modalScrim": "#E6000000",
-  "btnGrey": "#B36D6D6E",
+  "btnGrey": "#1AFFFFFF",
   "lineStrong": "#8FFFFFFF",
-  "track": "#47FFFFFF",
+  "track": "#2F2F2F",
   "chipBg": "#33FFFFFF",
   "surfHover": "#2F2F2F",
   "keyBg": "#66000000",
   "key": "#2A2A2A",
   "navIdle": "#CCFFFFFF",
-  "numeralFill": "#141414",
-  "numeralStroke": "#6F6F6F",
+  "numeralFill": "#000000",
+  "numeralStroke": "#7C7C7C",
   "panelScrim": "#E6000000",
   "panelRow": "#1FFFFFFF",
-  "panelValue": "#F2C33A"
+  "panelValue": "#F2C33A",
+  "surface3": "#2F2F2F",
+  "border": "#1AFFFFFF",
+  "numeralFillRed": "#E50914",
+  "numeralStrokeRed": "#4A0007",
+  "matBorder": "#59FFFFFF",
+  "hdInk": "#E0E0E0"
  },
  "spacing": {
-  "gutter": 64,
-  "gap": 16,
+  "gutter": 76,
+  "gap": 20,
   "rowGap": 34,
   "captionGap": 12,
   "metaGap": 6,
   "navHeight": 96,
-  "billboardHeight": 760,
+  "billboardHeight": 842,
   "chipTop": 788,
   "navGap": 40,
   "chipGap": 14,
@@ -69,7 +75,8 @@
   "key": 6,
   "modal": 10,
   "avatar": 10,
-  "panel": 10
+  "panel": 10,
+  "heroButton": 12
  },
  "type": {
   "brand": 34,
@@ -79,10 +86,10 @@
   "h2": 56,
   "h3": 34,
   "sub": 24,
-  "matLine": 19,
+  "matLine": 26,
   "button": 26,
   "chip": 20,
-  "rowTitle": 26,
+  "rowTitle": 32,
   "explore": 18,
   "caption": 19,
   "meta": 17,
@@ -91,14 +98,14 @@
   "liMeta": 20,
   "readout": 20,
   "searchField": 22,
-  "profileName": 24,
+  "profileName": 32,
   "avatarText": 64,
-  "key": 34,
+  "key": 48,
   "pinDot": 20,
   "modalWidth": 780,
-  "keyWidth": 110,
-  "keyHeight": 96,
-  "avatar": 176,
+  "keyWidth": 128,
+  "keyHeight": 128,
+  "avatar": 280,
   "lockGlyph": 52,
   "playerKey": 64,
   "panelTitle": 26,
@@ -106,46 +113,56 @@
   "panelNote": 18
  },
  "focus": {
-  "ringWidth": 4,
-  "scale": 1.05,
-  "durationMs": 200,
-  "shadowElevation": 12
+  "ringWidth": 5,
+  "scale": 1.06,
+  "durationMs": 160,
+  "shadowElevation": 12,
+  "glass": 1,
+  "glassPad": 6
  },
  "anim": {
   "cardFadeInMs": 220,
-  "rowScrollMs": 320,
-  "screenFadeMs": 180
+  "rowScrollMs": 240,
+  "screenFadeMs": 180,
+  "fadeUpMs": 600,
+  "fadeUpShift": 20,
+  "fadeUpStagger": 70,
+  "navFadeAt": 50,
+  "navFadeMs": 200
  },
  "cards": {
   "poster": {
-   "width": 300,
+   "width": 280,
    "aspect": 1.5,
-   "caption": true,
+   "caption": false,
    "fullBleed": false
   },
   "channel": {
-   "width": 300,
-   "aspect": 0.5667,
-   "caption": true,
+   "width": 280,
+   "aspect": 1.5,
+   "caption": false,
    "fullBleed": false
   },
   "continue": {
-   "width": 300,
-   "aspect": 0.5667,
-   "caption": true,
+   "width": 280,
+   "aspect": 1.5,
+   "caption": false,
    "fullBleed": false
   },
   "hero": {
-   "width": 1792,
-   "aspect": 0.4241,
+   "width": 1920,
+   "aspect": 0.4385,
    "caption": false,
    "fullBleed": true
   },
   "_top10": "The giant numeral is sized off the art height, so it scales with whatever card size the row uses. Mockup: 210 px text on a 300 px tall art, -26 px overlap, 7 px outline.",
-  "numeralTextRatio": 0.7,
-  "numeralWidthRatio": 0.5,
-  "numeralOverlapRatio": 0.087,
-  "numeralStrokePx": 7
+  "numeralTextRatio": 0.495,
+  "numeralWidthRatio": 0.55,
+  "numeralOverlapRatio": 0.229,
+  "numeralStrokePx": 8,
+  "numeralTextPx": 208,
+  "numeralOverlapPx": 96,
+  "numeralRed": 0
  },
  "rows": {
   "exploreThreshold": 6,
@@ -176,7 +193,7 @@
   "progressPostMs": 10000,
   "seekBackMs": 10000,
   "seekForwardMs": 30000,
-  "controlsHideMs": 3500,
+  "controlsHideMs": 6000,
   "torrentMaxBitrate": 4000000,
   "stallFailoverMs": 6000
  },
@@ -194,7 +211,18 @@
  },
  "preview": {
   "enabled": 1.0,
-  "delayMs": 1400.0,
+  "delayMs": 1500.0,
   "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
+ },
+ "hero": {
+  "rotateMs": 6000,
+  "rotateFadeMs": 500,
+  "maxItems": 5,
+  "playWidth": 320,
+  "playHeight": 72
+ },
+ "menu": {
+  "width": 560,
+  "radius": 10
  }
 }

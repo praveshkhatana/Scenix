@@ -41,18 +41,27 @@ data class RowLayout(
     /** Row-level gutter on the left of the whole row (safe area is separate). */
     val rowExtraLeft: Int,
     /** How wide a rank numeral may be, as a fraction of the art height (used by row plugins). */
-    val numeralWidthRatio: Float = 0.72f,
+    val numeralWidthRatio: Float = 0.55f,
     /** How far a rank numeral overlaps the art, same fraction. */
-    val numeralOverlapRatio: Float = 0.12f,
+    val numeralOverlapRatio: Float = 0.229f,
+    /** Absolute numeral metrics from the theme (design px, already scaled); 0 = use the ratios. */
+    val numeralTextPx: Int = 0,
+    val numeralOverlapPx: Int = 0,
+    val numeralStrokePx: Int = 0,
+    val numeralTextRatio: Float = 0.495f,
 ) {
     companion object {
         /**
-         * Default geometry for a card type, straight from `assets/theme.json` → `cards`, resolved
+         * Default geometry for a card type, straight from `assets/theme.json` -> `cards`, resolved
          * against this screen's pixel width (so a `fullBleed` card is exactly the content width).
+         *
+         * A `fullBleed` card is the WHOLE screen width, gutter included: the billboard is 1920 x 842
+         * in the mockup and its text column carries the gutter itself. Insetting the art would make
+         * the hero a different height on a different screen, which is what the theme cannot fix.
          */
         fun of(theme: Theme, screenW: Int, cardType: String): RowLayout {
             val spec = theme.cardSpec(cardType)
-            val artW = if (spec.fullBleed) (screenW - 2 * theme.gutter).coerceAtLeast(1) else spec.width
+            val artW = if (spec.fullBleed) screenW.coerceAtLeast(1) else spec.width
             return RowLayout(
                 slotWidth = artW + spec.numeralGutter,
                 artWidth = artW,
@@ -62,8 +71,12 @@ data class RowLayout(
                 caption = spec.caption,
                 fullBleed = spec.fullBleed,
                 rowExtraLeft = 0,
-                numeralWidthRatio = theme.token("cards", "numeralWidthRatio", 0.72).toFloat(),
-                numeralOverlapRatio = theme.token("cards", "numeralOverlapRatio", 0.12).toFloat(),
+                numeralWidthRatio = theme.token("cards", "numeralWidthRatio", 0.55).toFloat(),
+                numeralOverlapRatio = theme.token("cards", "numeralOverlapRatio", 0.229).toFloat(),
+                numeralTextPx = theme.px(theme.token("cards", "numeralTextPx", 0.0).toFloat()),
+                numeralOverlapPx = theme.px(theme.token("cards", "numeralOverlapPx", 0.0).toFloat()),
+                numeralStrokePx = theme.px(theme.token("cards", "numeralStrokePx", 8.0).toFloat()),
+                numeralTextRatio = theme.token("cards", "numeralTextRatio", 0.495).toFloat(),
             )
         }
     }
@@ -84,6 +97,15 @@ interface CardPlugin : Plugin {
 
     /** Optional: release references (bitmaps are shared with ImageLoader, so usually nothing). */
     fun unbind(holder: CardHolder) {}
+
+    /**
+     * What a press on this card means. Detail for everything the viewer has not started; "continue
+     * watching" goes straight into the player at the saved position, because a row that promises to
+     * resume something has to resume it, not make the viewer press twice.
+     */
+    fun open(item: Item, ctx: AppContext, host: ScreenHost) {
+        host.openDetail(item.identity, item)
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

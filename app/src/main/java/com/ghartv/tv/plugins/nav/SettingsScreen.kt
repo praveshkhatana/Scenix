@@ -13,7 +13,9 @@ import com.scenix.tv.R
 import com.scenix.tv.core.Addon
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.FixtureHub
 import com.scenix.tv.core.Format
+import com.scenix.tv.core.HttpHub
 import com.scenix.tv.core.HubError
 import com.scenix.tv.core.HubPrefs
 import com.scenix.tv.core.NavBar
@@ -61,17 +63,27 @@ object SettingsScreen : ScreenPlugin {
         section(ctx, col, "Connection")
         textRow(ctx, col, "Hub address", ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url)), editable = true) { value ->
             ctx.prefs.setHubUrl(value.trim())
+            // Typing an address means "show me the real library", so it drops the offline-preview pin as
+            // well. Without that the rows on screen keep coming from the bundled samples and the new
+            // address looks like it did nothing at all.
+            ctx.prefs.setFixture("")
+            ctx.hub = HttpHub(ctx.app, ctx.prefs)
             host.toast("Hub set to ${value.trim()}")
+            host.show("settings")
         }
         val fixture = ctx.prefs.fixture()
         actionRow(
-            ctx, col, "Offline fixtures",
-            if (fixture.isNullOrBlank()) "off \u2014 using the hub" else fixture,
-            if (fixture.isNullOrBlank()) "Load assets/fixtures/home.json" else "Use the hub again",
+            ctx, col, "Offline preview",
+            // The bundled sample library is a development aid, not a mode a household should sit in:
+            // it has last month's rows and no live artwork, so the state is spelled out here.
+            if (fixture.isNullOrBlank()) "off \u2014 streaming from the hub" else "on \u2014 bundled sample library",
+            if (fixture.isNullOrBlank()) "Use the bundled samples (no network)" else "Go back to the hub",
         ) {
             val turnOn = fixture.isNullOrBlank()
             ctx.prefs.setFixture(if (turnOn) "fixtures/home.json" else "")
-            host.toast(if (turnOn) "Fixtures on \u2014 restart to apply" else "Hub mode \u2014 restart to apply")
+            ctx.hub = if (turnOn) FixtureHub(ctx.app, "fixtures/home.json") else HttpHub(ctx.app, ctx.prefs)
+            host.toast(if (turnOn) "Bundled samples on" else "Streaming from the hub")
+            host.show("home")
         }
         textRow(ctx, col, "Data client", ctx.hub.label, editable = false, onChange = {})
 

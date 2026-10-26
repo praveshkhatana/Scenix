@@ -36,6 +36,9 @@ class MainActivity : AppCompatActivity(), ScreenHost {
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
+            // Any key is a decision to move, so a trailer still waiting out its dwell is cancelled
+            // here rather than opening under a card the viewer has already left.
+            com.scenix.tv.core.Preview.cancelPending()
             val pad = PinPad.active
             if (pad != null && event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
                 pad.remoteDigit((event.keyCode - KeyEvent.KEYCODE_0).toString())
@@ -54,6 +57,7 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     private val seeds = HashMap<String, Item>()
     private var playReq: Pair<Item, com.scenix.tv.core.Source?>? = null
     private var pendingDeepLink: String? = null
+    private var pendingDeepPlay: String? = null
     private lateinit var watch: com.scenix.tv.core.HubWatch
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,10 +70,7 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         root.setBackgroundColor(ctx.theme.bg)
         setContentView(root)
 
-        val identity = intent?.data?.let { uri ->
-            if (uri.scheme == "tv" && uri.host == "detail") uri.pathSegments.firstOrNull() else null
-        }
-        if (!identity.isNullOrBlank()) pendingDeepLink = identity
+        handleDeepLink(intent)
 
         // One health probe decides whether the whole app talks to the hub or to the bundled
         // fixtures, so the first screen never shows a blank page. It keeps retrying after that.
@@ -79,6 +80,63 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             if (stack.isNotEmpty()) render(stack.last().screen)
         }
         watch.start { startup() }
+    }
+
+    /**
+     * A `tv://` link that arrives while the app is already up (item 6). With the manifest at
+     * `singleTop` Android hands the new Intent to this same instance instead of starting a second
+     * one, so the link has to be read here — reading it only in onCreate is why `am start -d
+     * tv://detail/…` looked like it did nothing.
+     */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    /** `tv://detail/<identity>` and `tv://play/<identity>`, from onCreate and from onNewIntent. */
+    private fun handleDeepLink(i: Intent?) {
+        val uri = i?.data ?: return
+        if (!uri.scheme.equals("tv", true)) return
+        val identity = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val route = (uri.host ?: "detail").lowercase()
+        if (route != "play") routeDetail(identity) else routePlay(identity)
+    }
+
+    private fun routeDetail(identity: String) {
+        if (ctx.profile == null) { pendingDeepLink = identity; return }
+        openDetail(identity, seeds[identity] ?: Item(identity = identity, title = ""))
+    }
+
+    private fun routePlay(identity: String) {
+        if (ctx.profile == null) { pendingDeepPlay = identity; return }
+        openPlayerFor(identity)
+    }
+
+    /**
+     * A bare `tv://play/<identity>` may arrive with no seed in this process, so the item is fetched
+     * from the hub first; without sources there is nothing for the player to open.
+     */
+    private fun openPlayerFor(identity: String) {
+        val seed = seeds[identity]
+        if (seed != null && seed.sources.isNotEmpty()) {
+            play(seed, null)
+            return
+        }
+        ctx.hub.meta(identity, seed?.type) { item, _ ->
+            runOnUiThread {
+                if (item != null && item.sources.isNotEmpty()) play(item, null)
+                else {
+                    seeds[identity] = item ?: Item(identity = identity, title = "")
+                    show("player", identity)
+                }
+            }
+        }
+    }
+
+    /** Re-render whatever is on top, in place (MENU-key actions that change what a profile may see). */
+    override fun refresh() {
+        runOnUiThread { stack.lastOrNull()?.let { render(it.screen) } }
     }
 
     /** Called once the data client for this session is known. */
@@ -101,7 +159,11 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         val i = intent ?: return
         i.getStringExtra("hub_url")?.takeIf { it.isNotBlank() }?.let {
             ctx.prefs.setHubUrl(it.trim())
-            Log.i(TAG, "hub_url override: ${it.trim()}")
+            // Naming a hub is the whole point of the flag: it means "show me the real library". The
+            // offline fixture is a development pin that survives a relaunch, and leaving it stuck on
+            // is how a TV ends up displaying last month's rows and no artwork while the hub is healthy.
+            ctx.prefs.setFixture("")
+            Log.i(TAG, "hub_url override: ${it.trim()} (offline preview cleared)")
         }
         i.getStringExtra("fixture")?.takeIf { it.isNotBlank() }?.let {
             ctx.prefs.setFixture(it)
@@ -121,6 +183,9 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
     override fun container(): FrameLayout {
         root.removeAllViews()
+        // The selection frame belongs to the screen, not to a row: every screen gets exactly one,
+        // installed before the screen draws over it.
+        com.scenix.tv.core.FocusGlass.install(root, ctx)
         return root
     }
 
@@ -177,8 +242,13 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         ctx.prefs.setCurrentProfileId(profile.id)
         stack.clear()
         val deep = pendingDeepLink
+        val deepPlay = pendingDeepPlay
         pendingDeepLink = null
-        if (!deep.isNullOrBlank()) {
+        pendingDeepPlay = null
+        if (!deepPlay.isNullOrBlank()) {
+            seeds[deepPlay] = seeds[deepPlay] ?: Item(identity = deepPlay, title = "")
+            openPlayerFor(deepPlay)
+        } else if (!deep.isNullOrBlank()) {
             seeds[deep] = seeds[deep] ?: Item(identity = deep, title = "")
             show("detail", deep)
         } else {

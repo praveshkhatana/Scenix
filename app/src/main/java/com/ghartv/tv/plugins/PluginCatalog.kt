@@ -31,6 +31,8 @@ object PluginCatalog {
         reg.rules.register(com.scenix.tv.plugins.rules.HideRows)
         reg.rules.register(com.scenix.tv.plugins.rules.KidsGuard)
         reg.rules.register(com.scenix.tv.plugins.rules.RiskOrder)
+        reg.rules.register(com.scenix.tv.plugins.rules.ContinueGuard)
+        reg.rules.register(com.scenix.tv.plugins.rules.NotInterested)
 
         // ---- players: this registry IS the list of things this TV can actually do with a source.
         //      "http" is the fallback for any unknown kind, so a new hub kind still streams.

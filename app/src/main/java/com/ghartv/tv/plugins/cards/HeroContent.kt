@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.media3.ui.PlayerView
 import com.scenix.tv.R
 import com.scenix.tv.core.AppContext
@@ -18,11 +19,17 @@ import com.scenix.tv.core.Preview
 import com.scenix.tv.core.Views
 
 /**
- * The billboard content — art, scrims, brand mark, title, the maturity/quality chips, the reason
- * line and the Play / More Info / + / thumbs buttons.
+ * The billboard content — art, scrims, brand mark, title, the match/maturity/runtime/quality line,
+ * the reason line and the Play / More Info / + buttons.
  *
  * One implementation, three callers: the `hero` card plugin, the Home billboard and the Detail
- * header. That is why the Home billboard and the Detail hero cannot drift apart.
+ * header. That is why the Home billboard and the Detail hero cannot drift apart, and why a trailer
+ * that starts on the billboard behaves exactly like one that starts on the title page.
+ *
+ * Netflix's geometry, from the mockup: Play is a fixed 320 x 72 white pill that turns brand red
+ * under the eye, More Info is the same height in translucent white, and the whole text column is a
+ * bounded box, so the info line ellipsizes at the edge of the hero instead of running off a 1920 px
+ * screen — the "2h 20m · PA · E" clipping the screenshot showed.
  */
 object HeroContent {
 
@@ -31,8 +38,9 @@ object HeroContent {
         val overlay = holder.overlay
         holder.loadArt(item)
 
-        // Netflix: while a title holds the eye, its artwork quietly becomes a muted looping clip.
-        // It lives inside the art frame so the scrims and text above it never move.
+        // The hero is the preview surface for the whole screen: whatever card the viewer stands on
+        // plays here, not on the card. It lives inside the art frame so the scrims and text above it
+        // never move.
         val preview = holder.part("preview", holder.art) {
             PlayerView(ctx.app).apply {
                 layoutParams = FrameLayout.LayoutParams(
@@ -42,7 +50,11 @@ object HeroContent {
                 alpha = 0f
             }
         }
-        (preview as? PlayerView)?.let { Preview.start(it, ctx, item) }
+        (preview as? PlayerView)?.let {
+            Preview.setSurface(it)
+            Preview.setHeadline(item)
+            Preview.show(ctx, item)
+        }
 
         // --- scrims: dark on the left for the text, dark at the bottom into the page background
         val leftScrim = holder.part("scrimL", overlay) {
@@ -64,7 +76,8 @@ object HeroContent {
             floatArrayOf(0f, 0.30f, 0.62f),
         )
 
-        // --- text + buttons column
+        // --- text + buttons column. Its width is fixed, not wrap_content: an unbounded column can
+        // push the info line past the right edge of the screen, which is how the meta text ran off.
         val col = holder.part("heroText", overlay) {
             LinearLayout(ctx.app).apply {
                 orientation = LinearLayout.VERTICAL
@@ -78,6 +91,7 @@ object HeroContent {
         lp.leftMargin = theme.gutter
         lp.rightMargin = theme.gutter
         lp.bottomMargin = if (compact) theme.px(40f) else theme.px(78f)
+        lp.width = (holder.layout.artWidth - 2 * theme.gutter).coerceAtLeast(theme.px(400f))
         col.layoutParams = lp
 
         val mark = Views.text(ctx, "nmark", 40f, theme.brand, "", bold = true)
@@ -87,31 +101,27 @@ object HeroContent {
         val title = Views.text(ctx, if (compact) "h2" else "h1", if (compact) 56f else 104f, theme.ink, item.title, bold = true, maxLines = 2)
         replaceText(col, "title", title)
 
-        // chips: maturity box, HD box, then the year · duration · languages line
+        // Info line, in Netflix's order: match, maturity box, runtime, then the format marks.
+        // The last field is the only one allowed to shrink, and it is the least important one.
         val chips = LinearLayout(ctx.app)
         chips.orientation = LinearLayout.HORIZONTAL
         chips.gravity = Gravity.CENTER_VERTICAL
-        replaceRow(col, "chips", chips, theme.px(20f))
+        replaceRow(col, "chips", chips, theme.px(18f))
 
+        plainText(chips, "match", if (item.match > 0) "${item.match}% Match" else "", ctx, theme.match, bold = true)
         box(chips, "mat", Format.maturity(item), ctx)
-        box(chips, "hd", if (item.sources.any { it.quality.isNotBlank() }) "HD" else "", ctx)
-        val metaLine = arrayOf(
-            Format.year(item),
-            Format.duration(item.durationMs),
-            Format.languages(item),
-        ).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
-        val meta = Views.text(ctx, "matLine", 20f, theme.color("ink2", "#DCDCDC"), metaLine)
-        val mlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        mlp.marginStart = theme.px(14f)
-        chips.addView(meta, mlp)
+        plainText(
+            chips, "runtime",
+            arrayOf(Format.year(item), Format.duration(item.durationMs)).filter { it.isNotBlank() }.joinToString(" \u00B7 "),
+            ctx, theme.color("ink2", "#DCDCDC"),
+        )
+        box(chips, "hd", holder.qualityFlag(item), ctx)
+        box(chips, "cc", holder.subtitleFlag(item), ctx)
+        flexText(chips, "langs", Format.languages(item), ctx)
 
         // reason line — the honest "why is this billboard here", straight off the model
         val reason = buildString {
             if (item.inCinemas) append("New release \u2014 opened in the last 8 weeks")
-            if (item.match > 0) {
-                if (isNotEmpty()) append(" \u00B7 ")
-                append("${item.match}% match")
-            }
             if (item.sources.size > 1) {
                 if (isNotEmpty()) append(" \u00B7 ")
                 append("${item.sources.size} sources merged behind one tile")
@@ -121,7 +131,8 @@ object HeroContent {
         val reasonView = Views.text(ctx, "sub", 24f, theme.color("ink1", "#E8E8E8"), reason, maxLines = 2)
         replaceText(col, "reason", reasonView)
 
-        // buttons
+        // --- buttons: Play, then More Info. Ratings are not wired to the hub, so the thumbs the
+        // early mockup had are gone rather than a button that can only say "not wired yet".
         val btns = LinearLayout(ctx.app)
         btns.orientation = LinearLayout.HORIZONTAL
         btns.gravity = Gravity.CENTER_VERTICAL
@@ -129,22 +140,33 @@ object HeroContent {
 
         val progress = item.progress
         val resumable = progress != null && progress.watchedMs > 0 && progress.positionMs > 0
-        val play = button(
+        // A series Play names the episode it is about to start. A bare "Play" on a show is a promise no
+        // one can keep — the hub decides the episode (the one this profile stopped on, else the first) —
+        // so the button says which one it means, the way a real service does.
+        val ep = progress?.episode ?: item.firstEpisode()
+        val episodeHint = if (item.type == "series" && ep != null) " ${ep.label()}" else ""
+        val play = heroButton(
             ctx,
-            label = if (resumable) "Resume" else "Play",
+            label = (if (resumable) "Resume" else "Play") + episodeHint,
+            icon = R.drawable.ic_play,
             bg = Color.WHITE,
             fg = Color.BLACK,
-            icon = R.drawable.ic_play,
+            focusBg = theme.brand,
+            focusFg = Color.WHITE,
+            width = theme.px(theme.token("hero", "playWidth", 320.0).toFloat()),
         )
         play.setOnClickListener { holder.host.play(item, holder.host.app.playableSource(item)) }
         replaceButton(btns, "play", play, ctx)
 
-        val info = button(
+        val info = heroButton(
             ctx,
             label = "More Info",
-            bg = theme.color("btnGrey", "#B36D6D6E"),
-            fg = theme.ink,
             icon = R.drawable.ic_info,
+            bg = theme.color("btnGrey", "#1AFFFFFF"),
+            fg = theme.ink,
+            focusBg = theme.color("btnGreyHover", "#33FFFFFF"),
+            focusFg = theme.ink,
+            width = 0,
         )
         info.setOnClickListener { holder.host.openDetail(item.identity, item) }
         replaceButton(btns, "info", info, ctx)
@@ -158,33 +180,44 @@ object HeroContent {
             holder.host.toast(if (added) "Added to My List" else "Removed from My List")
         }
         replaceButton(btns, "plus", plus, ctx)
-
-        val up = roundButton(ctx, R.drawable.ic_thumb_up, false)
-        up.setOnClickListener { holder.host.toast("Ratings are not wired to the hub yet") }
-        replaceButton(btns, "up", up, ctx)
-
-        val down = roundButton(ctx, R.drawable.ic_thumb_down, false)
-        down.setOnClickListener { holder.host.toast("Ratings are not wired to the hub yet") }
-        replaceButton(btns, "down", down, ctx)
     }
 
     /** Clear the previous item's widgets before rebinding a recycled hero. */
     fun reset(holder: CardHolder) {
         // Release the preview before anything else: it is the one part holding a hardware decoder.
-        (holder.find("preview") as? PlayerView)?.let { Preview.stop(it) }
+        (holder.find("preview") as? PlayerView)?.let { Preview.clearSurface(it) }
         holder.find("heroText")?.visibility = View.GONE
         holder.find("scrimL")?.visibility = View.GONE
         holder.find("scrimB")?.visibility = View.GONE
     }
 
     // ---- button builders ------------------------------------------------------------------
-    fun button(ctx: AppContext, label: String, bg: Int, fg: Int, icon: Int): LinearLayout {
+
+    /**
+     * A hero button: fixed height, pill radius from the theme, and the whole control is the focus
+     * ring's owner. Play is white with black ink and turns brand red under the eye; More Info is
+     * translucent white. Both restyle on focus through [Focus.setFocusHooks], because a card (and a
+     * hero) gets exactly one focus listener.
+     */
+    private fun heroButton(
+        ctx: AppContext,
+        label: String,
+        icon: Int,
+        bg: Int,
+        fg: Int,
+        focusBg: Int,
+        focusFg: Int,
+        width: Int,
+    ): LinearLayout {
         val theme = ctx.theme
+        val radius = theme.radius("heroButton", 12f)
+        val height = theme.px(theme.token("hero", "playHeight", 72.0).toFloat())
         val b = LinearLayout(ctx.app)
         b.orientation = LinearLayout.HORIZONTAL
-        b.gravity = Gravity.CENTER_VERTICAL
-        b.setPadding(theme.px(34f), theme.px(16f), theme.px(34f), theme.px(16f))
-        b.background = Views.rounded(bg, theme.radius("button", 6f))
+        b.gravity = Gravity.CENTER
+        b.setPadding(theme.px(30f), 0, theme.px(30f), 0)
+        b.minimumHeight = height
+        b.background = Views.rounded(bg, radius)
         val iv = ImageView(ctx.app)
         iv.setImageResource(icon)
         iv.setColorFilter(fg)
@@ -194,6 +227,17 @@ object HeroContent {
         val tlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         tlp.marginStart = theme.px(14f)
         b.addView(tv, tlp)
+
+        Focus.attach(b, b, ctx, radius, scale = false)
+        Focus.setFocusHooks(b) { v, has ->
+            v.background = Views.rounded(if (has) focusBg else bg, radius)
+            (v as? LinearLayout)?.let { row ->
+                (row.getChildAt(0) as? ImageView)?.setColorFilter(if (has) focusFg else fg)
+                (row.getChildAt(1) as? TextView)?.setTextColor(if (has) focusFg else fg)
+            }
+        }
+        // width 0 means "as wide as its label": only Play is a fixed 320 x 72.
+        b.layoutParams = LinearLayout.LayoutParams(if (width > 0) width else ViewGroup.LayoutParams.WRAP_CONTENT, height)
         return b
     }
 
@@ -203,12 +247,13 @@ object HeroContent {
         val size = theme.px(58f)
         iv.layoutParams = LinearLayout.LayoutParams(size, size)
         iv.setImageResource(iconRes)
-        iv.setColorFilter(if (filled) theme.ink else theme.ink)
+        iv.setColorFilter(theme.ink)
         iv.scaleType = ImageView.ScaleType.CENTER_INSIDE
         val pad = theme.px(15f)
         iv.setPadding(pad, pad, pad, pad)
         val ring = if (filled) theme.brand else theme.color("lineStrong", "#8FFFFFFF")
         iv.background = Views.filled(theme.color("scrim", "#8C141414"), size / 2, theme.px(2f), ring)
+        Focus.attach(iv, iv, ctx, size / 2, scale = false)
         return iv
     }
 
@@ -217,14 +262,47 @@ object HeroContent {
         Focus.attach(view, view, ctx, ctx.theme.radius("button", 6f), scale = false)
     }
 
+    /** The maturity / HD / CC box: 2 px outline, 4 px radius, uppercase, tracked (the mockup's `.box`). */
     private fun box(parent: LinearLayout, key: String, value: String, ctx: AppContext) {
         val theme = ctx.theme
-        val tv = Views.text(ctx, "matLine", 19f, theme.ink, value)
-        tv.setPadding(theme.px(12f), theme.px(2f), theme.px(12f), theme.px(2f))
-        tv.background = Views.ring(theme.color("lineStrong", "#73FFFFFF"), theme.radius("chip", 4f), theme.px(1f))
+        val tv = Views.text(ctx, "matLine", 19f, theme.ink, value.uppercase())
+        tv.letterSpacing = 0.08f
+        tv.setPadding(theme.px(10f), theme.px(2f), theme.px(10f), theme.px(2f))
+        tv.background = Views.ring(
+            theme.color("matBorder", "#59FFFFFF"),
+            theme.radius("chip", 4f),
+            theme.px(2f),
+        )
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.marginEnd = theme.px(14f)
+        lp.marginEnd = theme.px(12f)
         parent.addView(tv, lp)
+        tv.tag = key
+        tv.visibility = if (value.isBlank()) View.GONE else View.VISIBLE
+    }
+
+    /** A plain field of the info line (match, runtime). */
+    private fun plainText(parent: LinearLayout, key: String, value: String, ctx: AppContext, color: Int, bold: Boolean = false) {
+        val theme = ctx.theme
+        val tv = Views.text(ctx, "matLine", 19f, color, value, bold = bold)
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.marginEnd = theme.px(12f)
+        parent.addView(tv, lp)
+        tv.tag = key
+        tv.visibility = if (value.isBlank()) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * The one field of the info line that may be cut: it takes whatever width is left and ellipsizes,
+     * so a title in five languages never pushes the hero's text off the right edge of the TV.
+     */
+    private fun flexText(parent: LinearLayout, key: String, value: String, ctx: AppContext) {
+        val theme = ctx.theme
+        val tv = Views.text(ctx, "matLine", 19f, theme.color("ink3", "#B0B0B0"), value)
+        tv.ellipsize = android.text.TextUtils.TruncateAt.END
+        val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        lp.marginEnd = theme.px(12f)
+        parent.addView(tv, lp)
+        tv.tag = key
         tv.visibility = if (value.isBlank()) View.GONE else View.VISIBLE
     }
 
@@ -245,10 +323,10 @@ object HeroContent {
     private fun replaceButton(parent: LinearLayout, key: String, view: View, ctx: AppContext) {
         parent.findViewWithTag<View>(key)?.let { parent.removeView(it) }
         view.tag = key
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        if (parent.childCount > 0) lp.marginStart = ctx.theme.px(16f)
+        val lp = view.layoutParams as? LinearLayout.LayoutParams
+            ?: LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        if (parent.childCount > 0) lp.marginStart = ctx.theme.gap
         parent.addView(view, lp)
-        focusable(view, ctx)
     }
 }
 

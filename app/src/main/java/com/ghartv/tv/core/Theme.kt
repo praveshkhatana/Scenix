@@ -153,7 +153,7 @@ class Theme private constructor(
                 type = root.optJSONObject("type") ?: JSONObject(),
                 cards = root.optJSONObject("cards") ?: JSONObject(),
                 focus = root.optJSONObject("focus") ?: JSONObject(),
-                anim = root.optJSONObject("animation") ?: JSONObject(),
+                anim = root.optJSONObject("anim") ?: root.optJSONObject("animation") ?: JSONObject(),
                 player = root.optJSONObject("player") ?: JSONObject(),
             )
         }

@@ -138,4 +138,11 @@ interface ScreenHost {
 
     /** Set the active profile (called by the profile picker after any PIN gate). */
     fun enterProfile(profile: Profile)
+
+    /**
+     * Re-render the screen that is on top, without pushing it onto the stack. A rule that changed
+     * what this profile may see (MENU key -> "Not interested") calls this instead of asking every
+     * screen to know how to refresh itself.
+     */
+    fun refresh() {}
 }

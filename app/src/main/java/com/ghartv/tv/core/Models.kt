@@ -44,13 +44,19 @@ data class Live(
 data class Progress(
     val positionMs: Long = 0,
     val watchedMs: Long = 0,
+    /** Which episode of a series this stopped on, so Play resumes that episode instead of S01E01. */
+    val episode: Episode? = null,
 ) {
     val fraction: Float
         get() = if (watchedMs <= 0L) 0f else (positionMs.toFloat() / watchedMs.toFloat()).coerceIn(0f, 1f)
 
     companion object {
         fun from(o: JSONObject?): Progress? = o?.let {
-            Progress(it.optLong("positionMs", 0L), it.optLong("watchedMs", 0L))
+            val e = it.optJSONObject("episode")
+            val se = if (e == null) null else Episode(
+                e.optInt("season", 0), e.optInt("episode", 0), s(e, "title", ""),
+            ).takeIf { q -> q.season > 0 && q.episode > 0 }
+            Progress(it.optLong("positionMs", 0L), it.optLong("watchedMs", 0L), se)
         }
     }
 }
@@ -94,6 +100,22 @@ data class Source(
 }
 
 /**
+ * One episode of a series. The hub lists these from the addon's own episode map and addresses streams
+ * as `<show>:<season>:<episode>`, so playing a particular episode is only a matter of naming it in the
+ * play request — the tile itself stays the series, which is what keeps rows, dedupe and Continue sane.
+ */
+data class Episode(val season: Int, val episode: Int, val title: String = "") {
+    /** What a person reads on a button: "S1 E4". */
+    fun label(): String = "S${season} E${episode}"
+
+    /** What a release is named on disk and in the player's title line: "S01E04". */
+    fun code(): String = "S%02dE%02d".format(season, episode)
+
+    /** The episode line for the player: "S01E04 · Cripples, Bastards and Broken Things". */
+    fun named(): String = if (title.isBlank()) code() else "${code()} \u00B7 $title"
+}
+
+/**
  * The item. `identity` is the merge key (`imdb:tt…`, else `norm:<slug>-<year>`); the app must
  * treat it as the primary key for everything (detail, progress, dedupe guard).
  */
@@ -117,12 +139,26 @@ data class Item(
     val progress: Progress? = null,
     val kids: Boolean = false,       // optional hub annotation; kids-guard uses it if present
     val sources: List<Source> = emptyList(),
+    /**
+     * Episodes of a series, when the hub knows them. A series is ONE tile with many addresses: this is
+     * what lets the Play button say "Play S1 E1" instead of guessing, and what lets the player queue the
+     * next episode instead of replaying the same one.
+     */
+    val episodes: List<Episode> = emptyList(),
+    /** Optional hub annotation: subtitle languages it can serve. Drives the CC chip; absent = no chip. */
+    val subtitleLanguages: List<String> = emptyList(),
 ) {
     /** Artwork to draw for a card of this item, given the card's aspect. */
     fun artFor(wide: Boolean): String? =
         (if (wide) backdrop ?: poster ?: logo else poster ?: logo ?: backdrop)?.takeIf { it.isNotBlank() }
 
     fun isLive(): Boolean = type == "channel" || live != null
+
+    /** The episode a Play press means when nobody has named one: the earliest one the hub listed. */
+    fun firstEpisode(): Episode? = episodes.minWithOrNull(compareBy({ it.season }, { it.episode }))
+
+    /** "S1 E1" for a button; "" when this is not a series with a known episode list. */
+    fun episodeLabel(): String = firstEpisode()?.label() ?: ""
 
     companion object {
         fun from(o: JSONObject): Item = Item(
@@ -145,6 +181,8 @@ data class Item(
             progress = Progress.from(o.optJSONObject("progress")),
             kids = o.optBoolean("kids", false) || s(o, "scope", "").equals("kids", true),
             sources = srcList(o.optJSONArray("sources")),
+            episodes = epList(o.optJSONArray("episodes")),
+            subtitleLanguages = strList(o.optJSONArray("subtitleLanguages") ?: o.optJSONArray("subs")),
         )
 
         fun list(a: JSONArray?): List<Item> {
@@ -162,6 +200,18 @@ data class Item(
             val out = ArrayList<String>(a.length())
             for (i in 0 until a.length()) out.add(sa(a, i, ""))
             return out.filter { it.isNotBlank() }
+        }
+
+        private fun epList(a: JSONArray?): List<Episode> {
+            if (a == null) return emptyList()
+            val out = ArrayList<Episode>(a.length())
+            for (i in 0 until a.length()) {
+                val o = a.optJSONObject(i) ?: continue
+                val s = o.optInt("season", 0)
+                val e = o.optInt("episode", 0)
+                if (s > 0 && e > 0) out.add(Episode(s, e, s(o, "title", "")))
+            }
+            return out
         }
 
         private fun srcList(a: JSONArray?): List<Source> {
@@ -367,7 +417,31 @@ data class PlayTarget(
     val expiresAt: Long = 0,
     val mode: String = "",
     val why: List<String> = emptyList(),
+    // The richer /app/v1/play answer. Every one of these is optional: a hub that answers only
+    // url+kind still plays, it just explains less when a link does not answer.
+    val status: String = "",
+    val tagline: String = "",
+    val warming: Boolean = false,
+    val tried: List<String> = emptyList(),
+    val seeders: Int = -1,
+    /**
+     * Which episode of a series this answer is. A series tile is one merge key with many addresses, so
+     * the hub picks the episode (the one named in the request, the one this profile stopped on, or the
+     * first) and names it back here — plus the one after it, which is what lets "Autoplay next" step a
+     * series forward instead of replaying the same episode for free.
+     */
+    val episode: Episode? = null,
+    val nextEpisode: Episode? = null,
 ) {
+    /** One honest sentence for the overlay when the hub resolved a link that did not work here. */
+    fun whyNot(): String = when {
+        seeders == 0 -> "This copy has nobody sharing it"
+        warming -> "The link resolved but had not produced bytes yet"
+        tagline.isNotBlank() -> tagline
+        tried.lastOrNull()?.isNotBlank() == true -> "Rejected: " + tried.last()
+        else -> ""
+    }
+
     /** True when Media3 can open this at all. */
     fun playable(): Boolean = url.startsWith("http")
 
@@ -384,7 +458,21 @@ data class PlayTarget(
                 expiresAt = o.optLong("expiresAt", 0L),
                 mode = s(o, "mode", ""),
                 why = jsonStrings(o.optJSONArray("why")),
+                status = s(o, "status", ""),
+                tagline = s(o, "tagline", ""),
+                warming = o.optBoolean("warming", false),
+                tried = jsonStrings(o.optJSONArray("tried")),
+                seeders = o.optJSONObject("torrent")?.optInt("seeders", -1) ?: -1,
+                episode = epFrom(o.optJSONObject("episode")),
+                nextEpisode = epFrom(o.optJSONObject("nextEpisode")),
             )
+        }
+
+        private fun epFrom(j: JSONObject?): Episode? {
+            if (j == null) return null
+            val s = j.optInt("season", 0)
+            val e = j.optInt("episode", 0)
+            return if (s > 0 && e > 0) Episode(s, e, s(j, "title", "")) else null
         }
     }
 }

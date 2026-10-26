@@ -39,9 +39,13 @@ interface HubClient {
     fun meta(identity: String, type: String? = null, cb: HubCb<Item?>)
     fun play(
         identity: String, provider: String?, profileId: String?,
-        type: String? = null, cb: HubCb<PlayTarget?>,
+        type: String? = null, season: Int = 0, episode: Int = 0, cb: HubCb<PlayTarget?>,
     )
-    fun progress(identity: String, positionMs: Long, profileId: String?)
+    /**
+     * Where the viewer stopped. `episode` names which one for a series, so the next Play press resumes
+     * that episode rather than restarting S01E01 three seasons in.
+     */
+    fun progress(identity: String, positionMs: Long, profileId: String?, episode: Episode? = null)
 
     /**
      * Cheap reachability probe, used at startup and every retry. The app falls back to the bundled
@@ -75,6 +79,9 @@ interface HubClient {
      * billboard simply keeps its still artwork.
      */
     fun trailer(identity: String, cb: HubCb<String?>) { cb.onResult(null, null) }
+
+    /** Same, named for the profile, so trailer availability can be gated exactly like rows. */
+    fun trailer(identity: String, profileId: String?, cb: HubCb<String?>) = trailer(identity, cb)
 }
 
 /**
@@ -147,22 +154,28 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
 
     override fun play(
         identity: String, provider: String?, profileId: String?,
-        type: String?, cb: HubCb<PlayTarget?>,
+        type: String?, season: Int, episode: Int, cb: HubCb<PlayTarget?>,
     ) = post(
         "/app/v1/play",
         JSONObject()
             .put("identity", identity)
             .put("provider", provider ?: JSONObject.NULL)
             .put("profile", profileId ?: JSONObject.NULL)
-            .put("type", type ?: JSONObject.NULL),
+            .put("type", type ?: JSONObject.NULL)
+            // 0 means "hub, you choose" — the hub defaults to the episode this profile stopped on, else
+            // the first one. Naming one is how a source switch mid-episode stays on that episode.
+            .put("season", season)
+            .put("episode", episode),
         { o -> PlayTarget.from(o) },
         cb,
     )
 
-    override fun trailer(identity: String, cb: HubCb<String?>) =
+    override fun trailer(identity: String, cb: HubCb<String?>) = trailer(identity, null, cb)
+
+    override fun trailer(identity: String, profileId: String?, cb: HubCb<String?>) =
         get(
             "/app/v1/trailer/$identity",
-            emptyMap(),
+            q(profileId),
             { o -> s(o, "url", "").takeIf { it.isNotBlank() } },
             cb,
         )
@@ -183,11 +196,17 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
             { o -> HubPrefs.from(o.optJSONObject("prefs") ?: o) }, cb)
 
     /** Fire and forget: progress lives on the hub so it survives a reinstall. */
-    override fun progress(identity: String, positionMs: Long, profileId: String?) {
+    override fun progress(identity: String, positionMs: Long, profileId: String?, episode: Episode?) {
         val body = JSONObject()
             .put("identity", identity)
             .put("positionMs", positionMs)
             .put("profile", profileId ?: JSONObject.NULL)
+        if (episode != null) {
+            body.put("episode", JSONObject()
+                .put("season", episode.season)
+                .put("episode", episode.episode)
+                .put("title", episode.title))
+        }
         val url = base() + "/app/v1/progress"
         try {
             pool.execute {
@@ -392,7 +411,7 @@ class FixtureHub(context: Context, private val assetPath: String) : HubClient {
 
     override fun play(
         identity: String, provider: String?, profileId: String?,
-        type: String?, cb: HubCb<PlayTarget?>,
+        type: String?, season: Int, episode: Int, cb: HubCb<PlayTarget?>,
     ) = reply({
         val play = root().optJSONObject("play")
         val fromFixture = play?.optJSONObject(identity) ?: play?.optJSONObject(provider ?: "")
@@ -407,7 +426,7 @@ class FixtureHub(context: Context, private val assetPath: String) : HubClient {
         }
     }, cb)
 
-    override fun progress(identity: String, positionMs: Long, profileId: String?) {
+    override fun progress(identity: String, positionMs: Long, profileId: String?, episode: Episode?) {
         Log.i(TAG, "progress (fixture) $identity ${positionMs}ms profile=$profileId")
     }
 

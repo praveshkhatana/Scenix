@@ -23,6 +23,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Episode
 import com.scenix.tv.core.Format
 import com.scenix.tv.core.HubError
 import com.scenix.tv.core.Item
@@ -78,6 +79,42 @@ object PlayerScreen : ScreenPlugin {
     private var index = 0
     private var target: PlayTarget? = null
 
+    /**
+     * Which episode of a series is playing. The hub names it in the play answer (it decides: the one
+     * asked for, the one this profile stopped on, else the first), and every later request for this
+     * title repeats it — switching source mid-episode must not restart S01E01. `nextEpisode` is what
+     * "Autoplay next" steps to.
+     */
+    private var curEpisode: Episode? = null
+    private var nextEpisode: Episode? = null
+
+    /** How many times the current source has been asked again after its connection went quiet. */
+    private var ioRetries = 0
+    private var ioRetryIndex = -1
+
+    /** When this screen took over, and the last key it saw — this remote reports one press twice. */
+    private var openedAtMs = 0L
+    private var lastKeyCode = -1
+    private var lastKeyAtMs = 0L
+
+    private fun isToggleKey(code: Int): Boolean = when (code) {
+        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_SPACE -> true
+        else -> false
+    }
+
+    /**
+     * Errors that mean "the bytes did not arrive in time", not "this copy is broken". A cold copy is
+     * worth waiting for; a wrong container or a 404 is not.
+     */
+    private fun isNetworkWait(name: String): Boolean = when (name) {
+        "ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT",
+        "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
+        "ERROR_CODE_IO_UNSPECIFIED",
+        -> true
+        else -> false
+    }
+
     /** The "12 · &TV" overlay shown when zapping live TV. */
     private var zapBadge: android.widget.TextView? = null
     private val hideBadge = Runnable { zapBadge?.visibility = View.GONE }
@@ -121,6 +158,9 @@ object PlayerScreen : ScreenPlugin {
     override fun render(host: ScreenHost) {
         val app = host.app
         val theme = app.theme
+        // Whatever was quietly looping in the billboard stops here: one hardware decoder, and the
+        // full-screen player needs it.
+        com.scenix.tv.core.Preview.release()
         ctx = app
         hostRef = host
 
@@ -134,6 +174,12 @@ object PlayerScreen : ScreenPlugin {
 
         item = seed
         ranked = app.ranked(seed)
+        // A new title starts with no episode pinned: the hub picks it (the episode this profile stopped
+        // on, else the first) and names it back in the play answer.
+        curEpisode = seed.progress?.episode
+        nextEpisode = null
+        ioRetries = 0
+        ioRetryIndex = -1
         val chosen = request?.second ?: app.playableSource(seed)
         index = ranked.indexOfFirst { it === chosen }.coerceAtLeast(0)
 
@@ -175,6 +221,7 @@ object PlayerScreen : ScreenPlugin {
 
         r.isFocusable = true
         r.isFocusableInTouchMode = false
+        openedAtMs = System.currentTimeMillis()
         r.setOnKeyListener { _, keyCode, ev -> ev.action == KeyEvent.ACTION_DOWN && onKey(keyCode) }
         // Claimed twice: once here, and once after the view is really in the window. Without the
         // deferred call the player opens with no focus at all, its own key handling never runs, and
@@ -268,9 +315,16 @@ object PlayerScreen : ScreenPlugin {
         index = i.coerceIn(0, ranked.size - 1)
         val src = ranked[index]
         val gen = ++generation
-        setStatus("Loading ${Format.provider(src)}\u2026")
+        // The hub's own play budget is ~11 s (it may be fetching a cold copy), so the wait is
+        // normal: say what is happening rather than naming a provider that is not failing.
+        setStatus("Finding the best copy\u2026")
 
-        app.hub.play(it.identity, src.provider, app.profile?.id, it.type) { play, error ->
+        // An episode, once chosen, is sticky: switching source mid-episode must not silently restart
+        // S01E01. On the first press 0/0 means "hub, you pick" — it answers with the episode this
+        // profile stopped on, or the first one, and names it back.
+        val ep = curEpisode
+        app.hub.play(it.identity, src.provider, app.profile?.id, it.type,
+            ep?.season ?: 0, ep?.episode ?: 0) { play, error ->
             BrowseHelper.runOnUiThread {
                 if (gen != generation) return@runOnUiThread
 
@@ -288,12 +342,29 @@ object PlayerScreen : ScreenPlugin {
                     return@runOnUiThread
                 }
 
+                // The hub owns the episode choice; take it back from the answer and hold it for every
+                // retry, source switch and progress report of this title.
+                play.episode?.let { curEpisode = it }
+                play.nextEpisode?.let { nextEpisode = it }
+                curEpisode?.let { e -> titleView?.text = episodeTitle(it.title, e) }
+
+                if (!play.playable() && play.warming && play.seeders != 0) {
+                    // A cold copy: the hub resolved it and is still pulling the first bytes. This is
+                    // a wait, not a failure, so wait once and ask again for the same source.
+                    setStatus("Finding the best copy\u2026")
+                    handler.postDelayed({ if (gen == generation) openAt(index, resumeAt, null) }, 1500L)
+                    return@runOnUiThread
+                }
+
                 if (!play.playable()) {
-                    // A magnet, or anything else Media3 has no business opening.
+                    // A magnet, or anything else Media3 has no business opening. The hub now explains
+                    // which: nobody sharing it, a link it rejected, a copy still warming.
                     val p = app.registries.playerFor(src.kind)
                     player?.pause()
                     saveProgress()
+                    val hubSaid = play.whyNot()
                     val line = when {
+                        hubSaid.isNotBlank() -> hubSaid
                         p == null -> "${Format.provider(src)} \u00B7 no player plugin on this TV"
                         p.external() -> p.openExternally(app, it, src, play)
                         else -> "${Format.provider(src)} \u00B7 this TV cannot open it"
@@ -335,7 +406,12 @@ object PlayerScreen : ScreenPlugin {
 
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent("Scenix/0.1")
-            .setConnectTimeoutMs(8000)
+            // media3's 8 s default is the reason a film "could not be played" on this TV: a copy that is
+            // not already cached takes longer than that to produce its first byte (the hub has to find
+            // peers and pull the head of the file), the player gives up mid-wait, and every other copy is
+            // just as cold. Waiting is not failing, so the wait is allowed to be long.
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(60000)
             .setAllowCrossProtocolRedirects(true)
         if (play.headers.isNotEmpty()) http.setDefaultRequestProperties(play.headers)
 
@@ -389,6 +465,23 @@ object PlayerScreen : ScreenPlugin {
             android.util.Log.w("ScenixPlayer", "playback error ${error.errorCodeName}", error)
             BrowseHelper.runOnUiThread {
                 if (player !== exo) return@runOnUiThread
+                val pos = exo.currentPosition
+                // The pipe died, not the copy. Every other copy of this title is just as cold, so
+                // spending them on the same first-byte wait ends in "No source left". Ask the same link
+                // again — the hub has kept it warm and the engine has already pulled its head — and say
+                // that we are waiting rather than that we failed.
+                if (isNetworkWait(error.errorCodeName) && ioRetryIndex != index) {
+                    ioRetryIndex = index
+                    ioRetries = 0
+                }
+                if (isNetworkWait(error.errorCodeName) && ioRetries < 2) {
+                    ioRetries++
+                    val gen = generation
+                    setStatus("Still fetching the first seconds\u2026")
+                    showControls()
+                    handler.postDelayed({ if (gen == generation) openAt(index, pos, null) }, 1500L)
+                    return@runOnUiThread
+                }
                 failover("it could not be played (${error.errorCodeName})")
             }
             app.images.trim()
@@ -421,9 +514,16 @@ object PlayerScreen : ScreenPlugin {
             app.canOpen(s) && !app.opensExternally(s)
         }
         if (pick == null) {
-            setStatus("No source left on this TV \u2014 $reason")
-            player?.pause()
-            showControls()
+            // Nothing else to switch to. A copy that is merely slow is not a copy that failed: a real
+            // player keeps waiting and says what it is waiting for, instead of putting up an error for
+            // a film that resumes ten seconds later. Only stop when it is genuinely not playing.
+            val exo = player
+            val waiting = exo != null && exo.playWhenReady && exo.playbackState == Player.STATE_BUFFERING
+            setStatus(if (waiting) waitingLine() else "No source left on this TV \u2014 $reason")
+            if (!waiting) {
+                exo?.pause()
+                showControls()
+            }
             return
         }
         val pos = player?.currentPosition ?: 0L
@@ -431,6 +531,20 @@ object PlayerScreen : ScreenPlugin {
         index = pick
         setStatus("Trying Source ${pick + 1}\u2026")
         openAt(pick, pos, "Switched to Source ${pick + 1} \u2014 Source $from $reason")
+    }
+
+    /** A stall with nowhere else to go, in words the viewer can act on. */
+    private fun waitingLine(): String {
+        val t = target
+        val seeders = t?.seeders ?: -1
+        val gateway = t != null && t.mode.equals("gateway", true)
+        return when {
+            gateway && seeders == 0 ->
+                "Nobody is sharing this copy \u2014 press Down for another one"
+            gateway && seeders in 1..9 ->
+                "Buffering slowly \u2014 $seeders people sharing this copy \u00B7 press Down for another"
+            else -> "Buffering\u2026"
+        }
     }
 
     /** What the overlay prints: the source, its quality, and the hub's own reason for choosing it. */
@@ -729,6 +843,15 @@ object PlayerScreen : ScreenPlugin {
 
     private fun onKey(keyCode: Int): Boolean {
         val exo = player
+        // One physical press on this remote arrives as two key events about 100 ms apart. That is what
+        // made "the Play button is slow / it double-presses": the press that opened this screen also
+        // landed here and paused the film again. A repeat of the same key inside 350 ms is the same
+        // press, and neither of them may toggle playback in the first second of a title.
+        val now = System.currentTimeMillis()
+        val duplicate = keyCode == lastKeyCode && now - lastKeyAtMs < 350L
+        lastKeyCode = keyCode
+        lastKeyAtMs = now
+        if (duplicate || (isToggleKey(keyCode) && now - openedAtMs < 1200L)) return true
         when (keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             KeyEvent.KEYCODE_SPACE -> {
@@ -838,7 +961,7 @@ object PlayerScreen : ScreenPlugin {
         val exo = player ?: return
         val pos = exo.currentPosition
         if (pos <= 0L) return
-        app.hub.progress(it.identity, if (finish) 0L else pos, app.profile?.id)
+        app.hub.progress(it.identity, if (finish) 0L else pos, app.profile?.id, curEpisode)
     }
 
     // ---- live zapping ------------------------------------------------------------------------
@@ -892,9 +1015,25 @@ object PlayerScreen : ScreenPlugin {
     private fun maybeAutoplayNext() {
         val app = ctx ?: return
         if (!app.prefs.autoplayNext(app.profile?.id ?: "")) return
+        // A series steps within itself first: the next episode of the same show, which is what someone
+        // watching a show expects. Only a film — or the last episode the hub knows about — falls through
+        // to the next title in the row.
+        val nx = nextEpisode
+        val now = item
+        if (nx != null && now != null) {
+            curEpisode = nx
+            nextEpisode = null   // this play answer names the one after that
+            titleView?.text = episodeTitle(now.title, nx)
+            hubSubs = emptyList()
+            loadSubs(app, now)   // subtitles are per episode, not per show
+            openAt(index, 0L, "Playing ${nx.label()}")
+            return
+        }
         val next = nextUp(app) ?: return
         item = next
         ranked = app.ranked(next)
+        curEpisode = next.progress?.episode
+        nextEpisode = null
         val chosen = app.playableSource(next)
         index = ranked.indexOfFirst { it === chosen }.coerceAtLeast(0)
         hubSubs = emptyList()
@@ -903,6 +1042,9 @@ object PlayerScreen : ScreenPlugin {
         loadSubs(app, next)
         openAt(index, 0L, "Playing next: ${next.title}")
     }
+
+    /** "Game of Thrones · S01E04" — a series keeps its episode code on the title line. */
+    private fun episodeTitle(show: String, ep: Episode): String = "$show \u00B7 ${ep.code()}"
 
     /** The item after this one in the row it came from, that this TV can play in place. */
     private fun nextUp(app: AppContext): Item? {
