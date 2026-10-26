@@ -49,6 +49,23 @@
                 <data android:scheme="tv" />
             </intent-filter>
         </activity>
+
+        <!--
+            The hybrid shell: the hub's web interface in a WebView, with media3 underneath it. Not the
+            launcher, and it has no intent filter, so nothing lands here by accident — it is started by
+            name while the two front ends are compared on the same panel:
+                adb shell am start -n com.scenix.tv/.WebShellActivity
+            A string extra named `url` overrides which hub UI to load. configChanges keeps the WebView
+            and its video surface alive through the orientation and density changes Android TV makes on
+            its own.
+        -->
+        <activity
+            android:name=".WebShellActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>
