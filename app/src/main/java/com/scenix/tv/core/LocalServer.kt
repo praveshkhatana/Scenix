@@ -3,6 +3,7 @@ package com.scenix.tv.core
 import android.content.Context
 import android.content.res.AssetManager
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStream
@@ -126,13 +127,31 @@ class LocalServer private constructor(
             path == "/app/v1/home" -> res.json(200, hub.homeJson(query["profile"]))
 
             path.startsWith("/app/v1/row/") -> {
-                val row = hub.rowJson(decode(path.removePrefix("/app/v1/row/")), query["profile"])
-                if (row == null) res.json(404, JSONObject().put("error", "no such row"))
-                else res.json(200, JSONObject().put("row", row))
+                // Unwrapped, exactly as a hub answers one row: `{id, title, card, items}`.
+                val rowId = decode(path.removePrefix("/app/v1/row/"))
+                val row = hub.rowJson(rowId, query["profile"])
+                if (row == null) res.json(404, JSONObject().put("error", "no such row").put("rowId", rowId))
+                else res.json(200, row)
             }
 
-            path == "/app/v1/search" ->
-                res.json(200, hub.searchJson(query["q"] ?: "", query["profile"]))
+            path == "/app/v1/search" -> {
+                // A hub answers a search with a flat list of items; this backend also has the shelf it
+                // grouped them into. Both are sent, so the same page reads either.
+                val term = query["q"] ?: ""
+                val found = hub.searchJson(term, query["profile"])
+                val flat = JSONArray()
+                found.optJSONArray("rows")?.let { rows ->
+                    for (i in 0 until rows.length()) {
+                        rows.optJSONObject(i)?.optJSONArray("items")?.let { a ->
+                            for (j in 0 until a.length()) {
+                                val item = a.optJSONObject(j) ?: continue
+                                flat.put(item)
+                            }
+                        }
+                    }
+                }
+                res.json(200, found.put("q", term).put("items", flat))
+            }
 
             path.startsWith("/app/v1/meta/") -> {
                 val item = hub.metaJson(decode(path.removePrefix("/app/v1/meta/")), query["type"])
@@ -170,25 +189,66 @@ class LocalServer private constructor(
             path == "/app/v1/settings" -> {
                 val o = parse(body)
                 when {
-                    method == "POST" && o != null -> res.json(200, hub.setSettings(o))
-                    method == "POST" -> res.json(400, JSONObject().put("error", "body must be JSON"))
-                    else -> res.json(200, hub.settings())
+                    // A hub is patched with PUT; POST is accepted too so a page has one less thing to
+                    // know about which machine it is on.
+                    (method == "PUT" || method == "POST") && o != null -> res.json(
+                        200,
+                        JSONObject().put("ok", true).put("settings", hub.setSettings(o)),
+                    )
+                    method == "PUT" || method == "POST" ->
+                        res.json(400, JSONObject().put("error", "expected a JSON object of settings"))
+                    else -> res.json(200, JSONObject().put("settings", hub.settings()))
                 }
+            }
+
+            path == "/app/v1/addons" && method == "POST" -> {
+                val o = parse(body)
+                val url = if (o == null) "" else o.optString("url", o.optString("manifest", "")).trim()
+                if (url.isBlank()) res.json(400, JSONObject().put("error", "an addon is a URL"))
+                else {
+                    val list = hub.addAddon(url, o?.optString("name", "") ?: "")
+                    hub.refreshAddons { _, _ -> }
+                    res.json(200, JSONObject().put("ok", true).put("addons", list))
+                }
+            }
+
+            path.startsWith("/app/v1/addons/") && method == "POST" -> {
+                val rest = path.removePrefix("/app/v1/addons/")
+                val which = decode(rest.substringBefore('/'))
+                val verb = rest.substringAfter('/', "")
+                val list = if (verb == "enable" || verb == "disable") hub.setAddonEnabled(which, verb == "enable") else null
+                if (list == null) res.json(404, JSONObject().put("error", "no such addon").put("id", which))
+                else res.json(200, JSONObject().put("ok", true).put("addons", list))
+            }
+
+            path.startsWith("/app/v1/addons/") && method == "DELETE" -> {
+                val which = decode(path.removePrefix("/app/v1/addons/"))
+                val list = hub.removeAddon(which)
+                if (list == null) res.json(404, JSONObject().put("error", "no such addon").put("id", which))
+                else res.json(200, JSONObject().put("ok", true).put("removed", which).put("addons", list))
             }
 
             path == "/app/v1/addons" -> res.json(200, JSONObject().put("addons", hub.addonsJson()))
 
-            path.startsWith("/app/v1/subs/") -> res.json(
-                200,
-                JSONObject().put(
-                    "subs",
-                    hub.subsJson(
-                        decode(path.removePrefix("/app/v1/subs/")),
-                        (query["lang"] ?: "").split(",").filter { it.isNotBlank() },
-                        query["type"],
-                    ),
-                ),
-            )
+            path.startsWith("/app/v1/trailer/") ->
+                // This backend does not advertise trailers, so a UI that branches on capabilities never
+                // asks. One that does not is answered in the same words a hub uses.
+                res.json(
+                    404,
+                    JSONObject().put("error", "no trailer")
+                        .put("identity", decode(path.removePrefix("/app/v1/trailer/")))
+                        .put("reason", "this TV plays only the files it is given"),
+                )
+
+            path.startsWith("/app/v1/subs/") -> {
+                val identity = decode(path.removePrefix("/app/v1/subs/"))
+                val langs = (query["lang"] ?: "").split(",").map { it.trim() }.filter { it.isNotBlank() }
+                res.json(
+                    200,
+                    JSONObject().put("identity", identity).put("langs", JSONArray(langs))
+                        .put("subs", hub.subsJson(identity, langs, query["type"])),
+                )
+            }
 
             else -> static(res, path)
         }
@@ -273,7 +333,7 @@ class LocalServer private constructor(
         }
     }
 
-    private companion object {
+    companion object {
         const val TAG = "ScenixServer"
         const val POOL_THREADS = 3
         const val MAX_BODY = 256 * 1024

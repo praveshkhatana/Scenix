@@ -49,6 +49,7 @@ const W = {
   playable: 12,         // a billboard you cannot press Play on is a poster, not a billboard
   nonTorrent: 6,        // ...and a copy this TV can start without a stream engine is worth more
   matchMax: 20,         // the addons' own popularity/rating signal, capped so it never rules alone
+  languageFit: 22,      // a title we know this house watches beats one whose language was never stated
   broadlyWatchable: 8,  // a certificate that says everyone/teen: safe to put in front of the household
   rotate: 3,            // ±3, deterministic per day: see the rotation note in score()
 };
@@ -100,6 +101,16 @@ function score(it, ctx) {
   }
 
   if (Number.isFinite(it.match)) s += Math.min(W.matchMax, Math.max(0, it.match) / 5);
+
+  // The billboard is the front door of the house. A title whose language this household has rejected is
+  // already gone — the allowlist rule dropped it before this row ever saw it — so what is left to order is
+  // a title we positively know the house watches against one nobody has ever stated the language of. On
+  // the single tile that decides the first two seconds of the app, the known one wins: this weight sits
+  // just above the addons' popularity signal, and below what just opened in cinemas or last week.
+  // Nothing here invents a language. It spends the knowledge already in data/languages.json.
+  const allow = (ctx.prefs && ctx.prefs.audioLanguages) || [];
+  if (allow.length && Array.isArray(it.languages) && it.languages.length
+    && it.languages.some((l) => allow.includes(l))) s += W.languageFit;
 
   // Cached lookups only: a record this box has never made is not a fact, it is a request.
   const cert = ratings.peek(it.identity);

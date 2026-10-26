@@ -29,6 +29,7 @@ const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
 const settings = require('./settings');
+const langdb = require('./langdb');
 
 const ROOT = path.join(__dirname, '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
@@ -638,6 +639,13 @@ class External {
         : null,
       _addons: [this.id],
     };
+    // A catalog tile almost never states a language, but a /meta/ response does — and this box has
+    // catalogued 1650 titles while answering meta for maybe a few dozen. So the question and its
+    // answer are kept on disk: whatever meta taught us classifies the same title next time it shows up
+    // as a tile, with nothing fetched. Unknown stays unknown; the language rule keeps classifying what
+    // it can and says nothing about what it cannot.
+    if (!item.languages) item.languages = langdb.peek(identity);
+    else langdb.learn(identity, item.languages);
     const prev = this.items.get(identity);
     if (prev) {
       for (const k of Object.keys(item)) {

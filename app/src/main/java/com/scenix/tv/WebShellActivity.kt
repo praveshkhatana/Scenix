@@ -30,6 +30,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.scenix.tv.core.LocalServer
 import com.scenix.tv.plugins.player.Ceilings
 import java.util.concurrent.TimeUnit
 
@@ -112,7 +113,7 @@ class WebShellActivity : Activity() {
             }
         }
 
-        val url = intent?.getStringExtra("url")?.takeIf { it.isNotBlank() } ?: hubRoot()
+        val url = intent?.getStringExtra("url")?.takeIf { it.isNotBlank() } ?: pageRoot()
         android.util.Log.i("ScenixWeb", "shell loading $url")
         web.loadUrl(url)
     }
@@ -153,6 +154,22 @@ class WebShellActivity : Activity() {
         val candidates = app.prefs.hubUrlCandidates(getString(R.string.hub_urls))
         val base = candidates.firstOrNull() ?: app.prefs.hubUrl(getString(R.string.hub_url))
         return base.trimEnd('/') + "/"
+    }
+
+    /**
+     * Which front end this shell shows. In hub mode it is the hub's own page, exactly as a browser on the
+     * LAN would open it. In standalone mode it is the page bundled in this app, opened off the in-app
+     * contract server on the loopback — so its relative `/app/v1` calls land on this TV instead of on a
+     * machine elsewhere, and the page cannot tell the two apart.
+     */
+    private fun pageRoot(): String {
+        if (!app.prefs.standalone()) return hubRoot()
+        val port = runCatching { LocalServer.portFor(app) }.getOrDefault(0)
+        if (port <= 0) {
+            android.util.Log.e("ScenixWeb", "no local contract server; falling back to the last hub address")
+            return hubRoot()
+        }
+        return "http://127.0.0.1:$port/"
     }
 
     // ---- the player, built on first use so a session that only browses allocates no decoder ----

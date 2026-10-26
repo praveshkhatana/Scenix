@@ -31,6 +31,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const langdb = require('./langdb');
 
 const ROOT = path.join(__dirname, '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
@@ -444,6 +445,10 @@ async function fromOMDb(imdbId) {
   if (!body || body.Response === 'False' || !body.Title) return null;
   const genres = String(body.Genre || '').split(',').map((s) => s.trim()).filter(Boolean);
   const runtime = parseInt(body.Runtime, 10);
+  // The same response names the languages this title is in. The certificate ladder has no use for them,
+  // but the owner's language rule does, and asking twice for what one answer already gave is the one
+  // thing this box should never do.
+  langdb.learnFromNames('imdb:' + imdbId, String(body.Language || '').split(','));
   return {
     source: 'omdb',
     title: body.Title,
@@ -486,6 +491,12 @@ async function fromTMDB(imdbId, wantedType) {
     const cert = normCert(b.rating); // NOT b.certification — this is the series field
     if (cert && !certs[country]) certs[country] = cert;
   }
+  // TMDB states the original language, and sometimes the spoken ones. Free on a call we are already
+  // making, and exactly the fact that decides whether this title belongs in this house at all.
+  langdb.learnFromCodes('imdb:' + imdbId, [
+    detail.original_language,
+    ...(Array.isArray(detail.spoken_languages) ? detail.spoken_languages.map((l) => l.iso_639_1) : []),
+  ]);
   return {
     source: 'tmdb',
     tmdbId: pick.id,
@@ -611,15 +622,21 @@ function merge(identity, imdbId, parts) {
  * Look a title up. Resolves with the record, or null when neither upstream answered (the caller then
  * uses the heuristic tier, and "found nothing" is remembered so the next page view does not ask again).
  *
- * `opts.force` ignores the daily cap; that is what tools/backfill-ratings.js uses, because it asks on
- * purpose and sleeps between calls. The live path never does.
+ * `opts.force` ignores the daily cap; that is what a backfill uses, because it asks on purpose and sleeps
+ * between calls. The live path never does.
+ *
+ * `opts.reask` additionally ignores the record already held. A stored record is normally the whole point
+ * of this file — the box does not ask the same question twice — but a record written before the lookup
+ * began keeping the *language* an answer states is incomplete in a way the store itself cannot see, and
+ * only asking again fills it. A tool does that once, on purpose, for the whole catalogue; nothing people
+ * watch does.
  */
 async function lookup(identity, known = {}, opts = {}) {
   load();
   refreshFromDisk();
   const key = String(identity);
   const have = state.ratings[key];
-  if (have && fresh(have)) return have;
+  if (have && fresh(have) && !opts.reask) return have;
   if (inflight.has(key)) return inflight.get(key);
   if (!opts.force && spentToday() >= DAILY_CAP) {
     // The free tier is roughly 1000 lookups a day and a home screen touches a thousand identities on a

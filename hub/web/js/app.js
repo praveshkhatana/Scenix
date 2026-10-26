@@ -366,6 +366,37 @@ function setProfile(p) {
  * with left/top would relayout a 1 GB panel in the middle of a transition, and a relayout there is where a
  * TV drops frames.
  */
+/**
+ * Lift a node out of the page as a clone pinned to its exact box, so it survives whatever happens to the
+ * screen underneath it. Paired with `land`, which flies that clone to another node's box. Two elements
+ * crossfading is a page transition; one element travelling between two places is a continuity, and the eye
+ * reads the difference immediately.
+ */
+function lift(node, cls) {
+  if (!node || !node.getBoundingClientRect) return null;
+  const a = node.getBoundingClientRect();
+  if (!a.width || !a.height) return null;
+  const ghost = el('div', {
+    class: cls,
+    style: `left:${a.left}px; top:${a.top}px; width:${a.width}px; height:${a.height}px;`,
+  }, node.cloneNode(true));
+  layer().appendChild(ghost);
+  return { ghost, from: a };
+}
+
+function land(pack, target, ms = 800) {
+  if (!pack || !pack.ghost) return;
+  const b = target && target.getBoundingClientRect ? target.getBoundingClientRect() : null;
+  const sc = b && b.width ? b.width / pack.from.width : 0.3;
+  const dx = b && b.width ? b.left - pack.from.left : (window.innerWidth * 0.5 - pack.from.left);
+  const dy = b && b.width ? b.top - pack.from.top : (60 - pack.from.top);
+  requestAnimationFrame(() => {
+    pack.ghost.style.transform = `translate(${dx}px, ${dy}px) scale(${sc})`;
+    requestAnimationFrame(() => pack.ghost.classList.add('fly'));
+  });
+  setTimeout(() => { if (pack.ghost.parentNode) pack.ghost.parentNode.removeChild(pack.ghost); }, ms + 140);
+}
+
 async function switchProfile(profile, node) {
   if (!profile) return;
   const face = node && node.querySelector ? node.querySelector('.a') : null;
@@ -379,9 +410,14 @@ async function switchProfile(profile, node) {
     }, face.cloneNode(true));
     layer().appendChild(ghost);
   }
+  // The wordmark goes the other way from the face: it has been holding the top of the profile screen, and on
+  // this beat it steps into the corner of the nav bar, where it lives for the rest of the session. Lifted
+  // before Home mounts, because the screen it stands on is about to be torn down.
+  const mark = lift(wrap && wrap.querySelector('.pbrand .brand-mark'), 'logo-ghost');
   if (wrap) wrap.classList.add('leaving');
   setProfile(profile);
   await navigate('home');
+  if (mark) land(mark, document.querySelector('.nav .brand .brand-mark'));
   if (!ghost) return;
   const chip = document.querySelector('.avatar-chip');
   const to = chip ? chip.getBoundingClientRect() : null;
@@ -454,6 +490,14 @@ async function hideBoot() {
   const b = bootEl();
   if (!b) return;
   b.classList.add('gone');
+  // The wordmark does not disappear and reappear one screen later — it moves. It flies from the centre of the
+  // splash to the head of the profile screen while the cards slide in behind it, so the opening is one
+  // continuous gesture rather than three separate ones. `booted` is what starts that card entrance: the
+  // entrance is timed off the splash, not off the data, because a fast hub must not spoil the beat.
+  const mark = lift(b.querySelector('.boot-logo'), 'logo-ghost');
+  const seat = document.querySelector('.pwrap .pbrand .brand-mark') || document.querySelector('.nav .brand .brand-mark');
+  land(mark, seat);
+  document.body.classList.add('booted');
   setTimeout(() => { if (b.parentNode) b.parentNode.removeChild(b); }, 700);
 }
 

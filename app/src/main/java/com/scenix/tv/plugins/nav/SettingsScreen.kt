@@ -168,6 +168,106 @@ object SettingsScreen : ScreenPlugin {
         infoRow(ctx, col, "Image cache", ctx.images.stats())
     }
 
+    /**
+     * Hubs answering a search on this network. A hub announces itself (design/deployment-modes.md Rule
+     * 4), so nobody has to know an address: the list below is what the last search remembered, each
+     * entry under the name its owner gave it rather than a host.
+     */
+    private fun hubSearch(ctx: AppContext, col: LinearLayout, host: ScreenHost) {
+        actionRow(
+            ctx, col, "Find hubs on this network",
+            if (HubDiscovery.isScanning()) "searching\u2026" else "", "Search",
+        ) {
+            if (HubDiscovery.isScanning()) return@actionRow
+            HubDiscovery.scan(
+                ctx.app,
+                ctx.app.getString(R.string.ssdp_search_target),
+                ctx.app.resources.getInteger(R.integer.ssdp_search_ms),
+            ) { found ->
+                val known = LinkedHashMap(ctx.prefs.discoveredHubs().associateBy { it.url })
+                for (f in found) known[f.url] = f
+                ctx.prefs.setDiscoveredHubs(ArrayList(known.values))
+                host.toast(if (found.isEmpty()) "No hub answered" else "Found ${found.size} hub(s)")
+                if (host.currentScreenId() == id) host.refresh()
+            }
+        }
+        for (found in ctx.prefs.discoveredHubs()) {
+            actionRow(ctx, col, found.display(), found.url, "Use") {
+                ctx.prefs.setHubUrl(found.url)
+                ctx.prefs.setHubName(found.url, found.name)
+                ctx.prefs.setBackendChoice("hub")
+                ctx.prefs.setStandalone(false)
+                ctx.prefs.setFixture("")
+                ctx.hub = HttpHub(ctx.app, ctx.prefs)
+                ctx.capabilities = null
+                ctx.watch?.rechoose()
+                host.toast("Streaming from ${found.display()}")
+                host.refresh()
+            }
+        }
+    }
+
+    /**
+     * Standalone mode's addons: this TV fetches its own content, so the list is edited here instead of
+     * on a hub. Only the manifest URL is stored — what an addon offers is whatever its own manifest
+     * says, and a build that shipped a URL would be a build that shipped someone else's household.
+     */
+    private fun localAddonsSection(ctx: AppContext, col: LinearLayout, host: ScreenHost) {
+        val local = LocalHub.get(ctx.app)
+        section(ctx, col, "Addons (fetched by this TV)")
+        val stored = local.settings().optJSONArray("addons") ?: JSONArray()
+        if (stored.length() == 0) {
+            infoRow(ctx, col, "No addons yet", "Add an addon URL below and this TV reads that addon\u2019s own catalogues.")
+        }
+        for (i in 0 until stored.length()) {
+            val entry = stored.optJSONObject(i) ?: continue
+            val url = entry.optString("manifest", entry.optString("url", ""))
+            if (url.isBlank()) continue
+            val name = entry.optString("name", "").ifBlank {
+                runCatching { java.net.URI(url).host }.getOrNull() ?: url
+            }
+            actionRow(ctx, col, name, url, "Remove") {
+                val kept = JSONArray()
+                for (k in 0 until stored.length()) {
+                    val e = stored.optJSONObject(k) ?: continue
+                    if (e.optString("manifest", e.optString("url", "")) != url) kept.put(e)
+                }
+                local.setSettings(JSONObject().put("addons", kept))
+                host.toast("Removed $name")
+                host.refresh()
+            }
+        }
+        textRow(ctx, col, "Add an addon (manifest URL)", "", editable = true) { value ->
+            val url = value.trim()
+            if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) {
+                host.toast("An addon URL starts with http:// or https://")
+                return@textRow
+            }
+            val arr = local.settings().optJSONArray("addons") ?: JSONArray()
+            arr.put(JSONObject().put("manifest", url))
+            local.setSettings(JSONObject().put("addons", arr))
+            local.refreshAddons { n, err ->
+                val count = n ?: 0
+                host.toast(
+                    if (err != null) "Saved, but the addon did not answer ($err)"
+                    else "Saved \u2014 $count addon(s) answering",
+                )
+                if (host.currentScreenId() == id) host.refresh()
+            }
+        }
+        actionRow(ctx, col, "Read the addons again", "", "Fetch") {
+            local.refreshAddons { n, err ->
+                val count = n ?: 0
+                host.toast(if (err != null) "The addons did not answer ($err)" else "$count addon(s) answering")
+                if (host.currentScreenId() == id) host.refresh()
+            }
+        }
+        actionRow(ctx, col, "Cached addon responses", "on this TV", "Clear") {
+            local.clearAddonCache()
+            host.toast("Cache cleared")
+        }
+    }
+
     // ---- small builders --------------------------------------------------------------------
 
     /**
@@ -197,13 +297,14 @@ object SettingsScreen : ScreenPlugin {
                 // No addons endpoint (or an empty one): the manifest may still carry the section.
                 ctx.hub.manifest { m, error ->
                     BrowseHelper.runOnUiThread {
-                        if (block.parent == null) return@runOnUiThread
-                        rows.removeAllViews()
-                        val fromManifest = m?.addons ?: emptyList()
-                        when {
-                            fromManifest.isNotEmpty() -> for (a in fromManifest) addonRow(ctx, rows, a)
-                            error != null -> infoRow(ctx, rows, "Addons", "not reported by this hub")
-                            else -> infoRow(ctx, rows, "Addons", "none installed")
+                        if (block.parent != null) {
+                            rows.removeAllViews()
+                            val fromManifest = m?.addons ?: emptyList()
+                            when {
+                                fromManifest.isNotEmpty() -> for (a in fromManifest) addonRow(ctx, rows, a)
+                                error != null -> infoRow(ctx, rows, "Addons", "not reported by this hub")
+                                else -> infoRow(ctx, rows, "Addons", "none installed")
+                            }
                         }
                     }
                 }

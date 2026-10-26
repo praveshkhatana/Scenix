@@ -60,6 +60,10 @@ const PROPS = [
   ['P13773', 'ID'], // LSF rating (Indonesia)
   ['P8652', 'NT'], // Netflix maturity rating: a streamer's own classification, not a board's, so it is
   // recorded under a code of our own, and core/ratings.js prefers a real board over it.
+  // Not a board: language of work, collected into an array under a key no country code can collide
+  // with. One query already walks these items, so asking for their language costs nothing extra, and
+  // unlike a catalog tile it is a stated fact about the title rather than a guess from its name.
+  ['P407', '#langs'],
 ];
 const BY_URI = {};
 // SPARQL hands back a predicate as http://www.wikidata.org/prop/direct/P1657 — not the entity URI of the
@@ -154,6 +158,11 @@ function rowsToCerts(bindings) {
     if (!cert) continue;
     const identity = 'imdb:' + imdb;
     byTitle[identity] = byTitle[identity] || {};
+    if (country === '#langs') {
+      // A title can be in more than one language, so this one is a list, not a first-wins board.
+      (byTitle[identity]['#langs'] = byTitle[identity]['#langs'] || []).push(cert);
+      continue;
+    }
     if (!byTitle[identity][country]) byTitle[identity][country] = cert;
   }
   return byTitle;

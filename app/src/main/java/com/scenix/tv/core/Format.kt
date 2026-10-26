@@ -47,17 +47,18 @@ object Format {
 
     fun languages(item: Item): String = item.languages.joinToString(" · ") { langName(it) }
 
-    /** Language codes from the hub ("hin","eng","pan") -> words. Unknown codes pass through. */
-    private fun langName(code: String): String = when (code.lowercase(Locale.US)) {
-        "hin" -> "Hindi"
-        "eng" -> "English"
-        "pan" -> "Punjabi"
-        "tam" -> "Tamil"
-        "tel" -> "Telugu"
-        "mar" -> "Marathi"
-        "guj" -> "Gujarati"
-        "urd" -> "Urdu"
-        else -> code.uppercase(Locale.US)
+    /**
+     * Language codes to words, in English, looked up in the system's own language table. No list of
+     * languages is baked into this app: which ones a household listens in is not a fact about the app,
+     * and a table here would be one more thing a build got wrong for everyone else. An unknown code is
+     * shown as it arrived.
+     */
+    private fun langName(code: String): String {
+        val c = code.trim()
+        if (c.isEmpty()) return ""
+        val named = runCatching { Locale.forLanguageTag(c).getDisplayLanguage(Locale.ENGLISH) }.getOrNull()
+        return named?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.titlecase(Locale.ENGLISH) }
+            ?: c.uppercase(Locale.US)
     }
 
     fun size(bytes: Long): String {

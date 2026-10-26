@@ -479,27 +479,50 @@ function subtitle(req, res, u, cors, tracksLookup) {
     '-f', 'webvtt', 'pipe:1'], id);
   let body = '';
   let tooBig = false;
+  // Why the extractor was stopped before it finished. A subtitle stream inside a cold torrent is read
+  // from the beginning of the file, so on a slow swarm hitting the timeout is the normal outcome — and
+  // an answer that says "here are your subtitles" while carrying only the WEBVTT header is a lie the
+  // player then caches, because a header is a plausible-looking document.
+  let cutBy = null;
   const t0 = Date.now();
   child.stdout.on('data', (c) => {
     body += c;
-    if (body.length > 4e6) { tooBig = true; killChild(child, 'too-large'); }
+    if (body.length > 4e6) { tooBig = true; cutBy = 'too-large'; killChild(child, 'too-large'); }
   });
-  const timer = setTimeout(() => killChild(child, 'timeout'), 20000);
+  const timer = setTimeout(() => { cutBy = 'timeout'; killChild(child, 'timeout'); }, 20000);
   if (timer.unref) timer.unref();
   child.on('close', (code) => {
     clearTimeout(timer);
     if (res.writableEnded) return;
-    if (!body.trim()) {
+    const cues = body.replace(/^WEBVTT[^\n]*\r?\n/, '').replace(/\r/g, '').trim();
+    if (!cues) {
       log('SUB FAIL', 'id=' + id, 'i=' + idx, 'hash=' + (who.hash || '-').slice(0, 12),
-        'elapsed=' + (Date.now() - t0) + 'ms', child._stderr() || ('exit ' + code));
+        'reason=' + (cutBy || 'no-cues'), 'elapsed=' + (Date.now() - t0) + 'ms',
+        child._stderr() || ('exit ' + code));
+      // Nothing reached the player yet is not the same answer as this copy having no subtitles: the
+      // first is worth asking again in a few seconds, the second never will be.
+      if (cutBy === 'timeout') {
+        return sendJson(res, cors, 503, {
+          error: 'warming', warming: true, retryAfterMs: 5000, i: idx,
+          note: 'this copy has to come off the swarm before its subtitles exist',
+        }, { 'Retry-After': '5' });
+      }
       return sendJson(res, cors, 404, { error: 'no subtitles to extract', i: idx });
     }
-    if (subCache.size > 40) subCache.clear();
-    subCache.set(key, { at: Date.now(), body });
-    log('SUB OK', 'id=' + id, 'i=' + idx, 'bytes=' + body.length, 'elapsed=' + (Date.now() - t0) + 'ms');
+    // Only a finished extraction is worth pinning for ten minutes. A body cut short by the timeout is
+    // real subtitles that stop halfway through the film, and caching that is how you get a viewer
+    // asking why the captions died at 01:52. Short cache, and say what it is.
+    const partial = cutBy === 'timeout';
+    if (!partial) {
+      if (subCache.size > 40) subCache.clear();
+      subCache.set(key, { at: Date.now(), body });
+    }
+    log('SUB OK', 'id=' + id, 'i=' + idx, 'bytes=' + body.length,
+      partial ? 'partial=timeout' : 'complete', 'elapsed=' + (Date.now() - t0) + 'ms');
     res.writeHead(200, Object.assign({
-      'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'public, max-age=600',
-    }, cors));
+      'Content-Type': 'text/vtt; charset=utf-8',
+      'Cache-Control': partial ? 'public, max-age=30' : 'public, max-age=600',
+    }, partial ? { 'X-Subtitles-Partial': 'timeout' } : {}, cors));
     res.end(body);
   });
 }

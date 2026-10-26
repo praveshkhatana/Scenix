@@ -59,6 +59,7 @@ const BATCH = Number(opt('batch', process.env.BATCH || 200));
 const LIMIT = Number(opt('limit', process.env.LIMIT !== undefined ? process.env.LIMIT : 2000));
 
 const ratings = require(path.join(ROOT, 'core', 'ratings'));
+const langdb = require(path.join(ROOT, 'core', 'langdb'));
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -157,6 +158,11 @@ async function main() {
         log,
         onBatch: (certs) => {
           for (const [identity, cc] of Object.entries(certs)) {
+            // The same query answered what language the title is in. Take that out of the certificate
+            // bag before the ladder sees it, and file it where the language rule looks.
+            const stated = cc['#langs'];
+            delete cc['#langs'];
+            if (stated) langdb.learnFromNames(identity, stated);
             const prev = ratings.peek(identity);
             const had = prev && prev.certs ? Object.keys(prev.certs).length : 0;
             const rec = ratings.ingest({ identity, certs: cc, sources: ['wikidata'] });

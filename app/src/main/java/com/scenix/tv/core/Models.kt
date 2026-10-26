@@ -364,9 +364,10 @@ data class Addon(
  * this read-only; the app never depends on its contents to draw anything.
  *
  * `capabilities` is the one exception, and the only place the app is allowed to ask what its backend
- * can do: a hub that streams from an engine lists things this app hosting itself cannot (`live-tv`,
- * a torrent gateway), and a screen that would only fail gets hidden rather than shown broken.
- * `null` means the backend predates the field, which means "everything" — an older hub loses nothing.
+ * can do: a hub that streams from an engine can do things this app hosting itself cannot (`live`, a
+ * torrent gateway), and a screen that would only fail gets hidden rather than shown broken. A backend
+ * states it as an object of booleans, one key per ability; `null` means the backend predates the field,
+ * which means "everything" — an older hub loses nothing.
  */
 data class Manifest(
     val version: String = "",
@@ -390,9 +391,22 @@ data class Manifest(
             rules = ids(o.optJSONArray("rules")),
             providers = ids(o.optJSONArray("players") ?: o.optJSONArray("providers")),
             addons = Addon.list(o.optJSONArray("addons")),
-            capabilities = o.optJSONArray("capabilities")?.let { jsonStrings(it) },
+            capabilities = capabilitiesOf(o),
             raw = o,
         )
+
+        /**
+         * What the backend says it can do, in one shape whatever arrived. A hub states it as an object of
+         * booleans, one key per ability, so the answer is the list of keys switched on; a bare list of
+         * names is read too. `null` only when the field is absent — which hides nothing.
+         */
+        private fun capabilitiesOf(o: JSONObject): List<String>? {
+            o.optJSONArray("capabilities")?.let { return jsonStrings(it) }
+            val obj = o.optJSONObject("capabilities") ?: return null
+            val on = ArrayList<String>()
+            for (k in obj.keys()) if (obj.optBoolean(k, false)) on.add(k)
+            return on
+        }
 
         private fun ids(a: JSONArray?): List<String> {
             if (a == null) return emptyList()

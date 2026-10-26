@@ -158,6 +158,9 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             show("pairing")
             return
         }
+        // Ask this backend what it can do before a screen is built from it, so a TV on its own never
+        // shows a row for something it has no way to supply.
+        readCapabilities()
         val remembered = ctx.prefs.currentProfileId()
         if (!remembered.isNullOrBlank()) {
             ctx.hub.profiles { profiles, _ ->

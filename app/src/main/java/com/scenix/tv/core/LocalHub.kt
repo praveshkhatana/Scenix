@@ -81,7 +81,12 @@ class LocalHub private constructor(context: Context) : HubClient {
         merged
     }
 
-    fun addonSpecs(): List<AddonSpec> {
+    /**
+     * The addons this TV has been told about. Content asks for the enabled ones; the list shown to the
+     * owner includes the switched-off ones, because an addon that is off still has to be seen to be
+     * turned back on.
+     */
+    fun addonSpecs(includeDisabled: Boolean = false): List<AddonSpec> {
         val arr = settings().optJSONArray("addons") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -94,7 +99,7 @@ class LocalHub private constructor(context: Context) : HubClient {
                 manifestUrl = url,
                 enabled = o.optBoolean("enabled", true),
             )
-        }.filter { it.enabled }
+        }.filter { it.enabled || includeDisabled }
     }
 
     /** Addons this app can answer for right now — an unread manifest simply contributes nothing. */
@@ -109,20 +114,25 @@ class LocalHub private constructor(context: Context) : HubClient {
 
     fun manifestJson(): JSONObject {
         val manifests = addonManifests()
-        val caps = ArrayList(
-            listOf(
-                "direct-http",        // a file this device plays by itself
-                "addon-catalogs",     // shelves come from the installed addons
-                "local-cache",        // answers survive the network being down
-                "local-profiles",     // profiles are created and kept on this TV
-                "profile-edit",
-                "local-prefs",
-                "search",
-            ),
-        )
-        if (manifests.any { it.has("subtitles") }) caps.add("subs")
-        // Deliberately absent: "torrent-gateway", "live-tv", "local-files", "trailers". A hub with an
-        // engine offers them; this device does not, so the UI hides them instead of failing on tap.
+        // The same object of facts the hub answers with, so a client UI branches once and cannot tell
+        // which machine it is talking to. The keys a hub sets from machinery this TV does not have are
+        // stated here as false rather than left out: an absent key reads as "unknown", and the whole
+        // point is that nothing here is unknown.
+        val caps = JSONObject()
+            .put("gateway", false)     // no engine fetches a torrent here: a source is a URL or nothing
+            .put("live", false)        // no channel list to tune
+            .put("localFiles", false)  // this TV serves no files of its own
+            .put("remux", false)       // a file plays as it is, or not at all
+            .put("tracks", false)      // languages are not read out of containers, only from addons
+            .put("announce", false)    // a TV does not announce itself as a backend
+            .put("directHttp", true)   // what a source has to be for this device to play it
+            .put("addonCatalogs", true)// the shelves are whatever the installed addons say
+            .put("localCache", true)   // answers survive the network being down
+            .put("localProfiles", true)
+            .put("profileEdit", true)  // and this app is the one that creates them
+            .put("localPrefs", true)   // the playback preference is kept here, not on a hub
+            .put("search", true)
+        if (manifests.any { it.has("subtitles") }) caps.put("subs", true)
         val rows = JSONArray()
         for (r in declaredRows(manifests)) {
             rows.put(JSONObject().put("id", r.id).put("title", r.title).put("card", r.card).put("order", r.order))
@@ -133,7 +143,7 @@ class LocalHub private constructor(context: Context) : HubClient {
             .put("version", appContext.getString(R.string.app_name) + " standalone")
             .put("theme", "scenix-dark")
             .put("api", "/app/v1")
-            .put("capabilities", JSONArray(caps))
+            .put("capabilities", caps)
             .put("addons", addonsJson())
             .put("rows", rows)
             .put("cards", JSONArray(listOf("poster", "hero", "continue")))
@@ -182,7 +192,10 @@ class LocalHub private constructor(context: Context) : HubClient {
             // answers at once: titles that have been on a shelf or played before.
             found.addAll(libraryItems().filter { it.title.contains(term, true) })
         }
-        val items = dedupe(found).sortedByDescending { it.match }
+        val kids = isKidsProfile(profileId)
+        val items = dedupe(found)
+            .filterNot { kids && impliedAge(it.maturity) > KIDS_MAX_AGE }
+            .sortedByDescending { it.match }
         val rows = JSONArray()
         if (items.isNotEmpty()) {
             rows.put(
@@ -192,6 +205,26 @@ class LocalHub private constructor(context: Context) : HubClient {
             )
         }
         return JSONObject().put("rows", rows)
+    }
+
+    private fun isKidsProfile(profileId: String?): Boolean =
+        profileList().firstOrNull { s(it, "id", "") == (profileId ?: "default") }
+            ?.optBoolean("isKids", false) ?: false
+
+    /**
+     * The age a maturity label implies, or -1 when it says nothing. A blank label is unknown and stays
+     * in: an addon that did not classify a title is not a reason to hide it from a kids profile.
+     */
+    private fun impliedAge(maturity: String): Int {
+        val m = maturity.trim().lowercase()
+        if (m.isEmpty()) return -1
+        Regex("(\\d{1,2})").find(m)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+        return when (m) {
+            "u", "g", "tv-y" -> 0
+            "pg", "tv-pg", "tv-14" -> 13
+            "a", "r", "nc-17", "tv-ma" -> 18
+            else -> -1
+        }
     }
 
     fun metaJson(identity: String, type: String?): JSONObject? {
@@ -247,14 +280,14 @@ class LocalHub private constructor(context: Context) : HubClient {
     }
 
     fun prefsJson(profileId: String?): JSONObject =
-        JSONObject().put("prefs", readProfilePrefs(profileId ?: "default"))
+        JSONObject().put("profile", profileId ?: "default").put("prefs", readProfilePrefs(profileId ?: "default"))
 
     fun setPrefsJson(values: JSONObject, profileId: String?): JSONObject = synchronized(lock) {
         val who = profileId ?: "default"
         val root = readJson(prefStore)
         root.put(who, values)
         writeJson(prefStore, root)
-        JSONObject().put("prefs", values)
+        JSONObject().put("profile", who).put("prefs", values)
     }
 
     /**
@@ -264,7 +297,7 @@ class LocalHub private constructor(context: Context) : HubClient {
      */
     fun addonsJson(): JSONArray {
         val out = JSONArray()
-        for (spec in addonSpecs()) {
+        for (spec in addonSpecs(includeDisabled = true)) {
             val am = addons.manifest(spec, wait = false, ttlMs = ttlMs())
             out.put(
                 JSONObject()
@@ -288,6 +321,59 @@ class LocalHub private constructor(context: Context) : HubClient {
             "stream".takeIf { am.has("stream") },
             "subtitle".takeIf { am.has("subtitles") },
         )
+    }
+
+    // ---- the owner's addons -------------------------------------------------------------------
+    // Same verbs as the hub's own addon routes, answered here from the settings file: an installed
+    // addon is a URL the owner typed, and nothing about it is decided by a build.
+
+    /** Take an addon by URL. The manifest is read when the shelves are next built, not here. */
+    fun addAddon(url: String, name: String = ""): JSONArray = synchronized(lock) {
+        val arr = settings().optJSONArray("addons") ?: JSONArray()
+        val entry = JSONObject().put("url", url.trim())
+        if (name.isNotBlank()) entry.put("name", name.trim())
+        arr.put(entry)
+        setSettings(JSONObject().put("addons", arr))
+        addonsJson()
+    }
+
+    /** Switch one addon on or off, matched by id or by the URL it was given. */
+    fun setAddonEnabled(which: String, enabled: Boolean): JSONArray? = editAddon(which) {
+        it.put("enabled", enabled)
+    }
+
+    /** Forget an addon entirely. Its cached responses stay until the cache is cleared. */
+    fun removeAddon(which: String): JSONArray? {
+        val kept = JSONArray()
+        val arr = settings().optJSONArray("addons") ?: JSONArray()
+        var removed = false
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (matchesAddon(o, which)) removed = true else kept.put(o)
+        }
+        if (!removed) return null
+        setSettings(JSONObject().put("addons", kept))
+        return addonsJson()
+    }
+
+    private fun editAddon(which: String, patch: (JSONObject) -> Unit): JSONArray? = synchronized(lock) {
+        val arr = settings().optJSONArray("addons") ?: return@synchronized null
+        var hit = false
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (matchesAddon(o, which)) {
+                patch(o)
+                hit = true
+            }
+        }
+        if (!hit) return null
+        setSettings(JSONObject().put("addons", arr))
+        addonsJson()
+    }
+
+    private fun matchesAddon(o: JSONObject, which: String): Boolean {
+        val url = s(o, "manifest", s(o, "url", "")).trim()
+        return s(o, "id", "") == which || url == which.trim() || slug(url) == which
     }
 
     /**
@@ -433,12 +519,17 @@ class LocalHub private constructor(context: Context) : HubClient {
         // One tile per title across the whole page, the rule the hub applies for the same reason: a
         // second addon that knows the same film adds sources to the surviving tile, it does not add a
         // second copy of the same poster to the screen.
+        //
+        // A kids profile also sees only what its maturity label allows. The page this backend serves runs
+        // no rules of its own, so the ceiling is applied here, where the shelves are built.
+        val kids = isKidsProfile(profileId)
         val seen = LinkedHashSet<String>()
         val merged = ArrayList<LocalRow>()
         for (r in out) {
             val items = ArrayList<Item>()
             for (it in r.items) {
                 if (r.id.startsWith("addon:") && !seen.add(it.identity)) continue
+                if (kids && impliedAge(it.maturity) > KIDS_MAX_AGE) continue
                 items.add(it)
             }
             if (items.isNotEmpty()) merged.add(r.copy(items = items))
@@ -601,7 +692,6 @@ class LocalHub private constructor(context: Context) : HubClient {
             direct.contains(".mpd", true) -> "dash"
             else -> "http"
         }
-        val bits = listOf(quality, size)
         val label = when {
             playable -> listOf(quality.ifBlank { "stream" }, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
             isTorrent -> listOf("torrent", quality, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
@@ -645,7 +735,8 @@ class LocalHub private constructor(context: Context) : HubClient {
         val p = readProfilePrefs(profileId ?: "default")
         val cap = s(p, "quality", "").lowercase()
         val maxBytes = p.optLong("maxFileSizeBytes", 0L)
-        val maxBitrate = p.optLong("maxBitrate", 0L)
+        // The profile's bitrate ceiling is not applied here because a community addon states no bitrate
+        // for a stream: there is nothing on this path to compare it against. Size and resolution are.
         val capped = sources.filter { src ->
             (maxBytes <= 0L || src.sizeBytes == 0L || src.sizeBytes <= maxBytes) &&
                 (cap.isBlank() || cap == "auto" || cap == "highest" || qualityRank(src.quality) <= qualityRank(cap))
@@ -1004,6 +1095,9 @@ class LocalHub private constructor(context: Context) : HubClient {
         private const val ROW_MAX = 30
         private const val MAX_CATALOGS_PER_ADDON = 6
         private const val LIBRARY_MAX = 800
+        // The age a kids profile is held to, the same default the app's own kids rule uses. A page served
+        // by this backend runs no rules of its own, so this is the one that protects a kids shelf.
+        private const val KIDS_MAX_AGE = 7
         private const val URL_TAG = "url="
 
         private val QUALITY_P = Regex("(\\d{3,4})p", RegexOption.IGNORE_CASE)

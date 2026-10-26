@@ -46,6 +46,7 @@ const remux = require('./core/remux');
 // (core/discovery.js). Both are read when a request asks, so a change made in the hub's own UI lands on
 // the next request: a setting that needs a restart to take effect is a setting nobody really made.
 const settings = require('./core/settings');
+const langdb = require('./core/langdb');
 const discovery = require('./core/discovery');
 const maturityRule = require('./rules/maturity');
 const ranking = require('./rules/source_ranking');
@@ -592,6 +593,9 @@ async function healthBody() {
     settings: settings.status(),
     discovery: discovery.status(),
     trailers: trailers.status(),
+    // What this box knows about the languages of what it catalogues: the number that says how much of the
+    // owner's language rule is actually enforceable, and how much is still guesswork.
+    languages: { file: langdb.FILE, ...langdb.coverage() },
     ratings: ratings.status(),
     // The front-end the hub itself serves: whether it is on disk, how many files, how many bytes. A
     // half-copied deploy shows up here instead of as a blank page on someone's TV.
@@ -1608,7 +1612,15 @@ const server = http.createServer(async (req, res) => {
     if (m) {
       const identity = m[1];
       const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
-      const ctx = makeCtx(profile, META_BUDGET_MS);
+      // A viewer opening a detail page must not wait on a slow addon, so this route answers inside
+      // META_BUDGET_MS and serves a cached/partial item when the upstream call is still running. That
+      // is the right trade for a person holding a remote and the wrong trade for a background learner:
+      // a learner that keeps being served the partial item never teaches the hub anything, which is how
+      // a catalogue of 1500 titles ended up with 21 known languages. `?budgetMs=` buys a longer wait for
+      // exactly that job, clamped so a typo cannot make the hub wait on an addon forever.
+      const askedBudget = Number(u.searchParams.get('budgetMs'));
+      const budget = Number.isFinite(askedBudget) ? Math.min(20000, Math.max(300, askedBudget)) : META_BUDGET_MS;
+      const ctx = makeCtx(profile, budget);
       // The client knows the tile's type; passing it stops an addon guessing the wrong one.
       const item = await ctx.resolve(identity, u.searchParams.get('type'));
       if (!item) return send(res, 404, { error: 'not found', identity });

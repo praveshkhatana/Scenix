@@ -153,12 +153,14 @@ function hash(s) {
 /** What a profile looks like: `{kind:'photo', src}` or `{kind:'char', char, palette}`. */
 export function avatarFor(profile, index = 0) {
   if (!profile) return null;
-  const photo = profile.avatar || profile.photo || profile.image || profile.picture;
-  if (photo) return { kind: 'photo', src: String(photo) };
+  // A choice this household made outranks a hub picture: if someone picks a face for a profile that later
+  // grows a photo, the face they chose is the one their family will keep looking for.
   const stored = readStore()[profile.id];
   if (stored && (stored.kind === 'photo' ? stored.src : characterById(stored.char) && paletteById(stored.palette))) {
     return stored;
   }
+  const photo = profile.avatar || profile.photo || profile.image || profile.picture;
+  if (photo) return { kind: 'photo', src: String(photo) };
   const kids = String(profile.kind || '').toLowerCase() === 'kids';
   const h = hash(profile.id || String(index));
   const chars = kids
@@ -175,21 +177,47 @@ export function avatarFor(profile, index = 0) {
 }
 
 /**
- * Paint a tile face. `face` is the `.a` element from app.css; it keeps its geometry and its overlays (the
- * lock, the Kids badge) and only its skin changes, so the profile switch can still clone it and fly it.
+ * Mix a hex toward white by amt. Written out rather than using color-mix(), because this renders on webviews a
+ * few Android versions behind the browser.
  */
-export function paintAvatar(face, profile, index = 0) {
-  if (!face) return;
-  const spec = avatarFor(profile, index);
-  if (!spec) return;
+function mix(hex, amt) {
+  const h = String(hex).replace('#', '');
+  if (h.length !== 6) return hex;
+  const c = (i) => Math.round(parseInt(h.slice(i, i + 2), 16) * (1 - amt) + 255 * amt);
+  return `rgb(${c(0)}, ${c(2)}, ${c(4)})`;
+}
+
+/**
+ * The ground a drawn face sits on. On a wall of black a tile filled with its own dark tone disappears — the
+ * first cut read as holes in the screen rather than as cards — so the palette's darker tone is lifted toward
+ * white in the upper left and allowed to fall off to near-black at the far edge. One light source, shared by
+ * every card, which is also what makes the row look lit by the halo behind it.
+ */
+export function tileFill(p) {
+  return `radial-gradient(130% 130% at 26% 14%, ${mix(p.b, 0.34)} 0%, ${p.b} 46%, #101318 100%)`;
+}
+
+/**
+ * Paint a spec onto a face. Only the skin is replaced: the lock and the Kids badge are the screen's
+ * overlays, and the profile switch clones this element and flies it, so its structure has to survive.
+ */
+export function paintSpec(face, spec) {
+  if (!face || !spec) return;
+  face.querySelectorAll('.av-art, .av-photo').forEach((n) => n.remove());
   if (spec.kind === 'photo') {
-    face.classList.remove('grad1', 'grad2', 'grad3', 'grad4', 'k');
     face.style.background = 'var(--key)';
-    face.innerHTML = `<img class="av-photo" src="${apiUrl(spec.src)}" alt=""/>`;
-    return;
+    face.insertAdjacentHTML('afterbegin', `<img class="av-photo" src="${apiUrl(String(spec.src).replace(/"/g, '%22'))}" alt=""/>`);
+  } else {
+    const c = characterById(spec.char) || CHARACTERS[0];
+    const p = paletteById(spec.palette) || PALETTES[0];
+    face.style.background = tileFill(p);
+    face.insertAdjacentHTML('afterbegin', `<svg class="av-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${c.art(p.a)}</svg>`);
   }
-  const c = characterById(spec.char) || CHARACTERS[0];
-  const p = paletteById(spec.palette) || PALETTES[0];
-  face.style.background = `radial-gradient(120% 120% at 30% 20%, ${p.b} 0%, #0e1013 100%)`;
-  face.innerHTML = `<svg class="av-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${c.art(p.a)}</svg>`;
+  const ini = face.querySelector('.ini');
+  if (ini) ini.style.display = 'none';   // the initial is a fallback, not a second layer
+}
+
+/** Paint whatever this profile should look like right now. */
+export function paintAvatar(face, profile, index = 0) {
+  paintSpec(face, avatarFor(profile, index));
 }

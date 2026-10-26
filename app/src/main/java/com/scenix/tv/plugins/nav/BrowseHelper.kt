@@ -116,13 +116,29 @@ object BrowseHelper {
         return tv
     }
 
+    /**
+     * What to say when the backend answered nothing. Which backend this TV is using changes the answer:
+     * a hub that is down is a different problem from a TV on its own that nobody has pointed at an addon
+     * yet, and a message about the first one on a screen caused by the second sends the owner to the
+     * wrong room.
+     */
     fun offlineMessage(ctx: AppContext, error: String): String {
+        if (ctx.prefs.standalone()) {
+            return "This TV is running on its own and has fetched nothing yet\n\n$error\n\n" +
+                "Add an addon under Settings, or pair a hub and stream from there."
+        }
         val hub = ctx.prefs.hubUrl(ctx.app.getString(com.scenix.tv.R.string.hub_url))
-        return "Cannot reach the hub at $hub\n\n$error\n\n" +
-            "Start the hub, or run the app in fixture mode (--es fixture assets/fixtures/home.json)."
+        val where = if (hub.isBlank()) "a hub (none is paired with this TV)" else "the hub at $hub"
+        return "Cannot reach $where\n\n$error\n\n" +
+            "Start the hub, pair this TV under Settings, or run the app in fixture mode " +
+            "(--es fixture assets/fixtures/home.json)."
     }
 
-    fun emptyMessage(ctx: AppContext): String = "Nothing here yet \u2014 the hub sent no rows this profile can see."
+    fun emptyMessage(ctx: AppContext): String = when {
+        ctx.prefs.standalone() ->
+            "Nothing here yet \u2014 add an addon under Settings and this TV reads that addon\u2019s own catalogues."
+        else -> "Nothing here yet \u2014 the hub sent no rows this profile can see."
+    }
 
     /** A kids profile getting 403 on an adult screen: say it plainly, do not make it look broken. */
     fun hiddenMessage(ctx: AppContext): String =

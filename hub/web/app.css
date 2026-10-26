@@ -694,55 +694,195 @@ body.native-live, html.native-live { background: transparent; }
 /* ==========================================================================
    Profiles, PIN, keypads
    ========================================================================== */
-.pwrap { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; background: var(--bg); padding: calc(40px * var(--s)); }
-/* Spec B, "Profile picker geometry": title 80/700 with 96 px below it, 280 px avatars on a 72 px gap,
-   radius 62 (22 % of the tile), border 3 px white/.2 that thickens to 6 px of #fff on focus. */
-.pwrap h1 {
-  font-size: calc(80px * var(--s)); font-weight: 700; margin-bottom: calc(96px * var(--s)); letter-spacing: -.02em;
-  animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
+/*
+  Profile selection: a full-bleed carousel in the dark, not a grid of tiles on a page. There is no heading
+  and no chrome — the focused card *is* the screen. It grows, the row slides so it sits dead centre, the
+  neighbours fall back in brightness, and the brand's own light comes up behind it. Cards are 2:3 portrait,
+  the same proportions the hub's posters use, so a person and a title read as the same species of thing.
+*/
+.pwrap {
+  position: absolute; inset: 0; display: grid; place-content: center; justify-items: center;
+  background: #000; overflow: hidden;
 }
-.pfs { display: flex; gap: calc(72px * var(--s)); flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+/* The halo is the only decoration here, and it is the brand colour doing the work rather than a border. */
+.pglow {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(46% 44% at 50% 50%, rgba(229, 9, 20, .42), rgba(229, 9, 20, .16) 42%, rgba(0, 0, 0, 0) 72%);
+  transition: opacity 500ms cubic-bezier(.33, 0, .67, 1);
+}
+/* The wordmark holds the top of the screen so the surface still reads as Scenix, but it stays small and dim:
+   on this screen the cards are the whole show. */
+.pbrand {
+  position: absolute; top: calc(54px * var(--s)); left: 50%; transform: translateX(-50%); z-index: 5;
+  color: var(--brand); opacity: .45;
+  transition: opacity 500ms cubic-bezier(.33, 0, .67, 1);
+}
+.pfs {
+  position: relative; z-index: 10; display: flex; align-items: center; justify-content: center;
+  gap: calc(46px * var(--s));
+  /* The row slides to bring the chosen card to the centre: spatial motion, so it is allowed to take half a
+     second, and it decelerates into place instead of stopping. */
+  transition: transform 620ms cubic-bezier(.23, 1, .32, 1), opacity 500ms cubic-bezier(.33, 0, .67, 1);
+}
 .avatar {
-  width: var(--avatar); text-align: center;
-  transition: transform var(--focus-ms) cubic-bezier(.23, 1, .32, 1);
+  position: relative; width: calc(300px * var(--s));
+  transition: transform 420ms cubic-bezier(.23, 1, .32, 1), filter 300ms ease;
   animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
-  /* The household's avatars arrive one after another, 100 ms apart — spec B. */
+  /* The household arrives one after another, 100 ms apart — spec B. */
   animation-delay: calc(var(--delay-children) + min(var(--i, 0), 7) * 100ms);
 }
 .avatar .a {
-  width: var(--avatar); height: var(--avatar); border-radius: calc(62px * var(--s)); position: relative;
-  display: grid; place-content: center; background: var(--key); overflow: hidden;
-  border: calc(3px * var(--s)) solid rgba(255, 255, 255, .2);
-  transition: border-color var(--focus-ms), box-shadow var(--focus-ms);
+  width: calc(300px * var(--s)); height: calc(450px * var(--s)); border-radius: calc(24px * var(--s));
+  position: relative; overflow: hidden; background: var(--key);
+  border: calc(2px * var(--s)) solid rgba(255, 255, 255, .10);
+  display: grid; place-content: center;
 }
+.avatar .a .av-art, .avatar .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.avatar .a .av-photo { object-fit: cover; }
 .avatar .a .ini { font-size: var(--t-avatar); font-weight: 800; color: #fff; }
-.avatar .a.grad1 { background: linear-gradient(135deg, #7a8493, #33383f); }
-.avatar .a.grad2 { background: linear-gradient(135deg, #6d5bd0, #2b2350); }
-.avatar .a.grad3 { background: linear-gradient(135deg, #2f8f8f, #14353a); }
-.avatar .a.grad4 { background: linear-gradient(135deg, #b0553f, #4a1f16); }
-.avatar.k .a { background: linear-gradient(135deg, var(--kids), #b8860b); }
-.avatar.k .a .ini { color: #241a02; }
+/* The name sits inside the card over a scrim, bottom-left, exactly where the reference puts a title. */
+.avatar .scrim {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 60%;
+  background: linear-gradient(to top, rgba(0, 0, 0, .9) 8%, rgba(0, 0, 0, 0) 100%);
+}
 .avatar .nm {
-  margin-top: calc(18px * var(--s)); font-size: var(--t-profile); font-weight: 500; color: rgba(255, 255, 255, .6);
-  transition: color var(--focus-ms), font-weight var(--focus-ms);
+  position: absolute; left: calc(20px * var(--s)); right: calc(20px * var(--s)); bottom: calc(54px * var(--s));
+  font-size: calc(34px * var(--s)); font-weight: 600; color: #fff; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* Focus: ring thickens 3 -> 6 px and the tile lifts 1.08. The extra 3 px is a shadow so the tile never
-   reflows and the row of names under it stays where the eye left it. */
-.avatar.foc { transform: scale(1.08); }
-.avatar.foc .a { border-color: #fff; box-shadow: 0 0 0 calc(3px * var(--s)) #fff; }
-.avatar.foc .nm { color: #fff; font-weight: 700; }
+.avatar .chips { position: absolute; left: calc(20px * var(--s)); bottom: calc(20px * var(--s)); display: flex; gap: calc(10px * var(--s)); }
+.avatar .pc {
+  font-size: calc(16px * var(--s)); font-weight: 500; color: rgba(255, 255, 255, .88);
+  padding: calc(4px * var(--s)) calc(12px * var(--s)); border-radius: 999px; background: rgba(255, 255, 255, .18);
+}
+.avatar .pini {
+  position: absolute; top: calc(16px * var(--s)); left: calc(16px * var(--s));
+  width: calc(42px * var(--s)); height: calc(42px * var(--s)); border-radius: 50%;
+  background: rgba(0, 0, 0, .5); display: grid; place-content: center;
+  font-size: calc(19px * var(--s)); font-weight: 800; color: #fff;
+}
+/* Focus, per the reference: size, light and depth. No outline ring — on a full-bleed card a ring reads like
+   a selection box in a photo editor, and the expansion already says everything. */
+.avatar.foc { transform: scale(1.34); z-index: 30; }
+.avatar.foc .a { border-color: rgba(255, 255, 255, .3); box-shadow: 0 calc(26px * var(--s)) calc(64px * var(--s)) rgba(0, 0, 0, .8); }
+.pfs.armed .avatar:not(.foc) { filter: brightness(.5) saturate(.78); }
 .avatar .lock {
-  position: absolute; bottom: calc(12px * var(--s)); right: calc(12px * var(--s));
-  width: calc(40px * var(--s)); height: calc(40px * var(--s)); border-radius: var(--r-badge);
-  background: rgba(0, 0, 0, .6); display: grid; place-content: center;
+  position: absolute; top: calc(16px * var(--s)); right: calc(16px * var(--s));
+  width: calc(42px * var(--s)); height: calc(42px * var(--s)); border-radius: 50%;
+  background: rgba(0, 0, 0, .5); display: grid; place-content: center;
 }
-.avatar .lock .ico { width: calc(24px * var(--s)); height: calc(24px * var(--s)); }
-.avatar .kbadge { position: absolute; top: calc(12px * var(--s)); left: calc(12px * var(--s)); }
-.avatar-add .a { background: transparent; border: calc(2px * var(--s)) dashed rgba(255, 255, 255, .35); }
-.avatar-add.foc .a { border-color: #fff; border-style: solid; box-shadow: 0 0 0 calc(3px * var(--s)) #fff; }
-.avatar-add.foc .nm { color: #fff; font-weight: 700; }
-.avatar-add .a .ico { width: calc(70px * var(--s)); height: calc(70px * var(--s)); color: var(--ink2); }
-.avatar-add { width: var(--avatar); text-align: center; transition: transform var(--focus-ms); }
+.avatar .lock .ico { width: calc(22px * var(--s)); height: calc(22px * var(--s)); }
+.avatar .kbadge { position: absolute; top: calc(16px * var(--s)); right: calc(16px * var(--s)); }
+.avatar-add .a { background: transparent; border: calc(2px * var(--s)) dashed rgba(255, 255, 255, .26); }
+.avatar-add .a .ico { position: absolute; inset: 0; margin: auto; width: calc(72px * var(--s)); height: calc(72px * var(--s)); color: rgba(255, 255, 255, .55); }
+
+/*
+  The avatar picker. It borrows the PIN pad's modal shell and needs no keyboard: a rail of characters, a row
+  of palettes, and a preview that repaints as the ring moves. Choosing is therefore free to explore — moving
+  is a preview, OK keeps it, Back leaves the profile exactly as it was.
+*/
+.pfoot { display: flex; gap: calc(28px * var(--s)); margin-top: calc(48px * var(--s)); }
+.pfoot .manage { margin-top: 0; }
+.mbox.avpick { width: calc(1280px * var(--s)); }
+.avpick .who { color: var(--ink2); font-size: calc(22px * var(--s)); margin-bottom: calc(26px * var(--s)); }
+/* The preview is a card, not a face: portrait, same proportions and same corner as the one on the row, so the
+   picture being chosen is the picture you will get. */
+.avprev { display: grid; place-items: center; margin-bottom: calc(18px * var(--s)); }
+.avprev .a {
+  width: calc(160px * var(--s)); height: calc(240px * var(--s)); border-radius: calc(18px * var(--s));
+  position: relative; overflow: hidden; background: var(--key); border: calc(3px * var(--s)) solid rgba(255, 255, 255, .2);
+}
+.avprev .a .av-art, .avprev .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.avprev .a .av-photo { object-fit: cover; }
+/* Nine faces have to sit in one line: a rail that wraps reads as a list, and a rail that fits reads as a
+   row of choices the eye can sweep in one movement. */
+/* Nine faces have to sit in one line: a rail that wraps reads as a list, and a rail that fits reads as a row
+   of choices the eye can sweep in one movement. */
+.avchars { display: flex; gap: calc(12px * var(--s)); flex-wrap: wrap; justify-content: center; }
+.avchar {
+  width: calc(96px * var(--s)); height: calc(96px * var(--s)); padding: 0; position: relative; overflow: hidden;
+  border-radius: calc(22px * var(--s)); border: calc(3px * var(--s)) solid transparent;
+  background: var(--key);
+  transition: transform var(--focus-ms) cubic-bezier(.23, 1, .32, 1), border-color var(--focus-ms), box-shadow var(--focus-ms);
+}
+.avchar .av-art, .avchar .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; }
+.avchar .av-photo { object-fit: cover; background: #fff; }
+.avchar.foc { border-color: #fff; box-shadow: 0 0 0 calc(3px * var(--s)) #fff; transform: scale(1.1); }
+/* Three families of faces in one modal needs signposts, or the rails blur into one long list. */
+.avlabel {
+  margin: calc(20px * var(--s)) 0 calc(10px * var(--s)); text-align: center;
+  font-size: calc(15px * var(--s)); font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--ink3);
+}
+.avsw { display: flex; gap: calc(14px * var(--s)); justify-content: center; margin-top: calc(22px * var(--s)); }
+.sw {
+  width: calc(50px * var(--s)); height: calc(50px * var(--s)); padding: 0; border-radius: 50%;
+  border: calc(3px * var(--s)) solid rgba(255, 255, 255, .25);
+  transition: transform var(--focus-ms) cubic-bezier(.23, 1, .32, 1), border-color var(--focus-ms), box-shadow var(--focus-ms);
+}
+.sw.foc { border-color: #fff; box-shadow: 0 0 0 calc(3px * var(--s)) #fff; transform: scale(1.14); }
+.avhint { margin-top: calc(20px * var(--s)); color: var(--ink3); font-size: calc(18px * var(--s)); text-align: center; }
+.avkeep { margin-top: calc(22px * var(--s)); }
+.avatar-add { text-align: center; }
+/* The add tile is drawn with a dashed edge, so it needs the reference's own focus cue: a hard white edge, not
+   a glow. */
+.avatar-add.foc .a { border-color: #fff; border-style: solid; }
+
+/*
+  The opening, in order. The wordmark flies from the middle of the splash to the head of this screen, and the
+  cards come in behind it from the right, one behind the next, so the row arrives as a wave rather than a pop.
+  The delay is measured against the splash rather than against the data — `body.booted` is set by app.js at the
+  instant the intro lets go — because a hub that answers in 40 ms must not steal the beat. `backwards` fill
+  only: `both` would hold the final transform and the focused card would never scale.
+*/
+@keyframes cardIn {
+  from { opacity: 0; transform: translateX(calc(150px * var(--s))); }
+  to { opacity: 1; transform: none; }
+}
+body.booted .pwrap .avatar {
+  animation: cardIn 640ms var(--fade-up-ease) backwards;
+  animation-delay: calc(300ms + min(var(--i, 0), 7) * 95ms);
+}
+/* The wordmark's flight between screens — the same spatial curve the cards and the avatar use, so the whole
+   opening reads as one move. It is a clone in the top layer, which is why it survives the screens swapping
+   underneath it. */
+.logo-ghost {
+  position: fixed; z-index: 86; pointer-events: none; color: var(--brand);
+  transform-origin: top left;
+  transition: transform 800ms cubic-bezier(.23, 1, .32, 1), opacity 420ms ease-in 400ms;
+}
+.logo-ghost > * { width: 100% !important; height: 100% !important; }
+.logo-ghost path { animation: none !important; opacity: 1 !important; }
+.logo-ghost.fly { opacity: 0; }
+
+/*
+  Edit belongs to the card, not to the page: it hangs off the bottom edge, fades in when that card is the one
+  standing in the light, and scales with it. So Down from a card lands on the one control that changes that
+  card, and the card holds its size while the pill is focused — the ground must not move under the finger.
+*/
+.avatar .pedit {
+  position: absolute; left: 50%; bottom: calc(-64px * var(--s)); z-index: 40;
+  transform: translateX(-50%) scale(.9); transform-origin: center top;
+  display: inline-flex; align-items: center; gap: calc(9px * var(--s));
+  padding: calc(9px * var(--s)) calc(20px * var(--s)); border-radius: 999px;
+  background: rgba(18, 18, 20, .88); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .34);
+  color: #fff; font-size: calc(18px * var(--s)); font-weight: 600; white-space: nowrap;
+  opacity: 0; pointer-events: none;
+  transition: opacity 200ms cubic-bezier(.23, 1, .32, 1), transform 220ms cubic-bezier(.23, 1, .32, 1),
+              background var(--focus-ms), border-color var(--focus-ms);
+}
+.avatar .pedit .ico { width: calc(20px * var(--s)); height: calc(20px * var(--s)); }
+.avatar.foc .pedit { opacity: 1; transform: translateX(-50%) scale(1); pointer-events: auto; }
+.avatar.keep .pedit { opacity: 1; pointer-events: auto; }
+.avatar .pedit.foc { background: #fff; color: #141414; border-color: #fff; transform: translateX(-50%) scale(1.1); }
+.avatar.keep { transform: scale(1.34); z-index: 30; }
+.pfs.armed .avatar:not(.foc):not(.keep) { filter: brightness(.62) saturate(.85); }
+/* Manage profiles is a card like the rest: the row is the whole menu, and there is nothing to hunt for below
+   the fold. */
+.avatar-manage .a { background: rgba(255, 255, 255, .05); }
+.avatar-manage .a .ico, .avatar-add .a .ico {
+  position: absolute; inset: 0; margin: auto;
+  width: calc(72px * var(--s)); height: calc(72px * var(--s)); color: rgba(255, 255, 255, .55);
+}
 /* Spec B: Manage Profiles is square, uppercase, tracked out, grey that whitens on focus. */
 .manage {
   margin-top: calc(48px * var(--s)); font-size: calc(22px * var(--s)); color: #808080;
@@ -762,10 +902,12 @@ body.native-live, html.native-live { background: transparent; }
 }
 .pwrap.leaving { transition: background 300ms ease; background: transparent; }
 .pwrap.leaving h1, .pwrap.leaving .manage { opacity: 0; transform: scale(.9); }
-.pwrap.leaving .pfs { opacity: 0; transform: scale(.9); }
+.pwrap.leaving .pfs { opacity: 0; }
+/* The row keeps its inline slide, so it leaves by fading where it stands; the scenery goes with it. */
+.pwrap.leaving .pglow, .pwrap.leaving .pbrand { opacity: 0; }
 .avatar-ghost {
   position: fixed; z-index: 88; pointer-events: none; transform-origin: top left;
-  border-radius: calc(62px * var(--s)); overflow: hidden;
+  border-radius: calc(24px * var(--s)); overflow: hidden;
   transition: transform 800ms cubic-bezier(.33, 0, .67, 1), opacity 400ms ease-in 400ms;
 }
 .avatar-ghost .a { width: 100%; height: 100%; }
