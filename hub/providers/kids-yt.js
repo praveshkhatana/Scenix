@@ -31,7 +31,7 @@ const YT_CHANNELS = (process.env.YT_CHANNELS === undefined
     'https://www.youtube.com/@funtoons/videos,https://www.youtube.com/@PunjabiToons/videos'
   : process.env.YT_CHANNELS).split(',').map((s) => s.trim()).filter(Boolean);
 const REFRESH_MS = 6 * 60 * 60 * 1000;
-const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 GhartvHub/0.1';
+const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 // The ladder the old addon offered on the legacy surface: 720p then 480p, both mp4.
 const LADDER = [['720p', 'b[ext=mp4][height<=720]/b[ext=mp4]/b'], ['480p', 'b[ext=mp4][height<=480]/b']];
 

@@ -40,7 +40,7 @@ const PROBE_TIMEOUT_MS = Number(process.env.LIVE_HEALTH_TIMEOUT_MS || 6000); // 
 const CONCURRENCY = Number(process.env.LIVE_HEALTH_CONCURRENCY || 8); // never take the box's uplinks
 const MAX_REDIRECTS = 3;
 const STALE_MS = Number(process.env.LIVE_HEALTH_STALE_MS || 24 * 60 * 60 * 1000); // after a day, "dead" is a rumour
-const UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 GhartvHub/0.1';
+const UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 

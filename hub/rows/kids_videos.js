@@ -17,8 +17,13 @@ module.exports = {
 
   async build(ctx) {
     const items = await ctx.library();
-    return items.filter((it) =>
-      (it.type === 'video' || it.type === 'series')
-      && (it.genres || []).some((g) => KIDS_TAGS.includes(g)));
+    return items
+      .filter((it) =>
+        (it.type === 'video' || it.type === 'series')
+        && (it.genres || []).some((g) => KIDS_TAGS.includes(g)))
+      // The `catalog:` mark is internal plumbing (scrub() drops it) and survives merge.dedupe, so
+      // core/ratings.js can tell "a title from a shelf a parent curated for a child" apart from the same
+      // title arriving out of a search of the whole catalogue. Only titles with no certificate use it.
+      .map((it) => ({ ...it, _addons: [...(it._addons || []), `catalog:${module.exports.id}`] }));
   },
 };

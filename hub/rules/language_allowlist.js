@@ -5,20 +5,24 @@
  * An item whose `languages` are known and none of which are in the allow-list is dropped. An item
  * whose languages are unknown (a live feed iptv-org lists no language for, a YouTube upload) is kept:
  * unknown is not the same as wrong, and dropping everything we cannot classify would empty the
- * shelves. Default allow-list is hin,eng,pan — the same three playlists iptv-org itself fetches.
+ * shelves.
+ *
+ * The list is the hub's own setting — `settings.languages`, chosen by the owner, empty meaning no filter
+ * at all. It ships empty because three languages are one household's policy and not a product's: a build
+ * that preselects them hides most of the catalogue from a stranger and never tells them.
  *
  * Per profile, profiles.json may override it:
  *   "rules": { "language-allowlist": { "allow": ["eng"] } }
- * and LANGS="" (env) turns the rule off for every profile.
+ * and LANGS (env, install-time seeding only) pre-fills the setting on a hub that has none.
  */
-const DEFAULT_ALLOW = (process.env.LANGS === undefined ? 'hin,eng,pan' : process.env.LANGS)
-  .split(',').map((s) => s.trim()).filter(Boolean);
+const settings = require('../core/settings');
 
+/** Read when the rule runs, not when the file loads: a settings change lands on the next request. */
 function allowFor(ctx) {
   const r = ctx.profile && ctx.profile.rules && ctx.profile.rules['language-allowlist'];
   if (r && Array.isArray(r.allow)) return r.allow;
   if (ctx.profile && Array.isArray(ctx.profile.languages)) return ctx.profile.languages;
-  return DEFAULT_ALLOW;
+  return settings.languages();
 }
 
 module.exports = {

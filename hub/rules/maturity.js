@@ -16,11 +16,22 @@
  *      else: not in home, not in search, not in Continue Watching, not in history, for anyone. Turning it
  *      on adds no permanent tile either — `rows/latenight.js` only appears while the switch is on.
  *
- * Unrated is tier 2. The addons in this house state no certificate, and OMDb/TMDB coverage is patchy for
- * Indian titles, so "we asked and nothing was stated" is treated as adult-by-default: safer to hide from
- * a child than to guess.
+ * Unrated is NOT a tier. A title where a board spoke is decided by the strictest board that answered —
+ * that part is a fact and it never changes. A title where no board spoke is a policy question, and
+ * core/ratings.js answers it in two steps: first the cheap signals that are already in the item (which
+ * shelf it came from, the genres it is filed under, how long it runs), which is what keeps a curated
+ * kids shelf full, and only if those say nothing does the conservative adult default apply. Every such
+ * decision carries `defaulted: true`, so nothing here pretends to know a certificate it never read.
+ *
+ * The consequence worth knowing: an unknown title can now be VISIBLE to a child when the evidence says
+ * it is children's content, and an unknown title in an adult catalogue stays invisible to children while
+ * remaining completely ordinary for the adults (an adult profile has no age ceiling).
  */
 const ratings = require('../core/ratings');
+
+/** Set MATURITY_DEBUG=1 to log every item this rule hides, with the evidence it hid it on. */
+const DEBUG = process.env.MATURITY_DEBUG === '1' || process.env.MATURITY_DEBUG === 'true';
+const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 /** Policy per tier. `switchRequired` is the one worth editing: set it false to let tier 3 be age-only. */
 const POLICY = {
@@ -78,14 +89,29 @@ module.exports = {
     item.tier = tier;
     item.minAge = minAge;
     item._ratingSource = known.from; // internal: scrub() drops it, the reason stays in the hub log
+    // `defaulted` is the difference between a number a board gave and a number the household chose.
+    // `inferred` narrows it further: a guess from the shelf and the genres, not the flat adult default.
+    item._ratingDefaulted = known.defaulted === true;
+    item._ratingInferred = known.inferred === true;
+    item._ratingBoards = known.boards || 0;
 
     // tier 3 is not an age question: it is a switch. Off, the title does not exist for anyone.
-    if (policy.switchRequired && !(ctx.prefs && ctx.prefs.xxxEnabled)) return null;
+    if (policy.switchRequired && !(ctx.prefs && ctx.prefs.xxxEnabled)) {
+      if (DEBUG) log('hide', ctx.profile && ctx.profile.id, item.identity, item.title, '- tier 3, switch off');
+      return null;
+    }
 
     // Children see only what their age allows. Adults have no ceiling.
     const age = ageOf(ctx.profile);
     const ceiling = ctx.profile && ctx.profile.kind === 'kids' ? (age == null ? 12 : age) : ADULT_CEILING;
-    if (minAge > ceiling) return null;
+    if (minAge > ceiling) {
+      if (DEBUG) {
+        log('hide', ctx.profile && ctx.profile.id, item.identity, item.title,
+          '-', tier + '/' + minAge, 'for age', ceiling, known.defaulted ? '(defaulted' + (known.inferred ? ', inferred' : '') + ')' : '(board)',
+          '|', known.from);
+      }
+      return null;
+    }
 
     return item;
   },

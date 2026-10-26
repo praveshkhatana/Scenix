@@ -28,6 +28,8 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
+const settings = require('./settings');
+
 const ROOT = path.join(__dirname, '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const ADDONS_FILE = process.env.ADDONS_FILE || path.join(DATA_DIR, 'addons.json');
@@ -37,42 +39,63 @@ const TTL_MS = Number(process.env.ADDON_TTL_MS || 6 * 60 * 60 * 1000); // freshn
 const FETCH_TIMEOUT_MS = Number(process.env.ADDON_TIMEOUT_MS || 8000);
 const META_WAIT_MS = Number(process.env.ADDON_META_WAIT_MS || 6000); // a detail page may wait this long
 const MANIFEST_WAIT_MS = Number(process.env.ADDON_MANIFEST_WAIT_MS || 8000);
-const MAX_SOURCES = Number(process.env.ADDON_MAX_SOURCES || 12); // a picker shows a dozen, not 90
-const MIN_SIZE_BYTES = Number(process.env.ADDON_MIN_SIZE_MB || 100) * 1e6; // a 200 KB "1080p" is a clip
+// How many copies a picker shows, and how small a file has to be before it stops looking like a film.
+// Both are the owner's setting (settings.addons), read per request; the env vars only seed it at install
+// time. The names these shipped under were borrowed from someone else's protocol and are honoured for one
+// release as a fallback, then dropped.
+function maxSources() { return settings.get().addons.maxSources; }
+function minSizeBytes() { return settings.get().addons.minSizeMB * 1e6; }
 const WARM_STREAMS = Number(process.env.ADDON_WARM_STREAMS || 12); // identities whose streams we pre-fetch
-const UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 GhartvHub/0.1';
+const UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
 // Seed install: what a brand-new hub ships with, before anyone configures anything. Ids are named,
 // not derived from the hostname, because they surface in the list the user reads in Settings.
 // A hub that is already running picks these up too (see the seed merge in init()), so shipping a new
 // addon in code is enough to put it on a family's TV.
-const SEED_ADDONS = [
-  { id: 'cinemeta', name: 'Cinemeta', url: 'https://v3-cinemeta.strem.io/manifest.json' },
-  {
-    id: 'torrentio',
-    name: 'Torrentio',
-    // A community addon carries its own configuration in the path, using commas AND pipes - which
-    // is why SEED_ADDON_URLS below splits on a comma only where another URL follows it.
-    // `language=` is the content policy: hindi,english,punjabi only, never widened silently.
-    // `sizefilter=` is a descending list of size ceilings; the FIRST value is the ceiling the addon
-    // will hand back, so 25GB lets a 4K remux exist at all. What this household actually plays is
-    // decided per profile by core/prefs.js (qualityCap) and rules/size_cap.js + source_ranking.js,
-    // which drop/deprioritise anything over the profile's cap (8 GB at 1080p by default). Sourcing a
-    // 4K file here and dropping it there is deliberate: raising the ceiling later costs no re-install.
-    url: 'https://torrentio.strem.fun/language=hindi,english,punjabi|sizefilter=25GB,8GB,4GB,2GB/manifest.json',
-  },
-  { id: 'opensubtitles', name: 'OpenSubtitles', url: 'https://opensubtitles-v3.strem.io/manifest.json' },
-  // A streams-only addon that answers with the services a title sits on. Measured on the hub, its
-  // public endpoint answers with *service links* (subscription / rent landing pages), not media files;
-  // rules/source_ranking.js keeps those below a real file so play() never hands the TV a web page.
-  { id: 'watchhub', name: 'WatchHub', url: 'https://watchhub.strem.io/manifest.json' },
-];
-if (process.env.SEED_ADDON_URLS) {
-  SEED_ADDONS.length = 0;
-  for (const url of String(process.env.SEED_ADDON_URLS)
-    .split(/,(?=https?:\/\/)/).map((s) => s.trim()).filter(Boolean)) {
-    SEED_ADDONS.push({ id: '', name: null, url });
+//
+// The list is built per boot rather than written out as a literal, because a community addon carries its
+// own configuration inside its URL: baking one household's languages into that string would decide what a
+// stranger's catalogue contains. `settings.languages` empty means no `language=` segment at all — ask the
+// addon for everything it has and let this hub's own rules decide what is worth showing.
+function seedAddons() {
+  const langs = settings.languages()
+    .map((code) => LANG_CODE_TO_NAME[code] || null)
+    .filter(Boolean);
+  const sizeFilter = String(settings.get().addons.sizeFilter || '').trim();
+  const torrentioPath = [
+    langs.length ? 'language=' + langs.join(',') : '',
+    sizeFilter ? 'sizefilter=' + sizeFilter : '',
+  ].filter(Boolean).join('|') || 'sort=qualitysize';
+  const seeds = [
+    { id: 'cinemeta', name: 'Cinemeta', url: 'https://v3-cinemeta.strem.io/manifest.json' },
+    {
+      id: 'torrentio',
+      name: 'Torrentio',
+      // A community addon carries its own configuration in the path, using commas AND pipes - which
+      // is why SEED_ADDON_URLS below splits on a comma only where another URL follows it.
+      // `language=` comes from the owner's languages, and is left out entirely when they named none.
+      // `sizefilter=` is read by the addon as a list of size RANGES, not as one descending ceiling: the
+      // old `25GB,8GB,4GB,2GB` asked for 2-4 GB, 4-8 GB and 8-25 GB and therefore hid every copy under
+      // 2 GB — which is every 720p rip, the ones that actually start playing on a home connection. What
+      // this household plays is still decided per profile by core/prefs.js (qualityCap) and
+      // rules/size_cap.js + source_ranking.js; these two bands just make sure the fast-starting small
+      // copies and a proper 1080p/4K copy are both on the table to choose between.
+      url: 'https://torrentio.strem.fun/' + torrentioPath + '/manifest.json',
+    },
+    { id: 'opensubtitles', name: 'OpenSubtitles', url: 'https://opensubtitles-v3.strem.io/manifest.json' },
+    // A streams-only addon that answers with the services a title sits on. Measured on the hub, its
+    // public endpoint answers with *service links* (subscription / rent landing pages), not media files;
+    // rules/source_ranking.js keeps those below a real file so play() never hands the TV a web page.
+    { id: 'watchhub', name: 'WatchHub', url: 'https://watchhub.strem.io/manifest.json' },
+  ];
+  if (process.env.SEED_ADDON_URLS) {
+    seeds.length = 0;
+    for (const url of String(process.env.SEED_ADDON_URLS)
+      .split(/,(?=https?:\/\/)/).map((s) => s.trim()).filter(Boolean)) {
+      seeds.push({ id: '', name: null, url });
+    }
   }
+  return seeds;
 }
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -191,6 +214,14 @@ const LANG_NAME_TO_CODE = {
   french: 'fre', spanish: 'spa', german: 'ger', japanese: 'jpn', korean: 'kor', russian: 'rus',
   chinese: 'chi', portuguese: 'por', persian: 'per', arabic: 'ara', turkish: 'tur', polish: 'pol',
 };
+
+
+/** The other direction: the hub's codes spelled the way an addon's own URL wants them. */
+const LANG_CODE_TO_NAME = (() => {
+  const out = {};
+  for (const [name, code] of Object.entries(LANG_NAME_TO_CODE)) out[code] = name;
+  return out;
+})();
 
 function langCodes(raw) {
   if (!raw) return null;
@@ -316,7 +347,7 @@ function sourcesFromStreams(addonId, body) {
   const byLabel = new Map();
   for (const entry of (body && Array.isArray(body.streams) ? body.streams : [])) {
     const t = parseStream(entry);
-    if (t.sizeBytes != null && t.sizeBytes < MIN_SIZE_BYTES) continue;
+    if (t.sizeBytes != null && t.sizeBytes < minSizeBytes()) continue;
     sources.push({
       provider: t.kind === 'torrent' ? 'torrent' : 'adaptive',
       label: t.label,
@@ -325,6 +356,9 @@ function sourcesFromStreams(addonId, body) {
       quality: t.quality,
       sizeBytes: t.sizeBytes,
       risk: t.risk,
+      // The swarm count as the addon states it. `risk` is a lossy encoding of the same number, and the
+      // picker needs the real one: a copy nobody is seeding is not a slow stream, it is a dead one.
+      seeders: Number.isFinite(t.seeders) ? t.seeders : null,
       _addon: addonId,
       _langs: t.langs,
     });
@@ -347,6 +381,7 @@ const BAND_SHARE = [0.5, 0.3, 0.2]; // sharpest band gets half, the next ~a thir
 const UNKNOWN_BAND_CAP = 2; // a band where quality is only guesswork never takes more than two slots
 
 function spreadAcrossBands(sources) {
+  const MAX_SOURCES = maxSources(); // read once: the shares must add up to one number
   const bands = new Map(); // quality -> that band's sources, healthiest swarm first
   for (const s of sources) {
     const key = s.quality || 'unknown';
@@ -585,6 +620,22 @@ class External {
       live: null,
       progress: null,
       sources: [],
+      // A series is a list of episodes, and the community protocol addresses one as
+      // `<imdbid>:<season>:<episode>`. Without this map the hub can only ask for the bare show id, and
+      // Torrentio answers that with whichever single episode it feels like — which is why "Play" on a
+      // series sometimes drops the viewer into S01E04. Cinemeta gives us the whole map for free.
+      episodes: mapType(meta.type || type) === 'series' && Array.isArray(meta.videos)
+        ? meta.videos
+          .map((v) => ({
+            season: Number(v.season) || null,
+            episode: Number(v.episode) || null,
+            title: v.title || null,
+            releasedAt: toMs(v.released),
+            thumb: v.thumbnail || null,
+          }))
+          .filter((e) => e.season && e.episode)
+          .sort((a, b) => a.season - b.season || a.episode - b.episode)
+        : null,
       _addons: [this.id],
     };
     const prev = this.items.get(identity);
@@ -651,7 +702,9 @@ class External {
    */
   sources(item) {
     if (!this.has('stream')) return [];
-    const identity = item.identity;
+    // `streamId` is the episode address (`imdb:tt123:1:4`) when the caller is playing one episode of a
+    // series; the tile's own `identity` stays the show so dedupe, progress and rows keep working.
+    const identity = (item && (item.streamId || item.identity)) || item.identity;
     if (!addressableBy(identity, this.id)) return [];
     const cached = this.streamSources.get(identity);
     if (cached) return cached;
@@ -686,6 +739,41 @@ class External {
     await getJson(this.streamPath(identity),
       { wait: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
     return this.sources({ identity });
+  }
+
+  /**
+   * The URL this source would hand the player, WITHOUT a round trip or a child process, plus the
+   * headers that request needs. core/probe.js asks this before it measures a source: play() is not an
+   * option there, because for some addons play() means shelling out to yt-dlp for a signed URL, and a
+   * measurement taken from a URL the player may never receive is worth nothing.
+   * Returns null when this source has no http(s) endpoint to measure: a magnet (a promise about a
+   * swarm) or a link to a service page. That answer is itself useful — the app sees `checked: false`.
+   */
+  sourceTarget(identity, source) {
+    const index = this.streamIndex.get(identity);
+    if (!index || !index.size) return null;
+    const entry = (source && source.label && index.get(source.label)) || null;
+    if (!entry || entry.kind === 'torrent' || entry.link || !entry.url) return null;
+    if (!/^https?:\/\//i.test(entry.url)) return null;
+    return { url: entry.url, headers: (entry.proxyHeaders && entry.proxyHeaders.request) || {} };
+  }
+
+  /**
+   * The magnet behind a torrent source, from the very index play() uses — so the torrent engine is
+   * pointed at the identical torrent the Play button would choose. The ranked rows a client sees are
+   * display shapes (label, quality, size); the hash lives here. Null for anything that is not a torrent.
+   */
+  magnetFor(identity, source) {
+    const index = this.streamIndex.get(identity);
+    if (!index || !index.size) return null;
+    const entry = (source && source.label && index.get(source.label)) || null;
+    if (!entry || entry.kind !== 'torrent') return null;
+    return entry.magnet
+      || (entry.infoHash
+        ? 'magnet:?xt=urn:btih:' + entry.infoHash
+          + (entry.filename ? '&dn=' + encodeURIComponent(entry.filename) : '')
+        : null)
+      || null;
   }
 
   async play(identity, source) {
@@ -856,7 +944,7 @@ function init(reg, st) {
   if (list === null) {
     const now = Date.now();
     list = [
-      ...SEED_ADDONS.map((a, i) => ({
+      ...seedAddons().map((a, i) => ({
         id: a.id || slugFromUrl(a.url), name: a.name, url: a.url,
         enabled: true, addedAt: now, priority: 40 + i,
       })),
@@ -898,7 +986,7 @@ function init(reg, st) {
   let touched = false;
   let lastPriority = 39;
   for (const e of list) if (!e.native) lastPriority = Math.max(lastPriority, Number(e.priority) || 40);
-  for (const seed of SEED_ADDONS) {
+  for (const seed of seedAddons()) {
     const existing = byId.get(seed.id);
     if (!existing) {
       list.push({
@@ -949,6 +1037,41 @@ function slugFromUrl(url) {
   } catch (e) {
     return slug(String(url));
   }
+}
+
+/**
+ * Re-apply the seed configuration after the owner changed a setting the seeds are built from — their
+ * languages, the size bands to ask for. A community addon's configuration *is* its URL, so changing the
+ * setting means handing the addon a different question, and the answer it gave the old one is not an
+ * answer to the new: the addon is remounted on the new URL and its stream cache simply stops matching.
+ * An entry a person configured by hand is left exactly as they left it, same rule as the seed merge in
+ * init(). This runs on a settings change so the owner sees the effect on the next request, not on the
+ * next restart.
+ */
+function resyncSeeds() {
+  const list = entries();
+  const seeds = new Map(seedAddons().map((s) => [s.id, s]));
+  const remount = [];
+  for (const entry of list) {
+    if (entry.native || entry.configured) continue;
+    const seed = seeds.get(entry.id);
+    if (!seed || !seed.url || entry.url === seed.url) continue;
+    log('ADDONS settings resynced', entry.id, ':', entry.url, '->', seed.url);
+    entry.url = seed.url;
+    remount.push(entry.id);
+  }
+  if (!remount.length) return { changed: 0 };
+  try {
+    writeEntries(list);
+  } catch (e) {
+    log('ADDONS settings resync write failed', e.message);
+  }
+  for (const id of remount) {
+    unmount(id);
+    const entry = list.find((x) => x.id === id);
+    if (entry) mount(entry);
+  }
+  return { changed: remount.length };
 }
 
 /** GET /app/v1/addons — native and installed, with live counts and the last error for each. */
@@ -1092,8 +1215,13 @@ function byId(id) {
 }
 
 module.exports = {
-  init, list, add, remove, setEnabled, byId, entries,
+  init, list, add, remove, setEnabled, byId, entries, resyncSeeds, seedAddons,
   paths: { ADDONS_FILE, CACHE_FILE },
-  limits: { TTL_MS, FETCH_TIMEOUT_MS, META_WAIT_MS, MAX_SOURCES, MIN_SIZE_BYTES, WARM_STREAMS },
+  // A getter, so a client reading its limits sees the owner's current choices rather than the values this
+  // process happened to have when it started.
+  get limits() {
+    return { TTL_MS, FETCH_TIMEOUT_MS, META_WAIT_MS,
+      MAX_SOURCES: maxSources(), MIN_SIZE_BYTES: minSizeBytes(), WARM_STREAMS };
+  },
   util: { langCodes, humanSize, parseStream, sourcesFromStreams, identityFor, remoteIdFor, mapType },
 };

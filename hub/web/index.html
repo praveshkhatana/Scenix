@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141414">
+<title>Scenix</title>
+<!--
+  Scenix — one web UI, thin native shells.
+
+  This file is the whole front-end's entry point. The hub serves it at `/` and every file it loads at
+  `/ui/<file>`, so every asset URL and every `import` below is root-relative (`/ui/js/…`). There is no
+  build step and no framework: open the URL and it runs.
+
+  Screens, cards and rows are plugins registered by the modules under /ui/js/. Nothing here names any
+  content: the hub's `/app/v1/home` decides what the household sees.
+-->
+<link rel="icon" href="/ui/assets/scenix-mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+  <!-- The screen router mounts one screen at a time into #stage. -->
+  <div id="stage"></div>
+
+  <!-- The only two <video> elements in the product live here, created and driven by /ui/js/video.js. -->
+  <div id="video-host" aria-hidden="true"></div>
+
+  <!-- Modals, option menus, keypads and status lines. -->
+  <div id="layer"></div>
+
+  <noscript>
+    <div class="boot-error">Scenix needs JavaScript. The hub is serving the interface; the browser is not running it.</div>
+  </noscript>
+
+  <div id="boot" class="boot">
+    <!--
+      The intro wordmark is the real logo as inline paths, not text: it has to paint correctly before the
+      webfont arrives, and one path per letter lets the mark build itself left-to-right (the CSS does that
+      in app.css under "The intro"). /ui/assets/scenix-wordmark.svg is the same artwork for anything that
+      wants it as an image, including the Android shell.
+    -->
+    <svg class="boot-logo" viewBox="0 0 351 81" role="img" aria-label="Scenix">
+      <path style="--i: 0" d="M32.8972 76.1601C23.6172 76.1601 16.4492 73.9318 11.3932 69.475C6.40122 64.9527 3.93722 58.202 4.00122 49.223H19.6492C19.5852 52.9588 20.6732 55.8098 22.9132 57.776C25.1532 59.7422 28.2892 60.7253 32.3212 60.7253C35.6492 60.7253 38.2732 60.1683 40.1932 59.0541C42.1132 57.9399 43.0732 56.2358 43.0732 53.9419C43.0732 52.0412 42.0812 50.6649 40.0972 49.8129C38.1772 48.9608 36.2572 48.371 34.3372 48.0433C32.4172 47.65 31.2332 47.4206 30.7852 47.3551C25.8572 46.372 21.6012 45.1922 18.0172 43.8159C14.4332 42.374 11.4252 40.2112 8.99322 37.3274C6.56122 34.4436 5.34522 30.6422 5.34522 25.9233C5.34522 21.2044 6.56122 17.2064 8.99322 13.9294C11.4252 10.5868 14.6572 8.09628 18.6892 6.45777C22.7852 4.81926 27.2332 4 32.0332 4C37.8572 4 42.8812 5.11419 47.1052 7.34257C51.3932 9.57095 54.7532 12.9463 57.1852 17.4686C58.4012 19.6314 59.1372 21.7287 59.3932 23.7605C59.6492 25.7267 59.7772 27.6601 59.7772 29.5608H44.1292C44.1292 26.0216 43.2012 23.4328 41.3452 21.7943C39.4892 20.0902 36.6092 19.2382 32.7052 19.2382C29.5692 19.2382 27.1372 19.7953 25.4092 20.9095C23.6812 22.0237 22.8172 23.5311 22.8172 25.4318C22.8172 27.5291 23.9692 29.0693 26.2732 30.0524C28.5772 31.0355 31.4892 31.9203 35.0092 32.7068C40.7692 33.8865 45.2492 35.0335 48.4492 36.1476C51.7132 37.1963 54.5292 39.097 56.8972 41.8497C59.2652 44.6024 60.4492 48.4693 60.4492 53.4504C60.4492 58.1693 59.1692 62.2328 56.6092 65.6409C54.0492 69.049 50.6572 71.6706 46.4332 73.5058C42.2732 75.2754 37.7612 76.1601 32.8972 76.1601Z"/>
+      <path style="--i: 1" d="M122.553 48.5286C122.617 57.209 120.217 64.0009 115.353 68.9044C110.489 73.7416 103.801 76.1602 95.2892 76.1602C90.2332 76.1602 85.5612 74.9674 81.2732 72.582C77.0492 70.1965 73.6892 66.8171 71.1932 62.4438C68.6972 58.0704 67.4492 53.0345 67.4492 47.3359V32.8243C67.4492 27.192 68.6332 22.1891 71.0012 17.8158C73.4332 13.4424 76.7292 10.063 80.8892 7.67758C85.1132 5.22586 89.8172 4 95.0012 4C103.513 4 110.169 6.41859 114.969 11.2558C119.833 16.0267 122.297 22.7855 122.361 31.5322H105.081C105.017 28.1528 104.121 25.5354 102.393 23.68C100.729 21.8247 98.2652 20.897 95.0012 20.897C92.0572 20.897 89.6252 21.8578 87.7052 23.7794C85.7852 25.7011 84.8252 28.4178 84.8252 31.9298V48.131C84.8252 51.6429 85.8172 54.3928 87.8012 56.3807C89.8492 58.3023 92.3452 59.2632 95.2892 59.2632C102.009 59.2632 105.369 55.685 105.369 48.5286H122.553Z"/>
+      <path style="--i: 2" d="M185.211 19.8516H150.518V32.1719H183.194V48.0293H150.518V60.3262H185.211V76.1602H134.554V8C134.554 5.79086 136.345 4 138.554 4H185.211V19.8516Z"/>
+      <path style="--i: 3" d="M233.998 40.7021V8C233.998 5.79086 235.789 4 237.998 4H249.871V76.1602H235.736L215.084 39.457V76.1602H199.211V8C199.211 5.79086 201.002 4 203.211 4H213.345L233.998 40.7021Z"/>
+      <path style="--i: 4" d="M279.701 76.1602H263.871V8C263.871 5.79086 265.662 4 267.871 4H279.701V76.1602Z"/>
+      <path style="--i: 5" d="M320.657 22.0205L328.476 6.22559C329.151 4.86277 330.54 4.00018 332.06 4H346.732L328.926 38.958L346.634 76.1602H328.659L320.145 57.3154L311.191 76.1602H293.701L311.666 39.709L296.499 9.80957C295.149 7.14877 297.083 4.00017 300.066 4H311.326L320.657 22.0205Z"/>
+    </svg>
+    <div class="boot-note">Connecting to your hub…</div>
+  </div>
+
+  <script type="module" src="/ui/js/app.js"></script>
+</body>
+</html>

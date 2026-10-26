@@ -2,21 +2,39 @@
 /*
  * tools/backfill-ratings.js — fill data/ratings.json in one pass, so the home screen never has to.
  *
- * Run it once on the hub box, after a deploy:
+ * Run it on the hub box, after a deploy:
  *
- *     cd ~/tvhub && node tools/backfill-ratings.js
+ *     cd ~/tvhub && node tools/backfill-ratings.js --bulk=wikidata
  *
  * What it walks: every identity the hub has ever seen (data/library.json), plus the items in the rows the
- * family actually scrolls past (top10, justadded, newreleases, punjabiclassics, installed, and the taste
+ * family actually scrolls past (top10, justadded,newreleases,punjabiclassics,installed, and the taste
  * rows) fetched from the running hub over HTTP when it answers. Channels are skipped — a live channel has
  * no certificate to find, and asking for one wastes the day's quota.
  *
- * OMDb's free tier is about 1000 lookups a day, so this sleeps between calls (SLEEP_MS, default 400) and
- * stops by itself when core/ratings.js reports its daily cap spent. It is resumable: a title already in
- * data/ratings.json is never fetched again, so running it tomorrow continues where today stopped.
+ * Three modes, and they cost very differently. Pick explicitly; a bare run does the cheap one.
  *
- * It prints, at the end, exactly how many titles got a real certificate and how many fell back to unrated.
- * That number is the honest measure of how good the kids filtering can be on this box.
+ *   (default) --bulk=wikidata  a few hundred titles per HTTP request, no key, no quota. This is the only
+ *                              route that fills a catalogue of thousands in minutes, and the only bulk
+ *                              source verified reachable from this box (the BBFC's own bulk dataset is not
+ *                              reachable from here at all).
+ *   --per-title                one OMDb call plus one TMDB call per title — the only way to get the boards
+ *                              that are not on Wikidata. OMDb's free tier is about 1000 lookups a day, so
+ *                              this sleeps between calls and stops by itself when core/ratings.js reports
+ *                              its daily cap spent. Run it overnight, not while the family is watching.
+ *   --recompute                no network at all: re-score every stored record from the boards it already
+ *                              holds. That is how a fix to the ladder reaches the titles this box knows.
+ *
+ * It is resumable and idempotent, so a run can be stopped at any point and started again:
+ *   - every batch is on disk before the next one is asked, so an interrupted run keeps what it fetched;
+ *   - certificates are unioned into a title's record, never replaced, so asking for the same title twice
+ *     changes nothing;
+ *   - --only-missing skips titles that already have a board, which is how to continue a big run cheaply.
+ *
+ * It is bounded: --limit caps how many titles one run touches (default 2000; --limit=0 is the whole
+ * catalogue, and you should mean it). This tool never starts an unbounded job against the internet.
+ *
+ * It prints the coverage before and after, and the tier distribution, so the run is measured rather than
+ * described. That number is the honest measure of how good the kids filtering can be on this box.
  */
 const fs = require('fs');
 const path = require('path');
@@ -24,10 +42,21 @@ const http = require('http');
 
 const ROOT = path.join(__dirname, '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
-const SLEEP_MS = Number(process.env.SLEEP_MS || 400);
-const HUB = process.env.HUB_URL || 'http://127.0.0.1:' + (process.env.PORT || 8788);
-const ROWS = (process.env.ROWS || 'top10,justadded,newreleases,punjabiclassics,installed,taste-action,taste-family,taste-animation').split(',');
-const PROFILE = process.env.PROFILE || 'raj';
+
+const argv = process.argv.slice(2);
+const has = (name) => argv.includes('--' + name);
+const opt = (name, fallback) => {
+  const hit = argv.find((a) => a.startsWith('--' + name + '='));
+  return hit ? hit.split('=').slice(1).join('=') : fallback;
+};
+
+const HUB = opt('hub', process.env.HUB_URL || 'http://127.0.0.1:' + (process.env.PORT || 8788));
+const ROWS = opt('rows', process.env.ROWS
+  || 'top10,justadded,newreleases,punjabiclassics,installed,taste-action,taste-family,taste-animation').split(',');
+const PROFILE = opt('profile', process.env.PROFILE || 'raj');
+const SLEEP_MS = Number(opt('sleep', process.env.SLEEP_MS || 400));
+const BATCH = Number(opt('batch', process.env.BATCH || 200));
+const LIMIT = Number(opt('limit', process.env.LIMIT !== undefined ? process.env.LIMIT : 2000));
 
 const ratings = require(path.join(ROOT, 'core', 'ratings'));
 
@@ -66,7 +95,26 @@ function fetchRow(rowId) {
   });
 }
 
+/** A coverage snapshot, so the run is measured and not described. */
+function coverage() {
+  const st = ratings.status();
+  return {
+    entries: st.entries,
+    titlesWithABoard: st.withCertificate,
+    certificateStrings: st.boardStrings,
+    askedNothingStated: st.askedNothing,
+    boardsWeCannotRead: st.unknownBoardStrings,
+    byTier: st.byTier,
+    upstreamCalls: st.upstreamCallsToday + '/' + st.dailyCap,
+  };
+}
+
 async function main() {
+  const doBulk = has('bulk') || (!has('per-title') && !has('recompute')); // the cheap route is the default
+  const doPerTitle = has('per-title');
+  const doRecompute = has('recompute');
+  const bulkSource = opt('bulk', 'wikidata');
+
   const library = readJson(path.join(DATA_DIR, 'library.json'), {});
   const wanted = new Map();
   for (const identity of Object.keys(library)) {
@@ -75,47 +123,95 @@ async function main() {
   const fromRows = (await Promise.all(ROWS.map(fetchRow))).flat();
   for (const it of fromRows) if (it && worthLookingUp(it.identity)) wanted.set(it.identity, it);
 
-  const ids = [...wanted.values()];
-  log('BACKFILL', ids.length, 'titles to look at,', ids.length - fromRows.filter((i) => i && worthLookingUp(i.identity)).length, 'of them only from the library');
+  let ids = [...wanted.values()];
+  if (has('only-missing')) {
+    ids = ids.filter((it) => {
+      const rec = ratings.peek(it.identity);
+      return !rec || !rec.certs || !Object.keys(rec.certs).length;
+    });
+  }
+  const seen = ids.length;
+  if (Number.isFinite(LIMIT) && LIMIT > 0 && ids.length > LIMIT) ids = ids.slice(0, LIMIT);
+
+  const before = coverage();
+  log('BACKFILL coverage before:', JSON.stringify(before));
+  log('BACKFILL', ids.length + '/' + seen, 'titles to look at',
+    seen > ids.length ? `(bounded by --limit ${LIMIT}; ${seen - ids.length} left for the next run)` : '(the whole catalogue)',
+    '| modes', [doBulk && 'bulk=' + bulkSource, doPerTitle && 'per-title', doRecompute && 'recompute'].filter(Boolean).join(' '),
+    '| hub', HUB, '| profile', PROFILE);
   if (!ids.length) {
-    log('BACKFILL nothing to do: no IMDb-backed identities in', path.join(DATA_DIR, 'library.json'));
+    log('BACKFILL nothing to do: no IMDb-backed identity is waiting');
     return;
   }
 
-  let got = 0;
-  let rated = 0;
-  let unrated = 0;
-  let capped = 0;
-  for (let i = 0; i < ids.length; i++) {
-    const it = ids[i];
-    const before = ratings.status().upstreamCallsToday;
-    const rec = await ratings.lookup(it.identity, { type: it.type, title: it.title, year: it.year });
-    if (rec && rec.tier == null) unrated++;
-    else if (rec && rec.sources && rec.sources.length) { got++; if (rec.maturity) rated++; }
-    if (rec && rec.tier === 3) log('BACKFILL tier 3:', it.identity, (rec.certs && Object.keys(rec.certs).join(',')) || 'flagged adult');
-    if (ratings.status().upstreamCallsToday === before) {
-      // Nothing was fetched: either we already had it, or the day's quota is spent.
-      capped++;
+  if (doBulk) {
+    if (bulkSource !== 'wikidata') {
+      log('BACKFILL unknown bulk source', bulkSource, '- wikidata is the only bulk source verified from this box');
+    } else {
+      const bulk = require(path.join(__dirname, 'lib', 'wikidata_bulk.js'));
+      let titlesGained = 0;
+      let boardsAdded = 0;
+      await bulk.run(ids.map((it) => it.identity), {
+        batch: BATCH,
+        sleepMs: Number(opt('bulk-sleep', 1500)),
+        log,
+        onBatch: (certs) => {
+          for (const [identity, cc] of Object.entries(certs)) {
+            const prev = ratings.peek(identity);
+            const had = prev && prev.certs ? Object.keys(prev.certs).length : 0;
+            const rec = ratings.ingest({ identity, certs: cc, sources: ['wikidata'] });
+            const now = rec && rec.certs ? Object.keys(rec.certs).length : 0;
+            if (now > had) {
+              titlesGained++;
+              boardsAdded += now - had;
+            }
+          }
+          ratings.flush(); // durable per batch: a stopped run never loses a certificate it already fetched
+        },
+      });
+      log('BACKFILL wikidata: titles that gained at least one certificate', titlesGained, '| certificates added', boardsAdded);
     }
-    if ((i + 1) % 25 === 0) {
-      const st = ratings.status();
-      log('BACKFILL', i + 1 + '/' + ids.length, 'certificates', got, 'with a stated rating', rated, 'upstream calls today', st.upstreamCallsToday + '/' + st.dailyCap);
-    }
-    if (ratings.status().upstreamCallsToday >= ratings.status().dailyCap) {
-      log('BACKFILL stopped at the daily cap', ratings.status().dailyCap, '- run it again tomorrow to continue');
-      break;
-    }
-    await sleep(SLEEP_MS);
   }
 
-  const st = ratings.status();
-  log('BACKFILL done: titles with a record from an upstream', got,
-    '| of those, a stated certificate', rated,
-    '| looked up but nothing stated', st.askedNothing,
-    '| tiers', JSON.stringify(st.byTier),
-    '| database entries', st.entries,
-    '| upstream calls today', st.upstreamCallsToday + '/' + st.dailyCap,
-    '| skipped (already known or capped)', capped);
+  if (doPerTitle) {
+    const keys = ratings.status().keys || [];
+    if (!keys.length) log('BACKFILL per-title: no upstream keys in', ratings.KEYS_FILE, '- nothing to ask, continuing');
+    let nothingStated = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const it = ids[i];
+      const spentBefore = ratings.status().upstreamCallsToday;
+      const rec = await ratings.lookup(it.identity, { type: it.type, title: it.title, year: it.year });
+      if (rec && rec.tier == null && rec.unrated) nothingStated++;
+      if (rec && rec.tier === 3) log('BACKFILL tier 3:', it.identity, (rec.certs && Object.keys(rec.certs).join(',')) || 'flagged adult');
+      if (ratings.status().upstreamCallsToday === spentBefore) continue; // already known, or capped: no sleep needed
+      if ((i + 1) % 25 === 0) {
+        const st = ratings.status();
+        log('BACKFILL per-title', i + 1 + '/' + ids.length, '| titles with a board', st.withCertificate,
+          '| upstream calls', st.upstreamCallsToday + '/' + st.dailyCap);
+      }
+      if (ratings.status().upstreamCallsToday >= ratings.status().dailyCap) {
+        log('BACKFILL stopped at the daily cap', ratings.status().dailyCap, '- run it again tomorrow to continue');
+        break;
+      }
+      await sleep(SLEEP_MS);
+    }
+    if (nothingStated) log('BACKFILL per-title: asked and nothing was stated for', nothingStated, 'titles');
+  }
+
+  if (doRecompute) {
+    const r = ratings.recomputeAll();
+    log('BACKFILL recompute: records', r.entries, '| rescoring changed', r.changed,
+      '| boards read', r.boards, '| tiers', JSON.stringify(r.byTier));
+  }
+
+  ratings.flush();
+  const after = coverage();
+  log('BACKFILL coverage after: ', JSON.stringify(after));
+  const d = (k) => (typeof after[k] === 'number' && typeof before[k] === 'number' ? after[k] - before[k] : '');
+  log('BACKFILL delta: titles with at least one board', d('titlesWithABoard'),
+    '| certificate strings stored', d('certificateStrings'),
+    '| boards this hub cannot read', d('boardsWeCannotRead'),
+    '| tiers', JSON.stringify(before.byTier), '->', JSON.stringify(after.byTier));
 }
 
 main().then(() => process.exit(0)).catch((e) => { log('BACKFILL failed:', e.message); process.exit(1); });

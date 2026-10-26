@@ -5,6 +5,8 @@
  *   data/library.json    { "<identity>": <addedAt ms> }   first time the hub ever saw that identity
  *   data/progress.json   { "<profile>": { "<identity>": { positionMs, watchedMs, updatedAt } } }
  *   data/profiles.json   optional runtime override of hub/profiles.json (merged by profile id)
+ *   hub/profiles.json    the household itself - NOT in the repo (real names), so hub/profiles.example.json
+ *                        (generic ids) ships instead and is the fallback when the real one is absent
  *
  * Writes are debounced (400 ms) and atomic: write <file>.tmp then rename, so a crash mid-write
  * cannot corrupt the library. Nothing here knows about providers, rows or rules.
@@ -40,6 +42,7 @@ class Store {
     this.libraryFile = path.join(this.dataDir, 'library.json');
     this.progressFile = path.join(this.dataDir, 'progress.json');
     this.profilesSeedFile = path.join(root, 'profiles.json');
+    this.profilesExampleFile = path.join(root, 'profiles.example.json');
     this.profilesFile = path.join(this.dataDir, 'profiles.json');
     fs.mkdirSync(this.dataDir, { recursive: true });
 
@@ -48,6 +51,7 @@ class Store {
     this._dirty = new Set();
     this._timer = null;
     this._profiles = null;
+    this._seedLogged = false;
     this.writes = 0;
   }
 
@@ -89,7 +93,9 @@ class Store {
 
   progressFor(profileId, identity) {
     const p = (this.progress[String(profileId)] || {})[String(identity)];
-    return p ? { positionMs: p.positionMs || 0, watchedMs: p.watchedMs || 0 } : { positionMs: 0, watchedMs: 0 };
+    return p
+      ? { positionMs: p.positionMs || 0, watchedMs: p.watchedMs || 0, episode: p.episode || null }
+      : { positionMs: 0, watchedMs: 0, episode: null };
   }
 
   setProgress(profileId, identity, patch) {
@@ -101,6 +107,12 @@ class Store {
     const next = {
       positionMs: Math.max(0, Number(patch.positionMs) || cur.positionMs || 0),
       watchedMs: Math.max(0, Number(patch.watchedMs) || cur.watchedMs || 0),
+      // Which episode of a series this person stopped on, so the next Play press resumes that episode
+      // instead of restarting S01E01 three seasons in.
+      episode: patch.episode && Number(patch.episode.season) > 0 && Number(patch.episode.episode) > 0
+        ? { season: Number(patch.episode.season), episode: Number(patch.episode.episode),
+          title: patch.episode.title || null }
+        : cur.episode || null,
       updatedAt: Date.now(),
     };
     this.progress[pkey][ikey] = next;
@@ -121,11 +133,35 @@ class Store {
 
   // ---- profiles -----------------------------------------------------------------------------------
 
+  /**
+   * The seed list: hub/profiles.json if the household has one, otherwise hub/profiles.example.json.
+   *
+   * profiles.json holds real names, so it is not in the repo and deploy-hub.sh never rsyncs it — the
+   * file lives only on the server that this household's TV points at. A fresh checkout therefore has
+   * just the example (generic ids: adult1, kid1…), which is enough for the hub to boot and for the app
+   * to be developed against. One log line says which of the two is in use, because "why is my profile
+   * gone" is otherwise a confusing first boot.
+   */
+  seedProfiles() {
+    const real = readJson(this.profilesSeedFile, null);
+    const from = real ? this.profilesSeedFile : this.profilesExampleFile;
+    const seed = real != null ? real : readJson(this.profilesExampleFile, []);
+    if (!this._seedLogged) {
+      this._seedLogged = true;
+      if (real == null) {
+        console.log(new Date().toISOString(), 'PROFILES',
+          'no profiles.json next to the hub - using', path.basename(this.profilesExampleFile),
+          '(generic ids). Copy it to profiles.json and put this household in it.');
+      }
+    }
+    const list = Array.isArray(seed) ? seed : Array.isArray(seed && seed.profiles) ? seed.profiles : [];
+    return { list, file: from };
+  }
+
   /** Seed profiles from hub/profiles.json, with data/profiles.json able to override by id. */
   profiles() {
     if (this._profiles) return this._profiles;
-    const seed = readJson(this.profilesSeedFile, []);
-    const list = Array.isArray(seed) ? seed : Array.isArray(seed.profiles) ? seed.profiles : [];
+    const list = this.seedProfiles().list;
     const override = readJson(this.profilesFile, []);
     const olist = Array.isArray(override) ? override : Array.isArray(override.profiles) ? override.profiles : [];
     const merged = new Map();
@@ -152,8 +188,7 @@ class Store {
    */
   patchProfile(id, patch) {
     if (!id) return null;
-    const seed = readJson(this.profilesSeedFile, []);
-    const slist = Array.isArray(seed) ? seed : Array.isArray(seed.profiles) ? seed.profiles : [];
+    const slist = this.seedProfiles().list;
     const current = readJson(this.profilesFile, []);
     const clist = Array.isArray(current) ? current : Array.isArray(current.profiles) ? current.profiles : [];
     const base = slist.find((p) => String(p.id) === String(id)) || clist.find((p) => String(p.id) === String(id)) || { id };
@@ -199,6 +234,7 @@ class Store {
     return {
       library: this.librarySize(),
       profiles: this.profiles().length,
+      profilesSeed: path.basename(this.seedProfiles().file), // profiles.json, or the example on a fresh box
       progressProfiles: Object.keys(this.progress).length,
       writes: this.writes,
       dataDir: this.dataDir,

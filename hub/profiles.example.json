@@ -1,67 +1,50 @@
 {
+  "_readme": [
+    "Copy this file to profiles.json next to index.js and put your own household in it.",
+    "profiles.json holds real names, so it is NOT in the repo and deploy-hub.sh never rsyncs it:",
+    "it lives only on the box your TV points at. The hub boots from this example when profiles.json",
+    "is missing, with generic ids, and says so once in the log.",
+    "Fields: id (never shown, used in every URL), name (shown on the TV), kind adult|kids,",
+    "age (the ceiling for rules/maturity.js), pinRequired, languages, rules (per-profile rule",
+    "overrides; data/profiles.json can patch the same fields at runtime without a restart)."
+  ],
   "profiles": [
     {
       "id": "adult1",
-      "name": "Adult",
+      "name": "Adult 1",
       "kind": "adult",
       "pinRequired": true,
       "rules": {}
     },
     {
       "id": "adult2",
-      "name": "Adult",
+      "name": "Adult 2",
       "kind": "adult",
       "pinRequired": false,
-      "rules": {
-        "size-cap": {
-          "maxBytes": 4000000000
-        }
-      }
+      "rules": { "size-cap": { "maxBytes": 4000000000 } }
     },
     {
-      "id": "kid3",
-      "name": "Kid",
+      "id": "kid1",
+      "name": "Kid 1",
       "kind": "kids",
       "age": 15,
       "pinRequired": false,
-      "languages": [
-        "hin",
-        "eng",
-        "pan"
-      ],
+      "languages": ["hin", "eng", "pan"],
       "rules": {
-        "language-allowlist": {
-          "allow": [
-            "hin",
-            "eng",
-            "pan"
-          ]
-        },
-        "kids-allowlist": {
-          "maxAge": 15
-        }
+        "language-allowlist": { "allow": ["hin", "eng", "pan"] },
+        "kids-allowlist": { "maxAge": 15 }
       }
     },
     {
-      "id": "kid4",
-      "name": "Kid",
+      "id": "kid2",
+      "name": "Kid 2",
       "kind": "kids",
       "age": 11,
       "pinRequired": false,
-      "languages": [
-        "hin",
-        "eng"
-      ],
+      "languages": ["hin", "eng"],
       "rules": {
-        "language-allowlist": {
-          "allow": [
-            "hin",
-            "eng"
-          ]
-        },
-        "kids-allowlist": {
-          "maxAge": 11
-        }
+        "language-allowlist": { "allow": ["hin", "eng"] },
+        "kids-allowlist": { "maxAge": 11 }
       }
     }
   ]

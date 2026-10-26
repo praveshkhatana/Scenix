@@ -1,17 +1,16 @@
 'use strict';
 /*
- * providers/iptv-org.js — free-to-air Indian TV from the iptv-org public playlist.
+ * providers/live-tv.js — free-to-air TV from one M3U playlist the owner chose.
  *
- * Moved verbatim (behaviour-wise) from work/iptv/iptv-india-addon.js: same playlist fetch, same
- * M3U parser, same per-language allow-list, same channel ids (`inlive___…`), same sort order
- * (lightest quality first for a name, so the default pick survives a Wi-Fi dip). The legacy
- * compat routes it serves are byte-for-byte what the old single-file addon returned, so the TV's
- * addon surface (manifest.json, /catalog/, /meta/, /stream/) keeps the TV's installed addon working.
+ * The playlist is a setting (`settings.live`), not a constant: which country's channels a hub shows is
+ * the household's business, and a build that answers it for them ships a stranger a row of channels in
+ * a language nobody in the house watches. The parsing, the per-language allow-list, the channel ids
+ * (`inlive___…`) and the sort order (lightest quality first for a name, so the default pick survives a
+ * Wi-Fi dip) came over from the old single-file addon unchanged, and so do the legacy compat routes it
+ * serves (manifest.json, /catalog/, /meta/, /stream/), which keep the TV's installed addon working.
  *
- * On top of that it now speaks the hub provider contract: catalog()/meta()/play() return §1 items
- * with one tile per channel *name* and one `sources[]` entry per quality variant.
- *
- * Adding another live source later = copy this file, change PLAYLIST_URL. Nothing else moves.
+ * On top of that it speaks the hub provider contract: catalog()/meta()/play() return §1 items with one
+ * tile per channel *name* and one `sources[]` entry per quality variant.
  */
 
 const http = require('http');
@@ -19,9 +18,22 @@ const https = require('https');
 const { URL } = require('url');
 
 const liveHealth = require('../core/live-health');
+const settings = require('../core/settings');
 
 const PROVIDER_ID = 'live-tv';
-const PLAYLIST_URL = process.env.PLAYLIST_URL || 'https://iptv-org.github.io/iptv/countries/in.m3u';
+/**
+ * The playlist this hub turns into a live-TV row: the owner's `settings.live.playlist`. It ships empty,
+ * because "which country's TV" is a household question — a build that answers it with India's playlist
+ * gives everyone else an empty row they cannot explain. No playlist, no live TV: the provider says so in
+ * health rather than serving somebody else's line-up.
+ */
+function playlistUrl() {
+  return String((settings.get().live || {}).playlist || '').trim();
+}
+/** The languages this hub allows, from the owner's setting. Empty means the language filter is off. */
+function allowLanguages() {
+  return settings.languages();
+}
 const CATALOG_ID = 'in_live';
 const KIDS_CATALOG_ID = 'in_kids';
 // Groups that are safe for a kids profile. This is an allow-list, not a genre filter: a channel only
@@ -32,19 +44,23 @@ const KIDS_GROUPS = ['Kids', 'Education', 'Animation', 'Children'];
 const KIDS_BLOCK = (process.env.KIDS_BLOCK || 'Animax,MediBizTV,BVG,Vyas,DD Kisan,Unique TV')
   .split(',').map((s) => s.trim()).filter(Boolean);
 // Language allow-list. iptv-org publishes a playlist per language, so a channel is kept only if its
-// stream appears in one of these. LANGS="" turns the filter off.
-const LANG_NAMES = { hin: 'Hindi', eng: 'English', pan: 'Punjabi' };
-const LANGS = (process.env.LANGS === undefined ? 'hin,eng,pan' : process.env.LANGS)
-  .split(',').map((s) => s.trim()).filter(Boolean);
+// stream appears in one of these. The list is the hub's own setting; empty turns the filter off.
+const LANG_NAMES = {
+  hin: 'Hindi', eng: 'English', pan: 'Punjabi', tam: 'Tamil', tel: 'Telugu', mal: 'Malayalam',
+  kan: 'Kannada', ben: 'Bengali', mar: 'Marathi', urd: 'Urdu', guj: 'Gujarati', rus: 'Russian',
+  spa: 'Spanish', por: 'Portuguese', fre: 'French', fra: 'French', ger: 'German', ita: 'Italian',
+  jpn: 'Japanese', kor: 'Korean', chi: 'Chinese', zho: 'Chinese', ara: 'Arabic', tur: 'Turkish',
+};
 const ID_PREFIX = 'inlive___';
 const REFRESH_MS = 6 * 60 * 60 * 1000; // playlist re-fetch every 6 h
 // A feed can go down inside an evening, so health is re-checked far more often than the playlist.
 const HEALTH_REFRESH_MS = Number(process.env.LIVE_HEALTH_REFRESH_MS || 30 * 60 * 1000);
-const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 GhartvHub/0.1';
+const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
 let channels = []; // {id, name, group, groups, logo, url, quality, langs, langCodes}
 let loading = null;
 let lastFetch = 0;
+let lastPlaylistUrl = ''; // what the last successful fetch actually pulled, so changing it takes effect
 let lastError = null;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -135,10 +151,10 @@ function kidsChannels() {
 // Which allowed languages each stream URL appears under, from iptv-org's per-language playlists.
 // Returns url -> { names: ['Hindi', …] } (display names for the legacy surface, unchanged from the old
 // addon) and codes: ['hin', …] (the §1 `languages` codes the hub rules work on).
-async function languageByStreamUrl() {
+async function languageByStreamUrl(langs) {
   const map = new Map();
   const failed = [];
-  for (const code of LANGS) {
+  for (const code of langs) {
     try {
       const text = await get(`https://iptv-org.github.io/iptv/languages/${code}.m3u`);
       let hits = 0;
@@ -163,13 +179,26 @@ async function languageByStreamUrl() {
 
 async function refresh(force = false) {
   if (loading) return loading;
-  if (!force && channels.length && Date.now() - lastFetch < REFRESH_MS) return Promise.resolve(channels);
-  loading = get(PLAYLIST_URL)
+  const url = playlistUrl();
+  // No playlist is a decision, not a broken install: the owner has not chosen a live source, so there is
+  // no live TV here to show. Say what is missing instead of fetching a default nobody asked for.
+  if (!url) {
+    channels = [];
+    lastError = 'no live playlist configured (settings.live.playlist is empty)';
+    lastFetch = Date.now();
+    return channels;
+  }
+  // The owner may have changed the playlist since the last fetch; a stale list must not outlive that.
+  if (!force && channels.length && url === lastPlaylistUrl && Date.now() - lastFetch < REFRESH_MS) {
+    return Promise.resolve(channels);
+  }
+  const langs = allowLanguages();
+  loading = get(url)
     .then(async (text) => {
       let parsed = parseM3U(text);
       if (parsed.length) {
-        if (LANGS.length) {
-          const byUrl = await languageByStreamUrl();
+        if (langs.length) {
+          const byUrl = await languageByStreamUrl(langs);
           if (byUrl.size) {
             for (const c of parsed) {
               const hit = byUrl.get(c.url);
@@ -187,6 +216,7 @@ async function refresh(force = false) {
         }
         channels = parsed;
         lastFetch = Date.now();
+        lastPlaylistUrl = url;
         lastError = null;
         console.log(new Date().toISOString(), 'playlist ok:', channels.length, 'channels');
       } else {
@@ -392,7 +422,7 @@ function ytFreeManifestPart() {
         name: 'India Live TV',
         extra: [
           { name: 'genre', isRequired: false, options: genres() },
-          { name: 'language', isRequired: false, options: LANGS.map((c) => LANG_NAMES[c] || c) },
+          { name: 'language', isRequired: false, options: allowLanguages().map((c) => LANG_NAMES[c] || c) },
           { name: 'search', isRequired: false },
         ],
       },
@@ -433,10 +463,25 @@ module.exports = {
   },
 
   async catalogs() {
+    // The ids stay (`in_live`, `in_kids`) because the installed app's legacy addon asks for them by name
+    // and a renamed catalog is a broken addon on someone's TV. The display names cannot stay: whose
+    // country's TV this is comes from the owner's playlist, and a row labelled "India Live TV" above a
+    // Brazilian playlist is the hub contradicting its own settings.
     return [
-      { id: CATALOG_ID, name: 'India Live TV', extra: ['search', 'genre', 'language'] },
-      { id: KIDS_CATALOG_ID, name: 'India Kids TV', extra: ['search'] },
+      { id: CATALOG_ID, name: 'Live TV', extra: ['search', 'genre', 'language'] },
+      { id: KIDS_CATALOG_ID, name: 'Kids Live TV', extra: ['search'] },
     ];
+  },
+
+  /**
+   * Refetch now, in the background: the owner just changed `settings.live` (a different playlist, or a
+   * different language policy, which is also a filter here). Nothing waits on it, and the row fills in a
+   * second later — a settings screen that needs a restart to show its own effect is a settings screen
+   * that lied.
+   */
+  reload() {
+    loading = null;
+    return refresh(true).catch((e) => console.log(new Date().toISOString(), 'live reload failed:', e.message));
   },
 
   /** Cache-only: returns [] until the first playlist fetch lands, never blocks the caller. */
@@ -462,6 +507,21 @@ module.exports = {
     return list.length ? hubItems(list)[0] : null;
   },
 
+  /**
+   * Cheap URL for core/probe.js: the variant this source names, with the same headers play() will send,
+   * and no round trip. A channel has several feeds and the viewer's complaint is exactly "which of
+   * these actually streams", so measuring the one the player is about to open is the whole point.
+   */
+  sourceTarget(identity, source) {
+    const url = source && source._url;
+    if (!url || !/^https?:\/\//i.test(url)) return null;
+    let referer = null;
+    try {
+      referer = new URL(url).origin + '/';
+    } catch (e) { /* a malformed playlist entry is measured without a Referer, not at all */ }
+    return { url, headers: referer ? { 'User-Agent': UA, Referer: referer } : { 'User-Agent': UA } };
+  },
+
   async play(identity, source) {
     const item = await this.meta(identity);
     if (!item) return null;
@@ -480,8 +540,8 @@ module.exports = {
       channels: channels.length,
       kidsChannels: kidsChannels().length,
       tiles: hubItems(channels).length,
-      languages: LANGS.join(','),
-      playlist: PLAYLIST_URL,
+      languages: allowLanguages().join(','),
+      playlist: playlistUrl(),
       lastFetch: lastFetch ? new Date(lastFetch).toISOString() : null,
       lastError,
       health: liveHealth.status(), // {checked, working, dead, unknown, numbered, updatedAt}

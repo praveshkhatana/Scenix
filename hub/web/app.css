@@ -1,0 +1,894 @@
+/* ==========================================================================
+   Scenix — the whole look of the interface.
+
+   Every length is a pixel measured on the 1920x1080 TV mockup (see assets/theme.json), multiplied at
+   runtime by `--s` = min(viewportW/1920, viewportH/1080). A 720p TV therefore gets the same design,
+   not a different one, and a laptop or phone gets a smaller but equally balanced one. /ui/js/theme.js
+   overwrites these custom properties from theme.json when it loads, so re-skinning is a JSON edit.
+
+   Nothing in this file names a title, a row or a source: content is data from /app/v1.
+   ========================================================================== */
+
+:root {
+  /* ---- colour tokens (defaults; theme.json re-applies them) ---- */
+  --bg: #141414;
+  --surface: #181818;
+  --surface2: #232323;
+  --surface3: #2f2f2f;
+  --line: #262626;
+  --border: rgba(255, 255, 255, .10);
+  --ink: #ffffff;
+  --ink1: #e8e8e8;
+  --ink2: #b3b3b3;
+  --ink3: #737373;
+  --brand: #e50914;
+  --brand-deep: #b00710;
+  --match: #46d369;
+  --kids: #f2c33a;
+  --kids-deep: #d9a22b;
+  --live: #e50914;
+  --warn: #f2c33a;
+  --focus-ring: #ffffff;
+  --track: #2f2f2f;
+  --chip-bg: rgba(255, 255, 255, .20);
+  --key-bg: #2a2a2a;
+  --modal-scrim: rgba(0, 0, 0, .90);
+  --panel-scrim: rgba(0, 0, 0, .90);
+  --mat-border: rgba(255, 255, 255, .35);
+  --hd-ink: #e0e0e0;
+  --numeral-stroke: #7c7c7c;
+
+  /* ---- scale ---- */
+  --s: 1;
+
+  /* ---- spacing ---- */
+  --gutter: calc(76px * var(--s));
+  --gap: calc(20px * var(--s));
+  --row-gap: calc(34px * var(--s));
+  --caption-gap: calc(12px * var(--s));
+  --meta-gap: calc(6px * var(--s));
+  --nav-h: calc(96px * var(--s));
+  --billboard-h: calc(842px * var(--s));
+  --nav-gap: calc(40px * var(--s));
+  --chip-gap: calc(14px * var(--s));
+  --button-gap: calc(22px * var(--s));
+  --hero-bottom: calc(78px * var(--s));
+  --panel-pad: calc(28px * var(--s));
+
+  /* ---- type ---- */
+  --t-brand: calc(34px * var(--s));
+  --t-nav: calc(22px * var(--s));
+  --t-mark: calc(40px * var(--s));
+  --t-h1: calc(104px * var(--s));
+  --t-h2: calc(56px * var(--s));
+  --t-h3: calc(34px * var(--s));
+  --t-sub: calc(24px * var(--s));
+  --t-mat: calc(26px * var(--s));
+  --t-button: calc(26px * var(--s));
+  --t-chip: calc(20px * var(--s));
+  --t-row-title: calc(32px * var(--s));
+  --t-explore: calc(18px * var(--s));
+  --t-caption: calc(19px * var(--s));
+  --t-meta: calc(17px * var(--s));
+  --t-badge: calc(15px * var(--s));
+  --t-li: calc(22px * var(--s));
+  --t-li-meta: calc(20px * var(--s));
+  --t-readout: calc(20px * var(--s));
+  --t-field: calc(22px * var(--s));
+  --t-profile: calc(32px * var(--s));
+  --t-avatar: calc(64px * var(--s));
+  --t-key: calc(48px * var(--s));
+  --t-panel-title: calc(26px * var(--s));
+  --t-panel-row: calc(23px * var(--s));
+  --t-panel-note: calc(18px * var(--s));
+
+  /* ---- radii ---- */
+  --r-card: calc(6px * var(--s));
+  --r-badge: calc(4px * var(--s));
+  --r-chip: calc(6px * var(--s));
+  --r-button: calc(6px * var(--s));
+  --r-field: calc(8px * var(--s));
+  --r-key: calc(6px * var(--s));
+  --r-modal: calc(10px * var(--s));
+  --r-avatar: calc(10px * var(--s));
+  --r-panel: calc(10px * var(--s));
+  --r-hero-button: calc(12px * var(--s));
+
+  /* ---- cards ---- */
+  --card-w: calc(280px * var(--s));
+  --card-h: calc(420px * var(--s));     /* 280 x 1.5 */
+  --rank-w: calc(var(--card-h) * .55);
+  --rank-overlap: calc(var(--card-h) * .229);
+  --rank-extra: calc(var(--card-h) * .321);
+
+  /* ---- focus + motion (spec B: scale 1.10, ring 5 px, 200 ms ease-out) ---- */
+  --ring-w: calc(5px * var(--s));
+  --focus-scale: 1.10;
+  --focus-ms: 200ms;
+  --row-scroll-ms: 240ms;
+  --screen-ms: 180ms;
+  --card-in-ms: 600ms;
+  --fade-up-ease: cubic-bezier(.43, .13, .23, .96);
+  --fade-up-shift: calc(20px * var(--s));
+  --delay-children: 100ms;
+  --stagger: 70ms;
+  /* Spec B: the first shelf is pulled 140 px up under the billboard. */
+  --hero-pull: calc(-60px * var(--s));
+
+  /* ---- panels ---- */
+  --panel-w: calc(560px * var(--s));
+  --panel-row-h: calc(68px * var(--s));
+  --modal-w: calc(780px * var(--s));
+  --key-w: calc(128px * var(--s));
+  --key-h: calc(128px * var(--s));
+  --avatar: calc(280px * var(--s));
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/*
+  Scenix Sans — the face the whole product is laid out against, and the reason the spec's pixel numbers
+  (104px titles, 32px row headings, 208px rank numerals) land where they do.
+
+  LICENCE WARNING: the binaries in /ui/font are still a vendor's proprietary face, shipped as-is so the
+  layout can be measured against the mockup. They must be replaced with an open-licence equivalent
+  (same widths, same cap height, same figure set) before this is distributed. Renaming the family and the
+  files is the seam: swap the three files, change nothing else.
+*/
+@font-face { font-family: "Scenix Sans"; font-style: normal; font-weight: 400; font-display: block;
+  src: url("/ui/font/ScenixSans-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Scenix Sans"; font-style: normal; font-weight: 500; font-display: block;
+  src: url("/ui/font/ScenixSans-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Scenix Sans"; font-style: normal; font-weight: 700; font-display: block;
+  src: url("/ui/font/ScenixSans-Bold.woff2") format("woff2"); }
+
+html, body { height: 100%; }
+
+body {
+  background: #000;
+  color: var(--ink);
+  font-family: "Scenix Sans", "Helvetica Neue", Helvetica, Arial, "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: var(--t-sub);
+  line-height: 1.32;
+  letter-spacing: -.004em;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  cursor: default;
+}
+
+img { display: block; max-width: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: default; }
+ul { list-style: none; }
+
+/* Scrollbars are noise on a TV and on a laptop alike; the rows and screens scroll themselves. */
+::-webkit-scrollbar { width: 0; height: 0; }
+* { scrollbar-width: none; }
+
+/* ==========================================================================
+   Boot + fatal states
+   ========================================================================== */
+.boot {
+  position: fixed; inset: 0; z-index: 90;
+  display: grid; place-content: center; justify-items: center; gap: calc(18px * var(--s));
+  background: var(--bg); transition: opacity 320ms ease;
+}
+.boot.gone { opacity: 0; pointer-events: none; }
+/*
+  The intro is CSS, not a video file: a video costs a decode on a 1 GB panel before anything else is on
+  screen, and it cannot be re-timed by the theme. The wordmark builds itself letter by letter — one path per
+  glyph in index.html, `--i` deciding the order — and the mark as a whole settles into place underneath.
+  Transform and opacity only (spec F).
+*/
+.boot-logo {
+  width: calc(430px * var(--s)); height: auto; color: var(--brand);
+  animation: markSettle 900ms cubic-bezier(.16, 1, .3, 1) both;
+}
+.boot-logo path {
+  fill: currentColor;
+  animation: letterIn 520ms cubic-bezier(.16, 1, .3, 1) both;
+  animation-delay: calc(var(--i, 0) * 85ms);
+}
+.boot-note { font-size: var(--t-sub); color: var(--ink2); animation: noteIn 500ms ease-out 700ms both; }
+@keyframes markSettle { from { opacity: .55; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes letterIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes noteIn { from { opacity: 0; transform: translateY(calc(12px * var(--s))); } to { opacity: 1; transform: none; } }
+.boot-error {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: var(--t-h3); color: var(--ink2); text-align: center; max-width: 60vw;
+}
+
+/* ==========================================================================
+   Screens
+   ========================================================================== */
+/* #stage holds a stacking context of its own (position: fixed), so it needs an explicit level above
+   #video-host: the player screen is transparent, and its HUD must draw over the film, not under it. */
+#stage { position: fixed; inset: 0; overflow: hidden; z-index: 2; }
+
+.screen {
+  position: absolute; inset: 0;
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: none;
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--nav-h) + calc(8px * var(--s)));
+  animation: screenIn var(--screen-ms) ease-out both;
+  background: var(--bg);
+}
+@keyframes screenIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ==========================================================================
+   Top navigation — transparent over the billboard, solid once you scroll
+   ========================================================================== */
+.nav {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--nav-h); z-index: 40;
+  display: flex; align-items: center; gap: var(--nav-gap);
+  padding: 0 var(--gutter);
+  background: linear-gradient(180deg, rgba(0, 0, 0, .85), rgba(0, 0, 0, .35) 60%, rgba(0, 0, 0, 0));
+  transition: background var(--screen-ms) ease;
+}
+.nav.solid { background: rgba(20, 20, 20, .97); }
+/*
+  The nav wordmark is the real logo (/ui/assets/scenix-wordmark.svg) painted through a mask, so it stays a
+  single flat colour the theme can drive — `body.kids` turns it yellow — and it never depends on the webfont
+  having arrived. One asset, two clients (the Android shell reads the same file).
+*/
+.brand { background: none; border: 0; padding: 0; color: var(--brand); white-space: nowrap; }
+.brand-mark {
+  display: block; width: calc(130px * var(--s)); height: calc(30px * var(--s)); background: currentColor;
+  -webkit-mask: url('/ui/assets/scenix-wordmark.svg') center / contain no-repeat;
+          mask: url('/ui/assets/scenix-wordmark.svg') center / contain no-repeat;
+}
+.nav-items { display: flex; align-items: center; gap: calc(10px * var(--s)); }
+.nav-item {
+  font-size: var(--t-nav); color: var(--ink1); font-weight: 400;
+  padding: calc(7px * var(--s)) calc(14px * var(--s)); border-radius: var(--r-badge);
+  white-space: nowrap;
+}
+.nav-item.on { font-weight: 700; color: #fff; }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: calc(26px * var(--s)); }
+.nav-icon {
+  width: calc(30px * var(--s)); height: calc(30px * var(--s)); color: var(--ink1);
+  padding: calc(8px * var(--s)); border-radius: var(--r-badge);
+}
+.avatar-chip {
+  width: calc(44px * var(--s)); height: calc(44px * var(--s)); border-radius: var(--r-badge);
+  display: grid; place-content: center; font-size: var(--t-li); font-weight: 800; color: #101010;
+  background: linear-gradient(135deg, #8b95a3, #2b3038);
+}
+.avatar-chip.kids { background: linear-gradient(135deg, var(--kids), var(--kids-deep)); }
+
+/* ==========================================================================
+   Focus — the same thing whether the eye arrives by remote or by mouse
+   ========================================================================== */
+[data-f] { outline: none; }
+
+.foc { z-index: 30; }
+
+.card.foc {
+  transform: scale(var(--focus-scale));
+  box-shadow: 0 0 0 var(--ring-w) var(--focus-ring),
+              0 calc(14px * var(--s)) calc(34px * var(--s)) rgba(0, 0, 0, .72);
+}
+.btn.foc, .chip.foc, .nav-item.foc, .nav-icon.foc, .round.foc,
+.li.foc, .src.foc, .ep.foc, .key.foc, .iconbtn.foc, .seg.foc {
+  box-shadow: 0 0 0 var(--ring-w) var(--focus-ring);
+  background-clip: padding-box;
+}
+/* A profile's ring is drawn on the tile, not on the button box: the button also contains the name below
+   it, and a square ring around a rounded tile with a label hanging out of it reads as a rendering fault. */
+.btn.foc.solid-white { background: #fff; }
+.li.foc, .src.foc, .ep.foc { background: var(--surface3); }
+.chip.foc { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
+.key.foc { background: #fff; color: #000; }
+.round.foc { transform: scale(1.08); border-color: #fff; }
+.avatar-add.foc { transform: scale(1.08); }
+.card.foc .cap { opacity: 1; transform: none; transition-delay: 250ms; }
+.card.foc .exp { opacity: 1; transition-delay: 250ms; }
+/* Spec B: 250 ms dwell expands the card's own panel, 1500 ms starts the muted trailer preview. The
+   delay lives here so the reveal is timed, not instant, and the exit (no delay) is faster than the
+   entrance. */
+.card .cap, .card .exp { transition-delay: 0ms; }
+/* A card preview is the one preview <video>, moved by js/video.js into whatever is being previewed.
+   The billboard already owns `.billboard .preview`; a card gets the same treatment inside its art. */
+.card .preview { position: absolute; inset: 0; opacity: 0; transition: opacity 320ms ease; z-index: 2; pointer-events: none; }
+.card .preview.on, .billboard .preview.on { opacity: 1; }
+.preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.preview .scrim { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.billboard .logo { max-width: calc(640px * var(--s)); max-height: calc(192px * var(--s));
+  object-fit: contain; object-position: left bottom; margin-bottom: calc(18px * var(--s)); }
+.bb .logo { max-width: calc(640px * var(--s)); max-height: calc(192px * var(--s));
+  object-fit: contain; object-position: left bottom; margin-bottom: calc(18px * var(--s)); }
+.bb .tagline { margin-top: calc(16px * var(--s)); font-size: var(--t-sub); color: var(--ink2); max-width: calc(760px * var(--s)); }
+.bb .why { margin-top: calc(14px * var(--s)); font-size: calc(17px * var(--s)); color: var(--ink3); max-width: calc(760px * var(--s)); }
+.bb .chips { padding: 0; margin: calc(20px * var(--s)) 0 calc(22px * var(--s)); }
+
+.ico {
+  width: calc(30px * var(--s)); height: calc(30px * var(--s)); flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round;
+}
+.ico.solid { fill: currentColor; stroke: none; }
+
+/* ==========================================================================
+   Billboard (card: hero)
+   ========================================================================== */
+.billboard {
+  position: relative; height: var(--billboard-h); overflow: hidden;
+  background: var(--surface);
+}
+.billboard .bb-arts { position: absolute; inset: 0; }
+.billboard .bb-art {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; transition: opacity 500ms ease;
+}
+.billboard .bb-art img { width: 100%; height: 100%; object-fit: cover; object-position: center 22%; }
+.billboard .bb-art.on { opacity: 1; }
+/* The trailer preview sits in the same frame as the still, and cross-fades into it. */
+#video-host video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.billboard .preview { position: absolute; inset: 0; opacity: 0; transition: opacity 320ms ease; z-index: 2; }
+.billboard .preview.on { opacity: 1; }
+/* Spec scrim stops: the horizontal wash ends at 55%, the vertical at 60%, and the bottom band is 8%. */
+.billboard .scrim {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(20, 20, 20, .94) 4%, rgba(20, 20, 20, .58) 30%, rgba(20, 20, 20, 0) 55%),
+    linear-gradient(0deg, var(--bg) 8%, rgba(20, 20, 20, .55) 32%, rgba(20, 20, 20, 0) 60%);
+}
+.billboard .preview .scrim {
+  background: linear-gradient(90deg, rgba(20, 20, 20, .88) 6%, rgba(20, 20, 20, .35) 45%, rgba(20, 20, 20, .1) 75%);
+}
+.bb {
+  position: absolute; left: var(--gutter); bottom: var(--hero-bottom); width: calc(900px * var(--s));
+  z-index: 4;
+}
+.bb .mark { font-size: var(--t-mark); font-weight: 900; color: var(--brand); margin-bottom: calc(6px * var(--s)); }
+.bb h1 {
+  font-size: var(--t-h1); font-weight: 800; line-height: .95; letter-spacing: -.022em;
+  text-shadow: 0 calc(4px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, .7);
+}
+.bb .sub { margin-top: calc(18px * var(--s)); font-size: var(--t-sub); color: var(--ink1); max-width: calc(760px * var(--s)); }
+.bb .mat { display: flex; gap: calc(14px * var(--s)); align-items: center; margin: calc(20px * var(--s)) 0 calc(26px * var(--s)); font-size: var(--t-mat); color: var(--ink1); }
+.bb-btns { display: flex; gap: var(--button-gap); align-items: center; }
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+.btn {
+  display: inline-flex; align-items: center; gap: calc(14px * var(--s));
+  padding: calc(16px * var(--s)) calc(34px * var(--s)); border-radius: var(--r-button);
+  font-size: var(--t-button); font-weight: 700; border: 0; color: #fff;
+  background: rgba(109, 109, 110, .55); transition: transform var(--focus-ms), background var(--focus-ms);
+  white-space: nowrap;
+}
+.btn .ico { width: calc(32px * var(--s)); height: calc(32px * var(--s)); }
+.btn.white { background: #fff; color: #000; }
+.btn.white .ico { stroke: #000; }
+.btn.red { background: var(--brand); }
+.btn.line { border: calc(2px * var(--s)) solid rgba(255, 255, 255, .5); background: transparent; }
+.btn.big { min-width: calc(320px * var(--s)); height: calc(72px * var(--s)); justify-content: center; padding: 0 calc(28px * var(--s)); border-radius: var(--r-hero-button); }
+.btn.ghost { background: rgba(255, 255, 255, .10); }
+.round {
+  width: calc(58px * var(--s)); height: calc(58px * var(--s)); border-radius: 50%;
+  border: calc(2px * var(--s)) solid rgba(255, 255, 255, .55);
+  display: grid; place-content: center; background: rgba(20, 20, 20, .55);
+  transition: transform var(--focus-ms), border-color var(--focus-ms);
+}
+.round.on { background: #fff; border-color: #fff; color: #000; }
+.round .ico { width: calc(28px * var(--s)); height: calc(28px * var(--s)); }
+
+.chips { display: flex; gap: var(--chip-gap); flex-wrap: wrap; padding: 0 var(--gutter); margin-bottom: calc(30px * var(--s)); }
+.chip {
+  padding: calc(10px * var(--s)) calc(24px * var(--s)); border-radius: var(--r-chip);
+  background: rgba(255, 255, 255, .09); border: 1px solid var(--border);
+  font-size: var(--t-chip); color: var(--ink1); display: flex; gap: calc(10px * var(--s)); align-items: center;
+}
+.chip.on { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
+.chip .ico { width: calc(22px * var(--s)); height: calc(22px * var(--s)); }
+
+.badge {
+  position: absolute; top: calc(12px * var(--s)); left: calc(12px * var(--s));
+  font-size: var(--t-badge); font-weight: 700; padding: calc(5px * var(--s)) calc(10px * var(--s));
+  border-radius: var(--r-badge); background: rgba(0, 0, 0, .78); border: 1px solid var(--border);
+}
+.badge.new { background: var(--brand); border-color: transparent; }
+.badge.live { background: var(--brand); border-color: transparent; display: flex; gap: calc(8px * var(--s)); align-items: center; }
+.badge.live i { width: calc(9px * var(--s)); height: calc(9px * var(--s)); border-radius: 50%; background: #fff; }
+.badge.kids { background: var(--kids); color: #132339; border-color: transparent; }
+.badge.right { left: auto; right: calc(12px * var(--s)); }
+
+.matbox { border: 1px solid var(--mat-border); padding: calc(1px * var(--s)) calc(12px * var(--s)); font-size: calc(19px * var(--s)); border-radius: var(--r-badge); }
+.hdbadge { border: 1px solid var(--mat-border); border-radius: var(--r-badge); padding: calc(2px * var(--s)) calc(8px * var(--s)); font-size: var(--t-badge); font-weight: 700; color: var(--hd-ink); }
+.mt { color: var(--match); font-weight: 700; }
+
+/* ==========================================================================
+   Rows and cards — rendered by the plugin registries in js/plugins/
+   ========================================================================== */
+.rows { padding-bottom: calc(80px * var(--s)); }
+/* The first shelf rides up under the billboard (spec B: -140 px). */
+/*
+  The first shelf slides up under the hero. The pull has to stop exactly where the hero's text block stops,
+  otherwise the shelf heading lands on the billboard's Play button (white on white). `--hero-bottom` and
+  `--hero-pull` are therefore a matched pair: the shelf heading sits just under the buttons.
+*/
+.rows.pulled { margin-top: var(--hero-pull); position: relative; z-index: 10; }
+.row { margin-bottom: var(--row-gap); animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
+  animation-delay: calc(var(--delay-children) + min(var(--i, 0), 7) * var(--stagger)); }
+.row > h3 {
+  font-size: var(--t-row-title); font-weight: 700; padding: 0 var(--gutter);
+  margin-bottom: calc(24px * var(--s)); display: flex; align-items: center; gap: calc(12px * var(--s));
+}
+.row > h3 .explore { margin-left: auto; font-size: var(--t-explore); color: var(--ink2); font-weight: 400; }
+.cards {
+  display: flex; gap: var(--gap);
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  /* Vertical padding is the room a focused card needs to scale into without being clipped by the
+     scroller — overflow: visible does not exist on an axis next to overflow-x: auto. */
+  padding: calc(40px * var(--s)) var(--gutter) calc(76px * var(--s));
+  scroll-behavior: smooth;
+  align-items: flex-start;
+}
+/* Card geometry is chosen by the row plugin, never by the screen: 5 landscape cards + a 120 px peek
+   of the sixth at 1920 (spec B), and 280x420 posters with a 28 px gap on a poster rail. */
+.cards.landscape { --card-w: calc(320px * var(--s)); --card-h: calc(180px * var(--s)); --gap: calc(20px * var(--s)); }
+.cards.poster    { --card-w: calc(280px * var(--s)); --card-h: calc(420px * var(--s)); --gap: calc(28px * var(--s)); }
+.cards.rank      { --card-w: calc(280px * var(--s)); --card-h: calc(420px * var(--s)); --gap: calc(28px * var(--s)); }
+.cards.channel   { --card-w: calc(320px * var(--s)); --card-h: calc(180px * var(--s)); --gap: calc(20px * var(--s)); }
+.card {
+  position: relative; flex: none; width: var(--card-w);
+  transition: transform var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out;
+  /* `backwards`, not `both`: with `both` the finished animation keeps pinning `transform: none` over
+     the focus zoom, so a focused card never scales. `will-change` only while it is actually animating. */
+  animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
+  animation-delay: calc(min(var(--i, 0), 7) * var(--stagger));
+}
+.card.foc { will-change: transform; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(var(--fade-up-shift)); } to { opacity: 1; transform: none; } }
+.card .art {
+  position: relative; width: 100%; height: var(--card-h);
+  border-radius: var(--r-card); overflow: hidden;
+  background: linear-gradient(150deg, #2b3a4a, #0f1620);
+  border: 1px solid rgba(255, 255, 255, .05);
+}
+.card .art img { width: 100%; height: 100%; object-fit: cover; }
+.card .cap {
+  position: absolute; top: 100%; left: 0; right: 0; margin-top: var(--caption-gap);
+  font-size: var(--t-caption); color: var(--ink1); line-height: 1.25;
+  opacity: 0; transform: translateY(calc(-6px * var(--s))); transition: opacity var(--focus-ms), transform var(--focus-ms);
+  max-width: 100%;
+}
+.card .meta { margin-top: var(--meta-gap); display: flex; gap: calc(12px * var(--s)); align-items: center; font-size: var(--t-meta); color: var(--ink2); }
+.card .meta .match { color: var(--match); font-weight: 700; }
+.card .meta .left { color: var(--ink3); }
+/* Continue Watching: 8 px, track rgba(255,255,255,.2), fill #E50914. The fill is scaled, not widened. */
+.prog { position: absolute; left: 0; right: 0; bottom: 0; height: calc(8px * var(--s)); background: rgba(255, 255, 255, .2); }
+.prog i { display: block; height: 100%; width: 100%; background: var(--brand); transform-origin: left center; }
+
+/* Top-10 style: the numeral is drawn from the art height, exactly like the mockup. */
+.card.rank { width: calc(var(--card-w) + var(--rank-extra)); }
+.card.rank .art { margin-left: var(--rank-overlap); }
+.card.rank .num {
+  position: absolute; left: 0; bottom: calc(-6px * var(--s)); width: var(--rank-w); height: var(--card-h);
+  display: flex; align-items: flex-end; justify-content: center;
+  font-size: calc(var(--card-h) * .495); font-weight: 900; line-height: .72;
+  color: var(--bg); -webkit-text-stroke: calc(var(--cards-rank-stroke, 8px) * 1) var(--numeral-stroke);
+  letter-spacing: -.04em;
+}
+.card.rank .num span { -webkit-text-fill-color: var(--bg); }
+
+/* Channel tiles: numbered, logo-centred, name on focus. */
+.card .chan { position: absolute; inset: 0; display: grid; place-content: center; gap: calc(8px * var(--s)); padding: calc(16px * var(--s)); text-align: center; }
+.card .chan img { width: calc(170px * var(--s)); height: calc(120px * var(--s)); object-fit: contain; margin: 0 auto; }
+.card .chan .cname { font-size: var(--t-caption); color: var(--ink1); font-weight: 700; }
+.card .chnum {
+  position: absolute; left: calc(14px * var(--s)); top: calc(12px * var(--s));
+  font-size: calc(30px * var(--s)); font-weight: 900; color: #fff;
+  background: rgba(0, 0, 0, .72); border: 1px solid var(--border); border-radius: var(--r-badge);
+  padding: calc(3px * var(--s)) calc(10px * var(--s));
+}
+.card .now { position: absolute; left: 0; right: 0; bottom: 0; padding: calc(10px * var(--s)) calc(12px * var(--s)); font-size: var(--t-meta); color: var(--ink1); background: linear-gradient(0deg, rgba(0, 0, 0, .85), rgba(0, 0, 0, 0)); }
+
+/* Quick actions that appear on the focused card: revealed inside the tile, never outside its edges. */
+.exp {
+  position: absolute; inset: auto 0 0 0; padding: calc(14px * var(--s));
+  display: flex; gap: calc(12px * var(--s)); align-items: center;
+  background: rgba(0, 0, 0, .72); opacity: 0; transition: opacity var(--focus-ms);
+}
+.exp .r {
+  width: calc(42px * var(--s)); height: calc(42px * var(--s)); border-radius: 50%;
+  border: calc(2px * var(--s)) solid rgba(255, 255, 255, .55); display: grid; place-content: center;
+}
+.exp .r.w { background: #fff; border-color: #fff; color: #000; }
+.exp .r .ico { width: calc(22px * var(--s)); height: calc(22px * var(--s)); }
+
+/* ==========================================================================
+   Detail
+   ========================================================================== */
+.detail-hero { position: relative; height: calc(620px * var(--s)); overflow: hidden; }
+.detail-hero img.bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+.detail-hero .scrim { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(20, 20, 20, .95) 4%, rgba(20, 20, 20, .55) 45%, rgba(20, 20, 20, .1) 75%), linear-gradient(0deg, var(--bg) 2%, rgba(20, 20, 20, 0) 55%); }
+.detail-body { position: relative; z-index: 5; padding: 0 var(--gutter); margin-top: calc(-140px * var(--s)); }
+.detail-cols { display: grid; grid-template-columns: minmax(0, 1fr) calc(560px * var(--s)); gap: calc(48px * var(--s)); align-items: start; }
+.detail-body h1 { font-size: var(--t-h2); font-weight: 800; letter-spacing: -.02em; line-height: 1.02; margin-bottom: calc(16px * var(--s)); max-width: calc(1100px * var(--s)); }
+.detail-body .mat { display: flex; gap: calc(14px * var(--s)); align-items: center; font-size: var(--t-mat); color: var(--ink1); margin-bottom: calc(22px * var(--s)); flex-wrap: wrap; }
+.detail-body .blurb { font-size: calc(23px * var(--s)); color: var(--ink1); max-width: calc(1100px * var(--s)); margin-bottom: calc(26px * var(--s)); }
+.detail-body .facts { font-size: var(--t-meta); color: var(--ink2); margin-bottom: calc(26px * var(--s)); }
+.detail-body .facts b { color: var(--ink2); font-weight: 400; }
+.detail-actions { display: flex; gap: calc(18px * var(--s)); align-items: center; margin-bottom: calc(34px * var(--s)); flex-wrap: wrap; }
+
+.sect-title { font-size: var(--t-h3); font-weight: 700; margin: calc(34px * var(--s)) 0 calc(16px * var(--s)); display: flex; align-items: center; gap: calc(14px * var(--s)); }
+.sect-title .note { font-size: var(--t-meta); color: var(--ink2); font-weight: 400; }
+
+.srcs { display: grid; gap: calc(12px * var(--s)); }
+.src {
+  display: flex; align-items: center; gap: calc(18px * var(--s));
+  padding: calc(16px * var(--s)) calc(22px * var(--s)); border-radius: var(--r-button);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.src .ico { color: var(--brand); }
+.src .sl { min-width: 0; }
+.src .sl b { font-size: calc(23px * var(--s)); font-weight: 700; display: block; }
+.src .sl span { font-size: calc(18px * var(--s)); color: var(--ink2); display: block; margin-top: calc(3px * var(--s)); }
+.src .q { margin-left: auto; display: flex; gap: calc(10px * var(--s)); flex: none; align-items: center; }
+.tagq { font-size: calc(17px * var(--s)); padding: calc(6px * var(--s)) calc(12px * var(--s)); border-radius: var(--r-badge); background: rgba(255, 255, 255, .10); border: 1px solid var(--border); white-space: nowrap; }
+.tagq.g { color: var(--match); }
+.tagq.y { color: var(--warn); }
+.tagq.r { color: #ff7a7a; }
+.why { margin-top: calc(8px * var(--s)); display: flex; flex-wrap: wrap; gap: calc(6px * var(--s)) calc(16px * var(--s)); font-size: calc(16px * var(--s)); color: var(--ink3); }
+.why i { font-style: normal; }
+
+.seasons { display: flex; gap: calc(12px * var(--s)); flex-wrap: wrap; margin-bottom: calc(16px * var(--s)); }
+.episodes { display: grid; gap: calc(10px * var(--s)); max-width: calc(1240px * var(--s)); }
+.ep {
+  display: flex; gap: calc(18px * var(--s)); align-items: center;
+  padding: calc(12px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-button);
+  background: rgba(255, 255, 255, .04); border: 1px solid var(--border);
+}
+.ep img { width: calc(168px * var(--s)); height: calc(95px * var(--s)); object-fit: cover; border-radius: var(--r-badge); background: #0f1620; flex: none; }
+.ep .en { font-size: calc(21px * var(--s)); font-weight: 700; }
+.ep .es { font-size: var(--t-meta); color: var(--ink2); }
+.ep .eq { margin-left: auto; font-size: var(--t-meta); color: var(--ink3); flex: none; }
+.ep.cur { background: rgba(229, 9, 20, .16); border-color: rgba(229, 9, 20, .5); }
+
+/* ==========================================================================
+   Player
+   ========================================================================== */
+#video-host { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+#video-host video { background: #000; }
+#video-host .surface { position: absolute; inset: 0; }
+#video-host .surface.preview { position: absolute; inset: 0; }
+/* The feature <video> exists from boot, but only paints while the player screen owns it. In a native
+   shell it is never appended at all, so the product still holds at most two <video> elements. */
+#video-host .surface.feature { display: none; }
+#video-host .surface.feature.on { display: block; }
+/* Contract rule (a): while native video is live the picture is *behind* this WebView, so the page must
+   not paint an opaque background over the picture area. Scrims and bars are gradient/rgba elements. */
+body.native-live, html.native-live { background: transparent; }
+
+.screen.player { background: transparent; overflow: hidden; z-index: 20; }
+.ply-stage { position: absolute; inset: 0; }
+/* Spec B: top bar rgba(0,0,0,.55) px 80 pt 48; bottom bar rgba(0,0,0,.82) px 96 pt 32 pb 56. Both are
+   gradients so they read as scrims over a live picture, never as a painted panel. */
+.ply-top {
+  position: absolute; left: 0; right: 0; top: 0; z-index: 6;
+  padding: calc(48px * var(--s)) calc(80px * var(--s)) calc(28px * var(--s));
+  background: linear-gradient(180deg, rgba(0, 0, 0, .72) 0%, rgba(0, 0, 0, .55) 55%, rgba(0, 0, 0, 0) 100%);
+}
+.ply-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  padding: calc(32px * var(--s)) calc(96px * var(--s)) calc(56px * var(--s));
+  background: linear-gradient(0deg, rgba(0, 0, 0, .82) 0%, rgba(0, 0, 0, .82) 55%, rgba(0, 0, 0, 0) 100%);
+}
+.ply-bottom .ply-bar { position: static; left: auto; right: auto; bottom: auto; }
+.ply-hud {
+  position: absolute; top: calc(48px * var(--s)); left: calc(80px * var(--s)); right: calc(80px * var(--s));
+  display: flex; align-items: flex-start; gap: calc(24px * var(--s)); z-index: 7;
+}
+.ply-hud .pt { font-size: calc(34px * var(--s)); font-weight: 700; }
+.ply-hud .ps { color: var(--ink2); font-size: calc(20px * var(--s)); margin-top: calc(8px * var(--s)); }
+.ply-hud .right { margin-left: auto; display: flex; gap: calc(12px * var(--s)); align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.ply-status {
+  display: flex; align-items: center; gap: calc(14px * var(--s));
+  font-size: calc(20px * var(--s)); color: var(--ink1);
+  background: rgba(0, 0, 0, .62); border: 1px solid var(--border); border-radius: var(--r-badge);
+  padding: calc(10px * var(--s)) calc(16px * var(--s)); max-width: calc(760px * var(--s));
+}
+.ply-status.warn { border-color: rgba(242, 195, 58, .55); color: var(--warn); }
+.ply-status.bad { border-color: rgba(255, 90, 90, .6); color: #ff8a8a; }
+.ply-status .spin { width: calc(22px * var(--s)); height: calc(22px * var(--s)); border-radius: 50%; border: calc(3px * var(--s)) solid rgba(255, 255, 255, .25); border-top-color: #fff; animation: spin 900ms linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.ply-bar {
+  position: absolute; left: var(--gutter); right: var(--gutter); bottom: calc(54px * var(--s)); z-index: 6;
+}
+/* Spec B: progress 8 px tall, radius 4, track rgba(255,255,255,.2), fill #E50914. The fills are
+   scaled, not widened — section F animates transform and opacity only. */
+.trk { height: calc(8px * var(--s)); border-radius: calc(4px * var(--s)); background: rgba(255, 255, 255, .2); position: relative; }
+.trk .buf { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(0); background: rgba(255, 255, 255, .45); border-radius: inherit; }
+.trk .pl { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(0); background: var(--brand); border-radius: inherit; }
+.trk .kn { position: absolute; top: 50%; width: calc(22px * var(--s)); height: calc(22px * var(--s)); border-radius: 50%; background: #fff; transform: translate(-50%, -50%); box-shadow: 0 0 0 calc(4px * var(--s)) rgba(229, 9, 20, .85); }
+.trk.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.times { display: flex; justify-content: space-between; color: var(--ink1); font-size: calc(19px * var(--s)); margin: calc(12px * var(--s)) 0 calc(22px * var(--s)); }
+.ctl { display: flex; align-items: center; gap: calc(10px * var(--s)); flex-wrap: wrap; }
+.iconbtn {
+  display: flex; gap: calc(12px * var(--s)); align-items: center;
+  padding: calc(12px * var(--s)) calc(18px * var(--s)); border-radius: var(--r-button);
+  font-size: calc(21px * var(--s)); color: #e6e6e6; background: rgba(255, 255, 255, .06);
+}
+.iconbtn .ico { width: calc(34px * var(--s)); height: calc(34px * var(--s)); }
+.iconbtn b { font-weight: 700; }
+.iconbtn.on { background: rgba(255, 255, 255, .18); }
+.iconbtn .val { color: var(--kids); font-weight: 700; }
+.iconbtn.dim { color: var(--ink3); }
+.ply-right { margin-left: auto; display: flex; align-items: center; gap: calc(10px * var(--s)); }
+.rate { color: var(--match); font-size: calc(19px * var(--s)); padding: 0 calc(10px * var(--s)); }
+
+/* Spec B: transport buttons are 144 px circles, Play 176 px, focus fill rgba(229,9,20,.85) with a
+   4 px white ring and scale 1.08. They sit inside the bottom bar, above the progress row. */
+.pbtns { display: flex; align-items: center; justify-content: center; gap: calc(40px * var(--s)); margin-top: calc(26px * var(--s)); }
+.pbtn {
+  position: relative; width: calc(144px * var(--s)); height: calc(144px * var(--s)); border-radius: 50%;
+  background: rgba(255, 255, 255, .12); border: calc(4px * var(--s)) solid rgba(255, 255, 255, .35);
+  display: grid; place-content: center; color: #fff;
+  transition: transform var(--focus-ms) ease-out, background-color var(--focus-ms) ease-out, border-color var(--focus-ms) ease-out;
+}
+.pbtn.play { width: calc(176px * var(--s)); height: calc(176px * var(--s)); background: #fff; color: #141414; border-color: #fff; }
+.pbtn .ico { width: calc(56px * var(--s)); height: calc(56px * var(--s)); }
+.pbtn .lbl { position: absolute; top: 100%; left: 0; right: 0; margin-top: calc(10px * var(--s));
+  text-align: center; font-size: var(--t-meta); color: var(--ink2); }
+.pbtn.foc { background: rgba(229, 9, 20, .85); border-color: #fff; color: #fff;
+  transform: scale(1.08); box-shadow: 0 0 0 calc(4px * var(--s)) #fff, 0 calc(18px * var(--s)) calc(44px * var(--s)) rgba(0, 0, 0, .6); }
+.pbtn.play.foc { transform: scale(1.08); }
+
+/* Spec B: Skip Intro 200x72, white/10 on a white/30 border, shown from 5 s to 90 s. */
+.skip {
+  position: absolute; right: calc(96px * var(--s)); bottom: calc(250px * var(--s)); z-index: 8;
+  width: calc(200px * var(--s)); height: calc(72px * var(--s));
+  background: rgba(255, 255, 255, .10); border: calc(2px * var(--s)) solid rgba(255, 255, 255, .30);
+  border-radius: var(--r-button); color: #fff; font-size: var(--t-button); font-weight: 700;
+  display: grid; place-content: center;
+  animation: fadeUp 200ms var(--fade-up-ease) backwards;
+}
+.skip.foc { background: #fff; color: #141414; box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.skip.gone { opacity: 0; transition: opacity 150ms ease; pointer-events: none; }
+
+.ply-fade { transition: opacity 260ms ease, transform 260ms ease; }
+.ply-fade.hide { opacity: 0; transform: translateY(calc(10px * var(--s))); pointer-events: none; }
+
+/* Spec B: next-episode card 400x225, shown in the last 7 s. */
+.nextup {
+  position: absolute; right: calc(96px * var(--s)); bottom: calc(350px * var(--s)); z-index: 8;
+  width: calc(400px * var(--s)); background: rgba(24, 24, 24, .95); border: 1px solid var(--border);
+  border-radius: var(--r-panel); padding: calc(20px * var(--s)); box-shadow: 0 calc(20px * var(--s)) calc(48px * var(--s)) rgba(0, 0, 0, .7);
+}
+.nextup .nt { font-size: var(--t-panel-title); font-weight: 700; margin-bottom: calc(10px * var(--s)); }
+.nextup .nx { font-size: calc(19px * var(--s)); color: var(--ink2); }
+.nextup .row2 { display: flex; gap: calc(12px * var(--s)); margin-top: calc(16px * var(--s)); align-items: center; }
+.nextup img { width: 100%; height: calc(120px * var(--s)); object-fit: cover; border-radius: var(--r-badge); margin-bottom: calc(12px * var(--s)); }
+
+.ply-center { position: absolute; inset: 0; display: grid; place-content: center; gap: calc(18px * var(--s)); z-index: 6; text-align: center; }
+.ply-center .big { font-size: var(--t-h3); font-weight: 700; }
+.ply-center .small { font-size: var(--t-sub); color: var(--ink2); max-width: calc(900px * var(--s)); }
+.ply-center .btns { display: flex; gap: calc(16px * var(--s)); justify-content: center; margin-top: calc(20px * var(--s)); }
+
+/* Option panels opened from the control bar (CC, audio, quality, speed). */
+.panel {
+  position: absolute; z-index: 8; width: var(--panel-w);
+  background: var(--panel-scrim); border: 1px solid var(--border); border-radius: var(--r-panel);
+  padding: var(--panel-pad); box-shadow: 0 calc(24px * var(--s)) calc(56px * var(--s)) rgba(0, 0, 0, .8);
+  max-height: calc(620px * var(--s)); overflow-y: auto; overscroll-behavior: contain;
+}
+.panel h4 { font-size: var(--t-panel-title); font-weight: 700; margin-bottom: calc(14px * var(--s)); display: flex; align-items: center; gap: calc(12px * var(--s)); }
+.panel .prow {
+  display: flex; align-items: center; gap: calc(14px * var(--s));
+  min-height: var(--panel-row-h); padding: calc(10px * var(--s)) calc(14px * var(--s));
+  border-radius: var(--r-button); font-size: var(--t-panel-row);
+}
+.panel .prow .sub { display: block; font-size: var(--t-panel-note); color: var(--ink2); margin-top: calc(2px * var(--s)); }
+.panel .prow .val { margin-left: auto; color: var(--kids); font-weight: 700; font-size: var(--t-panel-note); flex: none; }
+.panel .prow.on { background: rgba(255, 255, 255, .14); }
+.panel .prow.on .lbl::before { content: ""; }
+.panel .note { font-size: var(--t-panel-note); color: var(--ink2); margin-top: calc(12px * var(--s)); }
+.panel .segs { display: flex; gap: calc(8px * var(--s)); flex-wrap: wrap; }
+.seg { padding: calc(8px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-badge); background: rgba(255, 255, 255, .10); border: 1px solid var(--border); font-size: var(--t-panel-row); }
+.seg.on { background: #fff; color: #000; font-weight: 700; }
+
+/* ==========================================================================
+   Profiles, PIN, keypads
+   ========================================================================== */
+.pwrap { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; background: var(--bg); padding: calc(40px * var(--s)); }
+/* Spec B, "Profile picker geometry": title 80/700 with 96 px below it, 280 px avatars on a 72 px gap,
+   radius 62 (22 % of the tile), border 3 px white/.2 that thickens to 6 px of #fff on focus. */
+.pwrap h1 {
+  font-size: calc(80px * var(--s)); font-weight: 700; margin-bottom: calc(96px * var(--s)); letter-spacing: -.02em;
+  animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
+}
+.pfs { display: flex; gap: calc(72px * var(--s)); flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+.avatar {
+  width: var(--avatar); text-align: center;
+  transition: transform var(--focus-ms) cubic-bezier(.23, 1, .32, 1);
+  animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
+  /* The household's avatars arrive one after another, 100 ms apart — spec B. */
+  animation-delay: calc(var(--delay-children) + min(var(--i, 0), 7) * 100ms);
+}
+.avatar .a {
+  width: var(--avatar); height: var(--avatar); border-radius: calc(62px * var(--s)); position: relative;
+  display: grid; place-content: center; background: var(--key); overflow: hidden;
+  border: calc(3px * var(--s)) solid rgba(255, 255, 255, .2);
+  transition: border-color var(--focus-ms), box-shadow var(--focus-ms);
+}
+.avatar .a .ini { font-size: var(--t-avatar); font-weight: 800; color: #fff; }
+.avatar .a.grad1 { background: linear-gradient(135deg, #7a8493, #33383f); }
+.avatar .a.grad2 { background: linear-gradient(135deg, #6d5bd0, #2b2350); }
+.avatar .a.grad3 { background: linear-gradient(135deg, #2f8f8f, #14353a); }
+.avatar .a.grad4 { background: linear-gradient(135deg, #b0553f, #4a1f16); }
+.avatar.k .a { background: linear-gradient(135deg, var(--kids), #b8860b); }
+.avatar.k .a .ini { color: #241a02; }
+.avatar .nm {
+  margin-top: calc(18px * var(--s)); font-size: var(--t-profile); font-weight: 500; color: rgba(255, 255, 255, .6);
+  transition: color var(--focus-ms), font-weight var(--focus-ms);
+}
+/* Focus: ring thickens 3 -> 6 px and the tile lifts 1.08. The extra 3 px is a shadow so the tile never
+   reflows and the row of names under it stays where the eye left it. */
+.avatar.foc { transform: scale(1.08); }
+.avatar.foc .a { border-color: #fff; box-shadow: 0 0 0 calc(3px * var(--s)) #fff; }
+.avatar.foc .nm { color: #fff; font-weight: 700; }
+.avatar .lock {
+  position: absolute; bottom: calc(12px * var(--s)); right: calc(12px * var(--s));
+  width: calc(40px * var(--s)); height: calc(40px * var(--s)); border-radius: var(--r-badge);
+  background: rgba(0, 0, 0, .6); display: grid; place-content: center;
+}
+.avatar .lock .ico { width: calc(24px * var(--s)); height: calc(24px * var(--s)); }
+.avatar .kbadge { position: absolute; top: calc(12px * var(--s)); left: calc(12px * var(--s)); }
+.avatar-add .a { background: transparent; border: calc(2px * var(--s)) dashed rgba(255, 255, 255, .35); }
+.avatar-add.foc .a { border-color: #fff; border-style: solid; box-shadow: 0 0 0 calc(3px * var(--s)) #fff; }
+.avatar-add.foc .nm { color: #fff; font-weight: 700; }
+.avatar-add .a .ico { width: calc(70px * var(--s)); height: calc(70px * var(--s)); color: var(--ink2); }
+.avatar-add { width: var(--avatar); text-align: center; transition: transform var(--focus-ms); }
+/* Spec B: Manage Profiles is square, uppercase, tracked out, grey that whitens on focus. */
+.manage {
+  margin-top: calc(48px * var(--s)); font-size: calc(22px * var(--s)); color: #808080;
+  border: calc(1px * var(--s)) solid #808080; border-radius: 0;
+  padding: calc(14px * var(--s)) calc(30px * var(--s)); letter-spacing: .2em; text-transform: uppercase;
+  transition: color var(--focus-ms), border-color var(--focus-ms);
+}
+.manage.foc { color: #fff; border-color: #fff; }
+
+/*
+  The profile switch — the one moment in the product that has to feel physical (spec B).
+  The grid falls back to 0.9 and fades over 500/800 ms while the chosen face flies to the corner of the nav
+  bar and becomes the account chip. Home is already mounting underneath, so the flight is the wait.
+*/
+.pwrap h1, .pwrap .pfs, .pwrap .manage {
+  transition: transform 800ms cubic-bezier(.33, 0, .67, 1), opacity 500ms cubic-bezier(.33, 0, .67, 1);
+}
+.pwrap.leaving { transition: background 300ms ease; background: transparent; }
+.pwrap.leaving h1, .pwrap.leaving .manage { opacity: 0; transform: scale(.9); }
+.pwrap.leaving .pfs { opacity: 0; transform: scale(.9); }
+.avatar-ghost {
+  position: fixed; z-index: 88; pointer-events: none; transform-origin: top left;
+  border-radius: calc(62px * var(--s)); overflow: hidden;
+  transition: transform 800ms cubic-bezier(.33, 0, .67, 1), opacity 400ms ease-in 400ms;
+}
+.avatar-ghost .a { width: 100%; height: 100%; }
+.avatar-ghost.fly { opacity: 0; }
+
+.modal { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, .82); display: grid; place-content: center; justify-items: center; }
+.mbox { width: var(--modal-w); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-button); padding: calc(44px * var(--s)) calc(48px * var(--s)); text-align: center; }
+.mbox h2 { font-size: var(--t-h3); font-weight: 700; margin-bottom: calc(10px * var(--s)); }
+.mbox p { color: var(--ink2); font-size: calc(20px * var(--s)); margin-bottom: calc(26px * var(--s)); }
+.dots { display: flex; gap: calc(20px * var(--s)); justify-content: center; margin-bottom: calc(28px * var(--s)); }
+.dots i { width: calc(20px * var(--s)); height: calc(20px * var(--s)); border-radius: 50%; background: rgba(255, 255, 255, .25); }
+.dots i.on { background: #fff; }
+.p9 { display: grid; grid-template-columns: repeat(3, var(--key-w)); gap: calc(14px * var(--s)); justify-content: center; }
+.p9 .key { height: var(--key-h); border-radius: var(--r-key); background: var(--key); border: 1px solid var(--border); display: grid; place-content: center; font-size: var(--t-key); }
+.p9 .key.sm { font-size: calc(20px * var(--s)); font-weight: 700; letter-spacing: .04em; }
+.mbox .err { color: #ff8a8a; font-size: calc(19px * var(--s)); min-height: calc(26px * var(--s)); margin-top: calc(14px * var(--s)); }
+
+/* On-screen keyboard (remote-only entry; a physical keyboard types straight into the field). */
+.kbd { display: grid; gap: calc(8px * var(--s)); justify-content: center; margin-top: calc(18px * var(--s)); }
+.kbd .kr { display: grid; grid-auto-flow: column; grid-auto-columns: calc(72px * var(--s)); gap: calc(8px * var(--s)); }
+.kbd .key { height: calc(64px * var(--s)); border-radius: var(--r-key); background: var(--key); border: 1px solid var(--border); display: grid; place-content: center; font-size: calc(24px * var(--s)); }
+
+/* ==========================================================================
+   Search + Settings
+   ========================================================================== */
+.field {
+  display: flex; align-items: center; gap: calc(16px * var(--s));
+  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-field);
+  padding: calc(16px * var(--s)) calc(24px * var(--s)); min-height: calc(74px * var(--s));
+}
+.field .ico { width: calc(32px * var(--s)); height: calc(32px * var(--s)); color: var(--ink2); }
+.field .q { font-size: var(--t-field); color: var(--ink); white-space: pre; }
+.field .q.empty { color: var(--ink3); }
+.field .caret { width: calc(2px * var(--s)); height: calc(28px * var(--s)); background: #fff; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.grid { display: flex; flex-wrap: wrap; gap: var(--gap); padding: 0 var(--gutter); }
+.grid .card { animation-delay: calc(min(var(--i, 0), 7) * var(--stagger)); }
+
+.page-head { padding: calc(var(--nav-h) + calc(28px * var(--s))) var(--gutter) calc(24px * var(--s)); }
+.page-head h1 { font-size: var(--t-h2); font-weight: 800; letter-spacing: -.015em; }
+.page-head .sub { color: var(--ink2); font-size: var(--t-sub); margin-top: calc(10px * var(--s)); }
+
+.settings-cols { display: grid; grid-template-columns: calc(760px * var(--s)) minmax(0, 1fr); gap: calc(56px * var(--s)); padding: 0 var(--gutter) calc(90px * var(--s)); align-items: start; }
+.sgroup { margin-bottom: calc(38px * var(--s)); }
+.sgroup > h3 { font-size: var(--t-h3); font-weight: 700; margin-bottom: calc(14px * var(--s)); }
+.li {
+  display: flex; align-items: center; gap: calc(18px * var(--s));
+  padding: calc(20px * var(--s)) calc(24px * var(--s)); border-radius: var(--r-button);
+  background: var(--surface); border: 1px solid var(--border); font-size: var(--t-li);
+}
+.li .lv { margin-left: auto; color: var(--ink2); font-size: var(--t-li-meta); text-align: right; max-width: calc(400px * var(--s)); }
+.li .sw { width: calc(64px * var(--s)); height: calc(32px * var(--s)); border-radius: 999px; background: rgba(255, 255, 255, .22); position: relative; margin-left: auto; flex: none; }
+.li .sw.on { background: var(--brand); }
+.li .sw i { position: absolute; top: calc(4px * var(--s)); left: calc(4px * var(--s)); width: calc(24px * var(--s)); height: calc(24px * var(--s)); border-radius: 50%; background: #fff; transition: left 160ms ease; }
+.li .sw.on i { left: calc(36px * var(--s)); }
+.li .note { display: block; font-size: var(--t-panel-note); color: var(--ink3); margin-top: calc(4px * var(--s)); max-width: calc(420px * var(--s)); }
+.diag { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-panel); padding: calc(24px * var(--s)); }
+.diag h4 { font-size: var(--t-panel-title); margin-bottom: calc(14px * var(--s)); }
+.diag .dr { display: flex; gap: calc(14px * var(--s)); font-size: var(--t-panel-row); padding: calc(7px * var(--s)) 0; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.diag .dr b { font-weight: 400; color: var(--ink2); min-width: calc(240px * var(--s)); }
+.diag .ok { color: var(--match); font-weight: 700; }
+.diag .no { color: #ff8a8a; font-weight: 700; }
+.diag .mid { color: var(--warn); font-weight: 700; }
+
+/* ==========================================================================
+   Kids mode
+   ========================================================================== */
+body.kids { --bg: #0f1a2e; }
+body.kids .screen { background: linear-gradient(180deg, #1b2a4a, #0f1a2e 70%); }
+body.kids .nav { background: rgba(0, 0, 0, .35); height: calc(110px * var(--s)); }
+body.kids .nav.solid { background: rgba(10, 18, 32, .96); }
+body.kids .brand { color: var(--kids); }
+body.kids .row > h3 { font-size: calc(30px * var(--s)); font-weight: 800; }
+body.kids .card .art { border-radius: calc(14px * var(--s)); }
+body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 calc(9px * var(--s)) var(--kids), 0 calc(18px * var(--s)) calc(34px * var(--s)) rgba(0, 0, 0, .55); }
+.kids-tag { display: inline-flex; align-items: center; gap: calc(10px * var(--s)); background: var(--kids); color: #132339; font-weight: 800; padding: calc(10px * var(--s)) calc(20px * var(--s)); border-radius: 999px; font-size: var(--t-chip); }
+.kids-tag .ico { width: calc(22px * var(--s)); height: calc(22px * var(--s)); }
+
+/* ==========================================================================
+   Toast / status line
+   ========================================================================== */
+.toast {
+  position: fixed; left: 50%; bottom: calc(48px * var(--s)); transform: translateX(-50%);
+  z-index: 80; background: rgba(24, 24, 24, .96); border: 1px solid var(--border);
+  border-radius: var(--r-button); padding: calc(16px * var(--s)) calc(28px * var(--s));
+  font-size: var(--t-li); color: var(--ink1); box-shadow: 0 calc(18px * var(--s)) calc(40px * var(--s)) rgba(0, 0, 0, .6);
+  max-width: 86vw; animation: toastIn 200ms ease-out both;
+}
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, calc(10px * var(--s))); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Per-row loading and failure: one shelf that cannot answer must not take the home page down, and it
+   must not be mistaken for an empty shelf. The shimmer is the only infinite animation on the page —
+   section F reserves that for loaders. */
+.skeleton { display: flex; gap: var(--gap); padding: calc(40px * var(--s)) var(--gutter) calc(76px * var(--s)); }
+.skeleton i { flex: none; width: var(--card-w); height: var(--card-h); border-radius: var(--r-card);
+  background: linear-gradient(100deg, var(--surface2) 30%, var(--surface3) 50%, var(--surface2) 70%);
+  background-size: 200% 100%; animation: shimmer 1500ms linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.row-err { display: flex; align-items: center; gap: calc(18px * var(--s)); padding: 0 var(--gutter) calc(20px * var(--s));
+  color: var(--ink3); font-size: var(--t-sub); }
+.row-err .btn { padding: calc(10px * var(--s)) calc(20px * var(--s)); font-size: var(--t-meta); }
+
+.empty-row { color: var(--ink3); font-size: var(--t-sub); padding: 0 var(--gutter); }
+
+/* ==========================================================================
+   Small screens: laptop and phone browsers keep the same rhythm, scaled
+   ========================================================================== */
+@media (max-width: 1100px) {
+  :root { --gutter: calc(34px * var(--s)); --billboard-h: calc(700px * var(--s)); }
+  .detail-cols { grid-template-columns: minmax(0, 1fr); }
+  .settings-cols { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  :root { --gutter: calc(20px * var(--s)); --card-w: calc(190px * var(--s)); --card-h: calc(285px * var(--s)); --billboard-h: calc(560px * var(--s)); }
+  .nav-items { gap: 0; }
+  .bb h1 { font-size: calc(56px * var(--s)); }
+  .detail-body h1 { font-size: calc(34px * var(--s)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; transition-duration: 1ms !important; }
+  .cards { scroll-behavior: auto; }
+  .screen { scroll-behavior: auto; }
+  .card.foc { transform: none; }
+}

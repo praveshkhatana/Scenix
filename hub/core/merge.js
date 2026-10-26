@@ -11,6 +11,11 @@
 const FIELDS = [
   'identity', 'type', 'title', 'year', 'poster', 'backdrop', 'logo', 'match', 'maturity',
   'durationMs', 'languages', 'genres', 'addedAt', 'releasedAt', 'inCinemas', 'live', 'progress',
+  'episodes',
+  // Which address this tile's sources were actually fetched for (an episode of a series). It has to
+  // survive dedupe: the addon indexes streams by the address asked for, so a caller that loses it looks
+  // up the show and finds nothing, which showed up as "no play target" on every series.
+  'streamId',
 ];
 
 /** Empty item with the exact §1 shape, so every provider emits the same keys. */
@@ -19,6 +24,7 @@ function blankItem() {
     identity: null, type: null, title: null, year: null, poster: null, backdrop: null, logo: null,
     match: null, maturity: null, durationMs: null, languages: null, genres: null,
     addedAt: null, releasedAt: null, inCinemas: false, live: null, progress: null, sources: [],
+    episodes: null, streamId: null,
   };
 }
 

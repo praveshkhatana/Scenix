@@ -10,11 +10,20 @@
  * codenames so the player can retry a different one). This module is the hub's version of that check.
  *
  * One probe = a ranged GET of the first few hundred KB, aborted the moment the budget is spent:
- *   { ok, status, latencyMs, bytes, kbps, contentType, seekable, error, checkedAt }
+ *   { ok, status, latencyMs, bytes, kbps, rateReliable, rateFloor, contentType, seekable, error, checkedAt }
  * `latencyMs` is time-to-first-byte (what the player waits before anything is on screen) and `kbps` is
  * the rate measured while reading those bytes (what decides whether playback stalls). Both are the
  * numbers the viewer feels; a source that answers in 200 ms at 6 Mbps is worth more than a "bigger"
  * file that answers in 4 s at 0.4 Mbps, and now the ranking rule can know that.
+ *
+ * What `kbps` is allowed to mean, because dividing bytes by a millisecond is how nonsense gets made:
+ *   - `rateReliable: true` — the sample was either timed over a window of PROBE_MIN_SAMPLE_MS or more,
+ *     or the entire requested sample arrived, so the number describes this connection;
+ *   - `rateFloor: true` — a sub-case of the above: the sample landed faster than the window could be
+ *     opened, so the divisor was clamped up and `kbps` is a proven MINIMUM ("at least 33 Mbps"), never
+ *     a measurement. On a LAN, a real value computed from a 0.9 ms window reads 9.5 Tbps and means less;
+ *   - `rateReliable: false` — nothing about speed may be claimed. An HLS master playlist is 200 bytes
+ *     and is over in a millisecond: that answered, it did not stream.
  *
  * Cost control, because this sits in a request path:
  *   - results are cached in data/probe-cache.json keyed by a hash of url + the headers we replay;
@@ -25,8 +34,10 @@
  *   - probeAll() waits at most PROBE_BUDGET_MS (1.5 s) for the batch. Anything that has not answered
  *     when the budget is spent is simply `null` in the result AND keeps running in the background, so
  *     the next view finds it warm. A page view never waits longer than that, whatever the internet does.
- *   - nothing here throws: a probe that cannot answer contributes nothing and the response is exactly
- *     what it was before this module existed.
+ *   - nothing here throws: a probe that cannot answer contributes nothing, and the source keeps the
+ *     score the metadata ranking gave it. With PROBE_ENABLED=0 no measurement is taken and none of the
+ *     probe fields or weights appear anywhere: those responses are exactly as they were before this
+ *     module existed.
  *
  * No npm, no framework: http/https from Node, JSON file, atomic rename.
  * Server address and household identifiers are never written here (repo rule).
@@ -141,6 +152,21 @@ function probeable(url) {
   return typeof url === 'string' && /^https?:\/\//i.test(url);
 }
 
+/**
+ * A stable id for one candidate source, so the app can name the exact link it wants left out
+ * (`POST /app/v1/switch {exclude:["src…"]}`) instead of matching on a label two addons worded alike.
+ * It hashes what identifies the source within one title - which addon produced it, what kind of thing
+ * it is, its quality/size/label and its URL - so the same source keeps the same id across requests
+ * while the addon cache holds it, and a different feed never collides with it.
+ */
+function sourceId(source) {
+  if (!source || typeof source !== 'object') return null;
+  return 'src' + hash(
+    source._addon, source.provider, source.kind, source.quality,
+    source.sizeBytes, source.label, source._url
+  ).slice(0, 10);
+}
+
 // ---- one probe ------------------------------------------------------------------------------------
 
 /**
@@ -169,14 +195,27 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
 
     const result = (extra) => {
       const transferMs = firstByte ? ms(process.hrtime.bigint() - firstByte) : 0;
-      // bytes*8 bits over transferMs/1000 seconds, /1000 for kbps  ==  bytes*8/transferMs
-      const kbps = transferMs > 0 ? (bytes * 8) / transferMs : 0;
+      // A rate needs a window worth dividing by. Two different things can make a number here:
+      //   - the transfer ran long enough to time directly (transferMs >= MIN_SAMPLE_MS): a measurement;
+      //   - the whole sample arrived before that window closed (bytes >= maxBytes in 0.9 ms on a LAN):
+      //     then the rate is a LOWER BOUND — 1 MB inside 0.9 ms is also 1 MB inside 250 ms, so clamp the
+      //     divisor up and report what can be proved rather than 9.5 Tbps of rounding error;
+      //   - a few hundred bytes arrived and the response simply ended (an HLS master playlist): that is
+      //     a completed request, not a stream, so no speed may be claimed from it at all.
+      const timed = transferMs >= MIN_SAMPLE_MS;
+      const fullSample = bytes >= maxBytes;
+      const rateReliable = bytes > 0 && (timed || fullSample);
+      const rateFloor = rateReliable && !timed; // true: the number below is a "at least", not a value
+      const denom = rateFloor ? MIN_SAMPLE_MS : transferMs;
+      const kbps = denom > 0 ? (bytes * 8) / denom : 0; // bytes*8 bits over denom/1000 s, /1000 = kbps
       return {
         ok: false,
         status,
         latencyMs: ttfb == null ? null : rnd(ms(ttfb - t0)),
         bytes,
         kbps: Math.round(kbps * 10) / 10,
+        rateReliable,
+        rateFloor,
         contentType,
         seekable,
         sampleMs: rnd(transferMs), // how long the rate was measured over — honesty about the number
@@ -320,6 +359,12 @@ function publicEntry(entry) {
     latencyMs: Number.isFinite(entry.latencyMs) ? entry.latencyMs : null,
     bytes: Number.isFinite(entry.bytes) ? entry.bytes : 0,
     kbps: Number.isFinite(entry.kbps) ? entry.kbps : 0,
+    // false for a measurement too short to be a speed (a 200-byte playlist) and for anything written
+    // by an older hub, which did not know to say. Ranking only claims buffering when this is true.
+    rateReliable: entry.rateReliable === true,
+    // true when kbps is a proven minimum rather than a value ("at least this fast"): the sample landed
+    // faster than the timing window, so the divisor was clamped up instead of reporting rounding error.
+    rateFloor: entry.rateFloor === true,
     contentType: entry.contentType || null,
     seekable: entry.seekable === true,
     error: entry.error || null,
@@ -461,7 +506,7 @@ function status() {
 }
 
 module.exports = {
-  probeAll, probeUrl, probeOne, peek, invalidate, keyFor, hash, probeable, status,
+  probeAll, probeUrl, probeOne, peek, invalidate, keyFor, hash, probeable, sourceId, status,
   ENABLED, FILE,
   limits: { PROBE_BYTES, SAMPLE_BYTES_MAX, MIN_SAMPLE_MS, PROBE_TIMEOUT_MS, OK_TTL_MS, FAIL_TTL_MS, CONCURRENCY, BUDGET_MS, CACHE_MAX },
 };

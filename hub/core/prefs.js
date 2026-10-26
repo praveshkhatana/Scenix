@@ -21,6 +21,8 @@
  *                   set at all for 1080p/4k caps — a 6 Mbps clamp would silently forbid 1080p.
  */
 
+const settings = require('./settings');
+
 // What each requested level means in bytes and bandwidth, and how it ranks against a source's own
 // quality string. A 1080p Blu-ray rip is ~4-8 GB; a 4K remux is 15-25 GB. These are ceilings for what
 // the addons are allowed to keep, not claims about a specific file.
@@ -60,7 +62,9 @@ function capFor(profile) {
 // The starting point for every profile, before any preference is spelled anywhere. Kept as a literal
 // (not resolve(null)) so resolve() can spread it without a circular reference.
 const PROFILE_DEFAULTS = {
-  audioLanguages: ['hin', 'eng'],
+  // No languages of its own: a profile that has not chosen any watches what the hub allows, which the
+  // owner set in settings. Shipping ['hin','eng'] here would make one family's tastes the product's.
+  audioLanguages: [],
   quality: 'highest',
   preferAdaptive: true,
   // The dark-red zone (tier 3) is off until the household says otherwise. Off means those titles are not
@@ -85,7 +89,10 @@ function resolve(profile) {
     xxxEnabled: p.xxxEnabled !== undefined ? p.xxxEnabled : PROFILE_DEFAULTS.xxxEnabled,
   };
   if (!Array.isArray(out.audioLanguages) || !out.audioLanguages.length) {
-    out.audioLanguages = (profile && profile.languages) || PROFILE_DEFAULTS.audioLanguages;
+    // A profile with no language of its own wants whatever the household decided the hub may show. If
+    // the hub has no policy either, there is no first choice — and ranking says "audio not stated as a
+    // preference" instead of inventing one for a viewer it has never met.
+    out.audioLanguages = (profile && profile.languages) || settings.languages();
   }
   if (!Number.isFinite(out.maxSizeGB) || out.maxSizeGB <= 0) out.maxSizeGB = level.maxSizeGB;
   if (!Number.isFinite(out.maxBitrateMbps) || out.maxBitrateMbps <= 0) out.maxBitrateMbps = null;

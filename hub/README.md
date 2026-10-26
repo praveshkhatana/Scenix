@@ -68,7 +68,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | | |
 |---|---|
 | `GET /healthz`, `GET /` | per-provider and per-row counts, loaded and **failed** plugins |
-| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id |
+| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`), which is the only thing a client UI may branch on |
 | `GET /app/v1/profiles` | profiles and the rows each one sees |
 | `GET /app/v1/home?profile=<id>` | `{ rows: [{ id, title, card, items: […] }] }` |
 | `GET /app/v1/row/<id>?profile=<id>` | one row, for the app's "see all" |
@@ -76,8 +76,12 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | `GET /app/v1/meta/<identity>?profile=<id>` | one merged tile (403 if a rule drops it for that profile) |
 | `GET /app/v1/subs/<identity>?profile=<id>&lang=hin,en` | merged subtitles (403 if the title is hidden) |
 | `GET /app/v1/trailer/<identity>?profile=<id>` | `{url, headers, kind, videoId, expiresAt}` or 404 `{error:"no trailer"}`, from `data/trailers.json`: the clip id is already there for most titles, so only the perishable signed URL is minted (`yt-dlp`) when it has expired. A malformed percent-escape in any `/app/v1` path is a 400, never a crashed hub |
-| `POST /app/v1/play` `{identity, profile, source?, provider?, type?, exclude?, reprobe?}` | `{url, headers, kind, expiresAt, mode, proxiedUrl, picked, why, checked, probe, status, tagline, nextSource, alternatives}` — see [Which link actually plays](#which-link-actually-plays) |
-| `POST /app/v1/switch` `{identity, profile, exclude?, source?, type?}` | same body as play, but the measurement cache is ignored: "this link is buffering, give me another" |
+| `POST /app/v1/play` `{identity, profile, source?, provider?, type?, exclude?, reprobe?, container?, audio?, sub?}` | `{url, headers, kind, expiresAt, mode, proxiedUrl, picked, why, checked, probe, status, tagline, nextSource, alternatives}` plus the tracks this copy really carries (`audioTracks`, `subtitleTracks`, `selectedAudio`, `selectedSub`) and what container it is being handed in (`container`, `remuxed`) — see [Which link actually plays](#which-link-actually-plays). `container:"any"` (the default) is the native player's copy untouched; `"mp4"`/`"hls"` ask for a browser-safe re-wrap |
+| `POST /app/v1/switch` `{identity, profile, exclude?, source?, type?, container?, audio?, sub?}` | same body as play, but the measurement cache is ignored: "this link is buffering, give me another" |
+| `GET /app/v1/remux?u=&v=&audio=&sub=` | the engine's own stream URL re-wrapped on the fly into fragmented MP4: video is always copied, audio copied when the container can hold it and re-encoded when a browser cannot play it. `GET /app/v1/hls/<hash>/<fileId>` is the same idea as a playlist |
+| `GET /app/v1/subtitle?u=&i=` | one embedded text subtitle, converted to WebVTT and served with CORS, so a browser can use a track that lives inside a Matroska file |
+| `GET`/`PUT /app/v1/settings` | the owner's settings (`data/settings.json`): the hub's name, its content languages, its live-TV playlist, how the addon host behaves. PUT merges a patch and re-applies what other parts derived from the old values |
+| `GET /app/v1/addons`, `POST /app/v1/addons`, `POST /app/v1/addons/<id>/enable\|disable`, `DELETE /app/v1/addons/<id>` | the addon-protocol addons this hub answers with, installed or shipped, and which are on |
 | `POST /app/v1/progress` `{profile, identity, positionMs, watchedMs}` | remembered in `data/progress.json`; **refused (403) for a tier-3 title while the adult switch is off** |
 | `GET`/`POST /app/v1/prefs?profile=<id>` | per-profile `qualityCap` and `xxxEnabled`, with the defaults the app should show |
 | `GET /manifest.json`, `/catalog/`, `/meta/`, `/stream/` | any addon-protocol client — same ids (`inlive___`, `ytv___`), byte-identical bodies |
@@ -207,10 +211,15 @@ there is.
 |---|---|---|
 | `PORT` | 8788 | listen port |
 | `LOG_REQUESTS` | off | `REQ <method> <url> -> <code>` per request |
-| `LANGS` | `hin,eng,pan` | iptv-org playlists **and** the language allow-list (`""` disables the rule) |
+| `LANGS` | unset | **seeds** `settings.languages` on a hub that has none (the allow-list rule and the live playlists both read the setting, not this). An empty setting means the language rule is off |
+| `HUB_NAME` | `Scenix Hub` | **seeds** `settings.hubName`: the name a client shows when it lists the hubs it found |
+| `PLAYLIST_URL` | unset | **seeds** `settings.live.playlist`; with no playlist there is no live TV row |
+| `ANNOUNCE` | on | `0` stops the LAN responder, so pairing is by typed address only |
+| `ANNOUNCE_PORT` / `ANNOUNCE_INTERVAL_MS` | 1900 / 30000 | the UDP port the responder listens on and how often it says "I am here" |
+| `SETTINGS_FILE` | `data/settings.json` | where the owner's settings live |
 | `KIDS_BLOCK` | `Animax,MediBizTV,…` | kid-grouped channels that are still not for kids |
 | `YT_BIN` | `yt-dlp` | yt-dlp path; `YT_JS` (its `--js-runtimes`), `YT_CLIENT` (`android`), `YT_MAX`, `YT_CHANNELS` |
-| `CINEMETA_URL`, `TORRENTIO_URL` | v3-cinemeta, tuned torrentio | addon-protocol upstreams (`TORRENTIO_URL` carries the language + `sizefilter` tuning) |
+| `SEED_ADDON_URLS` | unset | comma-separated addon-protocol upstreams that replace the shipped seed list (the shipped list is built from `settings.languages` and `settings.addons.sizeFilter`, since an addon carries its configuration in its URL) |
 | `SIZE_CAP_GB` | 4 | hard per-source cap in `rules/size_cap.js` (the per-profile cap in `prefs` is what usually binds) |
 | `QUALITY_CAP`, `KIDS_QUALITY_CAP` | `1080p` / `720p` | default `qualityCap` for adult and kids profiles (`auto` disables the ceiling) |
 | `RATINGS_DAILY_CAP` | 800 | upstream certificate lookups per day, counted in `data/ratings.json`; browsing spends it, the backfill stops at it |
@@ -225,7 +234,7 @@ there is.
 | `TRAILER_CLIENT`, `TRAILERS_MAX_HEIGHT`, `TRAILER_BUDGET_MS`, `TRAILER_TTL_MS` | `android` / 720 / 12000 / 30 d | the trailer resolver: which player it asks, the ceiling, how long one request may take, how long a found video is remembered |
 | `TRAILER_MISS_TTL_MS`, `TRAILER_RETRY_MS` | 7 d / 12 h | how long a "this title has no trailer" answer is honoured before anyone asks again, and how long a failed lookup is retried after |
 | `HERO_MAX` | 5 | how many tiles the billboard may carry |
-| `STREMIO_MAX_SOURCES` / `STREMIO_MIN_SIZE_MB` | 12 / 100 | per-tile torrent pick list |
+| `ADDON_MAX_SOURCES` / `ADDON_MIN_SIZE_MB` | 12 / 100 | **seed** `settings.addons.maxSources` / `minSizeMB`: how many copies a picker shows, and how small a file may be before it stops looking like a film. The names these shipped under before they were settings are accepted for one release |
 | `DAYS` | 45 | "just added" window |
 | `HOME_BUDGET_MS`, `ROW_BUDGET_MS`, `CATALOG_BUDGET_MS`, `META_BUDGET_MS`, `ROW_MAX` | 1500/1200/800/3000/80 | time and size ceilings: `/app/v1/*` answers from cache and never waits on the network beyond these |
 
@@ -235,6 +244,17 @@ there is.
 restarts, so "Just added" means new, not "recently re-fetched". `data/progress.json` — per profile.
 `data/probe-cache.json` — what each stream URL last answered (latency, rate, seekability) and when it was
 last touched; it is a cache, so deleting it costs nothing but the next 1.5 s of measuring.
+`data/settings.json` — what the **owner** chose (see `GET`/`PUT /app/v1/settings`): the hub's name, the
+content languages, the live-TV playlist, the addon host's limits. Every one of those used to be a constant
+or an environment variable, which meant a hub installed by someone else answered questions about their
+household on their behalf. Environment variables only seed this file on a hub that has no value for a key
+yet; the UI is the place a setting is changed. It ships with **nothing selected**: no languages, no
+playlist, so a stranger gets a working hub on first boot and then chooses.
+`data/tracks.json` — what `ffprobe` found inside each copy this hub has served (`hash:fileId` → its audio
+and subtitle tracks, languages, codecs). It is what lets the shelf say "Hindi audio · E-AC3 5.1" instead of
+guessing from a filename, and it is a cache: deleting it costs a re-probe, nothing else.
+`data/hls/` — the playlists and segments for one browser asking for HLS; a job nobody asks for any more
+loses its `ffmpeg` and its directory within a sweep interval.
 **`profiles.json` is not in the repo**: it names real people, so only `profiles.example.json` (generic ids
 `adult1`, `kid1`, …) ships, and `deploy-hub.sh` excludes the real file from both directions. A box with no
 `profiles.json` boots from the example and logs one line saying so; copy the example and edit it.

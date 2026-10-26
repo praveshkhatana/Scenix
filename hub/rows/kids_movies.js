@@ -22,6 +22,13 @@ module.exports = {
     const lists = await Promise.all(
       ['Animation', 'Family', 'Adventure'].map((g) => shelves.genreShelf(ctx, 'movie', g, { limit: 20 })),
     );
-    return lists.flat().filter(Boolean);
+    // Stamp which shelf this came from. `_addons` is the one field merge.dedupe carries across sources,
+    // so it survives the pipeline, and it is internal (scrub() drops it): it is how a rule can tell a
+    // title a parent curated for a child from the same title arriving through a search of the whole
+    // catalogue. core/ratings.js inferTier() reads the `catalog:` mark; see its comment.
+    return lists.flat().filter(Boolean).map((it) => ({
+      ...it,
+      _addons: [...(it._addons || []), `catalog:${module.exports.id}`],
+    }));
   },
 };
