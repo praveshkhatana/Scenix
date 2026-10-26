@@ -182,6 +182,51 @@ class Store {
   }
 
   /**
+   * Write the whole merged list. This is the only way a profile that came from the seed file can be
+   * removed: `data/profiles.json` overrides the seed by id, so deleting a line there would leave the seed
+   * putting it back on the next boot.
+   */
+  setProfiles(list) {
+    writeJsonAtomic(this.profilesFile, list);
+    this._profiles = null;
+    return list;
+  }
+
+  /**
+   * Create a profile. Shape and defaults live here rather than in a screen, because a profile is a
+   * statement about what this backend may show, not about what one client drew. The last profile in a
+   * household cannot be removed: with no profile there is no home screen, and a box that boots to a blank
+   * page is worse than a box that keeps one adult.
+   */
+  addProfile(spec = {}) {
+    const name = String(spec.name || '').trim();
+    if (!name) return { error: 'a profile needs a name' };
+    const id = String(spec.id || '').trim()
+      || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'p';
+    const list = this.profiles();
+    if (list.some((x) => String(x.id) === id)) return { error: 'that profile already exists', id };
+    const next = [...list, {
+      id,
+      name,
+      kind: spec.kind === 'kids' ? 'kids' : 'adult',
+      pinRequired: Boolean(spec.pinRequired),
+      ...(spec.age != null && Number.isFinite(Number(spec.age)) ? { age: Number(spec.age) } : {}),
+      ...(Array.isArray(spec.languages) && spec.languages.length ? { languages: spec.languages } : {}),
+    }];
+    this.setProfiles(next);
+    return { profile: this.profile(id) };
+  }
+
+  removeProfile(id) {
+    const list = this.profiles();
+    if (list.length <= 1) return { error: 'the last profile cannot be removed' };
+    const next = list.filter((x) => String(x.id) !== String(id));
+    if (next.length === list.length) return { error: 'no such profile', id };
+    this.setProfiles(next);
+    return { removed: String(id) };
+  }
+
+  /**
    * Write a per-profile patch (prefs, rules, name…) into data/profiles.json, which is merged over
    * hub/profiles.json by id. This is how the app's Settings screen changes the hub's behaviour with
    * no code and no restart.

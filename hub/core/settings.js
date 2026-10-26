@@ -47,6 +47,10 @@ const DEFAULTS = {
   live: { playlist: '' },
   // How the addon host behaves. These were env-var constants; they are the owner's to set now.
   addons: { maxSources: 12, minSizeMB: 100, sizeFilter: '200MB-1.5GB,1.5GB-8GB' },
+  // Generated profile faces. Empty means this hub does not proxy any avatar service and a client draws
+  // its own; pointing it at one (self-hosted or public) makes the hub fetch and cache through it, so the
+  // TV still only ever talks to this box.
+  avatar: { baseUrl: '' },
 };
 
 let cached = null; // the last parsed+merged object, or null when the file has not been read yet
@@ -87,6 +91,7 @@ function normalize(s) {
       sizeFilter: String((s.addons || {}).sizeFilter == null
         ? DEFAULTS.addons.sizeFilter : (s.addons || {}).sizeFilter).trim().slice(0, 200),
     },
+    avatar: { baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300) },
   };
   // Anything the owner put in the file that this build does not know about is kept, so an older hub
   // reading a newer file does not quietly delete a setting a newer hub wrote.

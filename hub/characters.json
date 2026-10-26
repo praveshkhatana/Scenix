@@ -1,0 +1,137 @@
+{
+  "_note": [
+    "The faces this hub offers, in the order a client should show them.",
+    "This is content, not configuration: every household sees the same list until they change it. To change",
+    "it, edit this file or drop a list of your own in data/characters.json, which wins entry by entry - a",
+    "family that would rather see their favourite film characters than superheroes can do that without",
+    "touching code, and the Hub UI writes exactly that file.",
+    "Each entry is looked up by its Wikipedia page title; the picture is fetched once and kept on this box,",
+    "so a TV asks its own hub for faces and never learns a third-party hostname."
+  ],
+  "characters": [
+    {
+      "name": "Spider-Man",
+      "page": "Spider-Man"
+    },
+    {
+      "name": "Batman",
+      "page": "Batman"
+    },
+    {
+      "name": "Iron Man",
+      "page": "Iron Man"
+    },
+    {
+      "name": "Superman",
+      "page": "Superman"
+    },
+    {
+      "name": "Wolverine",
+      "page": "Wolverine (character)"
+    },
+    {
+      "name": "Deadpool",
+      "page": "Deadpool"
+    },
+    {
+      "name": "Black Panther",
+      "page": "Black Panther (character)"
+    },
+    {
+      "name": "The Joker",
+      "page": "Joker (character)"
+    },
+    {
+      "name": "Harley Quinn",
+      "page": "Harley Quinn"
+    },
+    {
+      "name": "Loki",
+      "page": "Loki (Marvel Comics)"
+    },
+    {
+      "name": "Hulk",
+      "page": "Hulk (comics)"
+    },
+    {
+      "name": "Thor",
+      "page": "Thor (Marvel Comics)"
+    },
+    {
+      "name": "Wonder Woman",
+      "page": "Wonder Woman"
+    },
+    {
+      "name": "Venom",
+      "page": "Venom (character)"
+    },
+    {
+      "name": "Doctor Strange",
+      "page": "Doctor Strange"
+    },
+    {
+      "name": "Supergirl",
+      "page": "Supergirl"
+    },
+    {
+      "name": "Harry Potter",
+      "page": "Harry Potter (character)"
+    },
+    {
+      "name": "Jack Sparrow",
+      "page": "Jack Sparrow"
+    },
+    {
+      "name": "Grogu",
+      "page": "Grogu"
+    },
+    {
+      "name": "Optimus Prime",
+      "page": "Optimus Prime"
+    },
+    {
+      "name": "Pikachu",
+      "page": "Pikachu"
+    },
+    {
+      "name": "Elsa",
+      "page": "Elsa (Frozen)"
+    },
+    {
+      "name": "Shrek",
+      "page": "Shrek"
+    },
+    {
+      "name": "Mickey Mouse",
+      "page": "Mickey Mouse"
+    },
+    {
+      "name": "Doraemon",
+      "page": "Doraemon"
+    },
+    {
+      "name": "Ninja Hattori",
+      "page": "Ninja Hattori"
+    },
+    {
+      "name": "Shin-chan",
+      "page": "Crayon Shin-chan"
+    },
+    {
+      "name": "Motu Patlu",
+      "page": "Motu Patlu"
+    },
+    {
+      "name": "Chhota Bheem",
+      "page": "Chhota Bheem"
+    },
+    {
+      "name": "Tanjiro",
+      "page": "Tanjiro Kamado"
+    },
+    {
+      "name": "Stitch",
+      "page": "Stitch (Lilo & Stitch)"
+    }
+  ]
+}

@@ -207,6 +207,22 @@ function scheduleCacheSave() {  if (saveTimer) clearTimeout(saveTimer);
   if (saveTimer.unref) saveTimer.unref();
 }
 
+/**
+ * Forget every upstream answer this box is holding.
+ *
+ * A household that changed an addon's address, its size filter or its language list wants the old answers
+ * gone now rather than aged out over hours, and a support conversation needs "start from nothing" without
+ * someone deleting files over ssh. The in-memory map and the file that makes a restart warm are both
+ * cleared, because clearing one and leaving the other is how a cache comes back after you deleted it.
+ */
+function clearCache() {
+  const cleared = cache.size;
+  cache.clear();
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try { fs.writeFileSync(CACHE_FILE, '{}'); } catch (e) { /* no file is the goal, not a failure */ }
+  return cleared;
+}
+
 // ---- upstream -> the hub item model (§1) ----------------------------------------------------------
 
 const LANG_NAME_TO_CODE = {
@@ -1223,7 +1239,7 @@ function byId(id) {
 }
 
 module.exports = {
-  init, list, add, remove, setEnabled, byId, entries, resyncSeeds, seedAddons,
+  init, list, add, remove, setEnabled, byId, entries, resyncSeeds, seedAddons, clearCache,
   paths: { ADDONS_FILE, CACHE_FILE },
   // A getter, so a client reading its limits sees the owner's current choices rather than the values this
   // process happened to have when it started.

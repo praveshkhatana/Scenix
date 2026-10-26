@@ -47,6 +47,7 @@ const remux = require('./core/remux');
 // the next request: a setting that needs a restart to take effect is a setting nobody really made.
 const settings = require('./core/settings');
 const langdb = require('./core/langdb');
+const avatars = require('./core/avatars');
 const discovery = require('./core/discovery');
 const maturityRule = require('./rules/maturity');
 const ranking = require('./rules/source_ranking');
@@ -165,7 +166,38 @@ function capabilities() {
     remux: remux.status().binFound === true, // a browser can be handed fragmented MP4 / HLS
     tracks: media.status().binFound === true, // audio and subtitle languages are read from the files
     announce: process.env.ANNOUNCE !== '0', // a client can find this hub without being told its address
+
+    // The rest of the vocabulary is about what a client may *change*, not about what it may watch. The
+    // rule it encodes is the deployment rule: configuration lives with whatever backend owns the
+    // household, so a hub install configures through the hub and a standalone TV configures itself. A
+    // client never learns which kind of box it is facing - it hides a control whose name is absent.
+    search: true, // /app/v1/search answers across every mounted addon
+    subtitles: hasSubtitleSource(), // an addon here supplies subtitle files
+    settingsAdmin: true, // languages, channels and rows: GET+PUT /app/v1/settings
+    addonAdmin: true, // addons are added, enabled, disabled and removed over HTTP
+    prefsEdit: true, // the per-profile definition of "the stream I want"
+    profileEdit: true, // profiles are created, renamed and removed over HTTP,
+    cacheAdmin: true, // the answers this backend cached can be thrown away on purpose,
+    avatarFaces: true, // profile faces are offered and served by this backend
   };
+}
+
+/** Does anything mounted here answer the subtitle resource? A capability is a route that exists, not a hope. */
+function hasSubtitleSource() {
+  return registry.providers.some((p) => {
+    const src = (p && (p.legacy || p.source || p)) || {};
+    return typeof src.has === 'function' && src.has('subtitles');
+  });
+}
+
+/**
+ * A profile on the wire. The PIN is deliberately absent: it travels inbound, never outbound, so a code
+ * typed on a TV cannot be read off the network by whoever is listening, and a client that wants to know
+ * whether to show a keypad asks with `pinSet`.
+ */
+function wireProfile(p) {
+  const { pin, ...rest } = p || {};
+  return { ...rest, pinSet: pin != null && String(pin).length > 0 };
 }
 
 /**
@@ -595,6 +627,7 @@ async function healthBody() {
     trailers: trailers.status(),
     // What this box knows about the languages of what it catalogues: the number that says how much of the
     // owner's language rule is actually enforceable, and how much is still guesswork.
+    avatars: avatars.status(),
     languages: { file: langdb.FILE, ...langdb.coverage() },
     ratings: ratings.status(),
     // The front-end the hub itself serves: whether it is on disk, how many files, how many bytes. A
@@ -1546,14 +1579,56 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, settings: next, effects });
     }
 
-    if (path === '/app/v1/profiles') {
+    if (path === '/app/v1/profiles' && req.method !== 'POST') {
+      // Every verb but create lands here: a listing is a read, and POST is the one thing this path also
+      // means (a new profile), so the method guard is what keeps a create from being answered with a list.
       return send(res, 200, {
         profiles: store.profiles().map((p) => ({
-          ...p,
+          ...wireProfile(p),
           prefs: prefs.resolve(p),
           rows: registry.rows.filter((r) => rowVisible(r, p)).map((r) => r.id),
         })),
       });
+    }
+
+    // Create, change and remove a profile on whichever backend owns the household. A PIN set here is
+    // verified by this process and never read back, which is what turns "ask for four digits" from
+    // theatre into a gate.
+    if (path === '/app/v1/profiles' && req.method === 'POST') {
+      const out = store.addProfile(await readBody(req));
+      if (out.error) return send(res, 400, { error: out.error });
+      invalidateCaches();
+      return send(res, 200, { ok: true, profile: wireProfile(out.profile) });
+    }
+    m = /^\/app\/v1\/profiles\/([^/]+)$/.exec(path);
+    if (m && (req.method === 'PUT' || req.method === 'PATCH')) {
+      const body = await readBody(req);
+      const patch = {};
+      for (const k of ['name', 'kind', 'age', 'languages', 'rules', 'prefs', 'pin', 'pinRequired']) {
+        if (body && body[k] !== undefined) patch[k] = body[k];
+      }
+      if (!Object.keys(patch).length) return send(res, 400, { error: 'nothing to change' });
+      const updated = store.patchProfile(m[1], patch);
+      if (!updated) return send(res, 404, { error: 'no such profile', id: m[1] });
+      invalidateCaches();
+      return send(res, 200, { ok: true, profile: wireProfile(store.profile(m[1])) });
+    }
+    if (m && req.method === 'DELETE') {
+      const out = store.removeProfile(m[1]);
+      if (out.error) return send(res, 400, { error: out.error });
+      invalidateCaches();
+      return send(res, 200, { ok: true, removed: out.removed });
+    }
+    m = /^\/app\/v1\/profiles\/([^/]+)\/unlock$/.exec(path);
+    if (m && req.method === 'POST') {
+      const body = await readBody(req);
+      const held = store.profile(m[1]);
+      const pin = held && held.pin != null ? String(held.pin) : '';
+      const asked = String((body && body.pin) || '');
+      if (!pin) return send(res, 200, { ok: true, unlocked: m[1], noPin: true });
+      return asked === pin
+        ? send(res, 200, { ok: true, unlocked: m[1] })
+        : send(res, 403, { error: 'wrong PIN', unlocked: null });
     }
 
     if (path === '/app/v1/home') {
@@ -1566,6 +1641,8 @@ const server = http.createServer(async (req, res) => {
           id: row.id,
           title: row.title,
           card: row.card,
+          order: row.order,
+          scope: row.scope || 'all',
           items: await buildRow(row, ctx, HOME_BUDGET_MS),
         })),
       );
@@ -1583,7 +1660,10 @@ const server = http.createServer(async (req, res) => {
         return send(res, 403, { error: 'row not for this profile', rowId: row.id, scope: row.scope });
       }
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
-      return send(res, 200, { id: row.id, title: row.title, card: row.card, items: await buildRow(row, ctx) });
+      return send(res, 200, {
+        id: row.id, title: row.title, card: row.card, order: row.order, scope: row.scope || 'all',
+        items: await buildRow(row, ctx),
+      });
     }
 
     if (path === '/app/v1/search') {
@@ -1731,7 +1811,13 @@ const server = http.createServer(async (req, res) => {
         if (typeof p.subtitles !== 'function') continue;
         const list = await withBudget(Promise.resolve().then(() => p.subtitles(identity, want)),
           SUBS_BUDGET_MS, [], 'subs ' + p.id);
-        for (const s of list || []) found.push({ ...s, addon: p.name || p.id });
+        for (const s of list || []) {
+          // The community protocol names a subtitle and states its language, but never its container, and a
+          // decoder has to be told one. The extension inside the name the addon chose is the only honest
+          // signal available; when it is missing `format` stays absent rather than being guessed at.
+          const ext = /\.(srt|ass|ssa|vtt)\b/i.exec(String(s.name || ''));
+          found.push({ ...s, ...(ext ? { format: ext[1].toLowerCase() } : {}), addon: p.name || p.id });
+        }
       }
       found.sort((a, b) => {
         const ai = want.indexOf(String(a.lang || '').toLowerCase());
@@ -1757,6 +1843,48 @@ const server = http.createServer(async (req, res) => {
         ? send(res, 200, { ok: true, addon: st })
         : send(res, 404, { error: 'no such addon', id: m[1] });
     }
+    // ---- faces ---------------------------------------------------------------------------
+    // Character pictures, cached here, plus a proxy for whatever generated-avatar service the owner
+    // configured. A TV asks its own hub for both and never learns a third-party hostname.
+    if (path === '/app/v1/avatars/characters') {
+      const ask = u.searchParams.get('refresh') === '1';
+      const list = await avatars.characters({
+        limit: Number(u.searchParams.get('limit') || 40),
+        refresh: ask,
+        wait: ask, // only an explicit refresh waits on the image host
+        seed: u.searchParams.get('seed') || '',
+      });
+      avatars.warm(); // whatever is missing lands in the background, never in this request
+      return send(res, 200, { characters: list });
+    }
+    m = /^\/app\/v1\/avatars\/character\/([a-z0-9-]+)$/.exec(path);
+    if (m) {
+      const img = avatars.characterImage(m[1]);
+      if (!img) return send(res, 404, { error: 'no cached face', id: m[1] });
+      res.writeHead(200, { ...corsHeaders(), 'content-type': img.type, 'cache-control': 'public, max-age=86400' });
+      return res.end(img.buf);
+    }
+    m = /^\/app\/v1\/avatars\/proxy\/(.+)$/.exec(path);
+    if (m) {
+      const got = await avatars.proxy(m[1], u.searchParams.toString());
+      if (got.error) return send(res, got.disabled ? 503 : 502, { error: got.error });
+      res.writeHead(200, { ...corsHeaders(), 'content-type': got.type, 'cache-control': 'public, max-age=86400' });
+      return res.end(got.buf);
+    }
+    if (path === '/app/v1/avatars/warm' && req.method === 'POST') {
+      const n = await avatars.warm();
+      return send(res, 200, { ok: true, faces: n });
+    }
+
+    // What this backend cached from upstream, on purpose: an addon whose address or filters just changed
+    // should not keep serving hour-old answers, and "clear the cache" is the first thing a support
+    // conversation reaches for. Standalone hosts answer the same route, so one UI can offer one button.
+    if (path === '/app/v1/cache/clear' && req.method === 'POST') {
+      const cleared = addons.clearCache();
+      invalidateCaches();
+      return send(res, 200, { ok: true, cleared });
+    }
+
     m = /^\/app\/v1\/addons\/([^/]+)$/.exec(path);
     if (m && req.method === 'DELETE') {
       const ok = addons.remove(m[1]);
@@ -1926,4 +2054,7 @@ server.listen(PORT, '0.0.0.0', () => {
   // Addons warm their own caches on their own schedule (see each addon's start()).
   // Kick the legacy compat load in the background too, exactly as the old addon did on listen.
   for (const p of compatProviders()) ensureCompat(p);
+  // Faces are the first thing a household sees, before they have watched a single thing, so the pictures
+  // are fetched at boot and kept. A profile screen then answers from this box in milliseconds.
+  avatars.warm();
 });
