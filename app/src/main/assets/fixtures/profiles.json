@@ -1,60 +1,60 @@
 {
- "profiles": [
-  {
-   "id": "adult",
-   "name": "Adult",
-   "isKids": false,
-   "hasPin": false,
-   "audioLanguages": [
-    "hin",
-    "eng"
-   ],
-   "subtitleLanguages": [
-    "eng"
-   ]
-  },
-  {
-   "id": "elder",
-   "name": "Elder",
-   "isKids": false,
-   "hasPin": false,
-   "languages": [
-    "pa",
-    "en"
-   ],
-   "audioLanguages": [
-    "pa",
-    "hin",
-    "en"
-   ],
-   "subtitleLanguages": [
-    "eng",
-    "pan"
-   ]
-  },
-  {
-   "id": "teen",
-   "name": "Teen",
-   "isKids": false,
-   "hasPin": true,
-   "audioLanguages": [
-    "pa",
-    "en"
-   ],
-   "subtitleLanguages": [
-    "en"
-   ]
-  },
-  {
-   "id": "child",
-   "name": "Child",
-   "isKids": true,
-   "hasPin": true,
-   "audioLanguages": [
-    "en",
-    "hin"
-   ],
-   "subtitleLanguages": []
-  }
- ]
+  "profiles": [
+    {
+      "id": "1000",
+      "name": "Adult",
+      "isKids": false,
+      "hasPin": false,
+      "audioLanguages": [
+        "hin",
+        "eng"
+      ],
+      "subtitleLanguages": [
+        "eng"
+      ]
+    },
+    {
+      "id": "1001",
+      "name": "Elder",
+      "isKids": false,
+      "hasPin": false,
+      "languages": [
+        "pa",
+        "en"
+      ],
+      "audioLanguages": [
+        "pa",
+        "hin",
+        "en"
+      ],
+      "subtitleLanguages": [
+        "eng",
+        "pan"
+      ]
+    },
+    {
+      "id": "1002",
+      "name": "Teen",
+      "isKids": false,
+      "hasPin": true,
+      "audioLanguages": [
+        "pa",
+        "en"
+      ],
+      "subtitleLanguages": [
+        "en"
+      ]
+    },
+    {
+      "id": "1003",
+      "name": "Child",
+      "isKids": true,
+      "hasPin": true,
+      "audioLanguages": [
+        "en",
+        "hin"
+      ],
+      "subtitleLanguages": []
+    }
+  ]
 }
