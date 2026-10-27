@@ -12,11 +12,13 @@
 import { api, apiBase, setApiBase } from '/ui/js/api.js';
 import { el, byId, clear, layer, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
-import { initInput, pushHandler, popHandler, setDigitSink } from '/ui/js/input.js';
+import { initInput, pushHandler, popHandler, setDigitSink,
+  setTypingTarget, currentTypingTarget } from '/ui/js/input.js';
 import { load as loadTheme, token, px } from '/ui/js/theme.js';
 import { initVideo, stopPreview } from '/ui/js/video.js';
 import * as state from '/ui/js/state.js';
 import { icon } from '/ui/js/icons.js';
+import { entryField } from '/ui/js/keyboard.js';
 import { initials } from '/ui/js/format.js';
 
 /* Screens are plugins too: the route table is the only place that knows a screen exists. */
@@ -82,6 +84,7 @@ const ctx = {
   askPin,
   /** Ask for a new PIN rather than checking one: resolves the digits, or null when the viewer backs out. */
   enterPin: (profile, reason = 'Choose a PIN') => askPin(profile, { reason, mode: 'set' }),
+  enterText: (opts) => askText(opts),
   setProfile,
   switchProfile,
   reload() { const r = routeStack[routeStack.length - 1]; if (r) mount(r, false); },
@@ -323,6 +326,66 @@ function closeModals() {
  * PIN shakes the pad instead of closing it. Cancel is a real button rather than only the remote's Back key,
  * because this dialog is also reached with a mouse and with a finger.
  */
+/**
+ * A modal that asks for one line of text - an add-on address, a playlist URL, anything too long to be a
+ * number. It draws the same keyboard the search screen uses, so the remote's number row, a real keyboard and
+ * the D-pad all feed one buffer, and it takes the typing target from whatever screen opened it and hands it
+ * back on close. Cancel answers `null`, which is a different thing from an empty value: the owner either did
+ * not want to type anything, or typed nothing yet.
+ */
+function askText({ title = '', reason = '', placeholder = '', initial = '', action = 'Save', validate = null } = {}) {
+  return new Promise((resolve) => {
+    const err = el('div', { class: 'err' });
+    let answered = false;
+    const entry = entryField({ glyph: 'globe', placeholder, initial });
+    let box;
+    const answer = (value) => { if (answered) return; answered = true; closeModals(); resolve(value); };
+
+    const submit = () => {
+      const v = String(entry.value || '').trim();
+      const problem = typeof validate === 'function' ? validate(v) : null;
+      if (problem) {
+        // Refusing in place keeps the half-typed address on screen: making someone re-enter 40 characters of
+        // URL because one character was wrong is how a TV form gets abandoned.
+        err.textContent = problem;
+        box.classList.remove('shake');
+        void box.offsetWidth;
+        box.classList.add('shake');
+        return;
+      }
+      answer(v);
+    };
+
+    box = el('div', { class: 'mbox text' },
+      el('button', {
+        class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Cancel', title: 'Cancel',
+        onclick: () => answer(null),
+      }),
+      el('h2', { text: title }),
+      reason ? el('p', { text: reason }) : null,
+      entry.field, err,
+      el('div', { class: 'mfoot' },
+        el('button', { class: 'btn line', type: 'button', text: 'Cancel', onclick: () => answer(null) }),
+        el('button', { class: 'btn white', type: 'button', text: action, onclick: submit })),
+      entry.kbd);
+    focus.focusable(box.querySelector('.mclose'));
+    for (const b of box.querySelectorAll('.mfoot .btn')) focus.focusable(b);
+
+    const previous = currentTypingTarget();
+    setTypingTarget({
+      insert: (ch) => entry.insert(ch),
+      backspace: () => entry.back(false),
+      clear: () => entry.back(true),
+      commit: submit,
+    });
+    mountModal(box, () => {
+      setTypingTarget(previous);
+      if (!answered) resolve(null);
+    });
+    focus.setFocus(entry.firstKey(), { scroll: false });
+  });
+}
+
 function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
   return new Promise((resolve) => {
     const need = Number(token('pin', 'length', 4));

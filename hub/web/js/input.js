@@ -62,6 +62,8 @@ export function setDigitSink(sink) { digitSink = sink || null; }
  * Arrows still navigate the interface, so a remote can walk out of the field at any time.
  */
 export function setTypingTarget(t) { typingTarget = t || null; }
+/** Who currently owns typed characters, so a modal can give the keyboard back to whatever had it. */
+export function currentTypingTarget() { return typingTarget; }
 export function typingActive() { return !!typingTarget; }
 
 export function initInput({ onBack, onLetterSearch } = {}) {

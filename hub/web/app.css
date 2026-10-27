@@ -796,6 +796,10 @@ body.native-live, html.native-live { background: transparent; }
 .pfoot { display: flex; gap: calc(28px * var(--s)); margin-top: calc(48px * var(--s)); }
 .pfoot .manage { margin-top: 0; }
 .mbox.avpick { width: calc(1280px * var(--s)); }
+/* A text modal has to hold a whole keyboard row - ten keys at 72 px plus their gaps and the box's own
+   padding - which is wider than the default modal. */
+.mbox.text { width: calc(900px * var(--s)); }
+.mbox.text .kbd { margin-top: calc(22px * var(--s)); }
 .avpick .who { color: var(--ink2); font-size: calc(22px * var(--s)); margin-bottom: calc(26px * var(--s)); }
 /* The preview is a card, not a face: portrait, same proportions and same corner as the one on the row, so the
    picture being chosen is the picture you will get. */

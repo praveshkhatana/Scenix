@@ -16,17 +16,11 @@
 
 import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
-import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { cardFor } from '/ui/js/plugins.js';
 import { setTypingTarget } from '/ui/js/input.js';
+import { entryField } from '/ui/js/keyboard.js';
 
-/* A keyboard laid out for a thumb on a touch screen and for a D-pad on a remote alike. Characters only: the
-   hub does the matching, and a catalogue this mixed has no use for a shift key. */
-// A row is either a run of single characters or an explicit list of keys. Writing the last row as the
-// string '⌫ clear' asked the loop to read it one character at a time, which produced Delete, a stray
-// space bar, and then c, l, e, a, r as five separate keys.
-const PAD = ['1234567890', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm', [' ', '.', '-'], ['⌫', 'Clear']];
 const DEBOUNCE_MS = 320;
 
 export function screen(ctx, arg) {
@@ -38,38 +32,24 @@ export function screen(ctx, arg) {
   const head = el('div', { class: 'page-head' },
     el('h1', { text: rowId ? 'Browsing' : 'Search' }), status);
 
-  let text = '';
-  const qText = el('div', { class: 'q empty', text: 'Type to search this hub' });
-  const field = el('div', { class: 'field' },
-    el('span', { class: 'ico' }, icon('search')), qText, el('span', { class: 'caret' }));
+  /* The field and its keyboard come from js/keyboard.js, so a title and an addon address are typed on the
+     same keys and a fix to one is a fix to both. `ready` keeps the first draw from scheduling a search
+     before the debounce timer it would clear exists. */
+  let ready = false;
+  const entry = entryField({
+    placeholder: rowId ? 'Type to search instead' : 'Type to search this hub',
+    onChange: () => { if (ready) schedule(); },
+  });
 
   root.appendChild(head);
-  root.appendChild(field);
+  root.appendChild(entry.field);
   let seq = 0;                 // answers may arrive out of order, so only the newest one is drawn
   let items = [];
   let cardStyle = 'poster';
 
   /* ------------------------------------------------------------------ keyboard */
 
-  const kbd = el('div', { class: 'kbd' });
-  // `wide` spans two columns: an action key carries a word, and a 24 px word does not fit in the 72 px
-  // column a letter gets, which is how "Delete" ended up printed over its own border.
-  const padKey = (label, fn, wide) => {
-    const b = el('button', { class: wide ? 'key wide' : 'key', type: 'button', text: label, onclick: fn });
-    focus.focusable(b);
-    return b;
-  };
-  for (const keys of PAD) {
-    const kr = el('div', { class: 'kr' });
-    for (const raw of keys) {
-      const ch = String(raw);
-      if (ch === '⌫') kr.appendChild(padKey('Delete', back, true));
-      else if (ch === 'Clear') kr.appendChild(padKey('Clear', () => { back(true); }, true));
-      else kr.appendChild(padKey(ch, () => insert(ch)));
-    }
-    kbd.appendChild(kr);
-  }
-  root.appendChild(kbd);
+  root.appendChild(entry.kbd);
 
   /* ------------------------------------------------------------------ results */
 
@@ -95,7 +75,7 @@ export function screen(ctx, arg) {
 
   async function runSearch() {
     const mine = ++seq;
-    const q = text.trim();
+    const q = entry.value.trim();
     if (!q) {
       status.textContent = rowId ? shelfLabel : 'Searching reads this hub only — nothing leaves your network.';
       return;
@@ -117,6 +97,7 @@ export function screen(ctx, arg) {
   }
 
   let timer = null;
+  ready = true;
   function schedule() {
     if (timer) clearTimeout(timer);
     timer = setTimeout(runSearch, DEBOUNCE_MS);
@@ -124,17 +105,12 @@ export function screen(ctx, arg) {
 
   /* --------------------------------------------------------- typed characters */
 
-  function draw() {
-    qText.textContent = text || (rowId ? 'Type to search instead' : 'Type to search this hub');
-    qText.classList.toggle('empty', !text);
-  }
-  function insert(ch) { text += ch; draw(); schedule(); }
-  function back(all) { text = all ? '' : text.slice(0, -1); draw(); schedule(); }
-
+  // Every edit goes through the shared buffer, which already asks for a search through `onChange`; these are
+  // just the names js/input.js calls when a real keyboard or a remote's numbers reach the page.
   setTypingTarget({
-    insert,
-    backspace: () => back(false),
-    clear: () => back(true),
+    insert: (ch) => entry.insert(ch),
+    backspace: () => entry.back(false),
+    clear: () => entry.back(true),
     commit: () => { if (timer) clearTimeout(timer); runSearch(); },
   });
 
@@ -158,10 +134,10 @@ export function screen(ctx, arg) {
   }
 
   if (rowId) loadShelf();
-  else if (typeof arg === 'string' && arg && !arg.startsWith('row:')) { text = arg; draw(); runSearch(); }
+  else if (typeof arg === 'string' && arg && !arg.startsWith('row:')) { entry.set(arg); runSearch(); }
   else runSearch();
 
-  root.__defaultFocus = () => grid.querySelector('.card') || kbd.querySelector('.key');
+  root.__defaultFocus = () => grid.querySelector('.card') || entry.firstKey();
   root.__dispose = () => {
     setTypingTarget(null);
     if (timer) clearTimeout(timer);
