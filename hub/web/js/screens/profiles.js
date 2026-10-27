@@ -82,7 +82,9 @@ export function screen(ctx) {
     const edit = el('div', {
       class: 'pedit', role: 'button', tabindex: '-1',
       'aria-label': `Edit ${profile.name}`,
-      onclick: () => editProfile(profile, node),
+      // The pill sits inside the face, and the face's own click enters the profile. Editing has to stop
+      // there or Edit opens the picker on top of the home screen of a profile nobody chose.
+      onclick: (ev) => { ev.stopPropagation(); editProfile(profile, node); },
     }, icon('sliders'), el('span', { text: 'Edit' }));
     focus.focusable(edit);
     // `k` sits on the button: a kids profile has to read from across the room before anyone makes out the chip.

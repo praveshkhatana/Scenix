@@ -418,24 +418,46 @@ export function screen(ctx) {
 
     /* A PIN is typed the way every other PIN in this app is typed — on the remote's number row or the on-screen
        pad — and handed straight to the hub, which is the only place the number is ever kept. */
+    /* The hub refuses to move a locked profile's settings without the number already on it, so this screen
+       asks for that number and carries it along. Nothing here decides whether a PIN is right - the hub does,
+       which is the only place the number is kept. */
+    async function proofOfLock(p) {
+      if (!isLocked(p)) return '';
+      const current = await ctx.enterPin(p, `Enter ${p.name}'s current PIN`);
+      if (!current) return null;
+      try {
+        const out = await api.unlockProfile(p.id, current);
+        if (!out || !out.ok) { ctx.toast('That is not the current PIN'); return null; }
+      } catch (e) { ctx.toast('That is not the current PIN'); return null; }
+      return current;
+    }
+
+    function whyRefused(e, fallback) {
+      return e && e.status === 403 ? 'That is not the current PIN' : fallback;
+    }
+
     async function setPin(p) {
-      const digits = await ctx.enterPin(p, isLocked(p) ? 'Choose a new PIN' : 'Choose a PIN');
+      const current = await proofOfLock(p);
+      if (current === null) return;
+      const digits = await ctx.enterPin(p, current ? 'Choose a new PIN' : 'Choose a PIN');
       if (!digits) return;
       try {
-        await api.updateProfile(p.id, { pin: digits, pinRequired: true });
+        await api.updateProfile(p.id, { pin: digits, pinRequired: true, pinCurrent: current });
         ctx.toast(`${p.name} now needs that PIN`);
         ctx.reload();
-      } catch (e) { ctx.toast('The hub would not store that PIN'); }
+      } catch (e) { ctx.toast(whyRefused(e, 'The hub would not store that PIN')); }
     }
 
     async function clearPin(p) {
+      const current = await proofOfLock(p);
+      if (current === null) return;
       try {
         // The hub clears the number but leaves the requirement flag behind, which is how a profile ends up
         // "PIN wanted, none set" and a pad that can never be satisfied. Take both off in one request.
-        await api.updateProfile(p.id, { pin: null, pinRequired: false });
+        await api.updateProfile(p.id, { pin: null, pinRequired: false, pinCurrent: current });
         ctx.toast(`${p.name} no longer needs a PIN`);
         ctx.reload();
-      } catch (e) { ctx.toast('The hub would not remove the PIN'); }
+      } catch (e) { ctx.toast(whyRefused(e, 'The hub would not remove the PIN')); }
     }
 
     if (caps.profileEdit) {
@@ -452,8 +474,15 @@ export function screen(ctx) {
         sw.onclick = async (ev) => {
           const on = ev.currentTarget.classList.toggle('on');
           ev.currentTarget.setAttribute('aria-checked', on ? 'true' : 'false');
-          try { await api.updateProfile(p.id, { kind: on ? 'kids' : 'adult' }); ctx.toast(`${p.name} is now a ${on ? 'kids' : 'standard'} profile`); }
-          catch (e) { ctx.toast('The hub would not change that profile'); ev.currentTarget.classList.toggle('on', !on); }
+          // Flipping Kids mode on a profile that is behind a PIN moves the ceiling over everything that
+          // profile can see, so it is a gate change and needs the number.
+          const current = await proofOfLock(p);
+          if (current === null) { ev.currentTarget.classList.toggle('on', !on); return; }
+          try {
+            await api.updateProfile(p.id, { kind: on ? 'kids' : 'adult', pinCurrent: current });
+            ctx.toast(`${p.name} is now a ${on ? 'kids' : 'standard'} profile`);
+          }
+          catch (e) { ctx.toast(whyRefused(e, 'The hub would not change that profile')); ev.currentTarget.classList.toggle('on', !on); }
         };
         focus.focusable(sw);
         l.appendChild(sw);

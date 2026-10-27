@@ -1716,6 +1716,19 @@ const server = http.createServer(async (req, res) => {
           return send(res, 400, { error: 'set a PIN before asking for one' });
         }
       }
+      /* A lock that anyone who reaches Settings can take off is not a lock. The number already on a
+         profile has to be produced before the profile's own settings - its PIN, its mode, its ceiling,
+         the rules that decide what it may see - can be moved, so one household member cannot quietly
+         change another's gate, and a child cannot lift their own ceiling by posting parameters. */
+      const held = store.profile(m[1]);
+      const holdsGate = ['pin', 'pinRequired', 'kind', 'age', 'rules', 'prefs', 'languages'].some((k) => k in patch);
+      if (held && held.pin != null && String(held.pin).trim() !== '' && holdsGate) {
+        const given = !body || body.pinCurrent == null ? '' : String(body.pinCurrent).trim();
+        if (given !== String(held.pin).trim()) {
+          log('PROFILE LOCK REFUSED', m[1], 'gate change without the current PIN');
+          return send(res, 403, { error: 'this profile is locked: its current PIN is needed to change that', locked: m[1] });
+        }
+      }
       if (!Object.keys(patch).length) return send(res, 400, { error: 'nothing to change' });
       const updated = store.patchProfile(m[1], patch);
       if (!updated) return send(res, 404, { error: 'no such profile', id: m[1] });
