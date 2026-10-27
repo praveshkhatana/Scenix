@@ -618,6 +618,7 @@ body.native-live, html.native-live { background: transparent; }
 .iconbtn.on { background: rgba(255, 255, 255, .18); }
 .iconbtn .val { color: var(--kids); font-weight: 700; }
 .iconbtn.dim { color: var(--ink3); }
+.prow.dim { opacity: .55; }
 .ply-right { margin-left: auto; display: flex; align-items: center; gap: calc(10px * var(--s)); }
 .rate { color: var(--match); font-size: calc(19px * var(--s)); padding: 0 calc(10px * var(--s)); }
 

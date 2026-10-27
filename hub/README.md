@@ -133,6 +133,36 @@ The flow the player needs mid-film:
    `provider:label`.
 4. `GET /healthz` reports `probe: {entries, working, failed, probes, cacheHits, budgetMisses, …}`.
 
+### When the picture stops moving
+
+A stream that dies in the middle of a film and a film that has finished reach the player as the same
+thing: a closed connection. The hub's proxy waits `PROXY_HEADERS_MS` for the engine to answer, gives up,
+and closes; the client's player reads that as end-of-file and — if nothing else is said — the viewer is
+put back on the row they came from, halfway through the movie, convinced the file was broken. That is the
+single most common cause of "so much buffering everywhere", and it is invisible without one extra fact.
+
+So the play answer states how long this copy is: **`durationMs`**, taken from the probe of the file about
+to be played (the title's own metadata only as a fallback, because a different cut disagrees with it).
+The whole response has no other way to express length, and a client that never learns it cannot tell an
+ending from a lie.
+
+What the client does with it lives in one file, `web/js/stall.js`, shared by the browser player and the
+TV's native player, and checked by `scripts/check-stall.mjs`:
+
+| situation | response |
+| --- | --- |
+| no movement for 6 s while something should be playing | one silent reload at the current position |
+| an `ended` arriving more than 20 s short of `durationMs` | the same reload, taken immediately — no waiting for the clock |
+| the copy comes back | nothing is said; the viewer never learns it happened |
+| still frozen after the reload | ask: *Choose another stream* / *Keep watching this one* |
+| a copy already reloaded once | it does not get a second silent attempt (`120 s` between attempts, one per copy) |
+| a copy the viewer gave up on | greyed out in the quality menu as `stalled here before`, and excluded from the next pick |
+
+Both routes (the clock and the early ending) run through one decision function, so a copy cannot buy
+itself a second free reload by failing differently. The numbers are timing rules rather than user
+configuration, which is why they live in that file and not in `settings.json`: a hub installed by
+somebody else should not have to be asked what counts as stuck.
+
 With `PROBE_ENABLED=0` none of this happens: no measurement, no `checked`/`probe`/`status`/`tagline`
 fields and no probe weights — the scores come out exactly as they did before probing existed (measured:
 identical `score` per source with the flag on and off for the same title). The `id` field is the one

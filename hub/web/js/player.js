@@ -24,6 +24,7 @@
  */
 
 import { api, apiUrl, streamUrl } from '/ui/js/api.js';
+import { createWatchdog, prematureEnd } from '/ui/js/stall.js';
 import { shell, session, effectivePrefs } from '/ui/js/state.js';
 import { token } from '/ui/js/theme.js';
 import { mainSurface } from '/ui/js/video.js';
@@ -465,7 +466,40 @@ export function backendName() { return shell() ? 'native' : 'video'; }
 
 export function createPlayer() {
   const bus = emitter();
-  const backend = shell() ? new NativeBackend(bus.emit) : new VideoBackend(bus.emit);
+  const backend = shell() ? new NativeBackend(gate) : new VideoBackend(gate);
+
+  /**
+   * Every event from either backend passes through here on its way to the screen. Most of the time this is a
+   * door that only opens; once in a while it declines to believe what it was told. A player cannot tell the
+   * difference between a film that finished and a stream whose source stopped answering - both arrive as a
+   * closed connection - so when a copy claims it is over minutes before the length we measured for it, this
+   * treats that as a stall and sends it to the same self-heal the clock uses. The viewer should never be
+   * handed back to the row they came from because a peer went quiet.
+   */
+  function gate(name, data) {
+    if (name === 'ended' && !swapping && !c.ended) {
+      const st = backend.state();
+      const dur = Number((data && data.durationMs) || st.durationMs || (c.target && c.target.durationMs) || 0);
+      const pos = Number((data && data.positionMs) || st.positionMs || 0);
+      if (prematureEnd({ positionMs: pos, durationMs: dur })) {
+        bus.emit('truncated', { positionMs: pos, durationMs: dur });
+        if (stall) stall.force();
+        return;
+      }
+    }
+    bus.emit(name, data);
+  }
+
+  let stallWatch = null;
+  // Whether someone is asking to watch this. The backends answer that question in different words - a browser
+  // element stays unpaused while it waits for bytes, the TV player says it is not playing at all during a
+  // buffer - so the controller keeps its own answer instead of trusting either one.
+  let wanted = true;
+  let starving = false;
+  // True while the hub is choosing a copy. An "ended" that arrives in this window belongs to the copy we are
+  // leaving, not the one arriving, and healing it would reload the wrong thing.
+  let swapping = false;
+  let stall = null;
 
   const c = {
     backend: backend.name,
@@ -477,6 +511,7 @@ export function createPlayer() {
     selectedSub: null,
     rate: 1,
     tried: [],
+    failed: [],           // copies that stalled on this title, so the quality menu can say so plainly
     session: null,          // {identity, profile, type, season, episode, title}
     ended: false,
 
@@ -523,6 +558,7 @@ export function createPlayer() {
       for (const k of ['exclude', 'audio', 'sub', 'type', 'season', 'episode', 'source']) {
         if (body[k] === undefined || body[k] === null || body[k] === '') delete body[k];
       }
+      swapping = true;
       bus.emit('negotiating', { identity: spec.identity });
       let target;
       try {
@@ -572,14 +608,15 @@ export function createPlayer() {
         subs: subsForBackend,
       });
       if (c.rate !== 1) backend.setRate(c.rate);
+      swapping = false;
       bus.emit('target', target);
       return target;
     },
 
     /* ---- the control surface ---- */
 
-    play() { if (!c.ended) backend.play(); },
-    pause() { backend.pause(); },
+    play() { wanted = true; if (!c.ended) backend.play(); },
+    pause() { wanted = false; backend.pause(); },
     /** Re-ask for the copy we already chose, at the point we reached. For a cold copy, not a new one. */
     retry() {
       if (backend.retry) backend.retry();
@@ -592,7 +629,7 @@ export function createPlayer() {
       if (st.playing) backend.pause(); else backend.play();
       bus.emit('position', st);
     },
-    seek(ms) { backend.seek(Math.max(0, ms)); bus.emit('position', Object.assign(c.state(), { positionMs: ms })); },
+    seek(ms) { wanted = true; backend.seek(Math.max(0, ms)); bus.emit('position', Object.assign(c.state(), { positionMs: ms })); },
     seekBy(deltaMs) {
       const st = c.state();
       const to = Math.max(0, Math.min(st.durationMs || Infinity, st.positionMs + deltaMs));
@@ -638,6 +675,25 @@ export function createPlayer() {
       }
     },
 
+    /** A copy the hub offered that already proved itself unreliable on this title. */
+    isFailed(src) {
+      if (!src) return false;
+      return (src.id != null && c.failed.includes(String(src.id)))
+        || (!!src.label && c.failed.includes(src.label));
+    },
+
+    /** The viewer chose to stay with a copy that stalled: it earns another reload later. */
+    keepWatching() { if (stall) stall.forgive(); },
+
+    /** The viewer gave up on the current copy. Remember it, then ask for one of the others. */
+    giveUpOnCurrent() {
+      const p = (c.target && c.target.picked) || {};
+      for (const k of [p.id, p.label]) {
+        if (k != null && !c.failed.includes(k)) c.failed.push(k);
+      }
+      return c.switchTo({ exclude: c.tried.slice() });
+    },
+
     state() { return backend.state(); },
     tracks() {
       return {
@@ -655,10 +711,45 @@ export function createPlayer() {
     subMargin(px) { return typeof backend.setSubMargin === 'function' ? backend.setSubMargin(px) : false; },
 
     stop() { c.ended = false; backend.stop(); },
-    dispose() { backend.stop(); if (backend.dispose) backend.dispose(); },
+    dispose() {
+      if (stallWatch) clearInterval(stallWatch);
+      stallWatch = null;
+      backend.stop();
+      if (backend.dispose) backend.dispose();
+    },
   };
 
   bus.on('ended', () => { c.ended = true; });
+
+  /* ------------------------------------------------------------- self-heal
+
+     The rule itself lives in js/stall.js so the shell player and a browser's video element are watched by one
+     set of numbers, and those numbers can be argued about in a test instead of on a television. All this does
+     is connect that rule to the real playhead and to the hub's way of re-opening a copy it already chose. */
+  bus.on('buffering', (d) => { starving = !!(d && d.buffering); });
+
+  stall = createWatchdog({
+    // Starving while still wanted counts as playing: that is the situation worth healing. A deliberate pause
+    // does not, and neither does a title that has finished.
+    state: () => Object.assign({}, c.state(), { playing: !!c.state().playing || (wanted && starving) }),
+    heal: () => c.retry(),
+    onHealing: (d) => bus.emit('healing', d),
+    onHealed: () => bus.emit('healed', {}),
+    describe: () => {
+      const p = (c.target && c.target.picked) || {};
+      return {
+        label: p.label || p.id || 'this copy',
+        alternates: (c.sources || []).filter((s) => !c.isFailed(s)).length,
+      };
+    },
+    onStuck: (d) => bus.emit('stuck', d),
+  });
+
+  // A new copy is a clean slate: no reload has been spent on this one and no question has been asked about it.
+  bus.on('error', () => { swapping = false; });
+  bus.on('target', () => { wanted = true; starving = false; stall.reset(); });
+
+  stallWatch = setInterval(() => stall.tick(), 1000);
   return c;
 }
 

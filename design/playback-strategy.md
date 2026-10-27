@@ -83,7 +83,34 @@ D-pad settings panel: **Source** (Auto + ranked list) · **Subtitles** (embedded
 default = profile's language order) · **Speed** (0.75–1.5) · **Aspect** · **Autoplay next** ·
 quality ceiling readout (`2.4 Mbps · ≤720p · 30 s buffer`). Each row is one `SettingsRow` plugin.
 
-## 5. Explicitly not doing
+## 5. Recovery — what happens when a copy stops moving
+
+A dead stream and a finished film arrive at the player identically: the connection closes. So the hub
+states the length of the copy it just handed over (`durationMs` on the play answer, measured from the
+file itself), and one client module decides what to do about it — `hub/web/js/stall.js`, used unchanged
+by the browser player and the TV's native shell, verified by `scripts/check-stall.mjs`.
+
+| token | value | meaning |
+| --- | --- | --- |
+| `STALL_MS` | 6000 | how long "no movement while something should be playing" counts as stuck |
+| `TRUNCATION_GRACE_MS` | 20000 | how close to the stated length an `ended` is allowed to land before it is believed |
+| `HEAL_COOLDOWN_MS` | 120000 | minimum gap between silent reloads of one copy |
+| `HEALS_PER_COPY` | 1 | how many times a copy gets rescued before the viewer is asked |
+
+Order of mercy: reload the same copy once, at the position it stopped, silently. If bytes return, say
+nothing — the viewer never learns there was a problem. If they do not, ask, in the viewer's language and
+with real numbers: which copy froze, where it froze, how many other copies this title has. *Choose
+another stream* excludes that copy for good (it is greyed in the quality menu as `stalled here before`);
+*Keep watching this one* spends the remaining attempts and leaves the picture alone.
+
+Both signals — a frozen clock and an ending that arrives minutes early — go through the same decision
+function, so a copy cannot earn a second free reload by failing in a different way. A live channel and an
+unprobed file report no length; both are believed when they say they have ended.
+
+These are timing rules, not user settings: nothing here goes in `settings.json`, because "what counts as
+stuck" is a property of our player, not a household preference.
+
+## 6. Explicitly not doing
 
 - No paid "debrid" service — the owner is not investing money, so the gateway runs on our own box.
 - No GPL engine linked into the MIT app — engine is either the hub (server-side) or a separate app.

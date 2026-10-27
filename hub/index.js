@@ -1444,6 +1444,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // cheaply (a magnet, a URL that costs a child process to mint), so it is choosing on metadata.
   out.checked = out.checked === true || source.checked === true;
   out.probe = out.probe || source.probe || null;
+  // How long this copy is, stated by the hub rather than guessed at by whoever plays it. A player cannot
+  // tell a film that finished from a source that stopped answering: both arrive as a closed connection, and
+  // guessing wrong drops the viewer back to the row they came from halfway through a movie. With the length
+  // here, an ending that shows up minutes early is recognisable as a stall and gets healed instead.
+  // The probe of the file we are about to play wins over the title's metadata: they disagree when the copy
+  // is a different cut, and the file on disk is what the client will actually be watching.
+  out.durationMs = (out.probe && out.probe.durationMs) || kept.durationMs || null;
   out.status = source.status || null;
   out.tagline = source.tagline || null;
   // What the picker rejected on the way here. When playback fails this is the difference between a

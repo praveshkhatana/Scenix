@@ -322,12 +322,18 @@ export function screen(ctx, identity) {
         !(player.target && player.target.picked && player.pinned),
         () => { player.pinned = false; player.setQuality('auto').then(() => { btnQuality.lastChild.textContent = qualityLabel(); closeMenu(); refreshStatus(); }); }));
       for (const s of player.sources || []) {
+        // Spec D: a copy that already froze on this title stays offered - it may be the biggest file and the
+        // viewer may want to gamble - but it is dimmed and labelled, because pretending it is as good as the
+        // others is how someone ends up re-choosing the broken link five times in a row.
+        const bad = player.isFailed(s);
         const bits = [s.provider, s.quality && qualityWord(s.quality), s.sizeBytes ? fmtSize(s.sizeBytes) : null,
-          s.seeders != null ? `${s.seeders} seeding` : null].filter(Boolean).join(' · ');
-        panel.appendChild(row(s.label || s.quality || 'copy', bits,
+          s.seeders != null ? `${s.seeders} seeding` : null, bad ? 'stalled here before' : null].filter(Boolean).join(' · ');
+        const r = row(s.label || s.quality || 'copy', bits,
           !!(player.target && player.target.picked && String(player.target.picked.id) === String(s.id)),
           () => { player.pinned = true; player.setQuality(s.id).then(() => { btnQuality.lastChild.textContent = qualityLabel(); closeMenu(); refreshStatus(); },
-            () => { panel.appendChild(el('div', { class: 'note', text: 'That copy could not be opened. The hub kept the one that works.' })); }); }));
+            () => { panel.appendChild(el('div', { class: 'note', text: 'That copy could not be opened. The hub kept the one that works.' })); }); });
+        if (bad) r.classList.add('dim');
+        panel.appendChild(r);
       }
       panel.appendChild(el('div', { class: 'note', text: 'Switching quality re-opens the title from the new copy, a few seconds in.' }));
     } else if (kind === 'speed') {
@@ -353,6 +359,12 @@ export function screen(ctx, identity) {
 
   /* ------------------------------------------------------------------- events */
 
+  // True while a decision we asked for is on screen. The shell reports READY whenever it feels like it -
+  // it flips between READY and BUFFERING all through a normal film - so an unrelated READY must not wipe
+  // away a question the viewer has not answered yet. Only their own choice, or the picture actually
+  // starting to move again, closes it.
+  let asking = false;
+
   const offs = [];
   offs.push(player.on('negotiating', () => {
     setStatus('Finding a copy that will play on this TV…', 'wait');
@@ -361,7 +373,7 @@ export function screen(ctx, identity) {
     center.hidden = false;
   }));
   offs.push(player.on('ready', () => {
-    center.hidden = true;
+    if (!asking) center.hidden = true;
     setPlayIcon();
     drawPosition();
     refreshStatus();
@@ -383,6 +395,13 @@ export function screen(ctx, identity) {
     refreshStatus();
   }));
   offs.push(player.on('retrying', () => { center.hidden = true; setStatus('Asking for this copy again...', 'wait'); }));
+  // Self-heal, in order: the playhead froze, we asked the hub for this same copy at this same point, and if
+  // that brought it back the note disappears on its own. Only a second freeze interrupts anyone.
+  offs.push(player.on('healing', (d) => setStatus(
+    `This copy stopped at ${clock(Math.max(0, Number(d && d.positionMs) || 0))} - asking the hub for it again...`, 'wait')));
+  // If the copy came back on its own while the question was still on screen, the question is moot.
+  offs.push(player.on('healed', () => { center.hidden = true; asking = false; refreshStatus(); }));
+  offs.push(player.on('stuck', (d) => drawStuck(d)));
   offs.push(player.on('error', (e) => {
     center.hidden = false;
     center.textContent = '';
@@ -415,6 +434,41 @@ export function screen(ctx, identity) {
     if (nextEpisode()) { drawNext(); nextUp.classList.remove('hide'); return; }
     ctx.back();
   }));
+
+  /**
+   * The reload has already been spent and the picture is still frozen, so this is the viewer's decision and
+   * not ours: take one of the other copies, or stay with this one and let the peers catch up. Nothing is
+   * offered as a third option that is really just the retry we already tried.
+   */
+  function drawStuck(d) {
+    show();
+    center.hidden = false;
+    asking = true;
+    center.textContent = '';
+    center.appendChild(el('div', { class: 'big', text: 'This copy has stopped moving' }));
+    const alt = Number((d && d.alternates) || 0);
+    center.appendChild(el('div', { class: 'small', text: `${d.label} froze here and asking the hub for it again did not start it up. `
+      + (alt ? `${alt} other cop${alt === 1 ? 'y is' : 'ies are'} available on this title.`
+        : 'Nothing else was offered for this title, so the only choice is to wait it out.') }));
+    const buttons = [];
+    if (alt) {
+      const other = el('button', { class: 'btn white big', type: 'button', text: 'Choose another stream',
+        onclick: () => {
+          setStatus('Looking for another copy...', 'wait');
+          player.giveUpOnCurrent().then((t) => { if (t) { center.hidden = true; asking = false; refreshStatus(); } },
+            () => setStatus('No other copy would open', 'bad'));
+        } });
+      focus.focusable(other);
+      buttons.push(other);
+    }
+    const stay = el('button', { class: alt ? 'btn ghost big' : 'btn white big', type: 'button',
+      text: 'Keep watching this one',
+      onclick: () => { center.hidden = true; asking = false; player.keepWatching(); refreshStatus(); } });
+    focus.focusable(stay);
+    buttons.push(stay);
+    center.appendChild(el('div', { class: 'btns' }, ...buttons));
+    focus.focusDefault(buttons[0]);
+  }
 
   function tickSkip() {
     const st = player.state();
