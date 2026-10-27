@@ -324,7 +324,11 @@ function orderBySeed(list, s) {
 
 /** The list a client draws, and the only place a face is ever fetched from. */
 async function characters({ limit = 40, refresh = false, wait = false, seed: pick = '' } = {}) {
-  const list = seed();
+  /* The seed decides WHICH faces this roll shows, not merely the order they arrive in. Slicing the file
+     order first would lock every picker onto the first N names in the list and "Another set" could never
+     reach the rest of the shelf - a 154-face catalogue with a 60-face rail would still only ever offer
+     the same 60. So the shuffle happens before the cut, and the cut is what the screen asked for. */
+  const list = orderBySeed(seed(), pick);
   const picked = list.slice(0, Math.max(1, Math.min(200, Number(limit) || 40)));
   const out = [];
   for (const entry of picked) {

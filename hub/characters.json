@@ -230,6 +230,556 @@
       "name": "Stitch",
       "page": "Stitch (Lilo & Stitch)",
       "source": "wikipedia"
+    },
+    {
+      "name": "Hawkeye",
+      "page": "Hawkeye",
+      "source": "superherodb"
+    },
+    {
+      "name": "Scarlet Witch",
+      "page": "Scarlet Witch",
+      "source": "superherodb"
+    },
+    {
+      "name": "Nebula",
+      "page": "Nebula",
+      "source": "superherodb"
+    },
+    {
+      "name": "Mantis",
+      "page": "Mantis",
+      "source": "superherodb"
+    },
+    {
+      "name": "Professor X",
+      "page": "Professor X",
+      "source": "superherodb"
+    },
+    {
+      "name": "Cyclops",
+      "page": "Cyclops",
+      "source": "superherodb"
+    },
+    {
+      "name": "Jean Grey",
+      "page": "Jean Grey",
+      "source": "superherodb"
+    },
+    {
+      "name": "Storm",
+      "page": "Storm",
+      "source": "superherodb"
+    },
+    {
+      "name": "Beast",
+      "page": "Beast",
+      "source": "superherodb"
+    },
+    {
+      "name": "Nightcrawler",
+      "page": "Nightcrawler",
+      "source": "superherodb"
+    },
+    {
+      "name": "Juggernaut",
+      "page": "Juggernaut",
+      "source": "superherodb"
+    },
+    {
+      "name": "Jubilee",
+      "page": "Jubilee",
+      "source": "superherodb"
+    },
+    {
+      "name": "Colossus",
+      "page": "Colossus",
+      "source": "superherodb"
+    },
+    {
+      "name": "Iceman",
+      "page": "Iceman",
+      "source": "superherodb"
+    },
+    {
+      "name": "Angel",
+      "page": "Angel",
+      "source": "superherodb"
+    },
+    {
+      "name": "Bishop",
+      "page": "Bishop",
+      "source": "superherodb"
+    },
+    {
+      "name": "Emma Frost",
+      "page": "Emma Frost",
+      "source": "superherodb"
+    },
+    {
+      "name": "Pyro",
+      "page": "Pyro",
+      "source": "superherodb"
+    },
+    {
+      "name": "Sabretooth",
+      "page": "Sabretooth",
+      "source": "superherodb"
+    },
+    {
+      "name": "Carnage",
+      "page": "Carnage",
+      "source": "superherodb"
+    },
+    {
+      "name": "Green Goblin",
+      "page": "Green Goblin",
+      "source": "superherodb"
+    },
+    {
+      "name": "Doctor Octopus",
+      "page": "Doctor Octopus",
+      "source": "superherodb"
+    },
+    {
+      "name": "Electro",
+      "page": "Electro",
+      "source": "superherodb"
+    },
+    {
+      "name": "Mysterio",
+      "page": "Mysterio",
+      "source": "superherodb"
+    },
+    {
+      "name": "Kraven the Hunter",
+      "page": "Kraven the Hunter",
+      "source": "superherodb"
+    },
+    {
+      "name": "Sandman",
+      "page": "Sandman",
+      "source": "superherodb"
+    },
+    {
+      "name": "Rhino",
+      "page": "Rhino",
+      "source": "superherodb"
+    },
+    {
+      "name": "Scorpion",
+      "page": "Scorpion",
+      "source": "superherodb"
+    },
+    {
+      "name": "Black Cat",
+      "page": "Black Cat",
+      "source": "superherodb"
+    },
+    {
+      "name": "Luke Cage",
+      "page": "Luke Cage",
+      "source": "superherodb"
+    },
+    {
+      "name": "Iron Fist",
+      "page": "Iron Fist",
+      "source": "superherodb"
+    },
+    {
+      "name": "Daredevil",
+      "page": "Daredevil",
+      "source": "superherodb"
+    },
+    {
+      "name": "Punisher",
+      "page": "Punisher",
+      "source": "superherodb"
+    },
+    {
+      "name": "Blade",
+      "page": "Blade",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ghost Rider",
+      "page": "Ghost Rider",
+      "source": "superherodb"
+    },
+    {
+      "name": "Silver Surfer",
+      "page": "Silver Surfer",
+      "source": "superherodb"
+    },
+    {
+      "name": "Galactus",
+      "page": "Galactus",
+      "source": "superherodb"
+    },
+    {
+      "name": "Nova",
+      "page": "Nova",
+      "source": "superherodb"
+    },
+    {
+      "name": "Captain Marvel",
+      "page": "Captain Marvel",
+      "source": "superherodb"
+    },
+    {
+      "name": "Nick Fury",
+      "page": "Nick Fury",
+      "source": "superherodb"
+    },
+    {
+      "name": "Vision",
+      "page": "Vision",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ultron",
+      "page": "Ultron",
+      "source": "superherodb"
+    },
+    {
+      "name": "Nightwing",
+      "page": "Nightwing",
+      "source": "superherodb"
+    },
+    {
+      "name": "Robin",
+      "page": "Robin",
+      "source": "superherodb"
+    },
+    {
+      "name": "Catwoman",
+      "page": "Catwoman",
+      "source": "superherodb"
+    },
+    {
+      "name": "Poison Ivy",
+      "page": "Poison Ivy",
+      "source": "superherodb"
+    },
+    {
+      "name": "Deathstroke",
+      "page": "Deathstroke",
+      "source": "superherodb"
+    },
+    {
+      "name": "Green Arrow",
+      "page": "Green Arrow",
+      "source": "superherodb"
+    },
+    {
+      "name": "Aquaman",
+      "page": "Aquaman",
+      "source": "superherodb"
+    },
+    {
+      "name": "Cyborg",
+      "page": "Cyborg",
+      "source": "superherodb"
+    },
+    {
+      "name": "Lex Luthor",
+      "page": "Lex Luthor",
+      "source": "superherodb"
+    },
+    {
+      "name": "Bizarro",
+      "page": "Bizarro",
+      "source": "superherodb"
+    },
+    {
+      "name": "Martian Manhunter",
+      "page": "Martian Manhunter",
+      "source": "superherodb"
+    },
+    {
+      "name": "Black Adam",
+      "page": "Black Adam",
+      "source": "superherodb"
+    },
+    {
+      "name": "Hawkgirl",
+      "page": "Hawkgirl",
+      "source": "superherodb"
+    },
+    {
+      "name": "Plastic Man",
+      "page": "Plastic Man",
+      "source": "superherodb"
+    },
+    {
+      "name": "Doctor Doom",
+      "page": "Doctor Doom",
+      "source": "superherodb"
+    },
+    {
+      "name": "Namor",
+      "page": "Namor",
+      "source": "superherodb"
+    },
+    {
+      "name": "Red Hulk",
+      "page": "Red Hulk",
+      "source": "superherodb"
+    },
+    {
+      "name": "Sentry",
+      "page": "Sentry",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ares",
+      "page": "Ares",
+      "source": "superherodb"
+    },
+    {
+      "name": "Hela",
+      "page": "Hela",
+      "source": "superherodb"
+    },
+    {
+      "name": "A-Bomb",
+      "page": "A-Bomb",
+      "source": "superherodb"
+    },
+    {
+      "name": "Abe Sapien",
+      "page": "Abe Sapien",
+      "source": "superherodb"
+    },
+    {
+      "name": "Abin Sur",
+      "page": "Abin Sur",
+      "source": "superherodb"
+    },
+    {
+      "name": "Abomination",
+      "page": "Abomination",
+      "source": "superherodb"
+    },
+    {
+      "name": "Abraxas",
+      "page": "Abraxas",
+      "source": "superherodb"
+    },
+    {
+      "name": "Absorbing Man",
+      "page": "Absorbing Man",
+      "source": "superherodb"
+    },
+    {
+      "name": "Adam Monroe",
+      "page": "Adam Monroe",
+      "source": "superherodb"
+    },
+    {
+      "name": "Adam Strange",
+      "page": "Adam Strange",
+      "source": "superherodb"
+    },
+    {
+      "name": "Agent Bob",
+      "page": "Agent Bob",
+      "source": "superherodb"
+    },
+    {
+      "name": "Agent Zero",
+      "page": "Agent Zero",
+      "source": "superherodb"
+    },
+    {
+      "name": "Air-Walker",
+      "page": "Air-Walker",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ajax",
+      "page": "Ajax",
+      "source": "superherodb"
+    },
+    {
+      "name": "Alan Scott",
+      "page": "Alan Scott",
+      "source": "superherodb"
+    },
+    {
+      "name": "Alex Mercer",
+      "page": "Alex Mercer",
+      "source": "superherodb"
+    },
+    {
+      "name": "Alfred Pennyworth",
+      "page": "Alfred Pennyworth",
+      "source": "superherodb"
+    },
+    {
+      "name": "Alien",
+      "page": "Alien",
+      "source": "superherodb"
+    },
+    {
+      "name": "Amazo",
+      "page": "Amazo",
+      "source": "superherodb"
+    },
+    {
+      "name": "Angel Dust",
+      "page": "Angel Dust",
+      "source": "superherodb"
+    },
+    {
+      "name": "Angel Salvadore",
+      "page": "Angel Salvadore",
+      "source": "superherodb"
+    },
+    {
+      "name": "Animal Man",
+      "page": "Animal Man",
+      "source": "superherodb"
+    },
+    {
+      "name": "Annihilus",
+      "page": "Annihilus",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ant-Man II",
+      "page": "Ant-Man II",
+      "source": "superherodb"
+    },
+    {
+      "name": "Anti-Monitor",
+      "page": "Anti-Monitor",
+      "source": "superherodb"
+    },
+    {
+      "name": "Anti-Venom",
+      "page": "Anti-Venom",
+      "source": "superherodb"
+    },
+    {
+      "name": "Apocalypse",
+      "page": "Apocalypse",
+      "source": "superherodb"
+    },
+    {
+      "name": "Aquababy",
+      "page": "Aquababy",
+      "source": "superherodb"
+    },
+    {
+      "name": "Aqualad",
+      "page": "Aqualad",
+      "source": "superherodb"
+    },
+    {
+      "name": "Arachne",
+      "page": "Arachne",
+      "source": "superherodb"
+    },
+    {
+      "name": "Archangel",
+      "page": "Archangel",
+      "source": "superherodb"
+    },
+    {
+      "name": "Arclight",
+      "page": "Arclight",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ardina",
+      "page": "Ardina",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ariel",
+      "page": "Ariel",
+      "source": "superherodb"
+    },
+    {
+      "name": "Armor",
+      "page": "Armor",
+      "source": "superherodb"
+    },
+    {
+      "name": "Atlas",
+      "page": "Atlas",
+      "source": "superherodb"
+    },
+    {
+      "name": "Atom Girl",
+      "page": "Atom Girl",
+      "source": "superherodb"
+    },
+    {
+      "name": "Atom II",
+      "page": "Atom II",
+      "source": "superherodb"
+    },
+    {
+      "name": "Aurora",
+      "page": "Aurora",
+      "source": "superherodb"
+    },
+    {
+      "name": "Azazel",
+      "page": "Azazel",
+      "source": "superherodb"
+    },
+    {
+      "name": "Azrael",
+      "page": "Azrael",
+      "source": "superherodb"
+    },
+    {
+      "name": "Bane",
+      "page": "Bane",
+      "source": "superherodb"
+    },
+    {
+      "name": "Banshee",
+      "page": "Banshee",
+      "source": "superherodb"
+    },
+    {
+      "name": "Bantam",
+      "page": "Bantam",
+      "source": "superherodb"
+    },
+    {
+      "name": "Batgirl IV",
+      "page": "Batgirl IV",
+      "source": "superherodb"
+    },
+    {
+      "name": "Batgirl VI",
+      "page": "Batgirl VI",
+      "source": "superherodb"
+    },
+    {
+      "name": "Batman II",
+      "page": "Batman II",
+      "source": "superherodb"
+    },
+    {
+      "name": "Battlestar",
+      "page": "Battlestar",
+      "source": "superherodb"
+    },
+    {
+      "name": "Batwoman V",
+      "page": "Batwoman V",
+      "source": "superherodb"
+    },
+    {
+      "name": "Beast Boy",
+      "page": "Beast Boy",
+      "source": "superherodb"
     }
   ]
 }
