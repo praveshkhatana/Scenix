@@ -32,6 +32,7 @@ export function screen(ctx) {
   let setting = null;      // /app/v1/settings → settings
   let names = {};          // /app/v1/settings → languageNames, supplied by the hub
   let prefs = null;        // /app/v1/prefs → prefs
+  let installed = [];      // /app/v1/addons → addons
   let busy = false;
 
   root.appendChild(el('div', { class: 'page-head' },
@@ -288,6 +289,50 @@ export function screen(ctx) {
       right.appendChild(g);
     }
 
+    /* --------------------------------------------------------------- add-ons */
+
+    // The registry is the hub's, so the page shows what it reports rather than assuming a fixed set: an
+    // owner installs Torrentio or a catalog on one box and every screen then has to render whatever that
+    // box now holds. A built-in row is listed but not removable; anything added over HTTP can be switched
+    // off without deleting it, which is the difference between "this source is down tonight" and "I never
+    // want this source again".
+    if (caps.addonAdmin && installed.length) {
+      const g = group('Add-ons', 'Sources this hub reads. Switching one off keeps its address and settings; the hub simply stops asking it.');
+      for (const ad of installed) {
+        const cats = (ad.catalogs || []).length;
+        const note = ad.native
+          ? `Built in${cats ? ` · ${cats} catalogue${cats > 1 ? 's' : ''}` : ''}`
+          : `${(ad.url || '').replace(/^https?:\/\//, '').slice(0, 46)}${cats ? ` · ${cats} catalogue${cats > 1 ? 's' : ''}` : ''}`;
+        const li = line(ad.name || ad.id, ad.error ? `Last error: ${String(ad.error).slice(0, 60)}` : note);
+        const sw = el('button', {
+          class: `sw${ad.enabled === false ? '' : ' on'}`, type: 'button', role: 'switch',
+          'aria-checked': ad.enabled !== false ? 'true' : 'false', 'aria-label': `${ad.name || ad.id} enabled`,
+        });
+        focus.focusable(sw);
+        sw.onclick = async () => {
+          const next = !sw.classList.contains('on');
+          sw.classList.toggle('on', next);
+          sw.setAttribute('aria-checked', next ? 'true' : 'false');
+          try { await api.setAddon(ad.id, next); ctx.toast(`${ad.name || ad.id} ${next ? 'on' : 'off'}`); }
+          catch (e) { ctx.toast('The hub would not change that add-on'); }
+        };
+        li.appendChild(sw);
+        if (!ad.native) {
+          const x = roundBtn('x', async () => {
+            try {
+              const r = await api.removeAddon(ad.id);
+              installed = (r && r.addons) || installed.filter((o) => o.id !== ad.id);
+              ctx.toast(`${ad.name || ad.id} removed`);
+              paint();
+            } catch (e) { ctx.toast('The hub would not remove that add-on'); }
+          }, `Remove ${ad.name || ad.id}`);
+          li.appendChild(x);
+        }
+        g.appendChild(li);
+      }
+      right.appendChild(g);
+    }
+
     /* -------------------------------------------------------------- profiles */
 
     /* A PIN is typed the way every other PIN in this app is typed — on the remote's number row or the on-screen
@@ -395,10 +440,13 @@ export function screen(ctx) {
   /* ------------------------------------------------------------------- load */
 
   (async () => {
-    const [s, p] = await Promise.all([
+    const [s, p, a3] = await Promise.all([
       api.settings().catch(() => null),
       profile.id ? api.prefs(profile.id).catch(() => null) : Promise.resolve(null),
+      caps.addonAdmin ? api.addons().catch(() => null) : Promise.resolve(null),
     ]);
+    const ad = a3 ? (a3.addons || []) : null;
+    installed = Array.isArray(ad) ? ad : null === ad ? [] : ad;
     setting = s ? (s.settings || s) : null;
     names = (s && s.languageNames) || {};
     prefs = p ? (p.prefs || p) : null;

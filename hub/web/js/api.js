@@ -104,6 +104,13 @@ export const api = {
   prefs: (profile) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
   savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { method: 'POST', body: prefs, timeout: 6000 }),
   health: () => request('/healthz', { timeout: 8000 }),
+
+  // Add-on management. The hub keeps the registry, so this is only a view of it: what is installed,
+  // whether it is switched on, and what it last failed at.
+  addons: () => request('/app/v1/addons', { timeout: 9000 }),
+  setAddon: (id, on) => request(`/app/v1/addons/${encodeURIComponent(id)}/${on ? 'enable' : 'disable'}`,
+    { method: 'POST', timeout: 9000 }),
+  removeAddon: (id) => request(`/app/v1/addons/${encodeURIComponent(id)}`, { method: 'DELETE', timeout: 9000 }),
   /* Settings and administration — the hub owns all of it, and the manifest says which of it exists. */
   settings: () => request('/app/v1/settings', { timeout: 8000 }),
   saveSettings: (body) => request('/app/v1/settings', { method: 'PUT', body, timeout: 8000 }),
