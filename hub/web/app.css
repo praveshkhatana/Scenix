@@ -953,6 +953,7 @@ body.booted .pwrap .avatar .a {
 /* On-screen keyboard (remote-only entry; a physical keyboard types straight into the field). */
 .kbd { display: grid; gap: calc(8px * var(--s)); justify-content: center; margin-top: calc(18px * var(--s)); }
 .kbd .kr { display: grid; grid-auto-flow: column; grid-auto-columns: calc(72px * var(--s)); gap: calc(8px * var(--s)); }
+.kbd .key.wide { grid-column: span 2; font-size: calc(20px * var(--s)); letter-spacing: .06em; }
 .kbd .key { height: calc(64px * var(--s)); border-radius: var(--r-key); background: var(--key); border: 1px solid var(--border); display: grid; place-content: center; font-size: calc(24px * var(--s)); }
 
 /* ==========================================================================

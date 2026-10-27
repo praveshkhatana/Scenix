@@ -23,7 +23,10 @@ import { setTypingTarget } from '/ui/js/input.js';
 
 /* A keyboard laid out for a thumb on a touch screen and for a D-pad on a remote alike. Characters only: the
    hub does the matching, and a catalogue this mixed has no use for a shift key. */
-const PAD = ['1234567890', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm', ' .-', '⌫ clear'];
+// A row is either a run of single characters or an explicit list of keys. Writing the last row as the
+// string '⌫ clear' asked the loop to read it one character at a time, which produced Delete, a stray
+// space bar, and then c, l, e, a, r as five separate keys.
+const PAD = ['1234567890', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm', [' ', '.', '-'], ['⌫', 'Clear']];
 const DEBOUNCE_MS = 320;
 
 export function screen(ctx, arg) {
@@ -49,16 +52,19 @@ export function screen(ctx, arg) {
   /* ------------------------------------------------------------------ keyboard */
 
   const kbd = el('div', { class: 'kbd' });
-  const padKey = (label, fn) => {
-    const b = el('button', { class: 'key', type: 'button', text: label, onclick: fn });
+  // `wide` spans two columns: an action key carries a word, and a 24 px word does not fit in the 72 px
+  // column a letter gets, which is how "Delete" ended up printed over its own border.
+  const padKey = (label, fn, wide) => {
+    const b = el('button', { class: wide ? 'key wide' : 'key', type: 'button', text: label, onclick: fn });
     focus.focusable(b);
     return b;
   };
   for (const keys of PAD) {
     const kr = el('div', { class: 'kr' });
-    for (const ch of keys) {
-      if (ch === '⌫') kr.appendChild(padKey('Delete', back));
-      else if (ch === 'clear') kr.appendChild(padKey('Clear', () => { back(true); }));
+    for (const raw of keys) {
+      const ch = String(raw);
+      if (ch === '⌫') kr.appendChild(padKey('Delete', back, true));
+      else if (ch === 'Clear') kr.appendChild(padKey('Clear', () => { back(true); }, true));
       else kr.appendChild(padKey(ch, () => insert(ch)));
     }
     kbd.appendChild(kr);
