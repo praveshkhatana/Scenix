@@ -70,7 +70,12 @@ export function screen(ctx, arg) {
       node.style.setProperty('--i', String(i));
       grid.appendChild(node);
     }
-    focus.focusDefault(grid.querySelector('.card'));
+    // Results arrive while the person is still writing. Taking the ring on every keystroke means a
+    // second letter never gets typed - the remote walks onto a poster instead of the next key - so the
+    // ring only moves into the results when it is not already resting on the pad.
+    if (!(document.activeElement && document.activeElement.closest('.kbd'))) {
+      focus.focusDefault(grid.querySelector('.card'));
+    }
   }
 
   async function runSearch() {

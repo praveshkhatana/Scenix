@@ -107,7 +107,15 @@ export function initInput({ onBack, onLetterSearch } = {}) {
     if (typingTarget) {
       if (key === 'Backspace') { typingTarget.backspace(); return; }
       if (key === 'Escape') { typingTarget.commit && typingTarget.commit('escape'); if (onBack) onBack(); return; }
-      if (key === 'Enter') { typingTarget.commit && typingTarget.commit('enter'); return; }
+      if (key === 'Enter') {
+        // A television has no keyboard: the only way to write a letter is to walk the D-pad onto it and
+        // press OK, and the only way to open a result is to walk onto it and press OK. So OK presses
+        // whatever is holding the focus ring - a key, a Done button, a title - and the entry itself is
+        // submitted by the pad's own action key, or by OK when nothing is holding the ring at all.
+        if (focus.activate()) return;
+        typingTarget.commit && typingTarget.commit('enter');
+        return;
+      }
       if (printable) { typingTarget.insert(key); return; }
     }
 
