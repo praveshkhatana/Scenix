@@ -412,8 +412,9 @@ function setProfile(p) {
 }
 
 /**
- * The profile switch. The spec calls this "the signature Netflix moment", and it is the one transition in
- * the product that has to be choreographed rather than faded.
+ * The profile switch, singled out in our design notes as the one transition in the product that has to be
+ * choreographed rather than faded: a route change plus a fade would leave the viewer wondering whether the
+ * face they picked actually took.
  *
  * The chosen face is lifted out of the grid as a clone pinned to its exact on-screen box, the grid behind it
  * falls back to 0.9 and fades, Home mounts underneath, and the clone flies to the account chip in the nav
