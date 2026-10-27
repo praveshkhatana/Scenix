@@ -195,6 +195,12 @@ class VideoBackend {
     this.host = made.div.parentNode;
     this.div = made.div;
     this.video = made.video;
+    // Where the response we are reading starts inside the title, and what the title's length is. A stream
+    // the hub is still generating gives the element neither, so these come from us. See load().
+    this.baseMs = 0;
+    this.durationMs = 0;
+    this.srcUrl = '';
+    this.rewindable = false;
     this.video.muted = false;
 
     const v = this.video;
@@ -225,17 +231,35 @@ class VideoBackend {
   /** A browser needs what Safari and Chrome can decode, so the hub re-muxes to MP4 for us. */
   get container() { return 'mp4'; }
 
+  /**
+   * A re-muxed stream has no length to hand the browser - the hub is generating it as it goes - so the
+   * element reports one seekable position, zero, and writing `currentTime` anywhere else snaps playback back
+   * to the beginning. Measured in a real browser: pressing forward ten seconds at fourteen seconds in came
+   * out at 1.3 seconds. So a position we cannot reach inside this response is reached by asking the hub for
+   * a stream that starts there (`&start=`, which it honours with an input seek) and remembering that this
+   * response begins partway into the title. Every position we report or aim at is then offset by that base.
+   */
   load(target, opts) {
     const url = streamUrl(target);
     if (!url) { this.emit('error', { code: 'no-url', message: 'The hub gave no stream address' }); return; }
     const v = this.video;
-    const startAt = (opts.positionMs || 0) / 1000;
-    const seekOnce = () => {
-      try { if (startAt > 1) v.currentTime = startAt; } catch (e) { /* some engines refuse before metadata */ }
-      v.removeEventListener('loadedmetadata', seekOnce);
-    };
-    v.addEventListener('loadedmetadata', seekOnce);
-    v.src = url;
+    // The hub knows how long the title is; a growing guess from the element is worse than that number.
+    this.durationMs = Number(target.durationMs) || 0;
+    this.baseMs = 0;
+    const at = Math.max(0, Number(opts.positionMs) || 0);
+    this.srcUrl = url;
+    this.rewindable = /\/app\/v1\/remux([?]|$)/.test(url); // only this endpoint takes a start time
+    if (at > 1500 && this.rewindable) {
+      this.srcUrl = url + (url.includes('?') ? '&' : '?') + 'start=' + Math.round(at);
+      this.baseMs = at;
+    } else if (at > 1) {
+      const seekOnce = () => {
+        try { if (this.localTo(Math.round(at)) != null) v.currentTime = this.localTo(at); } catch (e) { /* before metadata */ }
+        v.removeEventListener('loadedmetadata', seekOnce);
+      };
+      v.addEventListener('loadedmetadata', seekOnce);
+    }
+    v.src = this.srcUrl;
     v.load();
     const p = v.play();
     if (p && typeof p.catch === 'function') {
@@ -253,7 +277,34 @@ class VideoBackend {
 
   play() { const p = this.video.play(); if (p && p.catch) p.catch(() => {}); }
   pause() { this.video.pause(); }
-  seek(ms) { try { this.video.currentTime = Math.max(0, ms / 1000); } catch (e) { /* ignore */ } }
+  /** Where a title position sits inside the response we are currently reading. */
+  localTo(ms) { return (ms - this.baseMs) / 1000; }
+  /** Is that spot already ours to play without asking the hub again? */
+  reachable(ms) {
+    const v = this.video;
+    const want = this.localTo(ms);
+    if (want < 0) return false;
+    const inRanges = (ranges) => {
+      try {
+        for (let i = 0; i < ranges.length; i++) if (want >= ranges.start(i) - 1 && want <= ranges.end(i)) return true;
+      } catch (e) { /* no ranges at all */ }
+      return false;
+    };
+    return inRanges(v.buffered) || (v.seekable.length > 0 && v.seekable.end(v.seekable.length - 1) > 1 && inRanges(v.seekable));
+  }
+  seek(ms) {
+    const at = Math.max(0, Math.round(ms));
+    if (!this.rewindable || this.reachable(at)) {
+      try { this.video.currentTime = this.localTo(at); return; } catch (e) { /* fall through to a restart */ }
+    }
+    if (!this.srcUrl) return;
+    // Restart the stream at that point. The picture keeps playing while the hub opens the new one.
+    this.baseMs = at;
+    const wasPlaying = !this.video.paused;
+    this.video.src = this.srcUrl + (this.srcUrl.includes('?') ? '&' : '?') + 'start=' + at;
+    try { this.video.load(); } catch (e) { /* ignore */ }
+    if (wasPlaying) { const p = this.video.play(); if (p && p.catch) p.catch(() => {}); }
+  }
   stop() {
     const v = this.video;
     try { v.pause(); } catch (e) { /* ignore */ }
@@ -302,10 +353,11 @@ class VideoBackend {
     try {
       for (let i = 0; i < v.buffered.length; i++) buffered = Math.max(buffered, v.buffered.end(i));
     } catch (e) { /* ignore */ }
+    const real = (sec) => Math.round((sec || 0) * 1000) + this.baseMs;
     return {
-      positionMs: (v.currentTime || 0) * 1000,
-      bufferedMs: buffered * 1000,
-      durationMs: (v.duration && isFinite(v.duration) ? v.duration : 0) * 1000,
+      positionMs: real(v.currentTime),
+      bufferedMs: real(buffered), // an absolute title position, same as the native backend reports
+      durationMs: this.durationMs || ((v.duration && isFinite(v.duration) ? v.duration : 0) * 1000),
       playing: !v.paused && !v.ended,
       videoWidth: v.videoWidth, videoHeight: v.videoHeight,
     };
