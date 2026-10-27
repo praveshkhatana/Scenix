@@ -23,7 +23,7 @@ import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { session, rememberMeta, metaCache, inMyList } from '/ui/js/state.js';
 import { clock, runtime, size, langList, since, episodeLabel, seasonLabel, qualityWord, timeLeft, initials } from '/ui/js/format.js';
-import { rowFor, dropMountedRows } from '/ui/js/plugins.js';
+import { rowFor, lazyMount, dropMountedRows } from '/ui/js/plugins.js';
 import { startPreview, stopPreview } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
 import { token } from '/ui/js/theme.js';
@@ -139,7 +139,10 @@ export function screen(ctx, identity) {
       const head = el('h2', { class: 'sect-title' });
       const tabs = el('div', { class: 'seasons' });
       const wrap = el('div', { class: 'episodes h', 'data-nav': 'h' });
-      const paintEpisodes = () => {
+      // On the first paint the screen's own default focus (the Play button, up in the hero) decides where
+      // the ring lands; claiming it for the strip as well would scroll the page under the title.
+      // Switching a season is a deliberate move, so then the ring does follow the new strip.
+      const paintEpisodes = (follow) => {
         const shown = season === null ? eps : eps.filter((e) => (e.season === undefined ? 1 : e.season) === season);
         head.textContent = '';
         head.appendChild(el('span', { text: season === null ? 'All seasons' : seasonLabel(season) }));
@@ -148,19 +151,19 @@ export function screen(ctx, identity) {
         if (!item.live) wrap.appendChild(trailerTile());
         shown.forEach((e, i) => wrap.appendChild(epRow(e, i)));
         for (const k of tabs.children) k.classList.toggle('on', (k.dataset.season === '' ? null : Number(k.dataset.season)) === season);
-        focus.focusDefault(wrap.querySelector('.ep'));
+        if (follow) focus.focusDefault(wrap.querySelector('.ep'));
       };
       for (const s of seasons) {
         // The bar is numbers, because the heading above it already says what they are.
         const b = el('button', { class: `chip${s === season ? ' on' : ''}`, type: 'button',
           'data-season': String(s), 'aria-label': seasonLabel(s), text: String(s),
-          onclick: () => { season = s; paintEpisodes(); } });
+          onclick: () => { season = s; paintEpisodes(true); } });
         focus.focusable(b);
         tabs.appendChild(b);
       }
       if (seasons.length > 1) {
         const all = el('button', { class: 'chip all', type: 'button', 'data-season': '', text: 'All seasons',
-          onclick: () => { season = null; paintEpisodes(); } });
+          onclick: () => { season = null; paintEpisodes(true); } });
         focus.focusable(all);
         tabs.appendChild(all);
       }
@@ -442,6 +445,20 @@ export function screen(ctx, identity) {
 
   /* ------------------------------------------------------------------ related */
 
+  /* Two places quote this hub's own shelves — the shelf line in the hero and the related row below the
+     record — and both read the payload the home screen loads. A title opened straight from a URL has never
+     asked for it, so ask once here and cache it exactly the way home does. A hub that will not answer about
+     shelves simply gets fewer shelves on screen; nothing here invents a "more like this". */
+  async function ensureShelves() {
+    const pid = session.profile && session.profile.id;
+    if (!pid || (session.home && session.home.__profile === pid)) return;
+    try {
+      const home = await api.home(pid);
+      home.__profile = pid;
+      session.home = home;
+    } catch (e) { /* as just said */ }
+  }
+
   function related() {
     const pool = [];
     const seen = new Set([item.identity]);
@@ -465,7 +482,9 @@ export function screen(ctx, identity) {
       list: (it) => ctx.list(it),
       explore: () => {},
     });
-    if (node) root.appendChild(node);
+    // The row is a shell until something tells the shared lazy mounter which scroller it lives in — the same
+    // contract the home screen uses, so a synthesised row fills itself as it is scrolled into view.
+    if (node) { root.appendChild(node); lazyMount(node, { root }); }
   }
 
   /* -------------------------------------------------------------------- load */
@@ -475,7 +494,9 @@ export function screen(ctx, identity) {
 
   async function load() {
     const pid = session.profile && session.profile.id;
-    const r = await api.meta(identity, pid);
+    // Asked for beside the record so the first paint can already quote the hub's shelves. Arriving from
+    // home, where that payload is cached, this costs nothing extra.
+    const [, r] = await Promise.all([ensureShelves(), api.meta(identity, pid)]);
     item = (r && r.item) || r || {};
     if (!item.identity) item.identity = identity;
     rememberMeta(item);

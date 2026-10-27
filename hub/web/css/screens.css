@@ -55,11 +55,50 @@
   font-size: var(--t-meta); color: var(--ink3); letter-spacing: .02em;
 }
 
+/* The hero owns the frame it is drawn in: the queue of tiles below the words only fits if the billboard is
+   a tile taller than app.css makes it, otherwise it lands on the first shelf's heading. `--billboard-h` is
+   left alone so the narrow-window values in app.css keep working; the same room is added to each of them. */
+.billboard { height: calc(var(--billboard-h) + 158px * var(--s)); }
+
+/* The queue along the bottom edge: the tiles the hub put behind the one that is up, in the hub's order
+   wrapped around, each wearing the wide art the hub carries for it. The first is the tile on screen — the
+   largest, ringed in the brand red — and the two behind it step down beside it, all bottom aligned. They
+   live inside `.bb-btns` because that container is the band the remote walks inside the billboard, and a
+   control outside it would open a band whose box covers the whole picture; the line is told to take the
+   full width so it sits under the buttons instead of beside them. Nothing is written on a tile — the name
+   is already the line above it, and a tile that repeats it is a caption, not a thumbnail. */
+.bb-btns { flex-wrap: wrap; }
+.bb-btns .bb-meta { flex: 0 0 100%; }
+.bb-thumbs {
+  flex: 0 0 100%; display: flex; align-items: flex-end; gap: calc(44px * var(--s));
+  margin-top: calc(14px * var(--s));
+}
+.bb-thumb {
+  width: calc(272px * var(--s)); height: calc(174px * var(--s)); padding: 0; border: 0; overflow: hidden;
+  border-radius: var(--r-chip); background: var(--surface2); cursor: pointer; opacity: .62;
+  transition: opacity var(--focus-ms) ease-out, transform var(--focus-ms) ease-out;
+}
+.bb-thumb:first-child { width: calc(350px * var(--s)); height: calc(224px * var(--s)); }
+.bb-thumb:last-child { width: calc(184px * var(--s)); height: calc(118px * var(--s)); }
+.bb-thumb.on { opacity: 1; box-shadow: inset 0 0 0 calc(3px * var(--s)) var(--brand); }
+.bb-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* The ring is the card's ring — the same width, the same colour, the same step up — because one of these
+   tiles points at a title exactly as a card in the row underneath does. */
+.bb-thumb.foc {
+  opacity: 1; transform: scale(var(--focus-scale));
+  box-shadow: 0 0 0 var(--ring-w) var(--focus-ring);
+}
+.bb-thumb.on.foc {
+  box-shadow: inset 0 0 0 calc(3px * var(--s)) var(--brand), 0 0 0 var(--ring-w) var(--focus-ring);
+}
+
 /* Rotation. Not a control: the dots say which of the hub's tiles is up and how many there are, and the
    D-pad keeps the one step down from the buttons to the first shelf. A mouse can still click one. The
-   active dot stretches with `transform` rather than by growing a width, so the turn is compositor work. */
+   active dot stretches with `transform` rather than by growing a width, so the turn is compositor work.
+   They sit on the same line as the queue below the words — `--hero-bottom` is that line, since the queue
+   is the last thing in the text column — so the two never stack into one band of small marks. */
 .bb-dots {
-  position: absolute; right: var(--gutter); bottom: calc(58px * var(--s)); z-index: 4;
+  position: absolute; right: var(--gutter); bottom: var(--hero-bottom); z-index: 4;
   display: flex; align-items: center; gap: calc(9px * var(--s));
 }
 .bb-dot {
@@ -185,72 +224,112 @@
 .rate-note { font-size: var(--t-meta); color: var(--ink2); }
 
 /* ==========================================================================
-   Player chrome — one translucent bar holding the position and the transport,
-   with the menus as chips at its right end. No blur anywhere near the picture:
-   the film is live underneath, so every surface here is a solid with a hairline.
+   Player chrome — the way out at the top-left beside the name, a hairline of
+   position across the bottom, the transport flat under it, and the next
+   episode waiting at the right edge of the picture. Nothing here is a panel:
+   app.css already fades a scrim over the top and bottom of the film, and a
+   painted surface on top of that reads as a box floating in the picture. No
+   blur anywhere near it — the video underneath is live, and that is the one
+   effect this TV cannot pay for.
    ========================================================================== */
 
-/* The bar is the surface. It keeps app.css's gradient scrim behind it (a gradient is painted, not
-   blurred) and adds the pill the transport sits in. */
-.ply-bottom .ply-bar {
-  background: rgba(14, 16, 20, .66);
-  border: calc(1px * var(--s)) solid rgba(255, 255, 255, .14);
-  border-radius: calc(20px * var(--s));
-  padding: calc(22px * var(--s)) calc(28px * var(--s)) calc(20px * var(--s));
-}
+/* The scrims are the background, so the bar itself is nothing but layout. */
+.ply-bottom { padding-left: calc(80px * var(--s)); padding-right: calc(80px * var(--s)); }
+.ply-bar { background: none; border: 0; border-radius: 0; padding: 0; }
 
-/* Elapsed on the left, remaining on the right, the track between them — one line, tabular figures so the
-   numbers do not shuffle the bar as they change. */
+/* Back at the top-left, on the same line as the name of the thing playing, which is where a person looks
+   for it when they want out. A flat glyph until the ring lands on it: a box around every icon turns the
+   floor into a form. */
+.ply-top { display: flex; align-items: center; gap: calc(18px * var(--s)); padding-top: calc(40px * var(--s)); }
+.ply-top .pbtn { width: calc(64px * var(--s)); height: calc(64px * var(--s)); }
+.ply-top .pbtn .ico { width: calc(30px * var(--s)); height: calc(30px * var(--s)); }
+
+/* The name steps past the button and stops being a second headline over the picture: one line, cut short
+   rather than wrapped down the film. */
+.ply-hud { top: calc(50px * var(--s)); left: calc(164px * var(--s)); align-items: center; }
+.ply-hud > div:first-child { flex: 0 1 auto; min-width: 0; }
+.ply-hud .pt { font-size: calc(26px * var(--s)); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ply-hud .ps { font-size: calc(18px * var(--s)); margin-top: calc(4px * var(--s));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Elapsed at one end, what is left at the other, and a hairline between them — that whole line is the
+   position. Tabular figures so the row does not shuffle as the numbers change. */
 .ply-bar .times {
-  display: flex; align-items: center; gap: calc(18px * var(--s));
-  justify-content: flex-start; margin: 0 0 calc(16px * var(--s));
-  font-size: var(--t-readout); color: var(--ink1); font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; gap: calc(20px * var(--s));
+  justify-content: flex-start; margin: 0 0 calc(20px * var(--s));
+  font-size: var(--t-readout); color: var(--ink2); font-variant-numeric: tabular-nums;
 }
-.ply-bar .times span { flex: none; min-width: calc(96px * var(--s)); }
+.ply-bar .times span { flex: none; min-width: calc(92px * var(--s)); }
 .ply-bar .times span:last-child { text-align: right; }
-.ply-bar .trk { flex: 1 1 auto; height: calc(8px * var(--s)); }
-.trk .kn { width: calc(20px * var(--s)); height: calc(20px * var(--s)); transition: transform var(--focus-ms) ease-out; }
+.ply-bar .trk { flex: 1 1 auto; height: calc(6px * var(--s)); }
+.trk .kn { width: calc(16px * var(--s)); height: calc(16px * var(--s)); box-shadow: none;
+  transition: transform var(--focus-ms) ease-out; }
+/* The knob is the only part of the line that answers a key, so the ring on the line grows the knob. Scaling
+   it is a compositor change; thickening the line would repaint the whole bar. */
+.trk.foc .kn { transform: translate(-50%, -50%) scale(1.4); }
 
-/* Transport on the left, the menus that open panels on the right, in one row. The glyphs carry their own
-   names in `aria-label`/`title`, so the word under every button — which fit three 144 px circles and
-   nothing else — is dropped rather than shrunk to something unreadable on a sofa. */
-.ply-bar .pbtns { justify-content: flex-start; gap: calc(16px * var(--s)); margin-top: 0; }
+/* A channel has no position to move along, so the line is replaced by the only fact that stream supports:
+   it is happening now. The dot breathes on opacity alone, and app.css's reduced-motion rule leaves it a dot
+   that simply sits there. */
+.live-mark {
+  display: flex; align-items: center; gap: calc(12px * var(--s)); margin: 0 0 calc(20px * var(--s));
+  font-size: var(--t-readout); letter-spacing: .14em; text-transform: uppercase; color: var(--ink1);
+}
+.live-mark .dot { width: calc(14px * var(--s)); height: calc(14px * var(--s)); border-radius: 999px;
+  background: var(--brand); animation: livepulse 2600ms ease-in-out infinite; }
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* Transport at one end, the menus that open panels at the other, in one row. Flat, because the scrims are
+   the background: app.css's 144 px circles are a floor for a remote with no picture behind them, and here
+   the picture is the floor. The word under every button is dropped — it fit three huge circles and nothing
+   else — but each one still says what it is through `aria-label`/`title`, and each menu chip still shows the
+   value it is standing for, which is information rather than decoration. */
+.ply-bar .pbtns { justify-content: flex-start; align-items: center; gap: calc(8px * var(--s)); margin-top: 0; }
 .pbtn {
-  position: relative; width: calc(76px * var(--s)); height: calc(76px * var(--s)); border-radius: 999px;
-  background: rgba(255, 255, 255, .10); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .18);
-  display: grid; place-content: center; color: #fff;
+  position: relative; width: calc(66px * var(--s)); height: calc(66px * var(--s)); border-radius: 999px;
+  background: none; border: 0; display: grid; place-content: center; color: #fff;
   transition: transform var(--focus-ms) ease-out;
 }
 .pbtn .ico { width: calc(34px * var(--s)); height: calc(34px * var(--s)); }
 .pbtn .lbl { display: none; }
-.pbtn.play { width: calc(92px * var(--s)); height: calc(92px * var(--s)); background: #fff; color: #141414; border-color: #fff; }
+.pbtn.play { width: calc(78px * var(--s)); height: calc(78px * var(--s)); background: none; border: 0; color: #fff; }
+.pbtn.play .ico { width: calc(42px * var(--s)); height: calc(42px * var(--s)); }
+/* The red fill is the answer to a key press, so it stays; the ring rides with it. */
 .pbtn.foc { background: rgba(229, 9, 20, .85); border-color: #fff; color: #fff;
   transform: scale(1.08); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
-.pbtn.play.foc { background: #fff; color: #141414; }
 
-/* The menu chips live in the same row now. They are surfaces, not flat text, because each one opens a
-   panel and a control that looks like a label is a control nobody presses. */
-.ply-right { gap: calc(10px * var(--s)); }
-.ply-bar .iconbtn {
-  height: calc(56px * var(--s)); padding: 0 calc(20px * var(--s));
-  border-radius: 999px; background: rgba(255, 255, 255, .08);
-  border: calc(1px * var(--s)) solid rgba(255, 255, 255, .16);
-  font-size: var(--t-meta);
-}
+.ply-right { gap: calc(4px * var(--s)); }
+.ply-bar .iconbtn { height: calc(52px * var(--s)); padding: 0 calc(16px * var(--s));
+  border-radius: 999px; background: none; border: 0; font-size: var(--t-meta); color: var(--ink2); }
 .ply-bar .iconbtn .ico { width: calc(28px * var(--s)); height: calc(28px * var(--s)); }
+.ply-bar .iconbtn.foc { background: rgba(229, 9, 20, .85); color: #fff; }
+/* A chip that is carrying a real choice — subtitles on, a track switched — keeps app.css's fill. With the
+   chips otherwise flat, that fill is the entire difference between "this exists" and "this is what is
+   playing right now", and my flat rule above would otherwise outrank it by arriving later in the cascade. */
+.ply-bar .iconbtn.on { background: rgba(255, 255, 255, .16); color: #fff; }
+
+/* The next episode waits at the right edge of the picture, a tab half out of frame, so it can be seen coming
+   without covering the episode that is still playing. Only a series ever has one. */
+.ply-edge { position: absolute; right: calc(-24px * var(--s)); top: calc(50% - 44px * var(--s)); z-index: 7; }
+.pbtn.edge { width: calc(88px * var(--s)); height: calc(88px * var(--s));
+  background: rgba(14, 16, 20, .66); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .18); }
+.pbtn.edge .ico { width: calc(38px * var(--s)); height: calc(38px * var(--s)); }
+.pbtn.edge.foc { background: rgba(229, 9, 20, .85); }
 
 /* Which player this is, and the speed if it is not 1x: honest, small, under the bar rather than inside it. */
-.ply-bottom .ctl { margin-top: calc(14px * var(--s)); padding: 0 calc(8px * var(--s)); color: var(--ink3); }
+.ply-bottom .ctl { margin-top: calc(12px * var(--s)); padding: 0 calc(4px * var(--s)); color: var(--ink3); }
 .ply-bottom .ctl .iconbtn { background: none; border: 0; padding: 0 calc(6px * var(--s)); height: auto;
   font-size: var(--t-meta); }
 
-/* Skip intro rides above the bar, on the same translucent surface as the transport. */
+/* Skip intro rides above the bar. Both this and the next-episode card are measured against the bar's top,
+   which is now a hairline and one row of flat buttons rather than a padded panel. */
 .skip {
-  right: calc(96px * var(--s)); bottom: calc(232px * var(--s));
+  right: calc(80px * var(--s)); bottom: calc(268px * var(--s));
   background: rgba(14, 16, 20, .72); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .26);
 }
 .skip.foc { background: #fff; color: #141414; }
 
 /* The next-episode card keeps app.css's opaque panel — it covers the picture, and a card that is half
    transparent over a moving film is unreadable in a different way. */
-.nextup { right: calc(96px * var(--s)); bottom: calc(330px * var(--s)); }
+.nextup { right: calc(80px * var(--s)); bottom: calc(370px * var(--s)); }

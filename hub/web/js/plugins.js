@@ -413,7 +413,11 @@ export function billboard(row, ctx) {
 
     if (item.overview) text.appendChild(el('div', { class: 'sub', text: item.overview }));
 
-    text.appendChild(el('div', { class: 'bb-btns' },
+    /* The buttons, the hub's own date line and the queue of the hub's other tiles are one block:
+       `.bb-btns` is the band the remote walks inside the billboard, and a focusable control left outside it
+       opens a band of its own whose box covers the whole picture. The date and the queue are told to take
+       the full width, which puts them on lines under the buttons instead of beside them. */
+    const btns = el('div', { class: 'bb-btns' },
       el('button', {
         class: 'btn big red', type: 'button', onclick: () => ctx.play(item),
       }, icon('play', { solid: true }), 'Play'),
@@ -422,7 +426,7 @@ export function billboard(row, ctx) {
       }, icon(on ? 'check' : 'plus'), on ? 'In My List' : 'My List'),
       el('button', {
         class: 'round', type: 'button', 'aria-label': 'More info', onclick: () => ctx.open(item),
-      }, icon('info'))));
+      }, icon('info')));
 
     const meta = [];
     meta.push(monthYear(item.releasedAt) || (item.year ? String(item.year) : ''));
@@ -431,9 +435,39 @@ export function billboard(row, ctx) {
     if (seasons) meta.push(`${seasons} Season${seasons === 1 ? '' : 's'}`);
     else if (Number(item.durationMs) > 0) meta.push(runtime(item.durationMs));
     const shown = meta.filter(Boolean);
-    if (shown.length) text.appendChild(el('div', { class: 'bb-meta', text: shown.join('  ·  ') }));
+    if (shown.length) btns.appendChild(el('div', { class: 'bb-meta', text: shown.join('  ·  ') }));
 
-    for (const b of text.querySelectorAll('.btn, .round')) focusable(b);
+    /* The tiles the hub queued behind the one that is up, in the hub's order wrapped around, each wearing
+       the wide art the hub carries for it and nothing else: a name repeated under a picture of itself is a
+       caption, and the line above already says it. The first is the tile on the screen — the largest, ringed
+       in the brand colour — and the two behind it step down beside it, bottom aligned. `data-nav="h"` makes
+       the row its own band, so one step down from the buttons is the next tile and one more step is the
+       first shelf, instead of the queue being skipped over. */
+    const held = document.activeElement;
+    const heldAt = held && held.classList && held.classList.contains('bb-thumb') ? held.dataset.at : null;
+    const queue = el('div', { class: 'bb-thumbs', 'data-nav': 'h' });
+    for (let k = 0; k < Math.min(3, items.length); k++) {
+      const at = (i + k) % items.length;
+      const tile = el('button', {
+        class: 'bb-thumb' + (k === 0 ? ' on' : ''), type: 'button',
+        dataset: { at: String(at) }, 'aria-label': items[at].title,
+        onclick: () => setItem(at),
+      });
+      // The hub's shared art helper: a tile whose picture is missing stays an empty panel rather than
+      // becoming a broken-image icon in the middle of the billboard.
+      art(tile, items[at].backdrop || items[at].poster, items[at].title);
+      queue.appendChild(tile);
+    }
+    btns.appendChild(queue);
+    text.appendChild(btns);
+
+    for (const b of text.querySelectorAll('.btn, .round, .bb-thumb')) focusable(b);
+    // A turn of the billboard carries the ring to the same tile in its new position, so the remote is never
+    // left holding a node that has just been thrown away.
+    if (heldAt !== null) {
+      const again = queue.querySelector(`.bb-thumb[data-at="${heldAt}"]`);
+      if (again) again.focus();
+    }
     return true;
   };
   setItem(0);
