@@ -388,6 +388,9 @@ async function pipeline(items, ctx) {
 
 function rowVisible(row, profile) {
   const scope = row.scope || 'all';
+  // An owner's choice is final before any rule runs: "do not show this row on the home screen" is not
+  // something a profile's age or a row's scope should be able to overrule.
+  if ((settings.get().rows || {}).hidden.includes(row.id)) return false;
   // A billboard is a SHAPE, not a content tier, so every profile gets one — including a child, whose
   // billboard is decided by the rules that run over its items (maturity, then the kids allowlist) rather
   // than by a second hero row for kids. rows/hero.js is scope 'all' and carries no adult-only content.
@@ -1590,6 +1593,12 @@ const server = http.createServer(async (req, res) => {
         // One entry per language: this map carries both ISO 639-2/T and the older bibliographic
         // spelling of the same language, and a screen that draws every key shows "French" twice.
         languageNames: ranking.LANG_UI,
+        // The rows this hub can put on a home screen, so a settings screen offers an owner the choice
+        // over exactly what exists here rather than a guessed-at list. A backend that hosts no rows of
+        // its own simply omits the key, and the control does not appear anywhere.
+        rows: registry.rows.map((r) => ({
+          id: r.id, title: r.title, card: r.card || 'card', scope: r.scope || 'all',
+        })),
         file: settings.FILE,
       });
     }
@@ -1623,6 +1632,7 @@ const server = http.createServer(async (req, res) => {
         hubName: next.hubName,
         playlist: (next.live || {}).playlist || '(none)',
         addons: effects.addonsResynced + ' remounted',
+        rows: next.rows.hidden.length + ' hidden, ' + (next.rows.order.length ? 'owner order' : 'plugin order'),
       }));
       return send(res, 200, { ok: true, settings: next, effects });
     }
@@ -1716,6 +1726,15 @@ const server = http.createServer(async (req, res) => {
           items: await buildRow(row, ctx, HOME_BUDGET_MS),
         })),
       );
+      // Owner order, applied once the rows exist: names in `rows.order` come first in that sequence and
+      // everything else keeps the order its plugin asked for, so a hub gains a row plugin and the screen
+      // still places it sensibly without the owner having to re-list every row.
+      const wanted = (settings.get().rows || {}).order || [];
+      if (wanted.length) {
+        const rank = new Map(wanted.map((id, i) => [id, i]));
+        built.sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : wanted.length)
+          - (rank.has(b.id) ? rank.get(b.id) : wanted.length));
+      }
       // Then one pass over the finished screen: billboard to the front, and not the same title twice
       // (see arrangeHome). Every row is already built and ruled, so this costs nothing but a Set.
       return send(res, 200, { rows: arrangeHome(built) });

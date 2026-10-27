@@ -47,6 +47,11 @@ const DEFAULTS = {
   live: { playlist: '' },
   // How the addon host behaves. These were env-var constants; they are the owner's to set now.
   addons: { maxSources: 12, minSizeMB: 100, sizeFilter: '200MB-1.5GB,1.5GB-8GB' },
+  // Which of this hub's home rows a viewer sees, and in what order. Both lists are empty by default:
+  // every hub ships the rows its own plugins define, in the order those plugins ask for, and an owner's
+  // edits land here as an override rather than a rewrite. `hidden` names rows to leave off the screen;
+  // `order` is the sequence they should appear in, with anything it does not mention following behind.
+  rows: { hidden: [], order: [] },
   // Generated profile faces. Empty means this hub does not proxy any avatar service and a client draws
   // its own; pointing it at one (self-hosted or public) makes the hub fetch and cache through it, so the
   // TV still only ever talks to this box.
@@ -86,6 +91,16 @@ function normalizeLanguages(raw) {
   return out;
 }
 
+/** Row ids come from a screen that listed them, so they only need trimming and de-duplicating. */
+function idList(raw) {
+  const out = [];
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const id = String(item || '').trim().slice(0, 64);
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
 function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
@@ -96,6 +111,10 @@ function normalize(s) {
       minSizeMB: Math.max(0, Math.min(10000, Number((s.addons || {}).minSizeMB) || DEFAULTS.addons.minSizeMB)),
       sizeFilter: String((s.addons || {}).sizeFilter == null
         ? DEFAULTS.addons.sizeFilter : (s.addons || {}).sizeFilter).trim().slice(0, 200),
+    },
+    rows: {
+      hidden: idList((s.rows || {}).hidden),
+      order: idList((s.rows || {}).order),
     },
     avatar: {
       baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300),

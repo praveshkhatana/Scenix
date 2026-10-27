@@ -33,6 +33,7 @@ export function screen(ctx) {
   let names = {};          // /app/v1/settings → languageNames, supplied by the hub
   let prefs = null;        // /app/v1/prefs → prefs
   let installed = [];      // /app/v1/addons → addons
+  let rowList = null;      // /app/v1/settings → rows, when this backend has any to offer
   let busy = false;
 
   root.appendChild(el('div', { class: 'page-head' },
@@ -289,6 +290,64 @@ export function screen(ctx) {
       right.appendChild(g);
     }
 
+    /* ---------------------------------------------------------------- home rows */
+
+    // Which shelves a home screen shows is the owner's call, not the hub's: one household wants a live
+    // TV row, another never watches television and would rather it were not there at all. A backend that
+    // hosts no rows (a standalone app with nothing installed yet) reports none, and this whole section
+    // stays off the page rather than showing an empty list of choices.
+    if (rowList && rowList.length && caps.settingsAdmin) {
+      const g = group('Home rows', 'Turn a shelf off and it stops appearing on the home screen for everyone. The order below is the order the home screen draws them in.');
+      const hidden = new Set(((setting.rows || {}).hidden) || []);
+      const named = ((setting.rows || {}).order) || [];
+      const orderOf = () => {
+        const listed = named.filter((id) => rowList.some((r) => r.id === id));
+        return [...listed, ...rowList.map((r) => r.id).filter((id) => !listed.includes(id))];
+      };
+      const writeRows = (patch) => writeSettings({ rows: Object.assign({}, setting.rows, patch) });
+
+      for (const id of orderOf()) {
+        const row = rowList.find((r) => r.id === id);
+        if (!row) continue;
+        const li = line(row.title || row.id, row.scope === 'all' ? 'Shown to every profile'
+          : row.scope === 'kids' ? 'Kids profiles only' : 'Adult profiles only');
+        const sw = el('button', {
+          class: `sw${hidden.has(row.id) ? '' : ' on'}`, type: 'button', role: 'switch',
+          'aria-checked': hidden.has(row.id) ? 'false' : 'true', 'aria-label': `${row.title || row.id} shown`,
+        });
+        focus.focusable(sw);
+        sw.onclick = async () => {
+          // `off` is where this click is taking the row, not where it already was: a row drawn as on is
+          // being switched off, which is the one case that has to land in `hidden`.
+          const off = sw.classList.contains('on');
+          sw.classList.toggle('on', !off);
+          sw.setAttribute('aria-checked', off ? 'false' : 'true');
+          const nextHidden = new Set(hidden);
+          if (off) nextHidden.add(row.id); else nextHidden.delete(row.id);
+          hidden.clear(); for (const h of nextHidden) hidden.add(h);
+          await writeRows({ hidden: [...nextHidden] });
+        };
+        li.appendChild(sw);
+        const seq = orderOf();
+        const at = seq.indexOf(row.id);
+        const move = (delta, aria) => {
+          const b = roundBtn(delta < 0 ? 'chevUp' : 'chevDown', async () => {
+            const to = seq.slice();
+            const j = at + delta;
+            if (j < 0 || j >= to.length) return;
+            to.splice(at, 1); to.splice(j, 0, row.id);
+            await writeRows({ order: to });
+          }, aria);
+          if (at + delta < 0 || at + delta >= seq.length) b.disabled = true;
+          li.appendChild(b);
+        };
+        move(-1, `Move ${row.title || row.id} earlier`);
+        move(1, `Move ${row.title || row.id} later`);
+        g.appendChild(li);
+      }
+      right.appendChild(g);
+    }
+
     /* --------------------------------------------------------------- add-ons */
 
     // The registry is the hub's, so the page shows what it reports rather than assuming a fixed set: an
@@ -445,6 +504,7 @@ export function screen(ctx) {
       profile.id ? api.prefs(profile.id).catch(() => null) : Promise.resolve(null),
       caps.addonAdmin ? api.addons().catch(() => null) : Promise.resolve(null),
     ]);
+    rowList = Array.isArray(s && s.rows) ? s.rows : null;
     const ad = a3 ? (a3.addons || []) : null;
     installed = Array.isArray(ad) ? ad : null === ad ? [] : ad;
     setting = s ? (s.settings || s) : null;
