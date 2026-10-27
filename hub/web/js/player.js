@@ -173,6 +173,13 @@ class NativeBackend {
       type: opts.type || 'movie',
       season: opts.season,
       episode: opts.episode,
+      // Which audio and subtitle languages this household asks for, in its own order. Without them the
+      // shell's track selector falls back to the Android locale, so a Hindi-first viewer on an English
+      // menu system gets whatever the file's packager happened to flag as default.
+      audioLanguages: ((session.profile && session.profile.prefs && session.profile.prefs.audioLanguages) || [])
+        .join(','),
+      subtitleLanguages: ((session.profile && session.profile.prefs && session.profile.prefs.subtitleLanguages) || [])
+        .join(','),
       torrent: target.torrent || undefined,
       kind: target.kind || undefined,
     };
