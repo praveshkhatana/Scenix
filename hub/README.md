@@ -264,6 +264,11 @@ copy rather than play it badly: this hub never transcodes video, so on a browser
 H.265 file is not lower quality, it is a black screen with working sound. A client declares the codecs it
 can draw in `POST /app/v1/play` (`codecs: [...]`, empty for a device that decodes whatever the file holds),
 and a copy outside that list is held back for one inside it even when the household ranking preferred it.
+A record counts as a measurement only when `ffprobe` exited successfully *and* described at least one
+stream: it prints an empty object on stdout when it never managed to open the file, and believing that
+would have written "no audio, no subtitles, H.265 unknown" over an accurate description for weeks. A
+failed re-read therefore keeps the facts of the last good one, stamped with the probe they came from
+(`factsAt`), so a refused connection or an engine 404 costs nothing but the retry.
 `data/hls/` — the playlists and segments for one browser asking for HLS; a job nobody asks for any more
 loses its `ffmpeg` and its directory within a sweep interval.
 **`profiles.json` is not in the repo**: it names real people, so only `profiles.example.json` (generic ids
