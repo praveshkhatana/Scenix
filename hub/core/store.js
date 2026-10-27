@@ -198,12 +198,26 @@ class Store {
    * household cannot be removed: with no profile there is no home screen, and a box that boots to a blank
    * page is worse than a box that keeps one adult.
    */
+  /**
+   * A profile id is a handle, never a label. Slugifying the name put one household's names into every
+   * data file on somebody else's box, and it meant that renaming a child orphaned that child's watch
+   * history, because the history was filed under the old spelling. So ids are handed out as numbers, in
+   * order, and the name stays free to change for the rest of the profile's life.
+   */
+  nextProfileId(list) {
+    let top = 1000; // four digits and up, so an id never reads as an age, a year or a channel number
+    for (const p of list || []) {
+      const n = Number(String((p && p.id) || ''));
+      if (Number.isFinite(n) && n >= top) top = Math.floor(n) + 1;
+    }
+    return String(top);
+  }
+
   addProfile(spec = {}) {
     const name = String(spec.name || '').trim();
     if (!name) return { error: 'a profile needs a name' };
-    const id = String(spec.id || '').trim()
-      || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'p';
     const list = this.profiles();
+    const id = String(spec.id || '').trim() || this.nextProfileId(list);
     if (list.some((x) => String(x.id) === id)) return { error: 'that profile already exists', id };
     const next = [...list, {
       id,

@@ -10,41 +10,67 @@
   ],
   "profiles": [
     {
-      "id": "adult1",
+      "id": "1000",
       "name": "Adult 1",
       "kind": "adult",
       "pinRequired": true,
       "rules": {}
     },
     {
-      "id": "adult2",
+      "id": "1001",
       "name": "Adult 2",
       "kind": "adult",
       "pinRequired": false,
-      "rules": { "size-cap": { "maxBytes": 4000000000 } }
+      "rules": {
+        "size-cap": {
+          "maxBytes": 4000000000
+        }
+      }
     },
     {
-      "id": "kid1",
+      "id": "1002",
       "name": "Kid 1",
       "kind": "kids",
       "age": 15,
       "pinRequired": false,
-      "languages": ["hin", "eng", "pan"],
+      "languages": [
+        "hin",
+        "eng",
+        "pan"
+      ],
       "rules": {
-        "language-allowlist": { "allow": ["hin", "eng", "pan"] },
-        "kids-allowlist": { "maxAge": 15 }
+        "language-allowlist": {
+          "allow": [
+            "hin",
+            "eng",
+            "pan"
+          ]
+        },
+        "kids-allowlist": {
+          "maxAge": 15
+        }
       }
     },
     {
-      "id": "kid2",
+      "id": "1003",
       "name": "Kid 2",
       "kind": "kids",
       "age": 11,
       "pinRequired": false,
-      "languages": ["hin", "eng"],
+      "languages": [
+        "hin",
+        "eng"
+      ],
       "rules": {
-        "language-allowlist": { "allow": ["hin", "eng"] },
-        "kids-allowlist": { "maxAge": 11 }
+        "language-allowlist": {
+          "allow": [
+            "hin",
+            "eng"
+          ]
+        },
+        "kids-allowlist": {
+          "maxAge": 11
+        }
       }
     }
   ]
