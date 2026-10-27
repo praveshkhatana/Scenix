@@ -78,10 +78,6 @@ export function screen(ctx, identity) {
   const playIco = btnPlay.querySelector('.ico');
   const btnFwd = pbtn('fwd', '', 'Forward 10s', () => player.seekBy(10000), 'fwd');
   const btnNext = pbtn('next', '', 'Next episode', () => playNext());
-  const bar = el('div', { class: 'ply-bar' },
-    trk, el('div', { class: 'times' }, tLeft, tRight),
-    el('div', { class: 'pbtns' }, btnBack, btnRew, btnPlay, btnFwd, btnNext));
-
   const tool = (name, label, fn, val) => {
     const b = el('button', { class: 'iconbtn', type: 'button', 'aria-label': label, title: label,
       onclick: () => fn() }, icon(name), el('span', { text: label }));
@@ -94,11 +90,22 @@ export function screen(ctx, identity) {
   const btnSpeed = tool('speed', 'Speed', () => openMenu('speed'), '1x');
   const btnQuality = tool('globe', 'Quality', () => openMenu('quality'), qualityLabel());
   const rate = el('span', { class: 'rate' });
+
+  /* One surface, two rows: where the programme is (elapsed, the track, what is left) and what you can do
+     to it (the transport on the left, the menus that open panels on the right). Both rows live inside
+     `.ply-bar`, which is the band the D-pad steps along — a control outside it would be a row nobody can
+     reach from the transport without leaving the floor of the screen. */
+  const bar = el('div', { class: 'ply-bar' },
+    el('div', { class: 'times' }, tLeft, trk, tRight),
+    el('div', { class: 'pbtns' }, btnBack, btnRew, btnPlay, btnFwd, btnNext,
+      el('div', { class: 'ply-right' }, btnSub, btnAudio, btnSpeed, btnQuality)));
+
+  // Which player answered, and the speed if it is not 1x: below the bar, where a person can read it
+  // without it competing with the thing they are pressing.
   const ctl = el('div', { class: 'ctl' },
     el('span', { class: 'iconbtn dim' }, icon(player.backend === 'native' ? 'tv' : 'external'),
       el('span', { text: player.backend === 'native' ? 'TV player' : 'Browser player' })),
-    rate,
-    el('div', { class: 'ply-right' }, btnSub, btnAudio, btnSpeed, btnQuality));
+    rate);
   const bottom = el('div', { class: 'ply-bottom ply-fade' }, bar, ctl);
 
   const skip = el('button', { class: 'skip', type: 'button', text: 'Skip intro',
@@ -498,7 +505,9 @@ export function screen(ctx, identity) {
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       const a = document.activeElement;
-      if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn'))) {
+      // The track is the scrubber; the transport buttons and the menu chips in the same row step along the
+      // band instead. Same rule as before the chips moved into the bar — they just have to be named now.
+      if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
         player.seekBy(key === 'ArrowLeft' ? -10000 : 10000);
         return true;
       }

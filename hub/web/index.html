@@ -17,6 +17,9 @@
 -->
 <link rel="icon" href="/ui/assets/scenix-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/ui/app.css">
+<!-- The billboard, the detail page and the player chrome. Loaded after app.css on purpose: it overrides
+     app.css's shapes for those screens and adds the elements they draw, and it never redefines a token. -->
+<link rel="stylesheet" href="/ui/css/screens.css">
 </head>
 <body>
   <!-- The screen router mounts one screen at a time into #stage. -->

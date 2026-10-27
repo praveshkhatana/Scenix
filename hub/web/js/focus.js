@@ -86,13 +86,13 @@ function groupMembers(group, node) {
 
 function rectOf(node) { return node.getBoundingClientRect(); }
 
-function geometric(from, dir) {
+function geometric(from, dir, pool) {
   const a = rectOf(from);
   const acx = a.left + a.width / 2;
   const acy = a.top + a.height / 2;
   let best = null;
   let bestScore = Infinity;
-  for (const cand of candidates()) {
+  for (const cand of (pool || candidates())) {
     if (cand === from) continue;
     const b = rectOf(cand);
     const bcx = b.left + b.width / 2;
@@ -194,9 +194,16 @@ export function move(dir) {
   if (!next) {
     if (dir === 'up' || dir === 'down') {
       next = bandStep(current, dir);
-      // Inside a band the neighbouring band is the only honest answer. Pure geometry would happily
-      // walk back into a card that is merely scrolled behind the fixed menu bar.
-      if (!next && !bandOf(current)) next = geometric(current, dir);
+      // A band's neighbour is the only honest answer for leaving it: pure geometry would happily walk
+      // back into a card that is merely scrolled behind the fixed menu bar. But a band is often taller
+      // than the screen - an avatar picker with three rails in it - and then the way on is still down,
+      // and refusing it strands the ring on the last row the viewer can see. So geometry gets the last
+      // word, restricted to the band we are already standing in: the menu bar stays out of the running,
+      // and a grid still reaches its own next row and the rails beneath it.
+      if (!next) {
+        const band = bandOf(current);
+        next = geometric(current, dir, band ? candidates().filter((n) => band.contains(n)) : null);
+      }
     } else next = geometric(current, dir);
   }
   if (!next) return false;

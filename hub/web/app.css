@@ -833,7 +833,19 @@ body.native-live, html.native-live { background: transparent; }
 */
 .pfoot { display: flex; gap: calc(28px * var(--s)); margin-top: calc(48px * var(--s)); }
 .pfoot .manage { margin-top: 0; }
-.mbox.avpick { width: calc(1280px * var(--s)); }
+/* The picker is taller than any television, so the box itself scrolls. It used to be that the grid inside
+   it had its own overflow while the box did not: three rails and a palette row sat in a box that could not
+   move, the far rail was clipped, and the remote walked the ring into an area nothing could bring back on
+   screen. One scroller, the box, is what a D-pad can actually drive. */
+.mbox.avpick {
+  width: calc(1280px * var(--s));
+  max-height: calc(1000px * var(--s));
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; scroll-behavior: auto; scrollbar-width: none;
+}
+.mbox.avpick::-webkit-scrollbar { width: 0; }
+/* One style the hub cannot reach is a dimmed tile, not a browser's broken-image glyph. */
+.avchar.avgone { opacity: .3; }
 /* A text modal has to hold a whole keyboard row - ten keys at 72 px plus their gaps and the box's own
    padding - which is wider than the default modal. */
 .mbox.text { width: calc(900px * var(--s)); }
@@ -1164,8 +1176,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
    the bottom of the page. */
 .avchars.avfaces {
   display: flex; flex-wrap: wrap; align-content: flex-start; justify-content: center;
-  gap: calc(14px * var(--s)); overflow: auto;
-  max-height: calc(520px * var(--s));
+  gap: calc(14px * var(--s));
   padding: calc(10px * var(--s)) calc(4px * var(--s)) calc(14px * var(--s));
   scrollbar-width: none; scroll-behavior: auto;
 }

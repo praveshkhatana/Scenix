@@ -162,7 +162,10 @@ export function screen(ctx) {
         const cell = el('button', {
           class: 'avchar', type: 'button', 'aria-label': g.label, dataset: { gen: g.id },
           onclick: () => { Object.assign(spec, generatorSpec(g.id, faceSeed(), spec.palette, spec.fallback)); keep(); },
-        }, el('img', { class: 'av-photo', src: generatorUrlSafe(g.id, faceSeed(), spec.palette), alt: '' }));
+        }, el('img', {
+          class: 'av-photo', src: generatorUrlSafe(g.id, faceSeed(), spec.palette), alt: '',
+          onerror: () => { cell.classList.add('avgone'); },
+        }));
         focus.focusable(cell);
         gens.appendChild(cell);
       }
@@ -198,7 +201,7 @@ export function screen(ctx) {
       });
     }
     async function reroll() {
-      const list = await characterFaces(faceSeed(), 40, variant > 0).catch(() => []);
+      const list = await characterFaces(faceSeed(), RAIL, variant > 0).catch(() => []);
       if (list.length) drawFaces(list);
     }
 
@@ -227,7 +230,7 @@ export function screen(ctx) {
     // The hub's cached faces lead the picker: they are the ones a person recognises. Asked for before the modal
     // mounts so the rail is already inside the focus scope, and a hub with nothing cached just produces a
     // shorter picker. One quiet credit line, in the picker and nowhere else.
-    const got = await characterFaces(faceSeed(), 40).catch(() => []);
+    const got = await characterFaces(faceSeed(), RAIL).catch(() => []);
     drawFaces(got);
     /* The credit is built from what the hub says each face came from. Nothing here names an upstream, so a hub
        that changes its sources changes the credit by itself. */
@@ -236,6 +239,19 @@ export function screen(ctx) {
       const c = f.from || f.source;
       if (c && !credits.includes(c)) credits.push(c);
     }
+    /* The generated rail is a proxy, and a hub with no generator configured answers 503 for every style in
+       it. That is not a rail, it is a row of broken pictures, so ask for one face before offering the lot: a
+       deployment that cannot serve them simply does not show them, and the picker gets shorter instead of
+       looking broken. */
+    const genOk = await new Promise((done) => {
+      const src = generatorUrlSafe(GENERATED[0].id, seed, spec.palette);
+      if (!src) { done(false); return; }
+      const probe = new Image();
+      probe.onload = () => done(true);
+      probe.onerror = () => done(false);
+      probe.src = src;
+    });
+
     const parts = [
       el('h2', { text: 'Choose an avatar' }),
       el('div', { class: 'who', text: `${profile.name} — move to preview, OK to keep, Back to leave it alone` }),
@@ -244,8 +260,8 @@ export function screen(ctx) {
       got.length ? facesRail : null,
       got.length ? el('div', { class: 'avcred', text: `Faces: ${credits.length ? credits.join(', ') : 'this hub'}` }) : null,
       more,
-      el('div', { class: 'avlabel', text: 'Generated faces' }),
-      gens,
+      genOk ? el('div', { class: 'avlabel', text: 'Generated faces' }) : null,
+      genOk ? gens : null,
       el('div', { class: 'avlabel', text: 'Scenix faces' }),
       chars,
       el('div', { class: 'avlabel', text: 'Colours' }),
@@ -425,6 +441,10 @@ export function screen(ctx) {
 }
 
 /** An unreachable avatar API must not take the picker down with it. */
+// How many faces one roll of the shelf shows. The hub caps the rail itself and reshuffles the rest behind
+// "Another set", so this is a screenful-and-a-bit, not the size of the catalogue.
+const RAIL = 60;
+
 function generatorUrlSafe(styleId, seed, palette) {
   try { return generatorSpec(styleId, seed, palette).src; } catch (e) { return ''; }
 }

@@ -303,7 +303,42 @@ export function dropMountedRows() {
  * The billboard is the `hero` row drawn as one big still instead of as cards — the same registry, a
  * different renderer. Its shape lives here so the home screen only says "this row is a hero row" and then
  * rotates through what the hub put in it.
+ *
+ * Every line under the picture is a field the hub sent for this tile: the title's own lettering, the
+ * number its addons rated it by, the place the hub gave it on its featured board, the story, and the
+ * date, genre and length it carries. A tile without one of those has no line for it. A word invented on
+ * the billboard is a claim about a title that nobody in the house can check.
  */
+
+/**
+ * The number the hub gave a tile, in the unit the hub said it in. `rating` is the field rows/hero.js puts
+ * on a billboard tile; an object is read as { value, source }, a bare number as the value alone.
+ */
+function ratingOf(item) {
+  const r = item.rating;
+  if (r === undefined || r === null) return null;
+  const value = Number(typeof r === 'object' ? r.value : r);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const source = (typeof r === 'object' && r.source) ? String(r.source) : 'Rating';
+  return { value, source };
+}
+
+/** "Jan 2026" — the month and year the hub dated this title with, never a day it cannot know. */
+function monthYear(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  try { return new Date(n).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }); }
+  catch (e) { return ''; }
+}
+
+/** How many seasons the hub's own episode list covers. */
+function seasonCount(item) {
+  if (!Array.isArray(item.episodes) || !item.episodes.length) return 0;
+  const seen = new Set();
+  for (const e of item.episodes) seen.add(e && e.season !== undefined ? e.season : 1);
+  return seen.size;
+}
+
 export function billboard(row, ctx) {
   const max = token('hero', 'maxItems', 5);
   const items = (row.items || []).slice(0, max);
@@ -316,9 +351,18 @@ export function billboard(row, ctx) {
   }
   const preview = el('div', { class: 'preview' }, el('div', { class: 'scrim' }));
   const text = el('div', { class: 'bb' });
+  /* Rotation status, not a control: the dots say which of the hub's tiles is up and how many there are.
+     They stay outside `.bb-btns` because home.js re-registers that band after every turn and treats one
+     step down from it as the way onto the first shelf — a second line of small targets along the bottom
+     edge would sit in that step. A mouse can still click one. */
+  const dots = el('div', { class: 'bb-dots', 'aria-hidden': 'true' });
+  for (let i = 0; i < items.length; i++) {
+    dots.appendChild(el('button', { class: 'bb-dot', type: 'button', tabindex: '-1', onclick: () => setItem(i) }));
+  }
   slot.appendChild(arts);
   slot.appendChild(preview);
   slot.appendChild(text);
+  slot.appendChild(dots);
 
   let index = -1;
   let prevIndex = -1;
@@ -332,36 +376,46 @@ export function billboard(row, ctx) {
       // The title that is leaving keeps its own slide for a moment so the two never occupy the same frame.
       arts.children[k].classList.toggle('out', k === prevIndex && prevIndex !== i);
     }
+    for (let k = 0; k < dots.children.length; k++) dots.children[k].classList.toggle('on', k === i);
 
     const on = inMyList(item.identity);
-    const rt = runtime(item.durationMs);
-    const facts = [];
-    if (item.match) facts.push(el('span', { class: 'match', text: `${item.match}% match` }));
-    if (item.year) facts.push(el('span', { text: String(item.year) }));
-    if (item.maturity) facts.push(el('span', { class: 'matbox', text: item.maturity }));
-    if (rt) facts.push(el('span', { text: rt }));
-    if (item.languages && item.languages.length) facts.push(el('span', { text: langList(item.languages) }));
-    if (item.type === 'series' && item.episodes && item.episodes.length) {
-      facts.push(el('span', { text: `${item.episodes.length} episodes` }));
-    }
-
-    const why = (item.why && item.why[0]) || (item.sources && item.sources[0] && item.sources[0].why && item.sources[0].why[0]);
     clear(text);
     // The kicker is the sheet's first line: whose shelf this is, and what kind of thing it is holding.
     const kind = item.type === 'live' ? 'Live TV' : item.type === 'series' ? 'Series' : 'Movie';
     text.appendChild(el('div', { class: 'kicker' }, el('b', { text: 'Scenix' }), el('span', { text: kind })));
-    if (item.logo) {
-      text.appendChild(el('img', { class: 'logo', src: item.logo, alt: item.title }));
-    } else {
-      text.appendChild(el('h1', { text: item.title }));
+    // The title as artwork when the hub has lettering for it, and as heavy type when it does not.
+    if (item.logo) text.appendChild(el('img', { class: 'logo', src: item.logo, alt: item.title }));
+    else text.appendChild(el('h1', { text: item.title }));
+
+    const rating = ratingOf(item);
+    if (rating || Number(item.match) > 0) {
+      const line = el('div', { class: 'bb-rating' });
+      line.appendChild(el('span', { class: 'rsrc', text: rating ? rating.source : 'Match' }));
+      if (rating) {
+        line.appendChild(el('span', { class: 'rnum', text: rating.value.toFixed(1) }));
+        line.appendChild(icon('star', { solid: true }));
+      } else {
+        /* A hub that has not been rebuilt answers with `match` only — the same addon signal in per-cent —
+           so it is printed as a percentage instead of being dressed up as a star score. */
+        line.appendChild(el('span', { class: 'rnum', text: `${item.match}%` }));
+      }
+      if (item.maturity) line.appendChild(el('span', { class: 'matbox', text: item.maturity }));
+      else if (Number(item.minAge) > 0) line.appendChild(el('span', { class: 'matbox', text: `${item.minAge}+` }));
+      text.appendChild(line);
     }
-    if (item.tagline) text.appendChild(el('div', { class: 'tagline', text: item.tagline }));
+
+    // Where the hub put this title on its own featured board, when the hub said so.
+    const board = item.board;
+    if (board && Number.isFinite(Number(board.rank))) {
+      text.appendChild(el('div', { class: 'trend' },
+        el('b', { text: `#${board.rank}` }), el('span', { text: board.list || '' })));
+    }
+
     if (item.overview) text.appendChild(el('div', { class: 'sub', text: item.overview }));
-    if (facts.length) text.appendChild(el('div', { class: 'mat' }, facts));
-    if (why) text.appendChild(el('div', { class: 'why', text: why }));
+
     text.appendChild(el('div', { class: 'bb-btns' },
       el('button', {
-        class: 'btn big white', type: 'button', onclick: () => ctx.play(item),
+        class: 'btn big red', type: 'button', onclick: () => ctx.play(item),
       }, icon('play', { solid: true }), 'Play'),
       el('button', {
         class: 'btn big ghost', type: 'button', onclick: () => { ctx.list(item); setItem(index); },
@@ -369,6 +423,16 @@ export function billboard(row, ctx) {
       el('button', {
         class: 'round', type: 'button', 'aria-label': 'More info', onclick: () => ctx.open(item),
       }, icon('info'))));
+
+    const meta = [];
+    meta.push(monthYear(item.releasedAt) || (item.year ? String(item.year) : ''));
+    if (Array.isArray(item.genres) && item.genres[0]) meta.push(item.genres[0]);
+    const seasons = seasonCount(item);
+    if (seasons) meta.push(`${seasons} Season${seasons === 1 ? '' : 's'}`);
+    else if (Number(item.durationMs) > 0) meta.push(runtime(item.durationMs));
+    const shown = meta.filter(Boolean);
+    if (shown.length) text.appendChild(el('div', { class: 'bb-meta', text: shown.join('  ·  ') }));
+
     for (const b of text.querySelectorAll('.btn, .round')) focusable(b);
     return true;
   };

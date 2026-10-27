@@ -122,9 +122,14 @@ function score(it, ctx) {
   return s;
 }
 
+// The row's own name. The home route nulls a hero row's `title` on the way out (the billboard has no
+// heading over it), so the name has to ride on the tile for the app to be able to say where a tile came
+// from. It is this shelf's name, not a chart the hub is quoting.
+const TITLE = 'Featured';
+
 module.exports = {
   id: 'hero',
-  title: 'Featured', // never rendered — see the header; the registry requires every row to name itself
+  title: TITLE, // never rendered — see the header; the registry requires every row to name itself
   card: 'hero',
   order: 0, // before continue (10): the billboard is the first thing on the screen
   scope: 'all',
@@ -155,6 +160,11 @@ module.exports = {
       out.push(it);
       if (out.length >= CANDIDATES) break;
     }
+    // The app can say where a billboard tile came from, in the hub's own words: this shelf, this place in
+    // it. The rank is the order these rules produced, before the home route drops a tile that also sits on
+    // a shelf below and before it trims to the number of tiles that rotate — so the numbers can skip, and
+    // a #7 here really is the seventh thing this box thought the household should see.
+    out.forEach((it, i) => { it.board = { rank: i + 1, total: out.length, list: TITLE }; });
     return out;
   },
 };
