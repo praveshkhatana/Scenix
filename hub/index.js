@@ -215,6 +215,85 @@ function wireProfile(p) {
   return { ...rest, pinSet, locked: pinSet && !!p.pinRequired, effectivePrefs: prefs.resolve(p) };
 }
 
+/* ------------------------------------------------------------------ adult acts
+
+   The lock on a profile holds *that profile's* settings down, and it has never covered making a profile or
+   taking one away. On a hub where the grown-ups' profiles are the ones with numbers and the children's are not,
+   that leaves a door a child can walk through without touching a lock: add an adult profile, read the whole
+   catalogue through it, remove it again, and the household is left exactly as it was - which is what the owner
+   found, with the latenight row switched off and adult titles still on the home screen, because a profile whose
+   kind is `adult` has no age ceiling at all (rules/maturity.js) and tier-2 titles need no switch.
+
+   So these are named as adult acts, whoever is standing in front of the TV when they happen:
+
+     · adding a profile that is not a Kids one. A new Kids profile is harmless and stays free: whatever age is
+       written on it, the hub holds it to its own ceiling, and a child adding a playmate costs nothing.
+     · removing a profile that has no number of its own to produce.
+     · raising a Kids profile into the adult band, or raising the age it is held to.
+     · switching on the dark-red zone, which rules/maturity.js calls "a switch the household turns on".
+
+   The proof is the PIN of a profile that is already an adult's. If nobody on this hub has a number there is
+   nothing to ask, and the act stays free: the hub never invents a PIN, and a guard that refused everything
+   would be a lock-out of this file's making. Every refusal says so in the same shape - `gate: 'profiles'` -
+   so a screen can tell "this act belongs to an adult" apart from "you typed the wrong number".
+*/
+function pinHolders() {
+  return store.profiles().filter((p) => p.pin != null && String(p.pin).trim() !== '');
+}
+
+/**
+ * The numbers that open an adult act: an adult profile's, and on a hub that has put a number only on a child's
+ * profile, that number too. There it is the only proof anyone here has, and refusing it would lock the
+ * household out of its own settings rather than keep anyone out of anything.
+ */
+function adultHolders() {
+  const held = pinHolders();
+  const grown = held.filter((p) => p.kind !== 'kids');
+  return grown.length ? grown : held;
+}
+
+function proofGiven(body) {
+  return !body || body.pinCurrent == null ? '' : String(body.pinCurrent).trim();
+}
+
+/** Does this request carry a number an adult act needs? True when there is no number here to need. */
+function adultProofOk(body) {
+  const holders = adultHolders();
+  if (!holders.length) return true;
+  const given = proofGiven(body);
+  if (!given) return false;
+  return holders.some((p) => String(p.pin).trim() === given);
+}
+
+/** The refusal itself, worded by whether a wrong number was typed or none was offered. */
+function refuseAdult(res, body, act) {
+  const given = proofGiven(body);
+  const error = given
+    ? `that PIN is not the PIN of an adult profile here, and one is needed to ${act}`
+    : `an adult PIN is needed to ${act}`;
+  log('PROFILE LOCK REFUSED', act, given ? 'the number offered is not an adult profile’s' : 'no number offered');
+  return send(res, 403, { error, gate: 'profiles' });
+}
+
+/**
+ * Is this proposed change one an adult has to make? Two ways it can be: the ceiling a profile is held to goes up
+ * (a Kids profile moved into the adult band, or a child's age raised past where it was), or the filters that
+ * decide what a Kids profile may see are rewritten at all.
+ *
+ * The second half is deliberately coarse. The hub can tell that a Kids profile's rules or language list is being
+ * edited, not whether this particular edit widens the shelf or narrows it, and a child who narrows their own
+ * shelf today can widen it again tomorrow with nothing on the screen to notice. Tightening stays free in the two
+ * places the hub can see the direction for certain: the kind and the age.
+ */
+function isAdultChange(held, patch) {
+  if (!held) return false;
+  if ('kind' in patch && patch.kind !== 'kids' && held.kind === 'kids') return true;
+  if ('age' in patch && held.kind === 'kids'
+    && maturityRule.ceilingOf({ kind: 'kids', age: patch.age }) > maturityRule.ceilingOf(held)) return true;
+  if (held.kind === 'kids' && ('rules' in patch || 'languages' in patch)) return true;
+  return false;
+}
+
 /**
  * Legacy addon-compat keeps the old behaviour exactly: the request waits for the playlist (the
  * single-file addon did `await refresh()` before routing). App routes never wait - they read cache.
@@ -1879,7 +1958,12 @@ const server = http.createServer(async (req, res) => {
     // verified by this process and never read back, which is what turns "ask for four digits" from
     // theatre into a gate.
     if (path === '/app/v1/profiles' && req.method === 'POST') {
-      const out = store.addProfile(await readBody(req));
+      const body = await readBody(req);
+      /* The ceiling a new profile starts behind is the whole point of the household's locks, so choosing it is
+         an adult act: a Kids profile is held to the hub's ceiling by its rules whatever the number on it says,
+         and an adult one has no ceiling at all. A hub where nobody has a PIN yet adds freely. */
+      if (body && body.kind !== 'kids' && !adultProofOk(body)) return refuseAdult(res, body, 'add a profile');
+      const out = store.addProfile(body);
       if (out.error) return send(res, 400, { error: out.error });
       invalidateCaches();
       return send(res, 200, { ok: true, profile: wireProfile(out.profile) });
@@ -1900,7 +1984,7 @@ const server = http.createServer(async (req, res) => {
       }
       // A PIN and the wish to be asked for one are a single decision, not two fields that happen to sit next
       // to each other. A stored number with no flag is a gate that never opens; the flag without a number is
-      // a wall that checks nothing - Bankelal was left standing behind exactly that when a test PIN was
+      // a wall that checks nothing - one profile was left standing behind exactly that when a test PIN was
       // deleted, and an older client could put any household there. So the backend keeps them together and
       // refuses to hold the half-state at all.
       if ('pin' in patch) {
@@ -1917,7 +2001,15 @@ const server = http.createServer(async (req, res) => {
          profile has to be produced before the profile's own settings - its PIN, its mode, its ceiling,
          the rules that decide what it may see - can be moved, so one household member cannot quietly
          change another's gate, and a child cannot lift their own ceiling by posting parameters. */
-      const held = store.profile(m[1]);
+      /* `store.profile(id)` falls back to the household's first profile when the id is unknown, and a lock is
+         judged against the person named in the URL or against nobody: the record is looked up by id here, so a
+         request for a profile that does not exist is answered 404 further down instead of being refused with
+         somebody else's PIN. */
+      const held = store.profiles().find((p) => String(p.id) === String(m[1]));
+      /* And the id has to exist. `store.patchProfile` builds a record out of a patch for a profile it has never
+         heard of, which is a second way to mint a profile - one that answered to no rule on the create route at
+         all, since it was never a create. */
+      if (!held) return send(res, 404, { error: 'no such profile', id: m[1] });
       const holdsGate = ['pin', 'pinRequired', 'kind', 'age', 'rules', 'prefs', 'languages'].some((k) => k in patch);
       if (held && held.pin != null && String(held.pin).trim() !== '' && holdsGate) {
         const given = !body || body.pinCurrent == null ? '' : String(body.pinCurrent).trim();
@@ -1926,6 +2018,15 @@ const server = http.createServer(async (req, res) => {
           return send(res, 403, { error: 'this profile is locked: its current PIN is needed to change that', locked: m[1] });
         }
       }
+      /* That lock only speaks for a profile which has a number of its own. A profile with none — the one a child
+         minted this afternoon — can still have its ceiling lifted, so the ceiling is guarded on its own terms as
+         well: into the adult band, up past the age a child was held to, or rewriting the filters a Kids profile
+         is screened by. Producing that profile's own number answers this too, deliberately: the request carries
+         one field, and a change asked for twice would leave a screen holding two answers for it. */
+      const ownProof = !!(held && held.pin != null && proofGiven(body) === String(held.pin).trim());
+      if (isAdultChange(held, patch) && !ownProof && !adultProofOk(body)) {
+        return refuseAdult(res, body, 'change that profile');
+      }
       if (!Object.keys(patch).length) return send(res, 400, { error: 'nothing to change' });
       const updated = store.patchProfile(m[1], patch);
       if (!updated) return send(res, 404, { error: 'no such profile', id: m[1] });
@@ -1933,6 +2034,26 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, profile: wireProfile(store.profile(m[1])) });
     }
     if (m && req.method === 'DELETE') {
+      /* Removing a person takes their gate down with them, so the number on the profile has to be produced to
+         remove it. Without this, every lock in this file could be undone by a DELETE that asks nothing — a child
+         cannot lift their own ceiling, but they could delete the profile that had it and start a new one.
+         `store.profile(id)` falls back to the household's first profile when the id is unknown, so the lock is
+         looked up by id in the list itself: the number compared has to be the one on the person being removed. */
+      const body = await readBody(req);
+      const held = store.profiles().find((p) => String(p.id) === String(m[1]));
+      if (held && held.pin != null && String(held.pin).trim() !== '') {
+        const given = !body || body.pinCurrent == null ? '' : String(body.pinCurrent).trim();
+        if (given !== String(held.pin).trim()) {
+          log('PROFILE LOCK REFUSED', m[1], 'removal without the current PIN');
+          return send(res, 403, { error: 'this profile is locked: its current PIN is needed to remove it', locked: m[1] });
+        }
+      } else if (!adultProofOk(body)) {
+        /* A profile with no number on it has none to produce, which is exactly the profile a child can add in the
+           morning and erase at night — the evidence of an afternoon spent in somebody else's ceiling. So removal
+           is an adult act here too, answered by the number of an adult profile, and a hub where nobody has one
+           still lets the household tidy itself freely. */
+        return refuseAdult(res, body, 'remove a profile');
+      }
       const out = store.removeProfile(m[1]);
       if (out.error) return send(res, 400, { error: out.error });
       invalidateCaches();
@@ -2275,7 +2396,16 @@ const server = http.createServer(async (req, res) => {
       if (!wanted) return send(res, 400, { error: 'profile required' });
       const current = store.profile(wanted);
       if (!current || !current.id) return send(res, 404, { error: 'no such profile', profile: wanted });
-      const saved = store.patchProfile(current.id, { prefs: { ...(current.prefs || {}), ...fromWire(body) } });
+      const patchPrefs = fromWire(body);
+      /* The dark-red zone is a switch the household turns on, and while it is off rules/maturity.js hides
+         tier-3 titles from everyone - including a profile that has no number of its own. Switching it on is an
+         adult act for the same reason adding an adult profile is. Switching it off is free: nobody is punished
+         for tightening their own shelf, and a grown-up turning it off at the end of the night should not be
+         stopped by a number they cannot remember. */
+      if (patchPrefs.xxxEnabled === true && !prefs.resolve(current).xxxEnabled && !adultProofOk(body)) {
+        return refuseAdult(res, body, 'turn the adult switch on for that profile');
+      }
+      const saved = store.patchProfile(current.id, { prefs: { ...(current.prefs || {}), ...patchPrefs } });
       return send(res, 200, {
         profile: current.id,
         prefs: toWire(prefs.resolve(saved || current)),

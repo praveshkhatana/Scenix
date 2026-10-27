@@ -121,7 +121,9 @@ export const api = {
   unlockProfile: (id, pin) => request(`/app/v1/profiles/${encodeURIComponent(id)}/unlock`, { method: 'POST', body: { pin }, timeout: 6000 }),
   createProfile: (body) => request('/app/v1/profiles', { method: 'POST', body, timeout: 6000 }),
   updateProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body, timeout: 6000 }),
-  deleteProfile: (id) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'DELETE', timeout: 6000 }),
+  // A DELETE with a body is unusual but legal, and it is the only way a locked profile can be removed by a
+  // browser without the number travelling in a URL that gets logged. No body, no PIN: an unlocked profile.
+  deleteProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'DELETE', body, timeout: 6000 }),
   clearCache: () => request('/app/v1/cache/clear', { method: 'POST', body: {}, timeout: 9000 }),
   characters: (seed, limit = 40, refresh = false) => request(
     `/app/v1/avatars/characters?limit=${Number(limit) || 40}&seed=${encodeURIComponent(String(seed || 'scenix'))}${refresh ? '&refresh=1' : ''}`,

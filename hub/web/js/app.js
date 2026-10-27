@@ -29,7 +29,18 @@ const SCREENS = {
   search:   () => import('/ui/js/screens/search.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
+  add:      () => import('/ui/js/screens/add.js'),
+  manage:   () => import('/ui/js/screens/manage.js'),
 };
+
+/*
+ * Choosing who is watching is one family: the row of faces, making a person, looking after the people there
+ * already are. All three sit *before* the catalogue, so none of them carries the menu bar — a tab to a home
+ * page nobody has entered yet is a promise the screen cannot keep — and none of them needs a viewer picked in
+ * advance, which is the whole point of the row. BACK unwinds the route stack, so leaving Add goes back to
+ * whichever screen asked for it: the picker, or Settings.
+ */
+const GATE_SCREENS = ['profiles', 'add', 'manage'];
 
 const stage = () => byId('stage');
 const bootEl = () => byId('boot');
@@ -192,7 +203,7 @@ async function mount(route, _pushed) {
   mounted = node;
   wireNavScroll(node);
 
-  const chromeless = route.name === 'play' || route.name === 'profiles';
+  const chromeless = route.name === 'play' || GATE_SCREENS.indexOf(route.name) >= 0;
   nav.style.display = chromeless ? 'none' : 'flex';
   setNavActive(route.name);
   document.body.classList.toggle('watching', route.name === 'play');
@@ -342,7 +353,12 @@ function askText({ title = '', reason = '', placeholder = '', initial = '', acti
     let answered = false;
     const entry = entryField({ glyph: 'globe', placeholder, initial });
     let box;
-    const answer = (value) => { if (answered) return; answered = true; closeModals(); resolve(value); };
+    const answer = (value) => {
+      if (answered) return;
+      answered = true;
+      closeTopModal();          // this dialog only: the screen it was opened over stays where it was
+      resolve(value);
+    };
 
     const submit = () => {
       const v = String(entry.value || '').trim();
@@ -411,7 +427,7 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
       focus.focusable(btn);
       pad.appendChild(btn);
     }
-    const cancel = el('button', { class: 'btn line', type: 'button', text: 'Cancel', onclick: () => closeModals() });
+    const cancel = el('button', { class: 'btn line', type: 'button', text: 'Cancel', onclick: () => closeTopModal() });
     focus.focusable(cancel);
     const x = el('button', {
       class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Cancel', title: 'Cancel',
@@ -425,7 +441,20 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
       dots, pad, err,
       el('div', { class: 'mfoot' }, cancel));
     const draw = () => { for (let i = 0; i < need; i++) dots.children[i].classList.toggle('on', i < got.length); };
-    const finish = (ok) => { closeModals(); if (!ok) err.textContent = ''; resolve(mode === 'set' ? (ok ? got : null) : ok); };
+    /* The pad answers once, and it has to claim the answer before it closes: `closeModals()` runs this modal's
+       own close callback, whose job is to answer "no" when the viewer walked out of the pad without finishing.
+       Answered afterwards, that callback fires first and every PIN a viewer types is thrown away on the way
+       out — the pad looks like it accepted the number, and nothing is stored. js/app.js `askText` guards the
+       same way with `answered`; this pad had the same shape and not the same guard. */
+    let answered = false;
+    const finish = (ok) => {
+      if (answered) return;
+      answered = true;
+      // Only this pad, not everything under it: a pad opened over a profile's own sheet answers to that sheet,
+      // and dismissing the sheet as well would throw away the row the viewer was standing on.
+      closeTopModal();
+      resolve(mode === 'set' ? (ok ? got : null) : ok);
+    };
     function refuse(message) {
       got = '';
       draw();
@@ -466,7 +495,12 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
     }
     // input.js routes every digit — keyboard, remote number row, or on-screen pad — to one function.
     setDigitSink(press);
-    mountModal(box, () => { setDigitSink(null); resolve(false); });
+    mountModal(box, () => {
+      setDigitSink(null);
+      if (answered) return;            // the number was already given; closing the pad must not answer "no" too
+      answered = true;
+      resolve(false);
+    });
     focus.focusDefault(pad.querySelector('.key'));
   });
 }
@@ -673,7 +707,7 @@ async function boot() {
   // ?profile=<id> opens a page as a specific person. The launcher and the native shell hand a deep link
   // over with it, and a PIN-gated profile still has to be unlocked.
   const wanted = q.get('profile');
-  const gated = route.name === 'home' || route.name === 'profiles';
+  const gated = route.name === 'home' || GATE_SCREENS.indexOf(route.name) >= 0;
 
   // The landing screen mounts *under* the intro rather than after it, so the two crossfade.
   if (gated && !state.session.profile && !wanted) navigate('profiles');

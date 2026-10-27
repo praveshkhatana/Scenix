@@ -333,3 +333,165 @@
 /* The next-episode card keeps app.css's opaque panel — it covers the picture, and a card that is half
    transparent over a moving film is unreadable in a different way. */
 .nextup { right: calc(80px * var(--s)); bottom: calc(370px * var(--s)); }
+
+/* ==========================================================================
+   The gate screens — adding someone (#/add) and looking after the people who
+   are already here (#/manage).
+
+   Neither wears the nav bar: deciding who is watching happens before there is a shelf to be on, and BACK from
+   here steps out of the household rather than sideways along a row of posters. So both pay for their own top
+   padding instead of taking the `.page-head` allowance for a bar that is not on the screen.
+   ========================================================================== */
+
+.padd,
+.pmanage { padding: calc(34px * var(--s)) var(--gutter) calc(44px * var(--s)); }
+/* The head is already inside the page's own gutter. */
+.pmanage .page-head { padding: 0 0 calc(26px * var(--s)); }
+
+/* ==========================================================================
+   Add a profile — the new card on the left, filling in as the keypad is used,
+   the keyboard on the right, the languages this person watches across the
+   bottom where a row of chips has room to be one row.
+   ========================================================================== */
+
+.padd-top { display: flex; align-items: flex-start; gap: calc(56px * var(--s)); }
+.padd-left {
+  flex: none; width: calc(400px * var(--s));
+  display: flex; flex-direction: column; gap: calc(12px * var(--s));
+}
+.padd-right { flex: 1 1 auto; min-width: 0; }
+
+/* The preview is the card this person will be: same face, same scrim, same pills, same 280 x 420 as the row
+   it is about to join. A shape invented for a form preview is a card the viewer meets twice and recognises
+   once. It is not a control, so it takes none of the focus treatment — the ring belongs to the keypad. */
+.padd-tile { margin-bottom: calc(14px * var(--s)); }
+.padd-tile .a { box-shadow: 0 calc(20px * var(--s)) calc(52px * var(--s)) rgba(0, 0, 0, .55); }
+
+.padd-right h1 { font-size: var(--t-h2); font-weight: 800; letter-spacing: -.015em; }
+.padd-right .sub {
+  color: var(--ink2); font-size: var(--t-sub);
+  margin: calc(12px * var(--s)) 0 calc(24px * var(--s)); max-width: calc(900px * var(--s));
+}
+.padd-right .field { width: 100%; }
+
+.padd-fact { margin-top: calc(10px * var(--s)); }
+.padd-fact > h3 { font-size: calc(26px * var(--s)); font-weight: 700; margin-bottom: calc(10px * var(--s)); }
+.padd-fact .chips { padding: 0; margin: 0; gap: calc(10px * var(--s)); }
+.padd-fact .note { display: block; color: var(--ink3); font-size: var(--t-panel-note); margin-top: calc(8px * var(--s)); }
+/* An age is a Kids question. The hub's ratings rule reads the age on a child's profile and treats an adult as
+   unbounded (rules/kids_allowlist.js), so the row is hidden for an adult rather than asking a question that
+   changes nothing. */
+.padd-age .chip { min-width: calc(62px * var(--s)); justify-content: center; }
+/* A switch on a plain row, not a card: it sits under its own heading, and the card chrome would read as a
+   setting of the hub rather than a choice about this person. */
+.padd-pin .li { background: none; border: 0; padding: calc(10px * var(--s)) 0; }
+.padd-pin .li .note { max-width: calc(330px * var(--s)); }
+
+.padd-langs { margin-top: calc(34px * var(--s)); }
+.padd-langs > h3 { font-size: calc(26px * var(--s)); font-weight: 700; margin-bottom: calc(14px * var(--s)); }
+.padd-langs .chips { padding: 0; margin: 0; }
+.padd-foot { display: flex; gap: calc(16px * var(--s)); margin-top: calc(30px * var(--s)); }
+
+/* ==========================================================================
+   Manage profiles — one row per person, their face at the front of it.
+
+   The picker's cards cannot carry these controls: a row has room for what a profile is (the pills) next to
+   what it can be changed into, and opening a person is a decision about somebody else, not a way of choosing
+   who is watching. The face is the same portrait at a fifth the size, because it is the same face.
+   ========================================================================== */
+
+.prows { display: flex; flex-direction: column; gap: calc(14px * var(--s)); }
+.mrow {
+  display: flex; align-items: center; gap: calc(26px * var(--s)); width: 100%;
+  padding: calc(16px * var(--s)) calc(26px * var(--s));
+  background: var(--surface); border: calc(1px * var(--s)) solid var(--border); border-radius: var(--r-button);
+  color: var(--ink); text-align: left; cursor: pointer;
+  transition: background var(--focus-ms) cubic-bezier(.23, 1, .32, 1);
+}
+.mrow .a {
+  position: relative; flex: none; overflow: hidden; display: grid; place-content: center;
+  width: calc(96px * var(--s)); height: calc(144px * var(--s));
+  border-radius: calc(22px * var(--s)); background: var(--key);
+}
+.mrow .a .ini { font-size: calc(40px * var(--s)); font-weight: 800; color: #fff; }
+.mrow .a .av-art,
+.mrow .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.mrow .a .av-photo { object-fit: cover; }
+.mrow .a .lock {
+  position: absolute; right: calc(7px * var(--s)); bottom: calc(7px * var(--s));
+  width: calc(28px * var(--s)); height: calc(28px * var(--s)); border-radius: 50%;
+  background: rgba(0, 0, 0, .62); display: grid; place-content: center;
+}
+.mrow .a .lock .ico { width: calc(16px * var(--s)); height: calc(16px * var(--s)); }
+/* The ring is an inset shadow rather than a border: a border would change the box the artwork is sized to and
+   step the face by 3 px at the moment it gains focus. */
+.mrow.foc { background: var(--surface3); }
+.mrow.foc .a { box-shadow: inset 0 0 0 calc(3px * var(--s)) #fff; }
+
+.mbody { flex: 1 1 auto; min-width: 0; }
+.mnm { font-size: var(--t-profile); font-weight: 600; letter-spacing: -.01em; }
+.mmeta { color: var(--ink3); font-size: var(--t-li-meta); margin-top: calc(5px * var(--s)); }
+.pills { display: flex; flex-wrap: wrap; gap: calc(8px * var(--s)); margin-top: calc(12px * var(--s)); }
+.mrow .pc {
+  font-size: calc(15px * var(--s)); font-weight: 500; color: rgba(255, 255, 255, .88);
+  padding: calc(3px * var(--s)) calc(11px * var(--s)); border-radius: 999px; background: rgba(255, 255, 255, .16);
+}
+.mrow .pc.on { background: #fff; color: #000; font-weight: 700; }
+.mgo { flex: none; color: var(--ink3); display: grid; place-content: center; }
+.mgo .ico { width: calc(30px * var(--s)); height: calc(30px * var(--s)); }
+.mrow.foc .mgo { color: #fff; }
+
+/* Adding someone stays on the same list, with the picker's dashed card, so the last row of a household is the
+   way into a new one instead of a button that belongs to a different page. */
+.madd .a { background: transparent; box-shadow: inset 0 0 0 calc(2px * var(--s)) rgba(255, 255, 255, .26); }
+.madd .a .ico { width: calc(44px * var(--s)); height: calc(44px * var(--s)); color: rgba(255, 255, 255, .55); }
+.madd.foc .a { box-shadow: inset 0 0 0 calc(3px * var(--s)) #fff; }
+
+/* The rows arrive one after another, the way the cards do, so a page of five people reads as a household
+   rather than as a table that appeared. Opacity only: the row is full width, and a sideways slide of a
+   1760 px box is the page shifting, not a row arriving. */
+body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-delay: calc(min(var(--i, 0), 6) * 70ms); }
+
+/* ==========================================================================
+   One person's actions — the sheet that opens from a Manage row.
+
+   Same box the avatar picker uses to hold more than the screen: capped to the stage and scrolled inside
+   itself, because a modal that runs off the bottom of a TV is unreachable with a remote and a page that
+   scrolls behind the scrim moves the picture underneath it.
+   ========================================================================== */
+
+.mbox.psheet {
+  width: calc(1040px * var(--s));
+  max-height: calc(1000px * var(--s));
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; scroll-behavior: auto; scrollbar-width: none;
+  text-align: left;
+}
+.mbox.psheet::-webkit-scrollbar { width: 0; }
+.psheet-who { display: flex; align-items: center; gap: calc(24px * var(--s)); margin-bottom: calc(26px * var(--s)); }
+.psheet-who .a {
+  position: relative; flex: none; overflow: hidden; display: grid; place-content: center;
+  width: calc(96px * var(--s)); height: calc(144px * var(--s));
+  border-radius: calc(22px * var(--s)); background: var(--key);
+}
+.psheet-who .a .ini { font-size: calc(40px * var(--s)); font-weight: 800; color: #fff; }
+.psheet-who .a .av-art,
+.psheet-who .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.psheet-who .a .av-photo { object-fit: cover; }
+.psheet-id h2 { margin-bottom: calc(4px * var(--s)); }
+.psheet-id p { margin-bottom: 0; }
+
+/* A row of this sheet carries a label, the hub's answer, and up to two actions. Without the tighter button and
+   the shorter note, "Change PIN" and "Remove PIN" would push the label off the box. */
+.psheet .li { gap: calc(14px * var(--s)); padding: calc(16px * var(--s)) calc(20px * var(--s)); }
+.psheet .li .note { max-width: calc(340px * var(--s)); }
+.psheet .li .btn { padding: calc(10px * var(--s)) calc(20px * var(--s)); font-size: calc(19px * var(--s)); }
+.psheet .li .lv { max-width: calc(180px * var(--s)); }
+.psheet-sec { margin-top: calc(10px * var(--s)); }
+.psheet-sec > h3 { font-size: var(--t-panel-title); font-weight: 700; margin: calc(14px * var(--s)) 0 calc(10px * var(--s)); }
+.psheet-sec .chips { padding: 0; margin: 0 0 calc(10px * var(--s)); gap: calc(10px * var(--s)); }
+.psheet-sec .chip { min-width: calc(62px * var(--s)); justify-content: center; }
+.psheet-foot {
+  display: flex; justify-content: center; gap: calc(14px * var(--s));
+  margin-top: calc(26px * var(--s));
+}

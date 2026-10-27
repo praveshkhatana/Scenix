@@ -16,15 +16,19 @@
  * *face* is the interactive half: the ring tracks whoever you are standing on, the button under the row names
  * them, and the picker previews live as you move — moving is free, OK keeps it, Back leaves the person exactly
  * as they were.
+ *
+ * Adding a person and managing them are *not* done here. The gate is the row of faces and nothing else: the two
+ * cards at the end of the row open `#/add` and `#/manage`, their own screens. A viewer standing in front of the
+ * row should be able to make someone new without walking into the settings of the hub they are not using yet.
  */
 
-import { el, clear } from '/ui/js/dom.js';
+import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { initials } from '/ui/js/format.js';
 import { session, isKids, isLocked } from '/ui/js/state.js';
-import { avatarFor, paintAvatar, paintSpec, setAvatar, tileFill, paletteById, CHARACTERS, PALETTES } from '/ui/js/avatars.js';
-import { GENERATED, generatorSpec, characterFaces } from '/ui/js/avatarapi.js';
+import { paintAvatar } from '/ui/js/avatars.js';
+import { openAvatarPicker } from '/ui/js/avatarmodal.js';
 
 export function screen(ctx) {
   const wrap = el('div', { class: 'screen pwrap' });
@@ -102,210 +106,22 @@ export function screen(ctx) {
   }
 
   /**
-   * Changing a person. An open profile is edited straight away; a locked one asks for the PIN first, because
-   * the gate is there to stop someone changing the child's settings on the way past, not to protect the face.
+   * Changing a face. An open profile is edited straight away; a locked one asks for the PIN first, because the
+   * gate is there to stop someone changing the child's settings on the way past, not to protect the face. The
+   * picker itself is shared with `#/manage` and `#/add` (js/avatarmodal.js) so one screen cannot drift from the
+   * others on what choosing a face means.
    */
   function editProfile(profile, node) {
     if (!profile) return;
     if (isLocked(profile)) {
-      ctx.askPin(profile).then((ok) => { if (ok) openPicker(profile, node); });
+      ctx.askPin(profile).then((ok) => {
+        if (ok) openAvatarPicker(ctx, {
+          profile, face: node.querySelector('.a'), index: node.__index, restore: node,
+        });
+      });
       return;
     }
-    openPicker(profile, node);
-  }
-
-  /**
-   * The avatar picker. No keyboard is involved anywhere: rails of faces, a row of palettes, and a preview that
-   * repaints every time the ring moves. That makes exploring free — every face can be looked at without
-   * committing to any of them, and what gets stored is only a reference: a style and a seed, or a URL.
-   */
-  async function openPicker(profile, node) {
-    const start = avatarFor(profile, node.__index) || {};
-    // A generated face is stored as an image reference, so the picker has to reopen on the style it came from
-    // rather than falling back to a drawn character.
-    const spec = start.kind === 'photo'
-      ? { kind: 'photo', src: start.src, gen: start.gen, fit: start.fit, palette: start.palette || PALETTES[0].id }
-      : { kind: 'char', char: start.char || CHARACTERS[0].id, palette: start.palette || PALETTES[0].id };
-    const seed = profile.id || String(node.__index);
-    const preview = el('div', { class: 'a' });
-    paintSpec(preview, spec);
-
-    const chars = el('div', { class: 'avchars' });
-    const cells = [];
-    for (const c of CHARACTERS) {
-      const cell = el('button', {
-        class: 'avchar', type: 'button', 'aria-label': c.label, dataset: { char: c.id },
-        onclick: () => { spec.kind = 'char'; spec.char = c.id; delete spec.gen; delete spec.src; keep(); },
-      });
-      cells.push({ cell, c });
-      focus.focusable(cell);
-      chars.appendChild(cell);
-    }
-    // The faces are re-tinted rather than rebuilt, so the ring never loses its place mid-arrow. Each cell
-    // carries the same skin the card itself would have, so a choice previews as an avatar and not a sticker.
-    function tint(p) {
-      for (const { cell, c } of cells) {
-        cell.style.background = tileFill(p);
-        cell.innerHTML = `<svg class="av-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${c.art(p.a)}</svg>`;
-      }
-    }
-    tint(paletteById(spec.palette) || PALETTES[0]);
-
-    // Remote faces: nothing is downloaded into the product, only a reference is kept, so a new source is a line
-    // in one list rather than a release. The hub may proxy any of them; see js/avatarapi.js.
-    const gens = el('div', { class: 'avchars avgen' });
-    let variant = 0;   // another roll of the same styles, for whoever is not taken with the first set
-    const faceSeed = () => (variant ? `${seed}#${variant}` : seed);
-    function paintGens() {
-      clear(gens);
-      for (const g of GENERATED) {
-        const cell = el('button', {
-          class: 'avchar', type: 'button', 'aria-label': g.label, dataset: { gen: g.id },
-          onclick: () => { Object.assign(spec, generatorSpec(g.id, faceSeed(), spec.palette, spec.fallback)); keep(); },
-        }, el('img', {
-          class: 'av-photo', src: generatorUrlSafe(g.id, faceSeed(), spec.palette), alt: '',
-          onerror: () => { cell.classList.add('avgone'); },
-        }));
-        focus.focusable(cell);
-        gens.appendChild(cell);
-      }
-    }
-    paintGens();
-    // Faces are infinite and the rail is not, so the row itself offers another set. The seed is reshuffled and
-    // the hub reshuffles the same shelf the same way every time, which makes a new set free.
-    const more = el('button', {
-      class: 'avmore', type: 'button', text: 'Another set',
-      onclick: () => { variant++; paintGens(); reroll(); },
-    });
-    focus.focusable(more);
-
-    /*
-     * Real character art, already cached on the hub, which also says which pictures are tall posters — where the
-     * face sits in the upper third — and which are banners that have to be used whole. A circle would cut off
-     * exactly the art that makes these worth looking at, so this rail is a rail of 2:3 cards and the crop travels
-     * with the stored reference.
-     */
-    const facesRail = el('div', { class: 'avchars avfaces' });
-    let faces = [];
-    function drawFaces(list) {
-      faces = Array.isArray(list) ? list : [];
-      clear(facesRail);
-      faces.forEach((f, i) => {
-        const cell = el('button', {
-          class: `avface${f.fit === 'center' ? ' wide' : ''}`, type: 'button',
-          'aria-label': f.label || 'Character face', dataset: { face: String(i) },
-          onclick: () => { Object.assign(spec, { kind: 'photo', src: f.src, fit: f.fit, palette: spec.palette }); keep(); },
-        }, el('img', { src: f.src, alt: '', loading: 'lazy', decoding: 'async' }), el('span', { text: f.label || '' }));
-        focus.focusable(cell);
-        facesRail.appendChild(cell);
-      });
-    }
-    async function reroll() {
-      /* A roll is not a refresh. Asking the hub to re-fetch every face it already keeps would put sixty
-         picture downloads behind one button press. A plain ask is answered from the cache, and the hub
-         warms whatever the new roll happens to want in the background for the next one. */
-      const list = await characterFaces(faceSeed(), RAIL).catch(() => []);
-      if (list.length) drawFaces(list);
-    }
-
-    const sws = el('div', { class: 'avsw' });
-    for (const p of PALETTES) {
-      const sw = el('button', {
-        class: 'sw', type: 'button', 'aria-label': p.id, dataset: { pal: p.id },
-        style: `background: linear-gradient(135deg, ${p.a}, ${p.b})`,
-        onclick: () => {
-          spec.palette = p.id;
-          if (spec.gen) Object.assign(spec, generatorSpec(spec.gen, seed, p.id));
-          keep();
-        },
-      });
-      focus.focusable(sw);
-      sws.appendChild(sw);
-    }
-
-    function keep() {
-      setAvatar(profile.id, spec);
-      paintSpec(node.querySelector('.a'), spec);
-      ctx.toast(`${profile.name}'s avatar is set`);
-      ctx.closeModals();
-    }
-
-    // The hub's cached faces lead the picker: they are the ones a person recognises. Asked for before the modal
-    // mounts so the rail is already inside the focus scope, and a hub with nothing cached just produces a
-    // shorter picker. One quiet credit line, in the picker and nowhere else.
-    const got = await characterFaces(faceSeed(), RAIL).catch(() => []);
-    drawFaces(got);
-    /* The credit is built from what the hub says each face came from. Nothing here names an upstream, so a hub
-       that changes its sources changes the credit by itself. */
-    const credits = [];
-    for (const f of got) {
-      const c = f.from || f.source;
-      if (c && !credits.includes(c)) credits.push(c);
-    }
-    /* The generated rail is a proxy, and a hub with no generator configured answers 503 for every style in
-       it. That is not a rail, it is a row of broken pictures, so ask for one face before offering the lot: a
-       deployment that cannot serve them simply does not show them, and the picker gets shorter instead of
-       looking broken. */
-    const genOk = await new Promise((done) => {
-      const src = generatorUrlSafe(GENERATED[0].id, seed, spec.palette);
-      if (!src) { done(false); return; }
-      const probe = new Image();
-      probe.onload = () => done(true);
-      probe.onerror = () => done(false);
-      probe.src = src;
-    });
-
-    const parts = [
-      el('h2', { text: 'Choose an avatar' }),
-      el('div', { class: 'who', text: `${profile.name} — move to preview, OK to keep, Back to leave it alone` }),
-      el('div', { class: 'avprev' }, preview),
-      got.length ? el('div', { class: 'avlabel', text: 'Characters' }) : null,
-      got.length ? facesRail : null,
-      got.length ? el('div', { class: 'avcred', text: `Faces: ${credits.length ? credits.join(', ') : 'this hub'}` }) : null,
-      more,
-      genOk ? el('div', { class: 'avlabel', text: 'Generated faces' }) : null,
-      genOk ? gens : null,
-      el('div', { class: 'avlabel', text: 'Scenix faces' }),
-      chars,
-      el('div', { class: 'avlabel', text: 'Colours' }),
-      sws,
-      el('div', { class: 'avhint', text: 'Only a reference is kept, so a face can be changed any time. A photo the hub attaches to a profile takes precedence, and a face that cannot be reached falls back to a drawn one.' }),
-    ];
-
-    const box = el('div', { class: 'mbox avpick' }, ...parts);
-
-    // Moving the ring previews, OK keeps. Nothing is written until a face is chosen, so a viewer can look
-    // through every face available and leave the person exactly as they were — and landing on a colour
-    // repaints the whole rail of drawn faces at once, which is how a palette gets seen before it is picked.
-    let pw = () => {};
-    pw = focus.onFocus((n) => {
-      if (!n || !box.contains(n)) return;
-      const pal = paletteById(n.dataset.pal || spec.palette) || PALETTES[0];
-      let next;
-      const fi = n.dataset.face;
-      if (fi !== undefined && faces[Number(fi)]) {
-        const f = faces[Number(fi)];
-        next = { kind: 'photo', src: f.src, fit: f.fit, palette: pal.id };
-      } else if (n.dataset.char) next = { kind: 'char', char: n.dataset.char, palette: pal.id };
-      else if (n.dataset.gen) next = generatorSpec(n.dataset.gen, faceSeed(), pal.id, spec.fallback);
-      else if (n.dataset.pal) {
-        next = spec.gen
-          ? generatorSpec(spec.gen, faceSeed(), pal.id, spec.fallback)
-          : { kind: 'char', char: spec.char || CHARACTERS[0].id, palette: pal.id };
-      } else return;
-      paintSpec(preview, next);
-      tint(pal);
-    });
-
-    // mountModal already owns a focus scope, so the picker does not push another. Closing hands the ring back to
-    // the card it came from: whoever you were standing on is still who you are standing on.
-    ctx.mountModal(box, () => {
-      pw();
-      if (current) focus.setFocus(current, { scroll: false });
-    });
-    const home = spec.gen ? gens.querySelector(`[data-gen="${spec.gen}"]`)
-      : chars.querySelector(`[data-char="${spec.char}"]`);
-    focus.focusDefault(home || facesRail.firstChild || gens.firstChild);
+    openAvatarPicker(ctx, { profile, face: node.querySelector('.a'), index: node.__index, restore: node });
   }
 
   // Watch the ring: the row slides to keep the chosen card dead centre, the rest of the row dims against the
@@ -363,10 +179,13 @@ export function screen(ctx) {
   session.profiles.forEach((p, i) => grid.appendChild(tile(p, i)));
 
   let i = session.profiles.length;
+  // Both cards at the end of the row open their own screen. Sending a viewer to Settings to add a person makes
+  // them find the household section of a page about the hub, with the row of faces they were looking at gone
+  // behind them; `#/add` keeps the face they are making in front of them the whole time.
   const add = el('button', {
     class: 'avatar avatar-add', type: 'button', 'aria-label': 'Add profile',
     style: `--i: ${i++}`,
-    onclick: () => ctx.navigate('settings'),
+    onclick: () => ctx.navigate('add'),
   }, el('div', { class: 'a' }, icon('plus'), el('div', { class: 'nm', text: 'Add profile' })));
   focus.focusable(add);
   grid.appendChild(add);
@@ -377,7 +196,7 @@ export function screen(ctx) {
   const manage = el('button', {
     class: 'avatar avatar-manage', type: 'button', 'aria-label': 'Manage profiles',
     style: `--i: ${i}`,
-    onclick: () => ctx.navigate('settings'),
+    onclick: () => ctx.navigate('manage'),
   }, el('div', { class: 'a' }, icon('gear'), el('div', { class: 'nm', text: 'Manage profiles' })));
   focus.focusable(manage);
   grid.appendChild(manage);
@@ -437,17 +256,8 @@ export function screen(ctx) {
   if (pick) {
     afterSplash(() => {
       const node = grid.querySelector(`.avatar[data-profile="${pick}"]`);
-      if (node) openPicker(node.__profile, node);
+      if (node) editProfile(node.__profile, node);
     });
   }
   return wrap;
-}
-
-/** An unreachable avatar API must not take the picker down with it. */
-// How many faces one roll of the shelf shows. The hub caps the rail itself and reshuffles the rest behind
-// "Another set", so this is a screenful-and-a-bit, not the size of the catalogue.
-const RAIL = 60;
-
-function generatorUrlSafe(styleId, seed, palette) {
-  try { return generatorSpec(styleId, seed, palette).src; } catch (e) { return ''; }
 }
