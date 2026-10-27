@@ -355,7 +355,7 @@ export function screen(ctx) {
     // box now holds. A built-in row is listed but not removable; anything added over HTTP can be switched
     // off without deleting it, which is the difference between "this source is down tonight" and "I never
     // want this source again".
-    if (caps.addonAdmin && installed.length) {
+    if (caps.addonAdmin) {
       const g = group('Add-ons', 'Sources this hub reads. Switching one off keeps its address and settings; the hub simply stops asking it.');
       for (const ad of installed) {
         const cats = (ad.catalogs || []).length;
@@ -377,7 +377,7 @@ export function screen(ctx) {
         };
         li.appendChild(sw);
         if (!ad.native) {
-          const x = roundBtn('x', async () => {
+          const x = roundBtn('trash', async () => {
             try {
               const r = await api.removeAddon(ad.id);
               installed = (r && r.addons) || installed.filter((o) => o.id !== ad.id);
@@ -389,6 +389,28 @@ export function screen(ctx) {
         }
         g.appendChild(li);
       }
+      const addLine = line('Add another source',
+        'Type the address of an add-on manifest. The hub reads it before keeping it, so a typo is refused here rather than emptying the home screen later.');
+      addLine.appendChild(roundBtn('plus', async () => {
+        const url = await ctx.enterText({
+          title: 'Add an add-on',
+          reason: 'The manifest address of a source, for example https://example.org/manifest.json. A folder address works too: the hub appends the manifest name.',
+          placeholder: 'https://…/manifest.json',
+          action: 'Add',
+          validate: (v) => (!v ? 'Type an address first.'
+            : !/^https?:\/\//i.test(v) ? 'That has to start with http:// or https://.' : null),
+        });
+        if (!url) return;
+        try {
+          const r = await api.addAddon(url);
+          installed = (r && r.addons) || installed;
+          ctx.toast(`${(r && r.addon && r.addon.name) || 'Add-on'} is now a source here`);
+          paint();
+        } catch (e) {
+          ctx.toast((e && e.body && e.body.error) || 'The hub would not take that add-on');
+        }
+      }, 'Add an add-on'));
+      g.appendChild(addLine);
       right.appendChild(g);
     }
 

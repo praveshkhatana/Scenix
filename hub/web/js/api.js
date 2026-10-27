@@ -111,6 +111,10 @@ export const api = {
   setAddon: (id, on) => request(`/app/v1/addons/${encodeURIComponent(id)}/${on ? 'enable' : 'disable'}`,
     { method: 'POST', timeout: 9000 }),
   removeAddon: (id) => request(`/app/v1/addons/${encodeURIComponent(id)}`, { method: 'DELETE', timeout: 9000 }),
+
+  // Installing asks the hub to go and read the other side's manifest, which is a network round trip on
+  // someone else's schedule, so this gets more time than the calls that only touch local state.
+  addAddon: (url) => request('/app/v1/addons', { method: 'POST', body: { url }, timeout: 15000 }),
   /* Settings and administration — the hub owns all of it, and the manifest says which of it exists. */
   settings: () => request('/app/v1/settings', { timeout: 8000 }),
   saveSettings: (body) => request('/app/v1/settings', { method: 'PUT', body, timeout: 8000 }),
