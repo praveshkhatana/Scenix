@@ -1940,9 +1940,14 @@ const server = http.createServer(async (req, res) => {
     // should not keep serving hour-old answers, and "clear the cache" is the first thing a support
     // conversation reaches for. Standalone hosts answer the same route, so one UI can offer one button.
     if (path === '/app/v1/cache/clear' && req.method === 'POST') {
+      // Everything this process remembers about the outside world, not just the addon responses: a stale
+      // track listing or a link written off last week is just as much cache as a catalog page, and an
+      // owner pressing "clear" cannot tell which of the three the button actually meant.
       const cleared = addons.clearCache();
+      const tracks = media.clearCache();
+      const links = probe.clearCache();
       invalidateCaches();
-      return send(res, 200, { ok: true, cleared });
+      return send(res, 200, { ok: true, cleared, tracks, links });
     }
 
     m = /^\/app\/v1\/addons\/([^/]+)$/.exec(path);

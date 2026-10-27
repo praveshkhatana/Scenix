@@ -435,6 +435,20 @@ function checkBin() {
   return binSeen;
 }
 
+/**
+ * Forget every file this hub has probed. The running process holds the cache open, so deleting the JSON
+ * behind it changes nothing until a restart - which is exactly why an owner-facing "clear cache" has to
+ * come through here instead of at the filesystem.
+ */
+function clearCache() {
+  const n = Object.keys(load().entries).length;
+  state = { entries: {}, updatedAt: null };
+  loaded = true;
+  inFlight.clear();
+  saveNow();
+  return n;
+}
+
 function status() {
   const s = load();
   let ok = 0;
@@ -469,7 +483,7 @@ function status() {
 checkBin(); // one spawnSync at boot so /healthz can say whether the binary is there
 
 module.exports = {
-  peek, peekByHash, probe, tracksFor, prewarm, status, checkBin,
+  peek, peekByHash, probe, tracksFor, prewarm, status, checkBin, clearCache,
   langOf, normalize,
   keyOf,
   FILE,

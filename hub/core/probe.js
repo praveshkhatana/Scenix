@@ -468,6 +468,18 @@ function peek(url, headers = {}) {
 }
 
 /** Drop a measurement (the app reported "this one buffered": do not trust it until it is re-measured). */
+/**
+ * Drop every link verdict on record, in memory and on disk. A greyed-out source and a source that was
+ * never tried must not look alike forever because one bad evening was remembered.
+ */
+function clearCache() {
+  const n = Object.keys(state.entries).length;
+  state = { entries: {}, updatedAt: 0 };
+  inflight.clear();
+  save();
+  return n;
+}
+
 function invalidate(url, headers = {}) {
   if (!probeable(url)) return false;
   const key = keyFor(url, headers);
@@ -506,7 +518,7 @@ function status() {
 }
 
 module.exports = {
-  probeAll, probeUrl, probeOne, peek, invalidate, keyFor, hash, probeable, sourceId, status,
+  probeAll, probeUrl, probeOne, peek, invalidate, clearCache, keyFor, hash, probeable, sourceId, status,
   ENABLED, FILE,
   limits: { PROBE_BYTES, SAMPLE_BYTES_MAX, MIN_SAMPLE_MS, PROBE_TIMEOUT_MS, OK_TTL_MS, FAIL_TTL_MS, CONCURRENCY, BUDGET_MS, CACHE_MAX },
 };
