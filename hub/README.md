@@ -57,6 +57,11 @@ module.exports = {
 // ctx: { profile, providers, store, rules, days, now, catalog(), library(), resolve() }
 ```
 
+`order` is only where a row starts, not where it has to stay. An owner can switch any row off or move it
+around from the settings screen, and that override is stored in `data/settings.json` as `rows.hidden` and
+`rows.order` — both shipped empty, so a fresh hub draws exactly the shelves its own `rows/` files ask
+for, in their own order, and nothing about the defaults depends on which of those files happen to exist.
+
 ### Rule — `rules/x.js`
 ```js
 module.exports = { id: 'x', order: 30, async apply(item, ctx) { return item; /* or null to drop */ } };
@@ -80,7 +85,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | `POST /app/v1/switch` `{identity, profile, exclude?, source?, type?, container?, audio?, sub?}` | same body as play, but the measurement cache is ignored: "this link is buffering, give me another" |
 | `GET /app/v1/remux?u=&v=&a=&s=&start=&dur=` | the engine's own stream URL re-wrapped on the fly into fragmented MP4: video is always copied, audio copied when the container can hold it and re-encoded when a browser cannot play it. `a`/`s` are the stream indexes from the track lists (`a:1` → `a=1`), `start` seeks, `dur` stops, and a `Range` header is honoured so a probe cannot download the whole film. `GET /app/v1/hls/<hash>/<fileId>` is the same idea as a playlist |
 | `GET /app/v1/subtitle?u=&i=` | one embedded text subtitle, converted to WebVTT and served with CORS, so a browser can use a track that lives inside a Matroska file. A copy the swarm has not delivered yet answers `503 {error:'warming'}` with `Retry-After: 5`, and one that was cut off mid-track says so with `X-Subtitles-Partial: timeout` — asking again reaches further, because the engine keeps what it has already pulled |
-| `GET`/`PUT /app/v1/settings` | the owner's settings (`data/settings.json`): the hub's name, its content languages, its live-TV playlist, how the addon host behaves. PUT merges a patch and re-applies what other parts derived from the old values |
+| `GET`/`PUT /app/v1/settings` | the owner's settings (`data/settings.json`): the hub's name, its content languages, its live-TV playlist, how the addon host behaves, and which home rows are switched off or reordered. The GET also reports every row this hub can put on a home screen, so a settings screen offers the choice over what actually exists rather than a guessed-at list. PUT accepts the settings flat or wrapped in `{settings: …}`, merges it, and re-applies what other parts derived from the old values |
 | `GET /app/v1/addons`, `POST /app/v1/addons`, `POST /app/v1/addons/<id>/enable\|disable`, `DELETE /app/v1/addons/<id>` | the addon-protocol addons this hub answers with, installed or shipped, and which are on |
 | `POST /app/v1/progress` `{profile, identity, positionMs, watchedMs}` | remembered in `data/progress.json`; **refused (403) for a tier-3 title while the adult switch is off** |
 | `GET`/`POST /app/v1/prefs?profile=<id>` | per-profile `qualityCap` and `xxxEnabled`, with the defaults the app should show |
