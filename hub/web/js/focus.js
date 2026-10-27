@@ -66,7 +66,10 @@ export function blurFocus() {
 }
 
 function scrollTo(node) {
-  const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
+  /* Instant. A smooth scroll animates the container, which repaints everything visible for a third of a
+     second after every key, on top of the focus zoom and on top of whatever the shelf is already doing.
+     Remote navigation wants the next card under the ring immediately. */
+  const behavior = 'auto';
   try { node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior }); }
   catch (e) { try { node.scrollIntoView(); } catch (e2) { /* ignore */ } }
 }
