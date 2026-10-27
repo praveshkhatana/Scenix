@@ -201,7 +201,10 @@ export function screen(ctx) {
       });
     }
     async function reroll() {
-      const list = await characterFaces(faceSeed(), RAIL, variant > 0).catch(() => []);
+      /* A roll is not a refresh. Asking the hub to re-fetch every face it already keeps would put sixty
+         picture downloads behind one button press. A plain ask is answered from the cache, and the hub
+         warms whatever the new roll happens to want in the background for the next one. */
+      const list = await characterFaces(faceSeed(), RAIL).catch(() => []);
       if (list.length) drawFaces(list);
     }
 
