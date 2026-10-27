@@ -331,28 +331,38 @@ function serve(req, res, u, cors, tracksLookup) {
 
   let starved = ''; // set once any attempt proves the engine had no bytes for us yet
 
+  // The answer when nothing more can be tried: either the engine never got the file, which is a cold
+  // torrent and the client knows to wait, or this pipeline genuinely cannot cut the file, which is ours
+  // to report. Split out because two different paths now reach it.
+  const giveUp = (why) => {
+    if (watch) clearInterval(watch);
+    if (!res.writableEnded && !res.headersSent) {
+      // The engine not answering for the file is not the same failure as ffmpeg refusing a codec: it is
+      // the cold-torrent case, and the client already knows what to do with a warming answer.
+      const cold = who.hash && /served nothing|from the engine/.test(why);
+      rejected++;
+      sendJson(res, cors, cold ? 503 : 502, cold
+        ? { error: 'warming', warming: true, detail: why, retryAfterMs: 5000, hash: who.hash, fileId: who.fileId }
+        : { error: 'remux failed', detail: why, hash: who.hash, fileId: who.fileId },
+        cold ? { 'Retry-After': '5' } : null);
+    } else if (!res.writableEnded) res.end();
+    finish('failed', why);
+  };
+
   const tryNext = (why) => {
     if (settled) return;
     // Remember an engine that has not answered yet. The next plan may fail through a different
     // handler whose message says only "ffmpeg exited 0", and losing this fact at that point is what turns
     // a cold torrent into a hard failure the viewer is told about.
     if (/served nothing|from the engine/.test(why)) starved = why;
+    // An engine that has not served a single byte will not serve one because we asked for a different
+    // audio codec. Walking the remaining plans costs a full first-byte wait each time and lands on the
+    // same answer: measured this month a cold copy held a browser's player silent for 75 seconds across
+    // three plans before saying anything at all. So when the silence belongs to the swarm, stop paying
+    // for it and say what is true once - before claiming a retry that never happens.
+    if (starved && bytes === 0 && !res.headersSent) { giveUp(starved); return; }
     if (attempt > 0) log('REMUX RETRY', 'id=' + id, 'from=' + plans[attempt - 1], 'to=' + plans[attempt], 'because=' + why);
-    if (attempt >= plans.length) {
-      if (watch) clearInterval(watch);
-      if (!res.writableEnded && !res.headersSent) {
-        // The engine not answering for the file is not the same failure as ffmpeg refusing a codec: it is
-        // the cold-torrent case, and the client already knows what to do with a warming answer.
-        const cold = who.hash && /served nothing|from the engine/.test(why);
-        rejected++;
-        sendJson(res, cors, cold ? 503 : 502, cold
-          ? { error: 'warming', warming: true, detail: why, retryAfterMs: 5000, hash: who.hash, fileId: who.fileId }
-          : { error: 'remux failed', detail: why, hash: who.hash, fileId: who.fileId },
-          cold ? { 'Retry-After': '5' } : null);
-      } else if (!res.writableEnded) res.end();
-      finish('failed', why);
-      return;
-    }
+    if (attempt >= plans.length) { giveUp(why || starved); return; }
     const plan = plans[attempt];
     const args = baseArgs(p, plan, 'mp4');
     child = spawnFfmpeg(args, id);
@@ -668,5 +678,7 @@ checkBin();
 module.exports = {
   serve, subtitle, hlsUrl, hlsServe, mp4Url, status, checkBin,
   parseEngineUrl, streamIndex, planFor,
-  limits: { MAX_CHILDREN, STALL_MS, AUDIO_KBPS },
+  // `FIRST_BYTE_MS` travels in the manifest: a client that decides whether a silent
+  // stream is still warming or already dead should ask the hub how long it waits, not guess.
+  limits: { MAX_CHILDREN, STALL_MS, AUDIO_KBPS, FIRST_BYTE_MS },
 };

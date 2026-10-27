@@ -1536,6 +1536,9 @@ const server = http.createServer(async (req, res) => {
         // What this hub can actually do, so a client UI decides from facts rather than from guessing
         // which build of the hub it happens to be talking to — the same contract is answered by the app
         // itself with no server at all, and that difference has to be visible in the answer.
+        // How long this hub gives an unstarted copy before it admits the peers are not feeding it. The
+        // player needs the number to tell "still warming" from "this copy is dead" without guessing.
+        remux: { warmingMs: remux.limits.FIRST_BYTE_MS },
         capabilities: capabilities(),
         compat: { routes: ['/manifest.json', '/catalog/', '/meta/', '/stream/'] },
       });
