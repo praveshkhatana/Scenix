@@ -19,7 +19,7 @@
  *   - age ≤ 12  strict: only a stated rating inside {G, PG, U, U/A 7+, TV-Y, TV-Y7, TV-Y7-FV, TV-G,
  *             TV-PG}, or a kids genre.
  *   - age 13-17 teen: the strict list plus the 13+ band {PG-13, UA, U/A, U/A 13+, 12A, 12, 13+, TV-14,
- *                   15, 15A, M} — which is exactly what "Yug may watch UA/13+ content" means, spelled as
+ *                   15, 15A, M} — which is exactly what "a thirteen-year-old may watch UA/13+ content" means, spelled as
  *                   data. `M` is Australia's mature-15+, not an adult mark.
  *   - a certificate that writes an age (11, 12, 15A) is allowed when the child has reached that age,
  *     because the boards do not agree on words.
