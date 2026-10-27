@@ -67,7 +67,7 @@ export function screen(ctx) {
     node.style.setProperty('--i', String(index));
     shelves.appendChild(node);
 
-    if ((node.__items || []).length) { lazyMount(node); return node; }
+    if ((node.__items || []).length) { lazyMount(node, { root }); return node; }
 
     // The hub answers `/home` fast with some shelves still empty; those fill themselves in when reached.
     const size = row.card === 'poster' ? 'poster' : 'landscape';
@@ -92,7 +92,7 @@ export function screen(ctx) {
           node.__mounted = true;
           return list;
         };
-        lazyMount(node);
+        lazyMount(node, { root });
       } catch (e) {
         filled = false;
         sk.classList.remove('skeleton');
@@ -106,13 +106,10 @@ export function screen(ctx) {
         focus.focusable(sk.querySelector('.btn'));
       }
     };
-    if ('IntersectionObserver' in window) {
-      const io = new IntersectionObserver((es) => {
-        for (const e of es) if (e.isIntersecting) { io.disconnect(); fill(); }
-      }, { rootMargin: '900px 0px' });
-      io.observe(sk);
-      disposers.push(() => io.disconnect());
-    } else fill();
+    // A shelf the hub left empty still has to be reachable: it joins the same mount queue and fills
+    // itself when the viewer walks near it.
+    node.__ensure = fill;
+    lazyMount(node, { root });
     return node;
   }
 

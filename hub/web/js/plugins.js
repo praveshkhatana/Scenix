@@ -45,12 +45,21 @@ function isNew(item) {
   return added && (Date.now() - added) < 7 * 86400000;
 }
 
+/* Everything a viewer uses to decide rides on the picture itself, in two corners: what is new and how
+   much of it matches on the left, who it is for and how mature it is on the right. A cluster per side,
+   so adding a fact never needs new geometry. */
 function badges(item, art) {
-  if (item.live) art.appendChild(el('span', { class: 'badge live' }, 'Live'));
-  else if (isNew(item)) art.appendChild(el('span', { class: 'badge new' }, 'New'));
-  if (isKids(session.profile)) art.appendChild(el('span', { class: 'badge kids right' }, 'Kids'));
+  const left = [];
+  const right = [];
+  if (item.live) left.push(el('span', { class: 'badge live' }, 'Live'));
+  else if (isNew(item)) left.push(el('span', { class: 'badge new' }, 'New'));
+  if (item.match) left.push(el('span', { class: 'badge mt' }, `${item.match}%`));
+  if (isKids(session.profile)) right.push(el('span', { class: 'badge kids' }, 'Kids'));
+  if (item.maturity) right.push(el('span', { class: 'badge mat' }, item.maturity));
   const tier = token('cards', 'hdBadge', null);
-  if (tier && Number(item.tier) === 1) art.appendChild(el('span', { class: 'hdbadge' }, tier));
+  if (tier && Number(item.tier) === 1) right.push(el('span', { class: 'hdbadge' }, tier));
+  if (left.length) art.appendChild(el('div', { class: 'bset l' }, left));
+  if (right.length) art.appendChild(el('div', { class: 'bset r' }, right));
 }
 
 /** The small strip of facts under a title: match %, year, runtime, languages. */
@@ -103,8 +112,9 @@ function card(item, ctx, { art: artSrc, ratio, rank, progress, extra } = {}) {
   }
   if (rank) a.appendChild(el('div', { class: 'num' }, el('span', { text: String(rank.rank) })));
   node.appendChild(a);
-  const cap = el('div', { class: 'cap' }, el('div', { class: 't', text: item.title }), metaLine(item));
-  node.appendChild(cap);
+  // Nothing is printed under a shelf card: the picture is the label, and the name lives in the
+  // accessible label instead of on the page.
+  node.setAttribute('aria-label', item.title || '');
   if (extra) node.appendChild(extra);
   node.appendChild(quickActions(item, ctx));
   node.addEventListener('click', () => ctx.open(item));
@@ -230,22 +240,61 @@ registerRow('top10', (row, ctx) => {
  * dropped again. On a panel that has really killed a WebView renderer, that is the difference between a
  * page that survives and one that reloads itself.
  */
-export function lazyMount(rowNode, { root = null, preload = '1200px', keep = 4 } = {}) {
-  const items = rowNode.__items || [];
-  if (!items.length || rowNode.__mounted) return;
-  if (!('IntersectionObserver' in window)) { rowNode.__mount(items); return; }
-  if (!lazyMount.__obs) lazyMount.__obs = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      if (e.isIntersecting && !e.target.__mounted) e.target.__mount(e.target.__items);
-    }
-  }, { root, rootMargin: `${preload} 0px ${preload} 0px` });
-  lazyMount.__obs.observe(rowNode);
-  void keep;
+/* Rows are mounted as the viewer gets near them. This deliberately does not use IntersectionObserver:
+   shelves below the first screenful are clipped to zero area by the page's own scroll container, an
+   observer rooted at the viewport never sees them, and the page is left holding rows with nothing in
+   them — which on a remote is a dead end, because there is no card there to step onto and therefore no
+   scroll to bring them to life. Measuring against the scroller instead always answers. */
+
+let scroller = null;
+let queued = [];
+let frame = 0;
+let preloadPx = 1200;
+
+function pump() {
+  frame = 0;
+  if (!scroller || !queued.length) return;
+  const vb = scroller.getBoundingClientRect();
+  const top = vb.top - preloadPx;
+  const bottom = vb.bottom + preloadPx;
+  const rest = [];
+  let mounted = 0;
+  for (const node of queued) {
+    if (!node.isConnected || node.__mounted) continue;
+    const r = node.getBoundingClientRect();
+    if (r.bottom >= top && r.top <= bottom) {
+      if (node.__ensure) node.__ensure();
+      else node.__mount(node.__items);
+      mounted++;
+    } else rest.push(node);
+  }
+  queued = rest;
+  // Mounting changes the page's height, which moves everything below it. Look again next frame.
+  if (mounted && queued.length) schedule();
+}
+
+function schedule() { if (!frame) frame = requestAnimationFrame(pump); }
+
+function detach() {
+  if (!scroller) return;
+  scroller.removeEventListener('scroll', schedule);
+  scroller = null;
+}
+
+export function lazyMount(rowNode, { root = null, preload = '1200px' } = {}) {
+  if (!rowNode || rowNode.__mounted) return;
+  if (!rowNode.__ensure && !(rowNode.__items || []).length) return;
+  if (!root) { if (rowNode.__ensure) rowNode.__ensure(); else rowNode.__mount(rowNode.__items); return; }
+  if (root !== scroller) { detach(); scroller = root; scroller.addEventListener('scroll', schedule, { passive: true }); }
+  preloadPx = Math.max(0, parseFloat(preload) || 1200);
+  if (queued.indexOf(rowNode) < 0) queued.push(rowNode);
+  schedule();
 }
 
 export function dropMountedRows() {
-  if (lazyMount.__obs) lazyMount.__obs.disconnect();
-  lazyMount.__obs = null;
+  detach();
+  queued = [];
+  if (frame) { cancelAnimationFrame(frame); frame = 0; }
 }
 
 /* ------------------------------------------------------------------ billboard */

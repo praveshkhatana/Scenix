@@ -394,6 +394,13 @@ ul { list-style: none; }
 .badge.live i { width: calc(9px * var(--s)); height: calc(9px * var(--s)); border-radius: 50%; background: #fff; }
 .badge.kids { background: var(--kids); color: #132339; border-color: transparent; }
 .badge.right { left: auto; right: calc(12px * var(--s)); }
+/* Badges sit in a cluster per corner so any number of them line up without new geometry. */
+.bset { position: absolute; top: calc(12px * var(--s)); left: calc(12px * var(--s));
+  display: flex; gap: calc(8px * var(--s)); align-items: center; z-index: 3; }
+.bset.r { left: auto; right: calc(12px * var(--s)); }
+.bset .badge, .bset .hdbadge { position: static; }
+.badge.mt { color: var(--match); }
+.badge.mat { border-color: var(--mat-border); }
 
 .matbox { border: 1px solid var(--mat-border); padding: calc(1px * var(--s)) calc(12px * var(--s)); font-size: calc(19px * var(--s)); border-radius: var(--r-badge); }
 .hdbadge { border: 1px solid var(--mat-border); border-radius: var(--r-badge); padding: calc(2px * var(--s)) calc(8px * var(--s)); font-size: var(--t-badge); font-weight: 700; color: var(--hd-ink); }
@@ -417,6 +424,9 @@ ul { list-style: none; }
   margin-bottom: calc(24px * var(--s)); display: flex; align-items: center; gap: calc(12px * var(--s));
 }
 .row > h3 .explore { margin-left: auto; font-size: var(--t-explore); color: var(--ink2); font-weight: 400; }
+/* A row whose cards have not mounted yet still occupies the height it will have, so the page knows how
+   far down its own content goes before anything is focused in it. */
+.cards:empty { min-height: var(--card-h, 0); }
 .cards {
   display: flex; gap: var(--gap);
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
@@ -1171,9 +1181,10 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .episodes.h .ep .en { margin-top: calc(10px * var(--s)); }
 .episodes.h .ep .eq { margin-left: 0; margin-top: calc(8px * var(--s)); }
 
-/* A shelf card that is currently previewing gets wider, so the picture can actually be seen. */
+/* A shelf card that is currently previewing gets wider, so the picture can actually be seen, but it
+   keeps the height of its row: a card that grows taller than its neighbours pushes the shelf apart. */
 .cards .card.playing { width: calc(460px * var(--s)); transition: width 260ms cubic-bezier(.23, 1, .32, 1); }
-.cards .card.playing .art { height: calc(259px * var(--s)); transition: height 260ms cubic-bezier(.23, 1, .32, 1); }
+.cards .card.playing .art { height: var(--card-h); transition: height 260ms cubic-bezier(.23, 1, .32, 1); }
 
 /* The billboard turns by pushing sideways — one title leaves, the next arrives — not by fading in place. */
 .billboard .bb-art { opacity: 0; transform: translateX(7%); transition: transform 800ms cubic-bezier(.23, 1, .32, 1), opacity 420ms ease; }

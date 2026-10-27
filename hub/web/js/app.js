@@ -197,7 +197,10 @@ async function mount(route, _pushed) {
   setNavActive(route.name);
   document.body.classList.toggle('watching', route.name === 'play');
 
-  focus.pushScope(node);
+  // The menu bar lives beside the screen in #stage. Scoping the ring to the screen alone made the
+  // tabs unreachable on a remote, so a chromeless screen keeps its own scope and everything else
+  // can walk up into the bar.
+  focus.pushScope(chromeless ? node : stage());
   let target = focusTargetFor(route);
   // A screen may choose where the ring lands: the profile grid puts it on the last person who watched.
   if (!target && node.__defaultFocus) {

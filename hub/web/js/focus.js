@@ -107,6 +107,63 @@ function geometric(from, dir) {
   return best;
 }
 
+/* ---- bands: a shelf, the billboard's buttons and the menu bar are one unit each ----
+   Pure geometry compares card centres. A card that grows — a moving preview, a focused poster — moves
+   its own centre and swallows the centres of the shelves above and below it, and the ring stops moving.
+   So vertical steps walk bands in layout order and land in the same column the viewer was in. */
+
+const BAND_SEL = '.nav, .bb-btns, .billboard, .mbox, .sheet, .firstrun, .keys';
+
+function bandOf(node) {
+  let n = node;
+  while (n && n.tagName && n.tagName !== 'BODY') {
+    if (n.hasAttribute && n.hasAttribute('data-nav')) return n;
+    if (n.matches && n.matches(BAND_SEL)) return n;
+    n = n.parentElement;
+  }
+  return null;
+}
+
+function bands() {
+  const map = new Map();
+  for (const c of candidates()) {
+    const b = bandOf(c);
+    if (!b) continue;
+    let e = map.get(b);
+    if (!e) { e = { el: b, rect: rectOf(b), items: [] }; map.set(b, e); }
+    e.items.push(c);
+  }
+  const out = Array.from(map.values());
+  // Document order, not pixel order: the menu bar is fixed, so its pixels sit above whatever the page
+  // has scrolled past, while in the document it is honestly the first thing on the page.
+  out.sort((p, q) => (p.el.compareDocumentPosition(q.el) & 4) ? -1 : 1);
+  return out;
+}
+
+function bandStep(from, dir) {
+  const mine = bandOf(from);
+  if (!mine) return null;
+  const list = bands();
+  let idx = -1;
+  for (let i = 0; i < list.length; i++) if (list[i].el === mine) { idx = i; break; }
+  if (idx < 0) return null;
+  const a = rectOf(from);
+  const ax = a.left + a.width / 2;
+  const rest = dir === 'down' ? list.slice(idx + 1) : list.slice(0, idx).reverse();
+  for (const b of rest) {
+    if (!b.items.length) continue;
+    let best = b.items[0];
+    let bestD = Infinity;
+    for (const c of b.items) {
+      const r = rectOf(c);
+      const d = Math.abs(r.left + r.width / 2 - ax);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+  return null;
+}
+
 export function move(dir) {
   if (!current || !visible(current)) {
     const first = candidates()[0];
@@ -131,7 +188,14 @@ export function move(dir) {
       }
     }
   }
-  if (!next) next = geometric(current, dir);
+  if (!next) {
+    if (dir === 'up' || dir === 'down') {
+      next = bandStep(current, dir);
+      // Inside a band the neighbouring band is the only honest answer. Pure geometry would happily
+      // walk back into a card that is merely scrolled behind the fixed menu bar.
+      if (!next && !bandOf(current)) next = geometric(current, dir);
+    } else next = geometric(current, dir);
+  }
   if (!next) return false;
   setFocus(next);
   return true;
