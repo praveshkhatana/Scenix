@@ -45,6 +45,9 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+// The hub's read-ahead cushion. A remux reads the same torrent bytes through this hub's own proxy, so one
+// sequential read of a swarm feeds every screen at once instead of ffmpeg opening a competing read.
+const readahead = require('./readahead');
 
 const ROOT = path.join(__dirname, '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
@@ -151,7 +154,10 @@ function baseArgs(p, plan, format) {
   const args = ['-hide_banner', '-loglevel', 'error'];
   const startMs = Math.max(0, Number(p.startMs) || 0);
   if (startMs > 0) args.push('-ss', (startMs / 1000).toFixed(3)); // input seek: the engine serves the right offset
-  args.push('-i', p.url);
+  // The cushion sits in front of ffmpeg too: the bytes this hub already pulled for the Play press and for
+  // the first frame are the bytes ffmpeg reads next, and a swarm gets one sequential reader instead of two
+  // competing ones pushing each other's cache out. Off, or for a non-torrent input, this is what it was.
+  args.push('-i', readahead.wrapInput(p.url) || p.url);
   args.push('-map', '0:v');
   if (plan !== 'none') {
     args.push('-map', p.audioIdx != null ? '0:' + p.audioIdx : '0:a:0');

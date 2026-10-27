@@ -37,6 +37,15 @@ export function screen(ctx, identity) {
   const spec = Object.assign({ identity }, session.pendingPlay || {});
   const root = el('div', { class: 'screen player' });
 
+  /* The hub's own word for the title decides what the floor looks like. A channel is a live feed: there is
+     no position to scrub to, so no line to scrub and no buttons that move along it. A series has a next
+     episode waiting; a feature does not. A stream that has not reported a length yet is a different thing
+     again — that is the `live` flag below, and it only ever decides whether the bar can be moved along,
+     never which controls exist. */
+  const kind = String(spec.type || '').toLowerCase();
+  const isLiveFeed = kind === 'channel' || kind === 'live';
+  const isSeries = kind === 'series';
+
   /* ---------------------------------------------------------------- picture */
 
   // In the browser path the feature element is already on the page and only needs to be allowed to paint.
@@ -75,9 +84,10 @@ export function screen(ctx, identity) {
   const btnBack = pbtn('back', '', 'Back', () => ctx.back());
   const btnRew = pbtn('rew', '', 'Rewind 10s', () => player.seekBy(-10000), 'rew');
   const btnPlay = pbtn('play', 'play', 'Play', () => player.toggle());
-  const playIco = btnPlay.querySelector('.ico');
   const btnFwd = pbtn('fwd', '', 'Forward 10s', () => player.seekBy(10000), 'fwd');
-  const btnNext = pbtn('next', '', 'Next episode', () => playNext());
+  // Not in the row with the transport: the next episode waits at the right edge of the picture, where it can
+  // be seen coming without covering the one that is playing.
+  const btnNext = pbtn('next', 'edge', 'Next episode', () => playNext());
   const tool = (name, label, fn, val) => {
     const b = el('button', { class: 'iconbtn', type: 'button', 'aria-label': label, title: label,
       onclick: () => fn() }, icon(name), el('span', { text: label }));
@@ -91,14 +101,29 @@ export function screen(ctx, identity) {
   const btnQuality = tool('globe', 'Quality', () => openMenu('quality'), qualityLabel());
   const rate = el('span', { class: 'rate' });
 
-  /* One surface, two rows: where the programme is (elapsed, the track, what is left) and what you can do
-     to it (the transport on the left, the menus that open panels on the right). Both rows live inside
-     `.ply-bar`, which is the band the D-pad steps along — a control outside it would be a row nobody can
-     reach from the transport without leaving the floor of the screen. */
+  /* Two rows and no panel: where the programme is (elapsed, the line, what is left) and what you can do to it
+     (the transport at one end, the menus that open panels at the other). The scrims app.css fades over the top
+     and bottom of the picture are the whole background — a painted surface on top of those reads as a box
+     floating in the film. Nothing here carries a `data-nav` band: the ring walks these controls by geometry,
+     which is only safe while they are all on the same floor, so every one of them lives inside the chrome that
+     fades in and out together. */
+  const times = el('div', { class: 'times' }, tLeft, trk, tRight);
+  // A channel has no position to move along, so the line that shows one is replaced by the only fact that
+  // stream supports: it is happening now.
+  const liveMark = el('div', { class: 'live-mark' }, el('i', { class: 'dot' }), el('span', { text: 'Live' }));
   const bar = el('div', { class: 'ply-bar' },
-    el('div', { class: 'times' }, tLeft, trk, tRight),
-    el('div', { class: 'pbtns' }, btnBack, btnRew, btnPlay, btnFwd, btnNext,
-      el('div', { class: 'ply-right' }, btnSub, btnAudio, btnSpeed, btnQuality)));
+    isLiveFeed ? liveMark : times,
+    el('div', { class: 'pbtns' }, btnPlay, ...(isLiveFeed ? [] : [btnRew, btnFwd]),
+      el('div', { class: 'ply-right' }, btnSub, btnAudio, ...(isLiveFeed ? [] : [btnSpeed]), btnQuality)));
+
+  // Shown only when there is a next episode to go to, so a film and a channel are not offered a button that
+  // does nothing.
+  const edge = el('div', { class: 'ply-edge ply-fade' }, btnNext);
+  edge.hidden = true;
+
+  // The way out of a film sits at the top-left, beside the name of it, which is where a person looks for it —
+  // not in the row of things you can do to it.
+  top.appendChild(btnBack);
 
   // Which player answered, and the speed if it is not 1x: below the bar, where a person can read it
   // without it competing with the thing they are pressing.
@@ -127,6 +152,7 @@ export function screen(ctx, identity) {
   root.appendChild(center);
   root.appendChild(skip);
   root.appendChild(nextUp);
+  root.appendChild(edge);
   root.appendChild(bottom);
   skip.style.zIndex = '8';
 
@@ -138,20 +164,28 @@ export function screen(ctx, identity) {
 
   function chromeVisible() { return !hidden; }
 
+  // Everything that fades with the chrome, in one list, so no control can be left shining over a film that
+  // has decided to hide its buttons.
+  const chrome = [top, hud, bottom, nextUp, edge];
+
   function show() {
     hidden = false;
-    for (const n of [top, hud, bottom, nextUp]) n.classList.remove('hide');
+    for (const n of chrome) n.classList.remove('hide');
     arm();
   }
 
   function hide() {
     if (openKind) return;
-    // Never pull the floor out from under the ring: if the focus is standing in the chrome, the chrome stays.
+    // The ring used to be a reason to hold the chrome up. On a TV it is not one: the bar is the only thing
+    // anyone can focus here, so keeping it up would keep it up forever and the film would be watched through
+    // a control panel — the way out at the top and the next episode at the edge included. Only a control
+    // that is genuinely outside the chrome, the skip button, holds it on, and the first key press brings
+    // everything back, the ring included.
     const a = document.activeElement;
-    if (a && (bottom.contains(a) || hud.contains(a) || (skip.parentNode === root && skip === a))) { arm(); return; }
+    if (a && skip.parentNode === root && a === skip) { arm(); return; }
     if (player.state().playing === false) { arm(); return; }
     hidden = true;
-    for (const n of [top, hud, nextUp]) n.classList.add('hide');
+    for (const n of chrome) n.classList.add('hide');
   }
 
   function arm() {
@@ -180,8 +214,13 @@ export function screen(ctx, identity) {
 
   function setPlayIcon() {
     const playing = player.state().playing;
-    const ico = icon(playing ? 'pause' : 'play', { solid: true });
-    if (playIco.parentNode) playIco.replaceWith(ico);
+    // Only the triangle is a solid shape; the pause bars are two strokes, and `.ico.solid` switches the
+    // stroke off — asking for solid here would paint a pause that cannot be seen.
+    const ico = icon(playing ? 'pause' : 'play', { solid: !playing });
+    // Ask the button for the glyph it is wearing rather than trusting a node captured at build time: the
+    // first swap detaches that node, and a second call would then add a glyph beside the one already there.
+    const worn = btnPlay.querySelector('.ico');
+    if (worn) worn.replaceWith(ico);
     else btnPlay.insertBefore(ico, btnPlay.firstChild);
     const label = playing ? 'Pause' : 'Play';
     const lbl = btnPlay.querySelector('.lbl');
@@ -232,6 +271,15 @@ export function screen(ctx, identity) {
     const n = spec.next || (player.target && player.target.nextEpisode) || null;
     return n && (n.title || n.episode) ? n : null;
   }
+  /** The button at the edge of the picture exists exactly as long as there is an episode to go to. */
+  let edgeShown = false;
+  function paintEdge() {
+    const want = isSeries && !isLiveFeed && !!nextEpisode();
+    if (want === edgeShown) return;
+    edgeShown = want;
+    edge.hidden = !want;
+    if (!hidden) edge.classList.remove('hide');
+  }
   function playNext() {
     const n = nextEpisode();
     if (!n) return;
@@ -244,6 +292,7 @@ export function screen(ctx, identity) {
     });
   }
   function drawNext() {
+    paintEdge();
     const n = nextEpisode();
     const st = player.state();
     const total = Number(st.durationMs) || 0;
@@ -399,6 +448,9 @@ export function screen(ctx, identity) {
     if (t.title && !spec.title) title.textContent = t.title;
     if (t.tagline && !spec.subtitle) subtitle.textContent = t.tagline;
     live = !(Number(t.durationMs) > 0);
+    // The hub names the following episode in the same answer that gives us this copy, so the button at the
+    // edge of the picture can appear the moment there is something to press it for.
+    paintEdge();
     refreshStatus();
   }));
   offs.push(player.on('retrying', () => { center.hidden = true; setStatus('Asking for this copy again...', 'wait'); }));
@@ -481,6 +533,9 @@ export function screen(ctx, identity) {
   function tickSkip() {
     const st = player.state();
     if (live || player.ended) return hideSkip();
+    // An intro is a thing the hub marks on an episode. On a feature, or on a channel, a button offering to
+    // jump past one would be a guess dressed up as a control.
+    if (isLiveFeed || (!isSeries && !spec.introEndMs)) return hideSkip();
     const introEnd = Number(spec.introEndMs) || SKIP_TO;
     if (st.positionMs >= SKIP_FROM && st.positionMs < introEnd) showSkip();
     else hideSkip();
@@ -500,8 +555,10 @@ export function screen(ctx, identity) {
       return false;
     }
     if (key === 'MediaPlayPause' || key === 'PlayPause') { player.toggle(); setPlayIcon(); return true; }
-    if (key === 'MediaFastForward') { player.seekBy(10000); return true; }
-    if (key === 'MediaRewind') { player.seekBy(-10000); return true; }
+    // A live feed has no position for a remote to jump around, so the transport keys are left to the router
+    // rather than spending them on a seek that cannot land.
+    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(10000); return true; }
+    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-10000); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       const a = document.activeElement;
@@ -521,22 +578,26 @@ export function screen(ctx, identity) {
     return false;
   };
   pushHandler(handler);
-  focus.focusable(trk);
-  trk.setAttribute('aria-label', 'Position');
-  // On the bar itself the D-pad scrubs; a press lands on the point that was pointed at, which is the only
-  // way to move without a keyboard.
-  trk.addEventListener('click', (e) => {
-    const r = trk.getBoundingClientRect();
-    const st = player.state();
-    if (!r.width || live || !st.durationMs) return;
-    player.seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * st.durationMs);
-  });
+  // The scrubber is only a control when there is a position to scrub to.
+  if (!isLiveFeed) {
+    focus.focusable(trk);
+    trk.setAttribute('aria-label', 'Position');
+    // On the bar itself the D-pad scrubs; a press lands on the point that was pointed at, which is the only
+    // way to move without a keyboard.
+    trk.addEventListener('click', (e) => {
+      const r = trk.getBoundingClientRect();
+      const st = player.state();
+      if (!r.width || live || !st.durationMs) return;
+      player.seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * st.durationMs);
+    });
+  }
 
   /* ------------------------------------------------------------------ start */
 
   focus.focusDefault(btnPlay);
   setPlayIcon();
   drawPosition();
+  paintEdge();
   show();
 
   player.start({
@@ -568,6 +629,12 @@ export function screen(ctx, identity) {
       season: spec.season, episode: spec.episode, title: spec.title,
       positionMs: Math.round(st.positionMs), durationMs: Math.round(st.durationMs || 0),
       watchedMs: Math.round(st.watchedMs || st.positionMs),
+    }).then((r) => {
+      // The hub answers this with what it is doing with the bytes of this film: the rate the swarm is
+      // actually delivering against the bitrate the copy needs, and how much picture is sitting in its
+      // memory in front of the screen. The player keeps that so the one silent heal moves to a smaller
+      // copy instead of reloading one the hub can already prove is too slow.
+      player.noteStream(r && r.stream);
     }).catch(() => {});
   }, postMs);
 

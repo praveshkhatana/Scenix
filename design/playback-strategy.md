@@ -125,8 +125,30 @@ The hub holds up its end of the same bargain:
   One blacklist for all three is how a merely cold copy ends up refusing to open until somebody restarts
   the hub — and how a promise to "wait and try again" turns out to be answered from memory.
 
-These are timing rules, not user settings: nothing here goes in `settings.json`, because "what counts as
-stuck" is a property of our player, not a household preference.
+- **A copy is chosen on the rate it was measured delivering, not on the rate its file size implies.**
+  A Play press reads the copy through the hub's own buffer for `playback.sustainBudgetMs` and scores the
+  *worst* `playback.rateWindowMs` window inside it. The engine hands over a cached head at tens of MB/s
+  and then goes quiet, so an average over the sample flatters a copy that dies a minute in — playback
+  dies in the worst window, so the worst window is the verdict. A copy that never produced a byte is
+  `warming`, not slow: the hub's reader stays open and keeps reading, because the engine's first byte has
+  been measured arriving seventeen seconds after it was asked for. A copy that produced bytes and then
+  stopped carrying them is `starved`, and stays out of favour for `playback.starvedHoldMs`.
+- **The hub reads ahead of the player.** One bounded cushion of RAM per copy
+  (`playback.readAheadMB` / `readAheadSec`, whichever is smaller) sits between the swarm and the screen:
+  the player reads at LAN speed out of memory while the torrent bursts and pauses, and the one sequential
+  reader is the only thing touching the engine's per-torrent cache — which is what a pass-through pipe,
+  a keep-warm touch and ffmpeg all doing their own reads used to fight over. A remux reads through the
+  same cushion. The cushion is filled *before* the first frame is promised
+  (`playback.preBufferSec`/`preBufferMB`, never longer than `preBufferMs`) and what it bought is returned
+  in the play answer as `prebuffer`, so a screen can say what it is doing.
+
+The rate floor is what makes "auto quality" mean something here: the sharpest copy the swarm can actually
+feed is chosen, and when it cannot, the viewer is moved down a rung instead of being left with a freeze.
+
+These are timing rules, not user settings, and they stay in code: what counts as stuck, how long a heal
+waits, how many heals a copy gets. The buffer sizes, the pre-roll and the length of a rate sample *are*
+settings (`core/settings.js` DEFAULTS, editable on the Hub Settings screen) because how much of a film
+this box may hold in memory is the owner's call about their own hardware.
 
 ## 6. Explicitly not doing
 

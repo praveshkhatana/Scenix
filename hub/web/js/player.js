@@ -522,6 +522,7 @@ export function createPlayer() {
     async start(spec) {
       c.session = spec;
       c.tried = [];
+      c.stream = null;
       return c._negotiate(api.play, spec);
     },
 
@@ -692,6 +693,27 @@ export function createPlayer() {
     /** The viewer chose to stay with a copy that stalled: it earns another reload later. */
     keepWatching() { if (stall) stall.forgive(); },
 
+    /**
+     * What the hub said about the bytes behind this copy, on the last progress report: the rate the swarm
+     * is really delivering against the bitrate the file needs, how much picture is sitting in the hub's
+     * RAM in front of the screen, and whether the hub has already watched this copy starve. The controller
+     * holds it so the one silent heal can spend itself on a different copy rather than reloading the one
+     * that is provably too slow.
+     */
+    noteStream(stream) {
+      c.stream = stream && typeof stream === 'object' ? stream : null;
+      return c.stream;
+    },
+    /** Whether the box serving this film says this copy cannot carry it. */
+    copyTooSlow() {
+      const st = c.stream;
+      if (!st) return false;
+      if (st.starved) return true;
+      const got = Number(st.mbps);
+      const need = Number(st.needMbps);
+      return Number.isFinite(got) && Number.isFinite(need) && need > 0 && got < need;
+    },
+
     /** The viewer gave up on the current copy. Remember it, then ask for one of the others. */
     giveUpOnCurrent() {
       const p = (c.target && c.target.picked) || {};
@@ -702,6 +724,8 @@ export function createPlayer() {
     },
 
     state() { return backend.state(); },
+    /** The hub's last report about this copy's bytes, kept by noteStream. */
+    get stream() { return c.stream || null; },
     tracks() {
       return {
         audio: c.audioTracks,
@@ -739,7 +763,15 @@ export function createPlayer() {
     // Starving while still wanted counts as playing: that is the situation worth healing. A deliberate pause
     // does not, and neither does a title that has finished.
     state: () => Object.assign({}, c.state(), { playing: !!c.state().playing || (wanted && starving) }),
-    heal: () => c.retry(),
+    heal: () => {
+      // One silent heal per copy per film, and what it spends itself on matters. A copy the hub has
+      // watched fail to carry its own bitrate does not get better by being reopened — the hub says so in
+      // the progress answer — so the heal moves to a smaller copy at the same position. A copy the hub
+      // is happy with only hiccuped, and a reload of the same bytes is the right and cheapest answer.
+      const alternates = (c.sources || []).filter((src) => !c.isFailed(src)).length;
+      if (c.copyTooSlow() && alternates > 0) return c.switchTo({ exclude: c.tried.slice() });
+      return c.retry();
+    },
     onHealing: (d) => bus.emit('healing', d),
     onHealed: () => bus.emit('healed', {}),
     describe: () => {
@@ -811,6 +843,23 @@ export function describePlayback(player, extra = {}) {
   }
   if (t.negotiating || extra.negotiating) {
     return { tone: 'info', text: 'The hub is measuring your copies and picking the one that will play' };
+  }
+  // The hub holding a window of the film in memory is the difference between "it plays" and "it plays
+  // and does not stop", and it is worth saying out loud once, because it is also the thing a paid service
+  // does and this household is not paying one.
+  const pb = t.prebuffer;
+  if (pb && (pb.sec || pb.bytes)) {
+    const how = pb.sec ? `${pb.sec}s` : `${Math.round((pb.bytes || 0) / 1048576)}MB`;
+    return {
+      tone: 'info',
+      text: pb.complete
+        ? `The hub is holding ${how} of this copy in memory so the picture does not stop`
+        : `The hub started with ${how} buffered and is still reading ahead`,
+    };
+  }
+  const live = player.stream;
+  if (live && live.starved) {
+    return { tone: 'warn', text: 'The people sharing this copy cannot carry it — the hub is looking for another' };
   }
   if (t.warnings && t.warnings.length) return { tone: 'warn', text: t.warnings[0] };
   return null;

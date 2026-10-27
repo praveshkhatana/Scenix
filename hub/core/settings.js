@@ -62,6 +62,30 @@ const DEFAULTS = {
     superheroApi: 'https://akabab.github.io/superhero-api/api',
     wikiApi: 'https://en.wikipedia.org/api/rest_v1/page/summary/',
   },
+
+  // Playback smoothness. The complaint this whole block exists for is "the picture stops"; the two ways a
+  // hub fixes it without paying a caching service are (a) refuse a copy whose measured rate cannot carry
+  // its own bitrate and (b) read ahead of the player into RAM, so a torrent that bursts and pauses plays
+  // like a file on a server. Both are the owner's call, so both live here and on the Settings screen.
+  // What does NOT live here is "what counts as stuck" — that stays a timing rule in code (see
+  // Scenix/design/playback-strategy.md §5). These are how much of the film we hold, not how long we wait.
+  playback: {
+    readAhead: true,      // buffer torrent bytes in the hub ahead of the player at all
+    readAheadMB: 96,      // the cushion, in bytes of RAM, per copy
+    readAheadSec: 90,     // the same cushion as seconds of media; whichever is smaller wins
+    preBufferSec: 15,     // hold this much picture before promising the first frame
+    sustainBudgetMs: 4000, // how long a Play press spends learning a copy's real, sustained rate
+    starvedWindows: 2,    // slow windows in a row before the hub moves the viewer to a smaller copy
+    // Kept out of the Settings screen because an owner has no reason to touch them:
+    readAheadCopies: 2,      // how many copies may be cushioned at the same time
+    readAheadIdleMs: 45000,  // release a cushion this long after the last reader hangs up
+    preBufferMB: 32,         // never pre-roll more bytes than this, whatever the seconds say
+    preBufferMs: 6000,       // never delay the first frame longer than this to get the pre-roll
+    rateWindowMs: 1000,      // one measurement window; the worst window in a sample is the verdict
+    starvedFloor: 1,         // a copy is slow when its rate falls under its own bitrate times this
+    starvedGraceSec: 20,     // a cushion this deep absorbs a slow window without calling it starvation
+    starvedHoldMs: 900000,   // how long a copy that starved a viewer stays out of favour
+  },
 };
 
 let cached = null; // the last parsed+merged object, or null when the file has not been read yet
@@ -101,6 +125,42 @@ function idList(raw) {
   return out;
 }
 
+/**
+ * Playback smoothness, clamped: a screen that sends `readAheadMB: 999999` would otherwise ask this box
+ * for 1 TB of RAM, and a hub that swaps is a hub that stalls. Bounds here are about the machine surviving
+ * a typo, not about what the household should choose — those stay in DEFAULTS.
+ */
+function num(raw, dflt, lo, hi) {
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+}
+
+function normalizePlayback(p) {
+  const d = DEFAULTS.playback;
+  const src = p && typeof p === 'object' ? p : {};
+  const out = {};
+  for (const k of Object.keys(d)) {
+    if (k === 'readAhead') { out[k] = src[k] !== false; continue; }
+    out[k] = num(src[k], d[k], 0, 1e9);
+  }
+  // Sizes and seconds have their own sane ceilings; a 4 GB cushion on a 32 GB box that also runs the
+  // torrent engine is not a preference, it is a swap.
+  out.readAheadMB = num(src.readAheadMB, d.readAheadMB, 8, 2048);
+  out.readAheadSec = num(src.readAheadSec, d.readAheadSec, 5, 900);
+  out.preBufferSec = num(src.preBufferSec, d.preBufferSec, 0, 180);
+  out.preBufferMB = num(src.preBufferMB, d.preBufferMB, 1, 512);
+  out.preBufferMs = num(src.preBufferMs, d.preBufferMs, 0, 20000);
+  out.sustainBudgetMs = num(src.sustainBudgetMs, d.sustainBudgetMs, 500, 20000);
+  out.rateWindowMs = num(src.rateWindowMs, d.rateWindowMs, 250, 30000);
+  out.starvedWindows = Math.round(num(src.starvedWindows, d.starvedWindows, 1, 10));
+  out.starvedFloor = num(src.starvedFloor, d.starvedFloor, 0.2, 3);
+  out.starvedGraceSec = num(src.starvedGraceSec, d.starvedGraceSec, 0, 300);
+  out.readAheadCopies = Math.round(num(src.readAheadCopies, d.readAheadCopies, 1, 8));
+  out.readAheadIdleMs = num(src.readAheadIdleMs, d.readAheadIdleMs, 3000, 600000);
+  out.starvedHoldMs = num(src.starvedHoldMs, d.starvedHoldMs, 10000, 86400000);
+  return out;
+}
+
 function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
@@ -123,6 +183,7 @@ function normalize(s) {
       wikiApi: String((s.avatar || {}).wikiApi == null
         ? DEFAULTS.avatar.wikiApi : (s.avatar || {}).wikiApi).trim().slice(0, 300),
     },
+    playback: normalizePlayback(s.playback),
   };
   // Anything the owner put in the file that this build does not know about is kept, so an older hub
   // reading a newer file does not quietly delete a setting a newer hub wrote.
@@ -141,6 +202,13 @@ function seedFromEnv(s) {
   const min = process.env.ADDON_MIN_SIZE_MB;
   if (max !== undefined && s.addons.maxSources === DEFAULTS.addons.maxSources) s.addons.maxSources = Number(max);
   if (min !== undefined && s.addons.minSizeMB === DEFAULTS.addons.minSizeMB) s.addons.minSizeMB = Number(min);
+  // Read-ahead is on by default; an owner who wants the old pass-through pipe, or a smaller cushion on a
+  // smaller box, can say so at install time without opening the UI.
+  if (process.env.READ_AHEAD === '0' && s.playback.readAhead === DEFAULTS.playback.readAhead) {
+    s.playback.readAhead = false;
+  }
+  const ra = process.env.READ_AHEAD_MB;
+  if (ra !== undefined && s.playback.readAheadMB === DEFAULTS.playback.readAheadMB) s.playback.readAheadMB = Number(ra);
   return s;
 }
 
@@ -182,6 +250,14 @@ function languages() {
   return read().languages.slice();
 }
 
+/**
+ * The playback smoothness knobs, in the form core/readahead.js wants. A fresh object every call, so a
+ * settings PUT changes the next byte streamed without a restart.
+ */
+function playback() {
+  return Object.assign({}, read().playback);
+}
+
 /** Merge a patch into the file and return what it became. Nested objects merge key by key. */
 function set(patch) {
   const current = read();
@@ -214,4 +290,4 @@ function status() {
   };
 }
 
-module.exports = { get, set, languages, status, DEFAULTS, FILE };
+module.exports = { get, set, languages, playback, status, DEFAULTS, FILE };

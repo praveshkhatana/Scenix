@@ -42,6 +42,9 @@ const webui = require('./core/webui');
 // Both are read-only against the engine's own stream URL and both report themselves in /healthz.
 const media = require('./core/media');
 const remux = require('./core/remux');
+// The hub's own read-ahead: one bounded cushion of torrent bytes per copy, shared by the player, the
+// remuxer and the Play press that measures the copy before promising it. See core/readahead.js.
+const readahead = require('./core/readahead');
 // What the owner chose (core/settings.js) and what this hub says about itself on the LAN
 // (core/discovery.js). Both are read when a request asks, so a change made in the hub's own UI lands on
 // the next request: a setting that needs a restart to take effect is a setting nobody really made.
@@ -634,6 +637,10 @@ async function healthBody() {
     // Whether a browser can be handed MP4 at all: the binary, how many ffmpeg are running, how many
     // requests were refused because the box is already remuxing.
     remux: remux.status(),
+    // The cushion in front of the player: what is buffered, how fast the swarm is actually feeding it,
+    // and which copies this hub has watched fail to carry a film. This is the block to read when the
+    // question is "why did the picture stop".
+    readahead: readahead.status(),
     // The owner's choices as this request sees them, and what the LAN responder is currently saying.
     // A hub that "works" but has lost its announce socket shows that here rather than in a support call
     // about a TV that cannot find it.
@@ -699,6 +706,20 @@ async function proxyStream(req, res, u) {
   const hash = who.hash;
   const fileId = who.fileId;
   const headersMs = hash ? PROXY_ENGINE_HEADERS_MS : PROXY_TIMEOUT_MS;
+  if (hash) {
+    // A torrent goes through the read-ahead buffer, not straight to the engine. The player reads at LAN
+    // speed out of RAM while the swarm bursts and pauses, and the hub's single sequential reader is the
+    // only thing touching the engine's one cache per torrent. It falls through to the plain pass-through
+    // when read-ahead is switched off or asks something the buffer cannot answer (a suffix range).
+    const served = await readahead.serve(req, res, who, {
+      headersMs,
+      needMbps: Number(u.searchParams.get('need')) || 0,
+      retryAfterMs: PLAY_RETRY_AFTER_MS,
+      onReader: () => gateway.readBegin(hash, fileId),
+      onCold: (waited) => gateway.noteCold(hash, waited),
+    });
+    if (served) return;
+  }
   const mod = target.startsWith('https:') ? https : http;
   const t0 = Date.now();
   const tag = 'hash=' + (hash ? hash.slice(0, 12) : '-') + ' file=' + (fileId == null ? '-' : fileId);
@@ -1017,6 +1038,22 @@ async function fetchEpisodeSources(item) {
   item.sources = merge.rankSources(item.sources || [], registry.priorities);
 }
 
+/**
+ * The byte of the file a viewer at `positionMs` is sitting on.
+ *
+ * Seconds of film and bytes of file meet at the average bitrate, which is the same arithmetic
+ * rules/source_ranking.js uses to estimate what a copy needs. A variable-bitrate file is off by a few
+ * percent; starting a pre-roll a few percent early costs nothing, and starting one at the wrong place
+ * costs the whole point of it.
+ */
+function resumeOffset(source, item, positionMs) {
+  const pos = Number(positionMs);
+  const dur = Number(item && item.durationMs);
+  const size = Number((source && source.sizeBytes) || (item && item.sizeBytes) || 0);
+  if (!(pos > 0) || !(dur > 0) || !(size > 0)) return 0;
+  return Math.max(0, Math.min(size - 1, Math.floor(size * (pos / dur))));
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
   const item = await ctx.resolve(identity, type);
@@ -1138,7 +1175,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const extraWhy = [];
   let out = null;
   let lastResort = null; // a torrent the gateway could not serve: unplayable here, fine on an engine client
-  let slowGateway = null; // a gateway link that resolved but has not produced bytes yet
+  let slowGateway = null; // a gateway link that resolved but has not proved it can carry this file
   let tooSlow = null; // a gateway link that produced bytes, just not fast enough for this file
   for (const cand of queue) {
     const addon = addonOf(cand);
@@ -1211,40 +1248,152 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // The probe is clamped to the time actually left: the TV app puts a 12 s read timeout on this call,
     // so the last candidate the viewer hears about has to be one that was measured, not one the app gave
     // up waiting for. The 800 ms floor keeps a final try from being a zero-length measurement.
-    const p = await probe.probeUrl(r.url, o.headers || {}, {
-      timeoutMs: Math.max(800, Math.min(GATEWAY_DELIVER_MS, deadline - Date.now())),
-      force: true,
-    });
-    if (p && p.ok === false) {
-      tried.push(labelOf(cand) + ': engine served nothing (' + (p.error || p.status || 'no bytes') + ')');
+    // Measure before promising. `size / duration` is the bitrate this copy needs, and the rate the hub
+    // can actually pull out of it has to clear that — which is what "auto quality" means on the apps this
+    // household compares us to: keep the sharpest copy the swarm can feed, and step down a rung when it
+    // cannot. There are two ways to learn that rate and the difference between them is the difference
+    // between a film and a freeze:
+    //
+    //   · Read-ahead on (the default): read the copy continuously through core/readahead.js for
+    //     playback.sustainBudgetMs and score the WORST playback.rateWindowMs window inside it. Tonight's
+    //     copy handed over 171 MB in five seconds out of the engine's cache and then sent close to
+    //     nothing for 45; an average over that sample flatters it and a 256 KB sample cannot see it at
+    //     all. Playback dies in the worst window, so the worst window is the verdict. The bytes this
+    //     read pulls are not thrown away afterwards — they are the pre-roll the film starts with.
+    //   · Read-ahead off: the old 256 KB probe, which can only ever produce a floor.
+    const needs = ranking.estimateMbps(cand, kept);
+    // The engine has recently failed to answer for this torrent at all. Asking it again on the very next
+    // press spends the viewer's whole patience budget finding that out again, so while any other copy is
+    // on the list this one waits for its turn.
+    const frozen = gateway.isCold(r.hash);
+    if (frozen && queue.length > 1) {
+      tried.push(labelOf(cand) + ': the engine has not answered for this torrent for '
+        + Math.round((frozen.until - Date.now()) / 1000) + 's (no header ' + (frozen.tries || 1)
+        + 'x, last after ' + frozen.waitedMs + 'ms)');
+      o.cold = true;
+      slowGateway = slowGateway || { o, cand };
+      continue;
+    }
+    let m = null;
+    const buf = readahead.acquire({ hash: r.hash, fileId: r.fileId });
+    if (buf) {
+      readahead.noteNeed({ hash: r.hash, fileId: r.fileId }, needs);
+      m = await readahead.sustain(buf, {
+        needMbps: needs,
+        at: resumeOffset(cand, kept, opts.positionMs),
+        // A fair share of the time that is left, not all of it: three copies inside eleven seconds means
+        // the copy tested third must not be judged on a 1.5 s glance while the first had four. The reader
+        // is left open either way, so a copy passed over keeps warming in the background and the next
+        // press finds its bytes already in RAM.
+        budgetMs: Math.max(1000, Math.min(readahead.cfg().sustainMs,
+          Math.floor(Math.max(0, deadline - Date.now() - 900) / Math.max(1, queue.length - queue.indexOf(cand))))),
+      });
+    } else {
+      const p = await probe.probeUrl(r.url, o.headers || {}, {
+        timeoutMs: Math.max(800, Math.min(GATEWAY_DELIVER_MS, deadline - Date.now())),
+        force: true,
+      });
+      // A sample that arrived faster than it can be timed is a floor, not a rate — and a floor taken out
+      // of the engine's own cache is not even that. One 100 KB sample served from RAM divided by its own
+      // millisecond of transfer once looked like 8388 kbps, and the picker then ordered a 6 GB copy that
+      // had never put a byte on the wire. Only a real, timed transfer may move the link estimate.
+      m = p && {
+        ok: p.ok !== false,
+        error: p.error || p.status || 'no bytes',
+        mbps: Number.isFinite(p.kbps) ? p.kbps / 1000 : null,
+        real: !!p.ok && p.rateReliable !== false && !p.rateFloor,
+        bytes: Number(p.bytes) || 0,
+        ms: Number(p.ms) || 0,
+        probe: p,
+      };
+    }
+    if (m && m.ok === false) {
+      tried.push(labelOf(cand) + ': engine served nothing (' + m.error + ')');
       // A gateway link that was merely slow still beats a magnet on a TV that has no engine of its
       // own, so it is kept as the last resort rather than thrown away.
       o.warming = true;
       slowGateway = slowGateway || { o, cand };
       continue;
     }
-    const needs = ranking.estimateMbps(cand, kept);
-    const got = p && Number.isFinite(p.kbps) ? p.kbps / 1000 : null;
-    // A sample that arrived faster than it can be timed is a floor, not a rate — and a floor taken out of
-    // the engine's own cache is not even that. One 100 KB sample served from RAM divided by its own
-    // millisecond of transfer once looked like 8388 kbps, and the picker then ordered a 6 GB copy that
-    // had never put a byte on the wire. Only a real, timed transfer may move the link estimate.
-    const rateIsReal = p && p.ok && p.rateReliable !== false && !p.rateFloor && got != null;
-    if (rateIsReal) gatewayMbps = gatewayMbps ? gatewayMbps * 0.6 + got * 0.4 : got;
-    else if (got != null && p && p.ok) {
+    const got = m && Number.isFinite(m.mbps) ? m.mbps : null;
+    const rateIsReal = !!m && !!m.real && got != null;
+    if (m && m.cached) {
+      // The cushion is already full of this copy, so it is sitting on a fast server — the one advantage a
+      // paid caching service sells, arrived at with RAM instead of money. Nothing left to measure.
+      log('PLAY RATE CACHED', identity, labelOf(cand),
+        'bufferedMB=' + m.bufferedMB, 'need=' + (needs == null ? '?' : needs.toFixed(1)));
+      gateway.clearCold(r.hash);
+      readahead.clearSlow(r.hash);
+    } else if (rateIsReal) {
+      gatewayMbps = gatewayMbps ? gatewayMbps * 0.6 + got * 0.4 : got;
+      log('PLAY RATE MEASURED', identity, labelOf(cand),
+        'mbps=' + got.toFixed(1), 'need=' + (needs == null ? '?' : needs.toFixed(1)),
+        'avg=' + m.avgMbps, 'over=' + m.ms + 'ms', 'windows=' + JSON.stringify(m.windows || []),
+        'bufferedMB=' + m.bufferedMB);
+      // A copy that has now been measured carrying its own bitrate is not the copy that starved someone.
+      if (needs && got >= needs * speedBar) {
+        gateway.clearCold(r.hash);
+        readahead.clearSlow(r.hash);
+      }
+    } else if (m && !m.bytes) {
+      // Nothing arrived at all. That is a cold torrent still handshaking with its swarm, not a slow one,
+      // and the difference matters: the answer is to keep reading (this buffer's reader stays open, and
+      // the engine's first byte has been measured arriving seventeen seconds after we asked) rather than
+      // to call the copy a failure. The bytes land in RAM anyway, and a later press finds them there.
+      log('PLAY RATE WARMING', identity, labelOf(cand), 'over=' + m.ms + 'ms',
+        'seeders=' + (cand.seeders != null ? cand.seeders : '?'),
+        'need=' + (needs == null ? '?' : needs.toFixed(1)));
+      tried.push(labelOf(cand) + ': no byte of it arrived in ' + m.ms + 'ms (cold torrent, still reading)');
+      o.warming = true;
+      o.measuredBytes = 0;
+      o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
+      slowGateway = slowGateway || { o, cand };
+      continue;
+    } else if (got != null) {
+      // The sample was too short, or was a floor rather than a rate: the number cannot be trusted either
+      // way, which is precisely the situation that used to end in `PLAY RATE IGNORED … reason=rateFloor`
+      // and the same 1.8 GB copy being chosen every night. An unproven copy is not a green light; it goes
+      // into the same limbo as a cold one, its reader stays open so it keeps proving itself, and the
+      // choice is made among the copies that did measure.
       log('PLAY RATE IGNORED', identity, 'kbps=' + Math.round(got * 1000),
-        'reason=' + (p.rateFloor ? 'rateFloor' : 'rateReliable=false'));
+        'reason=' + (m.probe ? (m.probe.rateFloor ? 'rateFloor' : 'rateReliable=false') : 'shortWindow'),
+        'bytes=' + (m.bytes || 0), 'over=' + (m.ms || 0) + 'ms');
+      tried.push(labelOf(cand) + ': only ' + ((m.windows || []).length) + ' timed window of it ('
+        + (m.bytes || 0) + ' bytes in ' + (m.ms || 0) + 'ms) — no rate to judge');
+      o.checked = true;
+      o.measuredBytes = m.bytes || 0;
+      o.measuredMbps = Number(got.toFixed(2));
+      o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
+      slowGateway = slowGateway || { o, cand };
+      continue;
+    }
+    // A copy this hub watched starve a viewer minutes ago is not offered again as though nothing had
+    // happened. It stays available — a different evening's swarm may feed it — but it stops being the
+    // automatic first choice while anything else is on the list.
+    const shunned = readahead.isSlow(r.hash);
+    if (shunned && queue.length > 1) {
+      tried.push(labelOf(cand) + ': starved a viewer '
+        + Math.round((Date.now() - shunned.at) / 1000) + 's ago at ' + shunned.mbps
+        + ' Mbps against the ~' + shunned.needMbps + ' Mbps this file needs');
+      o.checked = true;
+      o.slow = true;
+      o.measuredBytes = 0;
+      o.neededMbps = shunned.needMbps;
+      o.measuredMbps = shunned.mbps;
+      slowGateway = slowGateway || { o, cand };
+      continue;
     }
     // Refusing a link on a number we cannot trust is worse than playing it. The bar itself is the
     // client's: a native player that buffers minutes ahead is given the relaxed one (speedBar), a
     // browser re-wrapping the copy keeps the rule's full demand.
     if (rateIsReal && needs && got < needs * speedBar) {
-      tried.push(labelOf(cand) + ': measured ' + got.toFixed(1) + ' Mbps, this file needs ~'
+      tried.push(labelOf(cand) + ': measured ' + got.toFixed(1) + ' Mbps over ' + m.ms + 'ms, this file needs ~'
         + needs.toFixed(1) + ' Mbps'
         + (speedBar < ranking.HEADROOM ? ' (bar relaxed to ' + speedBar.toFixed(2)
-          + 'x for a client that plays the copy itself)' : ''));
+        + 'x for a client that plays the copy itself)' : ''));
       o.checked = true;
-      o.probe = p;
+      if (m.probe) o.probe = m.probe;
+      o.measuredBytes = m.bytes || 0;
       o.slow = true;
       o.neededMbps = Number(needs.toFixed(2));
       o.measuredMbps = Number(got.toFixed(2));
@@ -1252,13 +1401,32 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
       continue;
     }
-    if (p) { o.checked = true; o.probe = p; }
+    if (m) {
+      o.checked = true;
+      if (m.probe) o.probe = m.probe;
+      // What this copy needs and what it was measured at, kept on the answer: the screen can say why it
+      // picked this one, and the proxy address can carry the number to every later reader of the same film.
+      if (Number.isFinite(needs)) o.neededMbps = Number(needs.toFixed(2));
+      if (got != null) o.measuredMbps = Number(got.toFixed(2));
+      if (m.cached) o.cached = true;
+    }
     out = o; source = cand; break;
   }
 
   // A copy that is merely slow is a better answer than one that never answered, which is better than a
   // magnet this TV cannot open at all.
-  const fallback = tooSlow || slowGateway || lastResort;
+  // Nothing cleared the bar, so the question is which failure is most likely to play: the copy that
+  // actually moved bytes beats one that never started, and among those that tie, the one with more people
+  // sharing it and a smaller file is the one a swarm can carry. The candidate list is already in the
+  // household's own preference order and the sort is stable, so a tie leaves the preference alone.
+  const scored = [tooSlow, slowGateway].filter(Boolean).map((f) => ({
+    f,
+    bytes: (f.o && f.o.measuredBytes) || 0,
+    seeders: Number(f.cand && f.cand.seeders) || 0,
+    size: Number(f.cand && f.cand.sizeBytes) || Infinity,
+  }));
+  scored.sort((x, y) => (y.bytes - x.bytes) || (y.seeders - x.seeders) || (x.size - y.size));
+  const fallback = (scored[0] && scored[0].f) || lastResort;
   if (!out && fallback) {
     out = fallback.o;
     source = fallback.cand;
@@ -1289,9 +1457,38 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       },
     };
   }
+  // Buffer the film, then start it. A paid service starts instantly because the file already sits on a
+  // fast server; the free version of that is to pull a window of the copy into this box's RAM *before*
+  // the first frame is promised, and to tell the screen how much of the film that bought. The Play press
+  // has already been reading this copy to measure it, so on a warm one this waits for nothing at all.
+  if (out.mode === 'gateway' && out.torrent && readahead.cfg().on) {
+    const bufWho = { hash: out.torrent.hash, fileId: out.torrent.fileId };
+    const buf = readahead.get(bufWho);
+    if (buf) {
+      const leftMs = Math.max(0, deadline - Date.now() - 700);
+      const pb = await readahead.preBuffer(buf, { budgetMs: leftMs });
+      const need = ranking.estimateMbps(source, kept);
+      out.prebuffer = {
+        ms: pb.ms,
+        bytes: Math.round(pb.bytes || 0),
+        sec: pb.sec,
+        neededSec: readahead.cfg().preSec,
+        neededMbps: need == null ? null : Number(need.toFixed(2)),
+        complete: !!pb.complete,
+      };
+      log('PLAY PREBUFFER', identity, labelOf(source),
+        'MB=' + pb.MB, 'sec=' + (pb.sec == null ? '?' : pb.sec), 'ms=' + pb.ms,
+        'complete=' + pb.complete, 'targetMB=' + (pb.targetMB == null ? '?' : pb.targetMB));
+    }
+  }
+
   if (/^https?:\/\//i.test(out.url)) {
     const h = Object.entries(out.headers || {}).map(([k, v]) => k + ':' + v).join('||');
-    out.proxiedUrl = '/app/v1/proxy?u=' + encodeURIComponent(out.url) + (h ? '&h=' + encodeURIComponent(h) : '');
+    out.proxiedUrl = '/app/v1/proxy?u=' + encodeURIComponent(out.url)
+      + (h ? '&h=' + encodeURIComponent(h) : '')
+      // What this copy has to sustain, carried on the address the player will use, so a reconnect an
+      // hour later still knows what "slow" is supposed to mean for this file.
+      + (out.mode === 'gateway' && Number.isFinite(out.neededMbps) ? '&need=' + out.neededMbps : '');
     // A torrent is served through the hub, not straight from the engine, for two reasons measured on
     // this TV: (1) a cold copy answers slowly and the player's own HTTP timeout kills the connection
     // while the first bytes are still arriving, and the hub can wait far longer than a TV can; (2) every
@@ -2116,6 +2313,9 @@ const server = http.createServer(async (req, res) => {
         { exclude: body.exclude, reprobe: body.reprobe === true, clientHost: req.headers.host,
           season: body.season, episode: body.episode,
           container: body.container, audio: body.audio, sub: body.sub,
+          // Where the viewer already is: the hub measures and pre-buffers the part of the file they are
+          // about to watch, not the part of it they finished an hour ago.
+          positionMs: body.positionMs,
           // Which video codecs this device can draw. Not a preference and never inferred here: the client
           // states it, and it decides which copies are worth offering this screen at all.
           codecs: body.codecs });
@@ -2135,6 +2335,9 @@ const server = http.createServer(async (req, res) => {
         { exclude: body.exclude, reprobe: body.reprobe !== false, clientHost: req.headers.host,
           season: body.season, episode: body.episode,
           container: body.container, audio: body.audio, sub: body.sub,
+          // Where the viewer already is, so the hub measures and pre-buffers the part of the file they are
+          // about to watch instead of the part they watched an hour ago.
+          positionMs: body.positionMs,
           codecs: body.codecs });
       return send(res, picked.status, picked.body);
     }
@@ -2155,7 +2358,12 @@ const server = http.createServer(async (req, res) => {
         return send(res, 403, { error: 'not stored: the adult switch is off for this profile', identity: body.identity, tier: 3 });
       }
       const progress = store.setProgress(who, body.identity, body);
-      return send(res, 200, { ok: true, identity: body.identity, progress });
+      // The answer carries what the hub is doing with the bytes of the film this profile is watching:
+      // the rate the swarm is really delivering against the bitrate the copy needs, and how many seconds
+      // of picture are sitting in RAM in front of the screen. A client that asks every
+      // playback.progressPostMs gets the downgrade decision handed to it instead of having to discover a
+      // frozen frame on its own.
+      return send(res, 200, { ok: true, identity: body.identity, progress, stream: readahead.live() });
     }
 
     return send(res, 404, { error: 'not found', path });
@@ -2167,10 +2375,22 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   log(HUB_ID, HUB_VERSION, 'on http://0.0.0.0:' + PORT + '  (clients: /app/v1/home?profile=<id>)');
+  // ffmpeg reads a torrent through this hub's own proxy so the cushion sits in front of it too; it needs
+  // to know the address to loop back to.
+  readahead.setSelfOrigin('http://127.0.0.1:' + PORT);
   log('addons:', registry.providers.map((p) => p.id + (p.native ? '' : '@' + p.priority)).join(', '));
   log('rows:', registry.rows.map((r) => r.id + '/' + (r.scope || 'all') + '@' + r.order).join(', '));
   log('rules:', registry.rules.map((r) => r.id + '@' + r.order).join(', '));
   log('gateway:', gateway.status().mode, '-', gateway.status().note);
+  {
+    const ra = readahead.cfg();
+    log('readahead:', ra.on
+      ? Math.round(ra.maxBytes / 1048576) + 'MB or ' + ra.maxSec + 's of media per copy, '
+        + ra.copies + ' copies, pre-roll ' + ra.preSec + 's/' + Math.round(ra.preMB / 1048576) + 'MB'
+        + ' (' + ra.preMs + 'ms max), rate sample ' + ra.sustainMs + 'ms in ' + ra.windowMs
+        + 'ms windows, downgrade after ' + ra.starvedWindows + ' slow windows'
+      : 'off (playback.readAhead=false) - torrent bytes are piped straight to the player');
+  }
   log('probe:', probe.ENABLED
     ? 'measures ' + Math.round(probe.limits.PROBE_BYTES / 1024) + ' KB per link, '
       + probe.limits.CONCURRENCY + ' at a time, max ' + probe.limits.BUDGET_MS

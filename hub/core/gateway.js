@@ -276,11 +276,31 @@ function touchPlay(hash, fileId, bytes) {
  * Hashes the engine has recently failed to answer, so the next Play press can say so honestly instead
  * of handing out a link that will sit on a dead socket for the length of the client's patience.
  */
-const cold = new Map(); // hash -> { until, waitedMs, at }
+const cold = new Map(); // hash -> { until, waitedMs, at, tries }
 const COLD_MS = Number(process.env.GATEWAY_COLD_MS || 90000);
+/**
+ * Remember that the engine could not answer for this torrent.
+ *
+ * The penalty grows with every time it happens. A swarm that has been asked four times in an evening and
+ * produced no header on any of them does not need ninety more seconds, it is a torrent this box cannot
+ * reach tonight, and offering it again as the first choice is how "it buffers again" becomes the
+ * household's description of the product. The ceiling stays well short of a day because a swarm can gain
+ * a peer at any moment, and nothing here forbids the copy: it stops it being chosen automatically.
+ */
 function noteCold(hash, waitedMs) {
   if (!hash) return;
-  cold.set(String(hash), { until: Date.now() + COLD_MS, waitedMs: Math.round(waitedMs || 0), at: Date.now() });
+  const key = String(hash);
+  const prev = cold.get(key);
+  const tries = ((prev && prev.tries) || 0) + 1;
+  const penalty = Math.min(MISS_DEAD_MS, COLD_MS * Math.pow(2, Math.min(4, tries - 1)));
+  cold.set(key, {
+    until: Date.now() + penalty, waitedMs: Math.round(waitedMs || 0), at: Date.now(),
+    tries: tries, penaltyMs: penalty,
+  });
+}
+/** A torrent that has produced bytes since is not cold, and the next press should not be told it is. */
+function clearCold(hash) {
+  if (hash) cold.delete(String(hash));
 }
 function isCold(hash) {
   if (!hash) return null;
@@ -626,7 +646,7 @@ module.exports = {
   readBegin,
   readEnd,
   isReading,
-  noteCold,
+  noteCold, clearCold,
   isCold,
   ENGINE,
   notEnabledError() { return { error: 'gateway not enabled', gateway: status() }; },

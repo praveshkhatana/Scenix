@@ -288,6 +288,47 @@ export function screen(ctx) {
         g.appendChild(l);
       }
       right.appendChild(g);
+      // The two things a hub can do about a picture that stops, in the household's own words: hold a
+      // window of the film in memory so a bursty torrent still plays, and refuse a copy the people
+      // sharing it cannot carry. Everything here is the owner's call, and the hub takes a change without
+      // a restart.
+      if (setting.playback) {
+        const pb = setting.playback;
+        const g2 = group('Playback smoothness',
+          'What the hub does with the bytes of a film so it does not stop halfway. Saved the moment it is changed.');
+        toggle(g2, 'Hold a window of the film in memory',
+          pb.readAhead
+            ? 'The hub reads ahead of the player into its own memory, so a torrent that bursts and pauses still plays like a file on a server.'
+            : 'Off: bytes go straight from the torrent to the player, which is what it did before — a quiet swarm shows up as a frozen picture.',
+          pb.readAhead !== false,
+          (v) => writeSettings({ playback: Object.assign({}, pb, { readAhead: v }) }));
+        stepper(g2, 'How much of the film to hold',
+          'The cushion in the hub. Bigger survives a longer pause in the swarm, and costs this box that much memory.',
+          [32, 64, 96, 128, 256], Number(pb.readAheadMB),
+          (v) => writeSettings({ playback: Object.assign({}, pb, { readAheadMB: v }) }),
+          (v) => `${v} MB`);
+        stepper(g2, '…or how many seconds of picture',
+          'The same cushion in seconds of this film, whichever is smaller. A big 4K copy gets a shorter window than a small one.',
+          [30, 60, 90, 120, 180], Number(pb.readAheadSec),
+          (v) => writeSettings({ playback: Object.assign({}, pb, { readAheadSec: v }) }),
+          (v) => `${v} s`);
+        stepper(g2, 'Buffer before the first frame',
+          'How much picture the hub reads before it starts the film. More means a slower start and a smoother ride.',
+          [0, 5, 10, 15, 25, 40], Number(pb.preBufferSec),
+          (v) => writeSettings({ playback: Object.assign({}, pb, { preBufferSec: v }) }),
+          (v) => (v === 0 ? 'Start at once' : `${v} s`));
+        stepper(g2, 'How long to test a copy’s speed',
+          'When Play is pressed the hub reads the copy for this long and takes its worst moment, so a copy that cannot carry its own picture is not chosen.',
+          [2000, 4000, 6000, 10000], Number(pb.sustainBudgetMs),
+          (v) => writeSettings({ playback: Object.assign({}, pb, { sustainBudgetMs: v }) }),
+          (v) => `${(v / 1000).toFixed(1)} s`);
+        stepper(g2, 'Move to a smaller copy after',
+          'How many slow stretches in a row before the hub switches the viewer to another copy without asking.',
+          [1, 2, 3, 4], Number(pb.starvedWindows),
+          (v) => writeSettings({ playback: Object.assign({}, pb, { starvedWindows: v }) }),
+          (v) => (v === 1 ? 'One slow stretch' : `${v} slow stretches`));
+        right.appendChild(g2);
+      }
     }
 
     /* ---------------------------------------------------------------- home rows */
