@@ -363,11 +363,14 @@ function askText({ title = '', reason = '', placeholder = '', initial = '', acti
       }),
       el('h2', { text: title }),
       reason ? el('p', { text: reason }) : null,
-      entry.field, err,
+      entry.field,
+      // Field, keys, then the actions along the bottom — the same order the PIN pad uses, so a remote that
+      // already knows one of these dialogs knows both, and focus walks downward into the keys rather than
+      // back up over them.
+      entry.kbd, err,
       el('div', { class: 'mfoot' },
         el('button', { class: 'btn line', type: 'button', text: 'Cancel', onclick: () => answer(null) }),
-        el('button', { class: 'btn white', type: 'button', text: action, onclick: submit })),
-      entry.kbd);
+        el('button', { class: 'btn white', type: 'button', text: action, onclick: submit })));
     focus.focusable(box.querySelector('.mclose'));
     for (const b of box.querySelectorAll('.mfoot .btn')) focus.focusable(b);
 
