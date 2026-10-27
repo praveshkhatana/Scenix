@@ -5,9 +5,42 @@ plugins {
     id 'org.jetbrains.kotlin.android' version '1.9.24'
 }
 
+// ---- one web UI, held in one place ---------------------------------------------------------------
+// The interface is the hub's (`hub/web/`), not a copy that can drift. A build step carries it into a
+// generated assets dir, so git holds a single copy and an APK ships whatever the UI changed minutes ago.
+// The bundle keeps its own layout because LocalServer mounts it at `/ui/*`, which is how a hub serves it:
+// the page's absolute paths (`/ui/js/app.js`) need no rewriting against either backend.
+//
+// The hub sits next to this app in the repository, and further up in a working copy checked out beside it,
+// so it is found by walking up until a directory holds `hub/web/index.html`. `-Pscenix.hub=<dir>` says so
+// outright for any other layout.
+def hubRoot = {
+    def asked = findProperty('scenix.hub')
+    if (asked) return file(asked)
+    def dir = projectDir.parentFile
+    for (int up = 0; up < 6 && dir != null; up++) {
+        for (def cand : [new File(dir, 'hub'), new File(dir, 'Scenix/hub')]) {
+            if (new File(cand, 'web/index.html').isFile()) return cand
+        }
+        dir = dir.parentFile
+    }
+    return null
+}()
+
+// Faces for the profile screen: the list this box offers, plus the bytes it has already cached. A TV asks
+// its own backend for a face and never learns a third-party hostname, so the offline start screen still
+// shows the characters a household chose.
+def hubUiDir = layout.buildDirectory.dir('generated/scenixAssets')
+
 android {
     namespace 'com.scenix.tv'
     compileSdk 34
+
+    sourceSets {
+        main {
+            assets.srcDirs += hubUiDir
+        }
+    }
 
     defaultConfig {
         applicationId 'com.scenix.tv'
@@ -49,6 +82,34 @@ android {
         abortOnError false      // warnings are fine for the P1 acceptance build
         checkReleaseBuilds false
     }
+}
+
+// Carried in at build time rather than checked in: the APK is a snapshot of the UI as it stands, and the
+// repository never holds the same files twice.
+def copyHubUi = tasks.register('copyHubUi', Copy) {
+    group = 'scenix'
+    description = 'Carry the hub\'s web UI, its character list and its cached faces into the assets.'
+    onlyIf { hubRoot != null && new File(hubRoot, 'web/index.html').isFile() }
+    into hubUiDir
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    if (hubRoot != null) {
+        from(new File(hubRoot, 'web')) {
+            // `web/ui` is a link to `web` itself — it is how a hub answers /ui/<path> straight off disk —
+            // and copying it would copy the tree into itself.
+            exclude 'ui', 'ui/**'
+            into 'web'
+        }
+        from(new File(hubRoot, 'characters.json')) { into 'characters' }
+        from(new File(hubRoot, 'data/avatar-faces')) {
+            include '**'
+            into 'characters/faces'
+        }
+    }
+}
+tasks.named('preBuild') { dependsOn copyHubUi }
+if (hubRoot == null) {
+    logger.warn("scenix: no hub/web found near ${projectDir}, so this APK carries no web UI. " +
+        'Pass -Pscenix.hub=<dir> to point at one.')
 }
 
 dependencies {

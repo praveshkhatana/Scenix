@@ -412,13 +412,15 @@ SUBS = {
 
 prefs = {
     "prefs": {
-        "profile": "raj",
+        "profile": "adult",
         "audioLanguages": ["hin", "eng"],
         "subtitleLanguages": ["eng"],
         "quality": "1080",
         "maxFileSizeBytes": 2000000000,
         "maxBitrateBps": 6000000,
-        "why": ["prefers Hindi, then English audio", "caps at 1080p",
+        # The words a household would recognise about itself are not in here: audio follows the
+        # profile's own languages, and the ceilings are the ones this TV was given.
+        "why": ["audio follows the profile's languages, in order", "caps at 1080p",
                 "refuses files over 2 GB", "refuses streams over 6.0 Mbps"],
     }
 }
@@ -437,15 +439,18 @@ addons = [
 ]
 
 profiles = {
+    # No household is named in here. Four shapes are, because that is what a real home has: someone
+    # with no restrictions, someone who listens in more than one language, someone with a PIN on
+    # their shelf and a child held to the kids ceiling.
     "profiles": [
-        {"id": "raj", "name": "Raj", "isKids": False, "hasPin": False,
+        {"id": "adult", "name": "Adult", "isKids": False, "hasPin": False,
          "audioLanguages": ["hin", "eng"], "subtitleLanguages": ["eng"]},
-        {"id": "nagraj", "name": "Nagraj", "isKids": False, "hasPin": False,
+        {"id": "elder", "name": "Elder", "isKids": False, "hasPin": False,
          "languages": ["pa", "en"], "audioLanguages": ["pa", "hin", "en"],
          "subtitleLanguages": ["eng", "pan"]},
-        {"id": "meera", "name": "Meera", "isKids": False, "hasPin": True,
+        {"id": "teen", "name": "Teen", "isKids": False, "hasPin": True,
          "audioLanguages": ["pa", "en"], "subtitleLanguages": ["en"]},
-        {"id": "aarav", "name": "Aarav", "isKids": True, "hasPin": True,
+        {"id": "child", "name": "Child", "isKids": True, "hasPin": True,
          "audioLanguages": ["en", "hin"], "subtitleLanguages": []},
     ]
 }

@@ -169,7 +169,8 @@ class WebShellActivity : Activity() {
             android.util.Log.e("ScenixWeb", "no local contract server; falling back to the last hub address")
             return hubRoot()
         }
-        return "http://127.0.0.1:$port/"
+        // The same path a hub serves it from, so nothing in the bundle has to know which mode it is in.
+        return "http://127.0.0.1:$port/ui/index.html"
     }
 
     // ---- the player, built on first use so a session that only browses allocates no decoder ----

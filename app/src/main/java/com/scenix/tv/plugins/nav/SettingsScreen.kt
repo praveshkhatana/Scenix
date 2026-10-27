@@ -462,7 +462,7 @@ object SettingsScreen : ScreenPlugin {
     private fun nextBitrate(cur: Int): Int =
         BITRATES[(BITRATES.indexOf(cur) + 1 + BITRATES.size) % BITRATES.size]
 
-    /** Typed language codes, kept in the order typed: `hin, eng` -> ["hin", "eng"]. */
+    /** Typed language codes, kept in the order typed: two codes separated by a comma become a list of two. */
     private fun codes(value: String): List<String> =
         value.split(',', ';', ' ').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
 

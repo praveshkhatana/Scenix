@@ -1,9 +1,11 @@
 package com.scenix.tv.plugins.nav
 
 import android.graphics.Color
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -13,6 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.R
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.LocalHub
 import com.scenix.tv.core.PinPad
 import com.scenix.tv.core.Profile
 import com.scenix.tv.core.ScreenHost
@@ -22,10 +25,12 @@ import com.scenix.tv.core.Views
 /**
  * "Who's watching?" — the entry screen, and the only gate the app itself owns.
  *
- * The profile list is the hub's (`GET /app/v1/profiles`), including its `isKids` and `hasPin` flags.
- * The PIN itself never leaves the TV: it is hashed into SharedPreferences. A profile the hub marks
- * protected but this TV has no PIN for is asked to set one on first use, so a family can lock a
- * profile from the app without a hub-side settings page.
+ * The profile list is the backend's (`GET /app/v1/profiles`), including its `isKids` and `hasPin`
+ * flags. A backend that says it has `profileEdit` — this TV on its own — is also asked to take a new
+ * one here, so a household is not obliged to have created its people somewhere else first. The PIN
+ * itself never leaves the TV: it is hashed into SharedPreferences. A profile marked protected but with
+ * no PIN on this TV is asked to set one on first use, so a profile can be locked from the app without
+ * a settings page anywhere else.
  *
  * Not in the nav: the app reaches it through `requireProfilePicker`, and Back from it exits.
  */
@@ -37,6 +42,7 @@ object ProfilesScreen : ScreenPlugin {
     override val order = 1
 
     private var pinOverlay: View? = null
+    private var addOverlay: View? = null
 
     override fun render(host: ScreenHost) {
         val ctx = host.app
@@ -77,13 +83,29 @@ object ProfilesScreen : ScreenPlugin {
         glp.gravity = Gravity.CENTER
         column.addView(grid, glp)
 
-        val manage = Views.text(ctx, "sub", 26f, theme.ink2, "Manage profiles \u00B7 hub \u00B7 player settings", gravity = Gravity.CENTER)
+        val manage = Views.text(
+            ctx, "sub", 26f, theme.ink2,
+            "Manage profiles \u00B7 ${if (ctx.prefs.standalone()) "this TV" else "hub"} \u00B7 player settings",
+            gravity = Gravity.CENTER,
+        )
         val mlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         mlp.topMargin = theme.px(52f)
         manage.isFocusable = true
         manage.setOnClickListener { host.show("settings") }
         Focus.attach(manage, manage, ctx, theme.radius("chip", 6f), scale = false)
         column.addView(manage, mlp)
+
+        // A backend that keeps its profiles itself can be asked for one here. A hub does not say so,
+        // and its owner's own settings page stays the place where people are created.
+        if (ctx.hub is LocalHub && ctx.hasCapability("profileEdit")) {
+            val add = Views.text(ctx, "sub", 26f, theme.brand, "Add a profile", gravity = Gravity.CENTER)
+            val alp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            alp.topMargin = theme.px(26f)
+            add.isFocusable = true
+            add.setOnClickListener { showAdd(host, root) }
+            Focus.attach(add, add, ctx, theme.radius("chip", 6f), scale = false)
+            column.addView(add, alp)
+        }
 
         grid.adapter = ProfilesAdapter(ctx, host) { profile -> gate(host, root, profile) }
 
@@ -145,9 +167,101 @@ object ProfilesScreen : ScreenPlugin {
         )
     }
 
+    /**
+     * One name and one question — whether this is a child's profile — written into this TV's own
+     * profile list. Nothing else about a person is asked for here: their languages and their ceilings
+     * are set under Settings, once they exist.
+     */
+    private fun showAdd(host: ScreenHost, root: FrameLayout) {
+        val ctx = host.app
+        val theme = ctx.theme
+        val local = ctx.hub as? LocalHub ?: return
+
+        val panel = LinearLayout(ctx.app)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.setPadding(theme.px(46f), theme.px(38f), theme.px(46f), theme.px(38f))
+        panel.background = Views.rounded(theme.surface, theme.radius("modal", 10f))
+
+        panel.addView(
+            Views.text(ctx, "h3", 34f, theme.ink, "A new profile"),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        val hint = Views.text(
+            ctx, "sub", 24f, theme.ink2,
+            "A name for this person. A child's shelf carries only what a maturity label allows.",
+        )
+        val hlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        hlp.topMargin = theme.px(12f)
+        hlp.bottomMargin = theme.px(24f)
+        panel.addView(hint, hlp)
+
+        val field = EditText(ctx.app)
+        field.hint = "Name"
+        field.setTextColor(theme.ink)
+        field.setHintTextColor(theme.ink3)
+        field.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 24f))
+        field.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        field.background = Views.rounded(theme.surface2, theme.radius("field", 8f), theme.px(1f), theme.line)
+        field.setPadding(theme.px(18f), theme.px(14f), theme.px(18f), theme.px(14f))
+        panel.addView(
+            field,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+
+        val row = LinearLayout(ctx.app)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.END
+        for (choice in listOf("Adult" to false, "Child" to true)) {
+            val b = Views.text(ctx, "button", 22f, theme.ink, choice.first, bold = true, gravity = Gravity.CENTER)
+            b.setPadding(theme.px(26f), theme.px(14f), theme.px(26f), theme.px(14f))
+            b.background = Views.rounded(if (choice.second) theme.kids else theme.brand, theme.radius("button", 6f))
+            b.isFocusable = true
+            b.setOnClickListener {
+                val name = field.text.toString().trim()
+                if (name.isEmpty()) {
+                    field.requestFocus()
+                    return@setOnClickListener
+                }
+                local.addProfile(name, choice.second)
+                closeAdd(root)
+                host.show("profiles")
+            }
+            Focus.attach(b, b, ctx, theme.radius("button", 6f), scale = false)
+            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            blp.leftMargin = theme.px(18f)
+            row.addView(b, blp)
+        }
+        val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        rlp.topMargin = theme.px(28f)
+        panel.addView(row, rlp)
+
+        val scrim = FrameLayout(ctx.app)
+        scrim.setBackgroundColor(theme.color("scrim", "#BF000000"))
+        scrim.addView(
+            panel,
+            FrameLayout.LayoutParams(theme.px(820f), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER),
+        )
+        addOverlay = scrim
+        root.addView(
+            scrim,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+        )
+        field.requestFocus()
+    }
+
+    private fun closeAdd(root: FrameLayout) {
+        addOverlay?.let { root.removeView(it) }
+        addOverlay = null
+    }
+
     override fun onBack(host: ScreenHost): Boolean {
         if (pinOverlay != null) {
             (host.container() as? FrameLayout)?.let { closePin(it) }
+            return true
+        }
+        if (addOverlay != null) {
+            (host.container() as? FrameLayout)?.let { closeAdd(it) }
             return true
         }
         return false
@@ -155,6 +269,7 @@ object ProfilesScreen : ScreenPlugin {
 
     override fun onLeave(host: ScreenHost) {
         pinOverlay = null
+        addOverlay = null
     }
 
     private fun closePin(root: FrameLayout) {

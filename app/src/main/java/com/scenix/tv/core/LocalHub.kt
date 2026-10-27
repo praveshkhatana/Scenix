@@ -121,18 +121,20 @@ class LocalHub private constructor(context: Context) : HubClient {
         val caps = JSONObject()
             .put("gateway", false)     // no engine fetches a torrent here: a source is a URL or nothing
             .put("live", false)        // no channel list to tune
-            .put("localFiles", false)  // this TV serves no files of its own
+            .put("localFiles", true)   // the files this backend names are opened by this TV, not relayed
             .put("remux", false)       // a file plays as it is, or not at all
             .put("tracks", false)      // languages are not read out of containers, only from addons
             .put("announce", false)    // a TV does not announce itself as a backend
-            .put("directHttp", true)   // what a source has to be for this device to play it
-            .put("addonCatalogs", true)// the shelves are whatever the installed addons say
-            .put("localCache", true)   // answers survive the network being down
-            .put("localProfiles", true)
-            .put("profileEdit", true)  // and this app is the one that creates them
-            .put("localPrefs", true)   // the playback preference is kept here, not on a hub
-            .put("search", true)
-        if (manifests.any { it.has("subtitles") }) caps.put("subs", true)
+            .put("search", true)       // one word, answered across every installed addon
+            .put("subtitles", manifests.any { it.has("subtitles") })
+            .put("settingsAdmin", true)// addons and languages: GET+PUT /app/v1/settings, answered here
+            .put("addonAdmin", true)   // addons are added, enabled, disabled and removed over HTTP
+            .put("prefsEdit", true)    // the definition of "the stream I want" is kept on this TV
+            .put("profileEdit", true)  // this backend creates, changes and removes the people
+            .put("cacheAdmin", true)   // what was cached from upstream can be thrown away on purpose
+            .put("avatarFaces", hasFaces())  // only if this build actually carries the pictures
+        // No key is left out. A key that is absent reads as "the backend did not say", and the point of
+        // this list is that a TV answering for itself says something about every one of them.
         val rows = JSONArray()
         for (r in declaredRows(manifests)) {
             rows.put(JSONObject().put("id", r.id).put("title", r.title).put("card", r.card).put("order", r.order))
@@ -988,6 +990,108 @@ class LocalHub private constructor(context: Context) : HubClient {
                 .put("updatedAt", System.currentTimeMillis())
                 .put("episode", episode ?: JSONObject.NULL),
         )
+    }
+
+    // ---- character faces ------------------------------------------------------------------------
+    //
+    // The build step carries the hub's character list and every picture that hub had already fetched into
+    // this APK, so a standalone TV draws its start screen out of its own storage: a face is a file on the
+    // device, not a request to somebody else's website. A build given no faces says so through the
+    // `avatarFaces` capability, and the client draws its own initials instead - a capability that lies is
+    // worse than one that is off.
+
+    /** The hub's own slug rule, kept identical so one path resolves on either backend. */
+    private fun slugOf(value: String): String =
+        value.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+
+    private fun assetText(name: String): String =
+        appContext.assets.open(name).use { it.readBytes().toString(Charsets.UTF_8) }
+
+    /** Empty string for "the source did not say", which is what the hub sends on the wire. */
+    private fun orNull(from: JSONObject, name: String): Any {
+        val v = s(from, name, "")
+        return if (v.isEmpty()) JSONObject.NULL else v
+    }
+
+    private var faceCache: List<JSONObject>? = null
+
+    /**
+     * The faces this build carries, in the order the shipped list gives them, described exactly as the hub
+     * describes them. An entry with no picture beside it is not offered: a picker full of broken images is
+     * a worse screen than a shorter one.
+     */
+    private fun faceRecords(): List<JSONObject> {
+        faceCache?.let { return it }
+        val out = ArrayList<JSONObject>()
+        try {
+            val listed = JSONObject(assetText("characters/characters.json")).optJSONArray("characters") ?: JSONArray()
+            for (i in 0 until listed.length()) {
+                val entry = listed.optJSONObject(i) ?: continue
+                val page = s(entry, "page", "").ifEmpty { s(entry, "name", "") }
+                val slug = slugOf(page)
+                if (slug.isEmpty()) continue
+                val meta = try {
+                    JSONObject(assetText("characters/faces/$slug.json"))
+                } catch (e: Throwable) {
+                    continue // no cached picture for this character in this build
+                }
+                out.add(
+                    JSONObject()
+                        .put("id", slug)
+                        .put("name", s(entry, "name", page))
+                        .put("label", s(entry, "name", page))
+                        .put("image", "/app/v1/avatars/character/$slug")
+                        .put("source", s(meta, "attribution", ""))
+                        .put("page", s(meta, "page", ""))
+                        .put("licence", orNull(meta, "licence"))
+                        .put("licenceUrl", orNull(meta, "licenceUrl"))
+                        .put("description", s(meta, "description", ""))
+                        .put("from", s(meta, "source", "wikipedia"))
+                        .put("publisher", orNull(meta, "publisher"))
+                        .put("fullName", orNull(meta, "fullName"))
+                        .put("alignment", orNull(meta, "alignment"))
+                        .put("powerScore", orNull(meta, "powerScore"))
+                        .put("width", meta.optInt("width", 0))
+                        .put("height", meta.optInt("height", 0))
+                        // A standing poster and a wide banner need different crops, and a card cannot know
+                        // which it holds without being told.
+                        .put("portrait", meta.optInt("height", 0) >= meta.optInt("width", 0)),
+                )
+            }
+        } catch (e: Throwable) {
+            // No list in this build at all. hasFaces() reports false and the client draws its own faces.
+        }
+        faceCache = out
+        return out
+    }
+
+    fun hasFaces(): Boolean = faceRecords().isNotEmpty()
+
+    /** The picker's answer, in the hub's envelope: `{ characters: [...] }`. */
+    fun charactersJson(limit: String?, pick: String?): JSONObject {
+        val wanted = (limit?.toIntOrNull() ?: 40).coerceIn(1, 200)
+        val all = faceRecords()
+        val ordered = if (pick.isNullOrEmpty()) all else all.sortedBy { stableHash(s(it, "id") + "|" + pick) }
+        return JSONObject().put("characters", JSONArray(ordered.take(wanted)))
+    }
+
+    /** A face as bytes plus what kind of picture they are, so the answer carries an honest content-type. */
+    fun faceImage(requested: String): Pair<ByteArray, String>? {
+        val slug = slugOf(requested)
+        if (slug.isEmpty()) return null
+        return try {
+            val type = try { s(JSONObject(assetText("characters/faces/$slug.json")), "type", "image/jpeg") } catch (e: Throwable) { "image/jpeg" }
+            appContext.assets.open("characters/faces/$slug.img").use { Pair(it.readBytes(), type.ifEmpty { "image/jpeg" }) }
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    /** Deterministic shuffle for "show me another set", so a backend has to remember nothing. */
+    private fun stableHash(text: String): Long {
+        var h = 2166136261L
+        for (c in text) h = (h xor c.code.toLong()) * 16777619L
+        return h and 0xffffffffL
     }
 
     // ---- the HubClient surface: the same shapes, delivered on the main thread ----------------------

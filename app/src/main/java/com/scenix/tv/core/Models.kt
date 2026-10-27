@@ -292,7 +292,8 @@ data class Profile(
                 name = s(o, "name", ""),
                 isKids = kind.equals("kids", ignoreCase = true) ||
                     o.optBoolean("isKids", o.optBoolean("kids", false)),
-                hasPin = o.optBoolean("pinRequired", o.optBoolean("hasPin", o.optBoolean("pin", false))),
+                // A hub says whether a code is set with `pinSet`; it never sends the code itself.
+                hasPin = o.optBoolean("pinSet", o.optBoolean("pinRequired", o.optBoolean("hasPin", false))),
                 hiddenRows = arr(o, "hiddenRows", "hidden"),
                 languages = arr(o, "languages").ifEmpty { arr(prefs, "languages") },
                 audioLanguages = arr(o, "audioLanguages", "audio")

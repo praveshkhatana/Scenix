@@ -107,7 +107,9 @@ class LocalServer private constructor(
     // the bundled page.
 
     private fun route(method: String, target: String, body: String, res: Res) {
-        val path = target.substringBefore('?', "/")
+        // substringBefore's second argument is the value returned when the delimiter is ABSENT, so asking
+        // for "/" there silently renamed every path without a query string to the site root.
+        val path = target.substringBefore('?')
         val query = queryOf(target)
         when {
             path == "/healthz" ->
@@ -230,6 +232,13 @@ class LocalServer private constructor(
 
             path == "/app/v1/addons" -> res.json(200, JSONObject().put("addons", hub.addonsJson()))
 
+            path == "/app/v1/cache/clear" && method == "POST" -> {
+                // Every addon response is kept for a while so a shelf redraws without the network. This
+                // throws that away: the next look at a catalogue is a real one.
+                hub.clearAddonCache()
+                res.json(200, JSONObject().put("ok", true))
+            }
+
             path.startsWith("/app/v1/trailer/") ->
                 // This backend does not advertise trailers, so a UI that branches on capabilities never
                 // asks. One that does not is answered in the same words a hub uses.
@@ -250,6 +259,15 @@ class LocalServer private constructor(
                 )
             }
 
+            path == "/app/v1/avatars/characters" ->
+                res.json(200, hub.charactersJson(query["limit"], query["seed"]))
+
+            path.startsWith("/app/v1/avatars/character/") -> {
+                val face = hub.faceImage(decode(path.removePrefix("/app/v1/avatars/character/")))
+                if (face == null) res.json(404, JSONObject().put("error", "no cached face"))
+                else res.send(200, face.second, face.first)
+            }
+
             else -> static(res, path)
         }
     }
@@ -257,7 +275,14 @@ class LocalServer private constructor(
     // ---- the bundled page ------------------------------------------------------------------------
 
     private fun static(res: Res, requested: String) {
-        val rel = if (requested == "/" || requested.isBlank()) "index.html" else requested.removePrefix("/")
+        // The page is mounted at /ui/ by a hub, and its own asset paths are written that way, so a
+        // standalone server answers /ui/app.css and /app.css as one file. That is what lets the same
+        // untouched bundle run against either backend.
+        val rel = when {
+            requested == "/" || requested.isBlank() || requested == "/ui" || requested == "/ui/" -> "index.html"
+            requested.startsWith("/ui/") -> requested.removePrefix("/ui/")
+            else -> requested.removePrefix("/")
+        }
         if (rel.contains("..")) {
             res.json(400, JSONObject().put("error", "bad path"))
             return
@@ -278,6 +303,8 @@ class LocalServer private constructor(
         "png" -> "image/png"
         "jpg", "jpeg" -> "image/jpeg"
         "webp" -> "image/webp"
+        "woff2" -> "font/woff2"
+        "woff" -> "font/woff"
         else -> "application/octet-stream"
     }
 
