@@ -565,6 +565,13 @@ class External {
       extra: (Array.isArray(c.extra)
         ? c.extra.map((e) => (typeof e === 'string' ? e : e && (e.name || e.key)))
         : c.extra || []).filter(Boolean).concat(body.search === true ? ['search'] : []),
+      // The values an addon will actually answer for, kept because it is the only honest list of what
+      // genres exist here. A shelf that guesses a genre no addon publishes stays empty forever, and a
+      // warm-up that hardcodes genres breaks the moment someone installs an addon with different ones.
+      genreOptions: (Array.isArray(c.extra) ? c.extra : [])
+        .map((e) => (typeof e === 'string' ? { name: e } : e || {}))
+        .filter((e) => (e.name || e.key) === 'genre' && Array.isArray(e.options))
+        .flatMap((e) => e.options).slice(0, 24),
     }));
     this.lastFetch = Date.now();
     return body;
@@ -626,6 +633,28 @@ class External {
     for (const it of items) this.items.set(it.identity, it);
     this.lastFetch = Date.now();
     return items;
+  }
+
+  /**
+   * Fill the cache for every genre this addon says it answers, so the first home page after a restart is
+   * full rather than short. Genre shelves read the cache and kick a background fetch on a miss, which means
+   * the row a household looks at first is the one that pays for the fetch - and every shelf of this kind
+   * came back empty on a fresh boot for exactly that reason. Sequential with a gap: these are the upstream's
+   * own rate limits, not a suggestion.
+   */
+  async warmGenres({ perCatalog = 8, gapMs = 300 } = {}) {
+    if (!this.cats.length) await this.loadManifest({ wait: true });
+    let fetched = 0;
+    for (const cat of this.cats) {
+      for (const genre of (cat.genreOptions || []).slice(0, perCatalog)) {
+        try {
+          await this.fetchCatalog(cat, { genre });
+          fetched++;
+          await new Promise((r) => setTimeout(r, gapMs));
+        } catch (e) { /* an addon that will not answer this genre is simply not asked again until TTL */ }
+      }
+    }
+    return fetched;
   }
 
   toItem(meta, type) {
@@ -1271,6 +1300,18 @@ function byId(id) {
 
 module.exports = {
   init, list, add, remove, setEnabled, byId, entries, resyncSeeds, seedAddons, clearCache,
+  // Background cache fill for every genre each mounted addon declares. `installed` holds the live objects -
+  // `entries()` is the saved config and has no methods to call, which is the kind of mistake that makes a
+  // warm-up look like it ran while it fetched nothing at all. Native providers sit in the same map wrapped
+  // as `{ entry, native }`, so the method check is what leaves them out.
+  async warmGenres() {
+    let n = 0;
+    for (const a of installed.values()) {
+      if (a && !a.native && a.entry && a.entry.enabled === false) continue;
+      if (a && typeof a.warmGenres === 'function') n += await a.warmGenres();
+    }
+    return n;
+  },
   paths: { ADDONS_FILE, CACHE_FILE },
   // A getter, so a client reading its limits sees the owner's current choices rather than the values this
   // process happened to have when it started.

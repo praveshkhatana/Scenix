@@ -2086,4 +2086,11 @@ server.listen(PORT, '0.0.0.0', () => {
   // Faces are the first thing a household sees, before they have watched a single thing, so the pictures
   // are fetched at boot and kept. A profile screen then answers from this box in milliseconds.
   avatars.warm();
+  // Genre shelves read whatever the addons have already said. On a fresh process that is nothing, so the
+  // first home page a household sees after a restart is missing Action, Comedy and Horror entirely, and it
+  // only fills in once someone happens to look at them. Warm the genres the addons themselves declare, in
+  // the background, never inside a request.
+  addons.warmGenres()
+    .then((n) => { if (n) console.log(`genres: ${n} catalog pages warmed from what the addons declare`); })
+    .catch(() => {});
 });
