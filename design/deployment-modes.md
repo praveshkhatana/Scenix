@@ -61,6 +61,15 @@ talks to addons directly, keeps its own cache and DB on device. Trade-offs, stat
 gateway, so a torrent must be handled on the device; no shared cache; heavier on a 2 GB panel. That
 is why the hub remains the recommended shape and standalone is the easy one, not the better one.
 
+Both shapes have run on the same panel in the same build, with only an owner setting changed between
+them. In hub mode the shell loaded the paired hub's address and played through the gateway. In
+standalone the app started its own contract host on a loopback port chosen at boot, served the
+identical page out of its own assets, and answered `GET /app/v1/manifest` with the richer flags turned
+off — `gateway:false, live:false, remux:false, tracks:false` beside `localFiles:true, search:true,
+settingsAdmin:true, profileEdit:true, addonAdmin:true` — with one profile created on first run. That
+state drew no audio-track or subtitle control, which is the capability rule doing its job rather than a
+diminished screen.
+
 ## Rule 3 — configuration follows the backend
 
 * **With a hub** the owner configures in the **Hub UI** (`http://<hub>:8788/` in any browser):
@@ -70,6 +79,14 @@ is why the hub remains the recommended shape and standalone is the easy one, not
   contract — one implementation of each screen, two hosts.
 
 A user must never have to edit a file or set an environment variable to make Scenix theirs.
+
+### Which surface a device draws
+
+The same decision belongs to the device, so it is stored there: an Android TV picks its front end in
+the app's own **Settings → Interface** and defaults to the web UI, with the built-in screens kept as
+the alternative for a panel that prefers them or cannot host a page. `tv://` links still resolve
+against the built-in stack, because such a link names a screen of that stack. Nothing else changes
+between the two: same backend, same contract, same player underneath.
 
 ## Rule 4 — pairing, not IP addresses
 
@@ -81,7 +98,9 @@ Nothing in a build names a machine. The client finds a hub by:
 3. **Remembered** — the last working address is tried first; a hub that stops answering falls back to
    the other candidates and says so on screen rather than spinning.
 
-With no hub paired and no choice made, the app starts in standalone mode.
+With nothing paired and no choice recorded, the app asks once which of these three it should use
+instead of browsing an empty library or spinning on a network that has no hub in it; the answer is
+remembered, and either answer can be changed later from Settings.
 
 ## Naming
 
