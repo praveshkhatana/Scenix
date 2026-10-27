@@ -50,7 +50,13 @@ const DEFAULTS = {
   // Generated profile faces. Empty means this hub does not proxy any avatar service and a client draws
   // its own; pointing it at one (self-hosted or public) makes the hub fetch and cache through it, so the
   // TV still only ever talks to this box.
-  avatar: { baseUrl: '' },
+  avatar: {
+    baseUrl: '', // a generated-avatar service to proxy; empty means clients draw their own faces
+    // The two catalogues character faces come from. Both are free and need no key or account; empty
+    // switches that source off for an owner who would rather not call that host at all.
+    superheroApi: 'https://akabab.github.io/superhero-api/api',
+    wikiApi: 'https://en.wikipedia.org/api/rest_v1/page/summary/',
+  },
 };
 
 let cached = null; // the last parsed+merged object, or null when the file has not been read yet
@@ -91,7 +97,13 @@ function normalize(s) {
       sizeFilter: String((s.addons || {}).sizeFilter == null
         ? DEFAULTS.addons.sizeFilter : (s.addons || {}).sizeFilter).trim().slice(0, 200),
     },
-    avatar: { baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300) },
+    avatar: {
+      baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300),
+      superheroApi: String((s.avatar || {}).superheroApi == null
+        ? DEFAULTS.avatar.superheroApi : (s.avatar || {}).superheroApi).trim().slice(0, 300),
+      wikiApi: String((s.avatar || {}).wikiApi == null
+        ? DEFAULTS.avatar.wikiApi : (s.avatar || {}).wikiApi).trim().slice(0, 300),
+    },
   };
   // Anything the owner put in the file that this build does not know about is kept, so an older hub
   // reading a newer file does not quietly delete a setting a newer hub wrote.
@@ -106,11 +118,8 @@ function seedFromEnv(s) {
   if (process.env.LANGS !== undefined && !s.languages.length) s.languages = normalizeLanguages(process.env.LANGS);
   if (process.env.HUB_NAME && s.hubName === DEFAULTS.hubName) s.hubName = String(process.env.HUB_NAME).trim();
   if (process.env.PLAYLIST_URL && !s.live.playlist) s.live.playlist = String(process.env.PLAYLIST_URL).trim();
-  // One release of tolerance for the borrowed names these limits used to ship under.
-  const max = process.env.ADDON_MAX_SOURCES !== undefined
-    ? process.env.ADDON_MAX_SOURCES : process.env.STREMIO_MAX_SOURCES;
-  const min = process.env.ADDON_MIN_SIZE_MB !== undefined
-    ? process.env.ADDON_MIN_SIZE_MB : process.env.STREMIO_MIN_SIZE_MB;
+  const max = process.env.ADDON_MAX_SOURCES;
+  const min = process.env.ADDON_MIN_SIZE_MB;
   if (max !== undefined && s.addons.maxSources === DEFAULTS.addons.maxSources) s.addons.maxSources = Number(max);
   if (min !== undefined && s.addons.minSizeMB === DEFAULTS.addons.minSizeMB) s.addons.minSizeMB = Number(min);
   return s;

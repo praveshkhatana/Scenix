@@ -10,10 +10,17 @@
  *
  * Two sources, both the owner's to configure and neither hardcoded in a screen:
  *
- *   characters  a shipped list (`characters.json`) of well-known characters, each looked up by its
- *               Wikipedia page title. The list is content, not configuration: `data/characters.json`
- *               overrides it entry by entry, so a household can put their own favourites there, and the
- *               Hub UI writes exactly that file.
+ *   characters  a shipped list (`characters.json`) of well-known characters. The list is content, not
+ *               configuration: `data/characters.json` overrides it entry by entry, so a household can put
+ *               their own favourites there, and the Hub UI writes exactly that file. Each entry names the
+ *               source to resolve it against, because the two sources cover different people:
+ *                 superherodb  a free, key-less catalogue of 563 comic characters - Marvel, DC and the
+ *                              independents - with clean portrait renders and real metadata (publisher,
+ *                              full name, alignment, power stats). This is what a superhero entry uses.
+ *                 wikipedia    everyone that catalogue does not know: cartoons, animation, film
+ *                              characters, looked up by article title, where the lead image is sometimes
+ *                              a poster and sometimes a statue.
+ *               `page` is the lookup key in both cases.
  *   generated   an upstream avatar service, proxied and cached for the same one-peer reason. Off by
  *               default: the setting (`avatar.baseUrl`) is empty until an owner points it somewhere.
  *
@@ -36,9 +43,23 @@ const TIMEOUT_MS = Number(process.env.AVATAR_TIMEOUT_MS || 6000);
 // Wikipedia throttles a caller that arrives in a burst, and a throttled picture is simply a missing face on
 // the profile screen. One at a time, with a pause, plus one patient retry, is what an install does once.
 const GAP_MS = Number(process.env.AVATAR_GAP_MS || 350);
-const MAX_BYTES = Number(process.env.AVATAR_MAX_BYTES || 512 * 1024);
+const MAX_BYTES = Number(process.env.AVATAR_MAX_BYTES || 512 * 1024); // one picture
+const MAX_CATALOGUE_BYTES = 8 * 1024 * 1024; // a whole character catalogue is a different kind of answer
 const TTL_MS = Number(process.env.AVATAR_TTL_MS || 30 * 24 * 3600 * 1000); // a character does not recast itself
-const WIKI = 'https://en.wikipedia.org/api/rest_v1/page/summary/';
+const WIKI_DEFAULT = 'https://en.wikipedia.org/api/rest_v1/page/summary/';
+const HEROES_DEFAULT = 'https://akabab.github.io/superhero-api/api';
+
+function wikiApi() {
+  const s = settings.get();
+  return String((s.avatar && s.avatar.wikiApi) || '').trim() || WIKI_DEFAULT;
+}
+
+/** Empty means the comic-character catalogue is switched off, which is a choice an owner can make. */
+function heroesApi() {
+  const s = settings.get();
+  const raw = (s.avatar && s.avatar.superheroApi === undefined) ? HEROES_DEFAULT : String(s.avatar.superheroApi || '');
+  return raw.trim();
+}
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -63,15 +84,23 @@ function seed() {
     for (const c of Array.isArray(list) ? list : []) {
       const page = String((c && (c.page || c.name)) || '').trim();
       if (!page) continue;
-      out.set(page, { name: String(c.name || page).trim(), page });
+      const source = c.source === 'superherodb' ? 'superherodb' : 'wikipedia';
+      out.set(page + '|' + source, { name: String(c.name || page).trim(), page, source });
     }
   };
   add(base && base.characters);
   if (over) add(Array.isArray(over) ? over : over.characters);
-  return [...out.values()];
+  // One card per character: the shipped list and the owner's file may name the same person through
+  // different sources, and a picker that draws Spider-Man twice is a bug, not a feature.
+  const seen = new Set();
+  return [...out.values()].filter((c) => {
+    if (seen.has(c.page)) return false;
+    seen.add(c.page);
+    return true;
+  });
 }
 
-async function getOnce(url, headers = {}) {
+async function getOnce(url, headers = {}, maxBytes = MAX_BYTES) {
   const res = await fetch(url, {
     headers: { 'user-agent': UA, accept: '*/*', ...headers },
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -85,15 +114,15 @@ async function getOnce(url, headers = {}) {
   }
   const buf = Buffer.from(await res.arrayBuffer());
   if (!buf.length) throw new Error('empty answer');
-  if (buf.length > MAX_BYTES) throw new Error('answer too large (' + buf.length + ' bytes)');
+  if (buf.length > maxBytes) throw new Error('answer too large (' + buf.length + ' bytes)');
   return { buf, type: res.headers.get('content-type') || 'application/octet-stream' };
 }
 
 /** A throttled answer is worth waiting for once; a 404 is not worth anything. */
-async function getBytes(url, headers = {}) {
+async function getBytes(url, headers = {}, maxBytes = MAX_BYTES) {
   for (let try_ = 0; try_ < 2; try_++) {
     try {
-      return await getOnce(url, headers);
+      return await getOnce(url, headers, maxBytes);
     } catch (e) {
       if (try_ === 0 && (e.throttled || /timeout|abort/i.test(e.message))) {
         await new Promise((r) => setTimeout(r, e.retryAfter || 2500));
@@ -108,6 +137,147 @@ async function getBytes(url, headers = {}) {
 const nap = (ms = GAP_MS) => new Promise((r) => setTimeout(r, ms));
 
 // ---- characters: a curated list, resolved once, kept on disk ---------------------------------------
+
+/**
+ * Pixel size read out of the bytes themselves. Neither source states dimensions beside its picture, and a
+ * card cannot crop a standing poster the way it crops a wide cast banner without knowing which it holds.
+ */
+function sniffDims(buf) {
+  if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  if (buf.length > 24 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const marker = buf[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+      }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  if (buf.length > 30 && buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') {
+    const form = buf.slice(12, 16).toString();
+    if (form === 'VP8X') return { width: 1 + buf.readUIntLE(20, 3), height: 1 + buf.readUIntLE(23, 3) };
+    if (form === 'VP8 ') return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+    if (form === 'VP8L') {
+      const bits = buf.readUInt32LE(21);
+      return { width: 1 + (bits & 0x3fff), height: 1 + ((bits >> 14) & 0x3fff) };
+    }
+  }
+  return { width: 0, height: 0 };
+}
+
+// ---- the two character sources --------------------------------------------------------------------
+
+let heroesCache = null; // { at, list: [{name, slug, publisher, fullName, alignment, stats, md, lg}] }
+
+/**
+ * The whole comic catalogue, fetched once and kept: 700 KB of JSON, no key, no quota, no rate limit worth
+ * mentioning, and a month between asks. One file answers every superhero entry, so a household adding a
+ * favourite pays a lookup rather than a round trip.
+ */
+async function heroesCatalogue() {
+  const api = heroesApi();
+  if (!api) return null;
+  const file = path.join(CACHE_DIR, 'superherodb.json');
+  if (heroesCache) return heroesCache.list;
+  try {
+    if (fresh(file)) {
+      heroesCache = { at: fs.statSync(file).mtimeMs, list: JSON.parse(fs.readFileSync(file, 'utf8')) };
+      return heroesCache.list;
+    }
+  } catch { /* not cached yet, which is the first-run case */ }
+  const got = await getBytes(api.replace(/\/+$/, '') + '/all.json', {}, MAX_CATALOGUE_BYTES);
+  if (got.error) return null;
+  let all = [];
+  try { all = JSON.parse(got.buf.toString('utf8')); } catch { return null; }
+  const list = (Array.isArray(all) ? all : []).map((h) => ({
+    name: String(h.name || ''),
+    slug: String(h.slug || ''),
+    publisher: String((h.biography && h.biography.publisher) || ''),
+    fullName: String((h.biography && h.biography.fullName) || ''),
+    alignment: String((h.biography && h.biography.alignment) || ''),
+    stats: h.powerstats || {},
+    md: (h.images && h.images.md) || '',
+    lg: (h.images && h.images.lg) || '',
+  })).filter((h) => h.name && (h.md || h.lg));
+  if (!list.length) return null;
+  heroesCache = { at: Date.now(), list };
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(list));
+  } catch { /* the next ask refetches, which is the right failure mode */ }
+  return list;
+}
+
+async function resolveSuperhero(entry) {
+  const catalogue = await heroesCatalogue();
+  if (!catalogue) return null;
+  const asked = String(entry.page || entry.name).trim().toLowerCase();
+  const hero = catalogue.find((h) => h.name.toLowerCase() === asked)
+    || catalogue.find((h) => h.slug && slugOf(h.slug) === slugOf(asked));
+  if (!hero) return null;
+  const got = await getBytes(hero.lg || hero.md);
+  if (got.error) return null;
+  const dims = sniffDims(got.buf);
+  const powerScore = ['intelligence', 'strength', 'speed', 'durability', 'power', 'combat']
+    .reduce((n, k) => n + (Number(hero.stats[k]) || 0), 0);
+  return {
+    buf: got.buf,
+    meta: {
+      name: entry.name,
+      page: heroesApi(),
+      title: hero.name,
+      description: [
+        hero.fullName && hero.fullName.toLowerCase() !== hero.name.toLowerCase() ? hero.fullName : '',
+        hero.publisher, hero.alignment,
+      ].filter(Boolean).join(' - '),
+      attribution: 'SuperHeroDB',
+      licence: 'the catalogue is MIT; the artwork belongs to the character publisher',
+      width: dims.width, height: dims.height, type: got.type,
+      publisher: hero.publisher, fullName: hero.fullName, alignment: hero.alignment, powerScore,
+    },
+  };
+}
+
+async function resolveWikipedia(entry) {
+  const base = wikiApi();
+  if (!base) return null;
+  const res = await fetch(base + encodeURIComponent(entry.page), {
+    headers: { 'user-agent': UA, 'accept-language': 'en' },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) return null;
+  let summary;
+  try { summary = await res.json(); } catch { return null; }
+  // A description page can point at a logo, a map or a coat of arms, and an SVG line drawing has no face
+  // in it. Beyond that this hub does not second-guess what counts as a picture of a character.
+  const url = (summary.thumbnail && summary.thumbnail.source)
+    || (summary.originalimage && summary.originalimage.source);
+  if (!url || /\.(svg)(\?|$)/i.test(url)) return null;
+  const got = await getBytes(url);
+  if (got.error) return null;
+  const dims = {
+    width: (summary.thumbnail && summary.thumbnail.width) || (summary.originalimage && summary.originalimage.width) || 0,
+    height: (summary.thumbnail && summary.thumbnail.height) || (summary.originalimage && summary.originalimage.height) || 0,
+  };
+  if (!dims.width) Object.assign(dims, sniffDims(got.buf));
+  if (dims.width && dims.width < 120) return null;
+  return {
+    buf: got.buf,
+    meta: {
+      name: entry.name,
+      page: summary.content_urls && summary.content_urls.desktop
+        ? summary.content_urls.desktop.page : 'https://en.wikipedia.org/wiki/' + encodeURIComponent(entry.page),
+      title: summary.title || entry.page,
+      description: summary.description || '',
+      attribution: 'Wikipedia',
+      licence: summary.license ? (summary.license.type || '') : '',
+      licenceUrl: summary.license ? (summary.license.url || '') : '',
+      width: dims.width, height: dims.height, type: got.type,
+    },
+  };
+}
 
 const metaPath = (slug) => path.join(FACE_DIR, slug + '.json');
 const imgPath = (slug) => path.join(FACE_DIR, slug + '.img');
@@ -125,45 +295,12 @@ async function ensureCharacter(entry, force = false) {
     try { fs.accessSync(imgPath(slug)); return { ...meta, slug }; } catch { meta = null; }
   }
 
-  let summary;
-  try {
-    const res = await fetch(WIKI + encodeURIComponent(entry.page), {
-      headers: { 'user-agent': UA, 'accept-language': 'en' },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!res.ok) return meta ? { ...meta, slug } : null;
-    summary = await res.json();
-  } catch {
-    return meta ? { ...meta, slug } : null; // offline: keep showing what we already have
-  }
+  const resolve = entry.source === 'superherodb' ? resolveSuperhero : resolveWikipedia;
+  let got = null;
+  try { got = await resolve(entry); } catch { got = null; }
+  if (!got || !got.buf) return meta ? { ...meta, slug } : null; // unknown or offline: keep what we have
 
-  // A description page can point at a logo, a map or a coat of arms. Nothing here decides what counts as
-  // a face beyond the basic facts: it has to be a picture, and it has to be big enough to look like one.
-  const url = (summary.thumbnail && summary.thumbnail.source)
-    || (summary.originalimage && summary.originalimage.source);
-  if (!url || /\.(svg)(\?|$)/i.test(url)) return meta ? { ...meta, slug } : null;
-
-  const got = await getBytes(url);
-  if (got.error) return meta ? { ...meta, slug } : null;
-  const width = summary.thumbnail && summary.thumbnail.width;
-  if (Number.isFinite(width) && width < 120) return meta ? { ...meta, slug } : null;
-
-  const out = {
-    name: entry.name,
-    page: summary.content_urls && summary.content_urls.desktop
-      ? summary.content_urls.desktop.page : 'https://en.wikipedia.org/wiki/' + encodeURIComponent(entry.page),
-    title: summary.title || entry.page,
-    description: summary.description || '',
-    licence: summary.license ? (summary.license.type || '') : '',
-    licenceUrl: summary.license ? (summary.license.url || '') : '',
-    attribution: 'Wikipedia',
-    // Whether this picture is a standing poster or a wide banner decides how a square or 2:3 card should
-    // crop it, and guessing from bytes at draw time is worse than recording it once.
-    width: (summary.thumbnail && summary.thumbnail.width) || (summary.originalimage && summary.originalimage.width) || 0,
-    height: (summary.thumbnail && summary.thumbnail.height) || (summary.originalimage && summary.originalimage.height) || 0,
-    type: got.type, // what the bytes actually are, so the picture is served with an honest content-type
-    fetchedAt: Date.now(),
-  };
+  const out = { ...got.meta, source: entry.source || 'wikipedia', fetchedAt: Date.now() };
   try {
     fs.mkdirSync(FACE_DIR, { recursive: true });
     fs.writeFileSync(imgPath(slug), got.buf);
@@ -208,7 +345,14 @@ async function characters({ limit = 40, refresh = false, wait = false, seed: pic
     source: c.attribution,
     page: c.page,
     licence: c.licence || null,
+    licenceUrl: c.licenceUrl || null,
     description: c.description || '',
+    // What the source knows about the character, for a picker that can say more than a name.
+    from: c.source || 'wikipedia',
+    publisher: c.publisher || null,
+    fullName: c.fullName || null,
+    alignment: c.alignment || null,
+    powerScore: c.powerScore || null,
     width: c.width || 0,
     height: c.height || 0,
     portrait: (c.height || 0) >= (c.width || 0),
@@ -234,6 +378,7 @@ function warm() {
   const missing = seed().filter((e) => !readCached(e));
   if (!missing.length) return Promise.resolve(0);
   warming = (async () => {
+    prune();
     let made = 0;
     for (const entry of missing) {
       if (await ensureCharacter(entry)) made++;
@@ -243,6 +388,24 @@ function warm() {
     return made;
   })().finally(() => { warming = null; });
   return warming;
+}
+
+/**
+ * Remove cached faces the current list no longer asks for. An entry that changes its page or its source
+ * gets a new file, and without this the old picture sits in data/ forever, counted as a face we offer.
+ */
+function prune() {
+  const wanted = new Set(seed().map((e) => slugOf(e.page)));
+  let files = [];
+  try { files = fs.readdirSync(FACE_DIR); } catch { return 0; }
+  let gone = 0;
+  for (const f of files) {
+    if (!/\.(img|json)$/.test(f)) continue;
+    if (wanted.has(f.replace(/\.(img|json)$/, ''))) continue;
+    try { fs.unlinkSync(path.join(FACE_DIR, f)); gone++; } catch { /* next boot tries again */ }
+  }
+  if (gone) log('AVATARS pruned', gone, 'files no character asks for');
+  return gone;
 }
 
 function characterImage(slug) {
@@ -299,6 +462,11 @@ function status() {
   return {
     seedFile: SEED_FILE,
     overrideFile: OVERRIDE_FILE,
+    sources: {
+      superherodb: heroesApi() || null,
+      wikipedia: wikiApi() || null,
+      catalogueCached: Boolean(heroesCache) || fs.existsSync(path.join(CACHE_DIR, 'superherodb.json')),
+    },
     faceDir: FACE_DIR,
     listed: seed().length,
     cached: faceCount,

@@ -5,133 +5,231 @@
     "it, edit this file or drop a list of your own in data/characters.json, which wins entry by entry - a",
     "family that would rather see their favourite film characters than superheroes can do that without",
     "touching code, and the Hub UI writes exactly that file.",
-    "Each entry is looked up by its Wikipedia page title; the picture is fetched once and kept on this box,",
-    "so a TV asks its own hub for faces and never learns a third-party hostname."
+    "`source` says which catalogue to resolve `page` against: superherodb for comic characters (a free",
+    "key-less list of 563 of them, with clean portrait art and real metadata), wikipedia for everyone else.",
+    "Pictures are fetched once and kept on this box, so a TV asks its own hub for faces and never learns a",
+    "third-party hostname - and the picker still works when the internet is down."
   ],
   "characters": [
     {
       "name": "Spider-Man",
-      "page": "Spider-Man"
+      "page": "Spider-Man",
+      "source": "superherodb"
     },
     {
       "name": "Batman",
-      "page": "Batman"
+      "page": "Batman",
+      "source": "superherodb"
     },
     {
       "name": "Iron Man",
-      "page": "Iron Man"
+      "page": "Iron Man",
+      "source": "superherodb"
     },
     {
       "name": "Superman",
-      "page": "Superman"
+      "page": "Superman",
+      "source": "superherodb"
     },
     {
       "name": "Wolverine",
-      "page": "Wolverine (character)"
+      "page": "Wolverine",
+      "source": "superherodb"
     },
     {
       "name": "Deadpool",
-      "page": "Deadpool"
+      "page": "Deadpool",
+      "source": "superherodb"
     },
     {
       "name": "Black Panther",
-      "page": "Black Panther (character)"
+      "page": "Black Panther",
+      "source": "superherodb"
     },
     {
       "name": "The Joker",
-      "page": "Joker (character)"
+      "page": "Joker",
+      "source": "superherodb"
     },
     {
       "name": "Harley Quinn",
-      "page": "Harley Quinn"
+      "page": "Harley Quinn",
+      "source": "superherodb"
     },
     {
       "name": "Loki",
-      "page": "Loki (Marvel Comics)"
+      "page": "Loki",
+      "source": "superherodb"
     },
     {
       "name": "Hulk",
-      "page": "Hulk (comics)"
+      "page": "Hulk",
+      "source": "superherodb"
     },
     {
       "name": "Thor",
-      "page": "Thor (Marvel Comics)"
+      "page": "Thor",
+      "source": "superherodb"
     },
     {
       "name": "Wonder Woman",
-      "page": "Wonder Woman"
+      "page": "Wonder Woman",
+      "source": "superherodb"
+    },
+    {
+      "name": "Captain America",
+      "page": "Captain America",
+      "source": "superherodb"
+    },
+    {
+      "name": "Black Widow",
+      "page": "Black Widow",
+      "source": "superherodb"
     },
     {
       "name": "Venom",
-      "page": "Venom (character)"
+      "page": "Venom",
+      "source": "superherodb"
     },
     {
       "name": "Doctor Strange",
-      "page": "Doctor Strange"
+      "page": "Doctor Strange",
+      "source": "superherodb"
     },
     {
       "name": "Supergirl",
-      "page": "Supergirl"
+      "page": "Supergirl",
+      "source": "superherodb"
+    },
+    {
+      "name": "Flash",
+      "page": "Flash",
+      "source": "superherodb"
+    },
+    {
+      "name": "Ant-Man",
+      "page": "Ant-Man",
+      "source": "superherodb"
+    },
+    {
+      "name": "Batgirl",
+      "page": "Batgirl",
+      "source": "superherodb"
+    },
+    {
+      "name": "Shang-Chi",
+      "page": "Shang-Chi",
+      "source": "superherodb"
+    },
+    {
+      "name": "Star-Lord",
+      "page": "Star-Lord",
+      "source": "superherodb"
+    },
+    {
+      "name": "Gamora",
+      "page": "Gamora",
+      "source": "superherodb"
+    },
+    {
+      "name": "Groot",
+      "page": "Groot",
+      "source": "superherodb"
+    },
+    {
+      "name": "Rocket Raccoon",
+      "page": "Rocket Raccoon",
+      "source": "superherodb"
+    },
+    {
+      "name": "X-23",
+      "page": "X-23",
+      "source": "superherodb"
+    },
+    {
+      "name": "Magneto",
+      "page": "Magneto",
+      "source": "superherodb"
+    },
+    {
+      "name": "Thanos",
+      "page": "Thanos",
+      "source": "superherodb"
     },
     {
       "name": "Harry Potter",
-      "page": "Harry Potter (character)"
+      "page": "Harry Potter (character)",
+      "source": "wikipedia"
     },
     {
       "name": "Jack Sparrow",
-      "page": "Jack Sparrow"
+      "page": "Jack Sparrow",
+      "source": "wikipedia"
     },
     {
       "name": "Grogu",
-      "page": "Grogu"
+      "page": "Grogu",
+      "source": "wikipedia"
     },
     {
       "name": "Optimus Prime",
-      "page": "Optimus Prime"
+      "page": "Optimus Prime",
+      "source": "wikipedia"
     },
     {
       "name": "Pikachu",
-      "page": "Pikachu"
+      "page": "Pikachu",
+      "source": "wikipedia"
     },
     {
       "name": "Elsa",
-      "page": "Elsa (Frozen)"
+      "page": "Elsa (Frozen)",
+      "source": "wikipedia"
     },
     {
       "name": "Shrek",
-      "page": "Shrek"
+      "page": "Shrek",
+      "source": "wikipedia"
     },
     {
       "name": "Mickey Mouse",
-      "page": "Mickey Mouse"
+      "page": "Mickey Mouse",
+      "source": "wikipedia"
     },
     {
       "name": "Doraemon",
-      "page": "Doraemon"
+      "page": "Doraemon",
+      "source": "wikipedia"
     },
     {
       "name": "Ninja Hattori",
-      "page": "Ninja Hattori"
+      "page": "Ninja Hattori",
+      "source": "wikipedia"
     },
     {
       "name": "Shin-chan",
-      "page": "Crayon Shin-chan"
+      "page": "Crayon Shin-chan",
+      "source": "wikipedia"
     },
     {
       "name": "Motu Patlu",
-      "page": "Motu Patlu"
+      "page": "Motu Patlu",
+      "source": "wikipedia"
     },
     {
       "name": "Chhota Bheem",
-      "page": "Chhota Bheem"
+      "page": "Chhota Bheem",
+      "source": "wikipedia"
     },
     {
       "name": "Tanjiro",
-      "page": "Tanjiro Kamado"
+      "page": "Tanjiro Kamado",
+      "source": "wikipedia"
     },
     {
       "name": "Stitch",
-      "page": "Stitch (Lilo & Stitch)"
+      "page": "Stitch (Lilo & Stitch)",
+      "source": "wikipedia"
     }
   ]
 }

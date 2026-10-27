@@ -8,8 +8,8 @@
  * this folder found nothing. One row file fixes that; the only other place the word appears is the
  * home route, which puts this row first and stops it repeating a title already on the screen below it.
  *
- * What belongs up here is a decision, so the decision is a table you can read and edit. Netflix puts
- * the NEW thing on the billboard — just opened in cinemas, just released, just added to this house — and
+ * What belongs up here is a decision, so the decision is a table you can read and edit: the billboard
+ * takes the NEW thing — just opened in cinemas, just released, just added to this house — and
  * behind that, something this household would actually watch (the addons' own popularity, whether a
  * copy actually exists to play) and whether the billboard can preview itself (core/trailers.js). The
  * weights are a table at the top of this file for the same reason the maturity ladder is a table in
@@ -41,7 +41,7 @@ const DAY = 86400000;
 
 /* The billboard policy. Edit these numbers; nothing below them needs to change. */
 const W = {
-  inCinemas: 45,        // Netflix puts the thing that just opened up here, above everything else
+  inCinemas: 45,        // the thing that just opened in cinemas outranks everything else up here
   freshDays: 180,       // how far back "recently released" reaches...
   fresh: 30,            // ...and what it is worth at release day (linear to 0 at freshDays)
   justAdded: 18,        // first time this hub ever saw it (data/library.json), fading over ctx.days

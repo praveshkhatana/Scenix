@@ -58,7 +58,7 @@ const PROPS = [
   ['P7573', 'IE'], // IFCO rating (Ireland)
   ['P9866', 'GR'], // GRAC classification (Greece)
   ['P13773', 'ID'], // LSF rating (Indonesia)
-  ['P8652', 'NT'], // Netflix maturity rating: a streamer's own classification, not a board's, so it is
+  ['P8652', 'NT'], // a streaming service's own maturity classification, not a certification board's, so it is
   // recorded under a code of our own, and core/ratings.js prefers a real board over it.
   // Not a board: language of work, collected into an array under a key no country code can collide
   // with. One query already walks these items, so asking for their language costs nothing extra, and
