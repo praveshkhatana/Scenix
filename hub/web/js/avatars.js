@@ -234,7 +234,11 @@ export function paintSpec(face, spec) {
       drawChar(face, spec.fallback || spec.char, p);
     });
     img.src = apiUrl(String(spec.src).replace(/"/g, '%22'));
-    face.appendChild(img);
+    /* The art goes in BEHIND everything that reads as a person. A drawn face arrives through
+       insertAdjacentHTML('afterbegin') and so always sat under the name; a photo was appended last,
+       which meant the picture you had just chosen painted over the scrim, the name and the age pills
+       and the card lost its label the moment you picked it. */
+    face.insertBefore(img, face.firstChild);
     face.classList.add('has-art');
   } else {
     face.classList.remove('has-art');
