@@ -109,3 +109,11 @@ profile, addon. No third-party product or project name appears in code, comments
 the exceptions are genuine runtime dependencies (Node, ffmpeg, the media player library, the torrent
 engine) and the addon services an owner chooses to install. The design vocabulary in
 `design/ui-tokens.md` is ours; the research that informed it stays out of this repository.
+
+## The offline copy is built, not remembered
+
+The Android shell carries a copy of the hub's web UI so a device with no hub reachable still opens
+something. That copy is taken from the hub tree at build time, which means a device's fallback ages from
+the moment its APK was built: install an APK today, change the UI tomorrow, and tomorrow's offline screen
+shows today's interface. So an APK is rebuilt whenever the UI it bundles changes, not only when the shell
+code changes. The build's copy task does the copying; the obligation is to run the build.
