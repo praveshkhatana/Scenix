@@ -212,6 +212,7 @@ class Store {
       pinRequired: Boolean(spec.pinRequired),
       ...(spec.age != null && Number.isFinite(Number(spec.age)) ? { age: Number(spec.age) } : {}),
       ...(Array.isArray(spec.languages) && spec.languages.length ? { languages: spec.languages } : {}),
+      ...(String(spec.avatar || '').trim() ? { avatar: String(spec.avatar).trim().slice(0, 400) } : {}),
     }];
     this.setProfiles(next);
     return { profile: this.profile(id) };

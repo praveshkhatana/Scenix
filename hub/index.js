@@ -1604,8 +1604,15 @@ const server = http.createServer(async (req, res) => {
     if (m && (req.method === 'PUT' || req.method === 'PATCH')) {
       const body = await readBody(req);
       const patch = {};
-      for (const k of ['name', 'kind', 'age', 'languages', 'rules', 'prefs', 'pin', 'pinRequired']) {
+      for (const k of ['name', 'kind', 'age', 'languages', 'rules', 'prefs', 'pin', 'pinRequired', 'avatar']) {
         if (body && body[k] !== undefined) patch[k] = body[k];
+      }
+      // A face is the profile's own choice, and it travels as a path this backend serves, so a TV never
+      // needs an image host to draw its start screen.
+      if (patch.avatar !== undefined) {
+        const v = String(patch.avatar).trim().slice(0, 400);
+        if (v && !v.startsWith('/') && !/^https?:\/\//.test(v)) return send(res, 400, { error: 'avatar must be a path this backend serves or an http(s) URL' });
+        patch.avatar = v;
       }
       if (!Object.keys(patch).length) return send(res, 400, { error: 'nothing to change' });
       const updated = store.patchProfile(m[1], patch);
