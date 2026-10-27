@@ -116,13 +116,57 @@ export function screen(ctx) {
     return node;
   }
 
+  /* ---- first run ---------------------------------------------------------
+     A hub with nothing installed answers `/home` with no rows at all. On a TV that reads as a broken app, so
+     the page says what is missing and puts the remote on the fix. Everything here comes from `capabilities`:
+     a hub that manages its own add-ons sends the viewer to Settings, one that does not is told who to ask. */
+
+  function firstRun() {
+    const m = ctx.manifest() || {};
+    const caps = m.capabilities || {};
+    const canFix = !!caps.addonAdmin || !!caps.settingsAdmin;
+    const steps = [];
+    if (canFix) steps.push(['Add an add-on', 'Add-ons are what bring titles onto the hub. Scenix shows whatever they hand over, in the order the hub chooses.']);
+    steps.push(['Choose the languages you watch', 'Audio and subtitles are ranked by what you ask for, so this decides what you are offered.']);
+    const box = el('div', { class: 'firstrun' },
+      el('h1', { text: 'Nothing on the shelves yet' }),
+      el('p', {
+        text: canFix
+          ? 'The hub is answering and your profile is set. What is missing is content: this hub has no add-ons installed, so there is nothing to put on a row.'
+          : 'The hub is answering and your profile is set, but it has nothing to show yet. Whoever runs this hub adds the content.',
+      }),
+      el('div', { class: 'fr-steps' },
+        ...steps.map((s, i) => el('div', { class: 'fr-step' },
+          el('i', { text: String(i + 1) }),
+          el('div', {}, el('b', { text: s[0] }), el('span', { text: s[1] })))))
+      ,
+      el('div', { class: 'bb-btns' },
+        canFix ? el('button', { class: 'btn white big', type: 'button', onclick: () => ctx.navigate('settings') }, 'Set up the hub') : null,
+        caps.search ? el('button', { class: 'btn ghost big', type: 'button', onclick: () => ctx.navigate('search') }, 'Search anyway') : null));
+    for (const b of box.querySelectorAll('.btn')) focus.focusable(b);
+    return box;
+  }
+
   const disposers = [];
+
+  /** Stop whatever is moving and give the card back the size it had before. */
+  function endPreview() {
+    const n = previewFor;
+    previewFor = null;
+    stopPreview();
+    if (n && n.closest) {
+      const c = n.closest('.card');
+      if (c) c.classList.remove('playing');
+    }
+  }
 
   /* ---- load ------------------------------------------------------------- */
 
   async function load() {
     const profile = session.profile && session.profile.id;
     if (!profile) return;
+    // ?empty=1 shows this state against a hub that already has content, so it can be checked on a browser.
+    if (new URLSearchParams(location.search).has('empty')) { shelves.appendChild(firstRun()); return; }
     let home = session.home;
     if (!home || home.__profile !== profile) {
       home = await api.home(profile);
@@ -137,6 +181,9 @@ export function screen(ctx) {
       .map((r, i) => ({ r, i, o: r.order == null ? i : Number(r.order) }))
       .sort((a, b) => (a.o - b.o) || (a.i - b.i))
       .map((x) => x.r);
+
+    // No rows at all means a hub with nothing installed, not a screen that failed to paint.
+    if (!ordered.length) { shelves.appendChild(firstRun()); return; }
 
     const hero = ordered.find((r) => r.card === 'hero');
     const rest = ordered.filter((r) => r !== hero);
@@ -157,7 +204,7 @@ export function screen(ctx) {
 
   const onDwell = focus.onFocus((node) => {
     if (dwell) { clearTimeout(dwell); dwell = null; }
-    if (previewFor && previewFor !== node) { stopPreview(); previewFor = null; }
+    if (previewFor && previewFor !== node) endPreview();
     if (!node || node === document.body) return;
     const card = node.closest ? node.closest('.card') : null;
     const inBillboard = node.closest && node.closest('.billboard');
@@ -169,7 +216,8 @@ export function screen(ctx) {
         const trailer = await getTrailer(identity, session.profile && session.profile.id);
         if (dead || focus.getFocus() !== node) return;
         const art = card.querySelector('.art');
-        if (trailer && art && startPreview(art, trailer)) previewFor = node;
+        // A card that is actually moving picture is given room to be one: wider, and at the trailer's ratio.
+        if (trailer && art && startPreview(art, trailer)) { previewFor = node; card.classList.add('playing'); }
       }, delay);
     } else if (inBillboard && bb) {
       dwell = setTimeout(() => { if (!dead) previewBillboard(bb); }, delay);

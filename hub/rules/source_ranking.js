@@ -96,6 +96,26 @@ const LANG_NAMES = {
   per: 'Persian', tur: 'Turkish', pol: 'Polish', ukr: 'Ukrainian', ned: 'Dutch', dut: 'Dutch',
 };
 
+// Three-letter codes come in two families - ISO 639-2/T (fra, zho, deu, nld) and the older bibliographic
+// forms (fre, chi, ger, dut) some files still state. They name the same language, so a screen that lists
+// every key prints "French" twice. Lookups answer both; the list a UI draws names each one once, under the
+// code most sources actually state.
+const LEGACY_CODES = /^(fre|chi|ger|dut|swe|dan|pol|gre|alb|arm|baq|bur|cze|fin|flo|geo|hol|ice|mac|may|per|rum|slo|srb|swh|tha|tib|tur|ukr|vie)$/;
+function preferredCode(name, current, candidate) {
+  if (!current) return candidate;
+  if (LEGACY_CODES.test(current) && !LEGACY_CODES.test(candidate)) return candidate;
+  return current;
+}
+
+/** Same map shape the screens already read, one entry per language, keyed by the code to ask for. */
+const LANG_UI = (() => {
+  const byName = {};
+  for (const [code, name] of Object.entries(LANG_NAMES)) byName[name] = preferredCode(name, byName[name], code);
+  const out = {};
+  for (const name of Object.keys(byName)) out[byName[name]] = name;
+  return out;
+})();
+
 /** 1 → "1st", 2 → "2nd": `why` is read by a person, so "2th" is not acceptable. */
 function ord(n) {
   if (n % 100 >= 11 && n % 100 <= 13) return n + 'th';
@@ -262,6 +282,7 @@ function fitsCap(source, capBytes) {
 }
 
 module.exports = {
+  LANG_UI,
   id: 'source-ranking',
   order: 40, // after the item rules, so it sorts what actually survived them
   weights: W,

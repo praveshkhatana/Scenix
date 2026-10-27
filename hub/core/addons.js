@@ -240,6 +240,22 @@ const LANG_CODE_TO_NAME = (() => {
   return out;
 })();
 
+/** Trim to usable text, or nothing: an empty string on a tile reads like a field that failed. */
+function cleanText(v) {
+  return typeof v === 'string' ? v.trim().slice(0, 1200) : '';
+}
+
+/** A cast or crew list arrives as an array of strings, an array of objects naming a person, or — for the
+credits, which a show usually has one of — a single comma-separated line. Keep the names, cap the length. */
+function nameList(v) {
+  if (typeof v === 'string') v = v.split(',');
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (typeof x === 'string' ? x.trim() : String((x && (x.person || x.name)) || '').trim()))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
 function langCodes(raw) {
   if (!raw) return null;
   const list = (Array.isArray(raw) ? raw : String(raw).split(/[,;]/))
@@ -637,6 +653,14 @@ class External {
       live: null,
       progress: null,
       sources: [],
+      // The words. A detail page built from a poster and a year is why someone leaves for an app that can
+      // say what a thing is about, and this addon has been sending the synopsis, the cast and the crew the
+      // whole time - we were simply not picking them up.
+      overview: cleanText(meta.description) || null,
+      tagline: cleanText(meta.tagline) || null,
+      cast: nameList(meta.cast),
+      crew: nameList(meta.director).concat(nameList(meta.writer)).filter(Boolean).slice(0, 4),
+      country: cleanText(meta.country) || null,
       // A series is a list of episodes, and the community protocol addresses one as
       // `<imdbid>:<season>:<episode>`. Without this map the hub can only ask for the bare show id, and
       // Torrentio answers that with whichever single episode it feels like — which is why "Play" on a
@@ -646,8 +670,11 @@ class External {
           .map((v) => ({
             season: Number(v.season) || null,
             episode: Number(v.episode) || null,
-            title: v.title || null,
-            releasedAt: toMs(v.released),
+            // The real key for an episode name here is `name`; `title` is the community-protocol word and
+            // most instances never send it. Reading only `title` is why every episode strip came up blank.
+            title: cleanText(v.title) || cleanText(v.name) || null,
+            synopsis: cleanText(v.overview) || cleanText(v.description) || null,
+            releasedAt: toMs(v.released) || toMs(v.firstAired),
             thumb: v.thumbnail || null,
           }))
           .filter((e) => e.season && e.episode)
@@ -693,7 +720,11 @@ class External {
   async meta(identity, hint) {
     if (!this.has('meta') || !addressableBy(identity, this.id)) return null;
     const known = this.types.get(identity) || null;
-    const order = [...new Set([known, communityType(hint), 'movie', 'series', 'tv'].filter(Boolean))];
+    // What the caller says beats what we guessed. One ask without a type used to settle the question for
+    // good: a guessed `movie` answer landed here on an id that is ALSO a series upstream, and every later
+    // call — even one that said `series` outright — asked the wrong type first because the remembered guess
+    // came first in the list. Blind guesses prefer series, which is what this hub's catalogues mostly hold.
+    const order = [...new Set([communityType(hint), known, 'series', 'movie', 'tv'].filter(Boolean))];
     let raw = null;
     let askedType = null;
     for (const t of order) {

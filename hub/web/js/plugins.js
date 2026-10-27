@@ -272,11 +272,17 @@ export function billboard(row, ctx) {
   slot.appendChild(text);
 
   let index = -1;
+  let prevIndex = -1;
   const setItem = (i) => {
     const item = items[i];
     if (!item) return false;
+    prevIndex = index;
     index = i;
-    for (let k = 0; k < arts.children.length; k++) arts.children[k].classList.toggle('on', k === i);
+    for (let k = 0; k < arts.children.length; k++) {
+      arts.children[k].classList.toggle('on', k === i);
+      // The title that is leaving keeps its own slide for a moment so the two never occupy the same frame.
+      arts.children[k].classList.toggle('out', k === prevIndex && prevIndex !== i);
+    }
 
     const on = inMyList(item.identity);
     const rt = runtime(item.durationMs);
@@ -292,7 +298,9 @@ export function billboard(row, ctx) {
 
     const why = (item.why && item.why[0]) || (item.sources && item.sources[0] && item.sources[0].why && item.sources[0].why[0]);
     clear(text);
-    text.appendChild(el('div', { class: 'mark', text: 'Scenix' }));
+    // The kicker is the sheet's first line: whose shelf this is, and what kind of thing it is holding.
+    const kind = item.type === 'live' ? 'Live TV' : item.type === 'series' ? 'Series' : 'Movie';
+    text.appendChild(el('div', { class: 'kicker' }, el('b', { text: 'Scenix' }), el('span', { text: kind })));
     if (item.logo) {
       text.appendChild(el('img', { class: 'logo', src: item.logo, alt: item.title }));
     } else {

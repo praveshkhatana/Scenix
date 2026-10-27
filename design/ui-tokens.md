@@ -59,6 +59,14 @@ them as CSS custom properties. Change a number in one place and you have broken 
 hub). The binaries in `hub/web/font/` are a vendor face standing in for ours and must be swapped for an
 open-licence equivalent with matching metrics before distribution.
 
+A token file spells a colour in exactly two forms: `#RRGGBB`, or `rgba(r,g,b,a)` with alpha written `0`–`1`.
+**Eight-digit hex is banned in every theme file.** `#AARRGGBB` (Android) and `#RRGGBBAA` (CSS) are the same
+eight characters read two different ways, nothing errors when the wrong one is parsed, and a hairline meant
+to be 10 % white comes out as opaque cyan — which is how every border, chip and nav label on a screen went
+wrong at once. Both the web client and the Android shell parse `rgba()`, so a token file can be copied
+between the two without anything tinting. Each side still tolerates the other's eight-digit form, to
+survive a paste out of a design tool.
+
 ## Motion law
 
 Animate only `transform` and `opacity`. Three duration families: 120–160 ms, 200–300 ms, 500–800 ms.

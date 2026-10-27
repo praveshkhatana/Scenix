@@ -720,17 +720,21 @@ body.native-live, html.native-live { background: transparent; }
 .pfs {
   position: relative; z-index: 10; display: flex; align-items: center; justify-content: center;
   gap: calc(46px * var(--s));
+  will-change: transform;
   /* The row slides to bring the chosen card to the centre: spatial motion, so it is allowed to take half a
      second, and it decelerates into place instead of stopping. */
   transition: transform 620ms cubic-bezier(.23, 1, .32, 1), opacity 500ms cubic-bezier(.33, 0, .67, 1);
 }
+/* The first placement happens before anything is on screen, so it must not animate: sliding the row into its
+   starting position at the same moment the cards slide in from the right is what read as a stutter. */
+.pfs:not(.settled) { transition: none; }
 .avatar {
   position: relative; width: calc(300px * var(--s));
   transition: transform 420ms cubic-bezier(.23, 1, .32, 1), filter 300ms ease;
-  animation: fadeUp var(--card-in-ms) var(--fade-up-ease) backwards;
-  /* The household arrives one after another, 100 ms apart — spec B. */
-  animation-delay: calc(var(--delay-children) + min(var(--i, 0), 7) * 100ms);
 }
+/* The entrance and the focus scale live on different elements — the face slides in, the card grows — because
+   one property cannot carry two animations. With both on the card, the entrance held the transform, the
+   focused card could not grow while it arrived, and then it snapped up the moment the entrance released. */
 .avatar .a {
   width: calc(300px * var(--s)); height: calc(450px * var(--s)); border-radius: calc(24px * var(--s));
   position: relative; overflow: hidden; background: var(--key);
@@ -740,17 +744,20 @@ body.native-live, html.native-live { background: transparent; }
 .avatar .a .av-art, .avatar .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .avatar .a .av-photo { object-fit: cover; }
 .avatar .a .ini { font-size: var(--t-avatar); font-weight: 800; color: #fff; }
-/* The name sits inside the card over a scrim, bottom-left, exactly where the reference puts a title. */
+/* The name sits inside the card over a scrim, bottom-left, exactly where the reference puts a title, with the
+   details in pills underneath it rather than crossing it. Centred text over left-aligned pills read as one
+   collided block. */
 .avatar .scrim {
   position: absolute; left: 0; right: 0; bottom: 0; height: 60%;
   background: linear-gradient(to top, rgba(0, 0, 0, .9) 8%, rgba(0, 0, 0, 0) 100%);
 }
 .avatar .nm {
-  position: absolute; left: calc(20px * var(--s)); right: calc(20px * var(--s)); bottom: calc(54px * var(--s));
+  position: absolute; left: calc(22px * var(--s)); right: calc(22px * var(--s)); bottom: calc(66px * var(--s));
+  text-align: left;
   font-size: calc(34px * var(--s)); font-weight: 600; color: #fff; letter-spacing: -.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.avatar .chips { position: absolute; left: calc(20px * var(--s)); bottom: calc(20px * var(--s)); display: flex; gap: calc(10px * var(--s)); }
+.avatar .chips { position: absolute; left: calc(22px * var(--s)); bottom: calc(22px * var(--s)); display: flex; gap: calc(10px * var(--s)); }
 .avatar .pc {
   font-size: calc(16px * var(--s)); font-weight: 500; color: rgba(255, 255, 255, .88);
   padding: calc(4px * var(--s)) calc(12px * var(--s)); border-radius: 999px; background: rgba(255, 255, 255, .18);
@@ -838,7 +845,7 @@ body.native-live, html.native-live { background: transparent; }
   from { opacity: 0; transform: translateX(calc(150px * var(--s))); }
   to { opacity: 1; transform: none; }
 }
-body.booted .pwrap .avatar {
+body.booted .pwrap .avatar .a {
   animation: cardIn 640ms var(--fade-up-ease) backwards;
   animation-delay: calc(300ms + min(var(--i, 0), 7) * 95ms);
 }
@@ -853,6 +860,18 @@ body.booted .pwrap .avatar {
 .logo-ghost > * { width: 100% !important; height: 100% !important; }
 .logo-ghost path { animation: none !important; opacity: 1 !important; }
 .logo-ghost.fly { opacity: 0; }
+/* The re-roll sits under the rail it belongs to, and does one thing: eight more faces, same styles. */
+.avmore {
+  display: block; margin: calc(16px * var(--s)) auto 0;
+  padding: calc(10px * var(--s)) calc(24px * var(--s)); border-radius: 999px;
+  background: var(--key); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .24);
+  color: var(--ink); font-size: calc(16px * var(--s)); font-weight: 600;
+  transition: background var(--focus-ms), color var(--focus-ms), border-color var(--focus-ms);
+}
+.avmore.foc { background: #fff; color: #141414; border-color: #fff; }
+/* The dialog box itself takes focus so the ring cannot escape back into the page behind it. The browser's own
+   focus ring then draws a hairline around the whole modal, which reads as a border belonging to nothing. */
+.mbox:focus, .mbox:focus-visible { outline: none; }
 
 /*
   Edit belongs to the card, not to the page: it hangs off the bottom edge, fades in when that card is the one
@@ -1034,3 +1053,167 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   .screen { scroll-behavior: auto; }
   .card.foc { transform: none; }
 }
+
+/* ==========================================================================
+   PIN pad — restyled to the brand, and closable by hand as well as by remote
+   ========================================================================== */
+.modal:focus, .modal:focus-visible, .mbox.pin:focus, .mbox.pin:focus-visible { outline: none; }
+.mbox.pin {
+  position: relative; width: calc(560px * var(--s)); padding: calc(40px * var(--s)) calc(44px * var(--s)) calc(34px * var(--s));
+  background: linear-gradient(180deg, #1e1e20 0%, var(--surface) 62%);
+  border: 1px solid rgba(255, 255, 255, .10); border-radius: var(--r-modal);
+  box-shadow: 0 calc(30px * var(--s)) calc(80px * var(--s)) rgba(0, 0, 0, .72);
+}
+.mbox.pin::before {
+  content: ''; position: absolute; left: calc(44px * var(--s)); right: calc(44px * var(--s)); top: 0;
+  height: calc(4px * var(--s)); background: var(--brand); border-radius: 0 0 calc(4px * var(--s)) calc(4px * var(--s));
+}
+.mbox.pin h2 { font-size: var(--t-h2); letter-spacing: -.01em; margin-bottom: calc(4px * var(--s)); }
+.mbox.pin p { margin-bottom: calc(18px * var(--s)); }
+.pmark { display: flex; justify-content: center; margin-bottom: calc(14px * var(--s)); }
+.pmark span { color: var(--brand); font-weight: 900; letter-spacing: .3em; text-transform: uppercase; font-size: calc(17px * var(--s)); }
+.mclose {
+  position: absolute; right: calc(18px * var(--s)); top: calc(18px * var(--s));
+  width: calc(52px * var(--s)); height: calc(52px * var(--s)); border-radius: 50%;
+  display: grid; place-content: center; font-size: calc(22px * var(--s)); color: var(--ink1);
+  background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16);
+}
+.mclose.foc { background: #fff; color: #141414; box-shadow: 0 0 0 var(--ring-w) var(--brand); }
+.dots i { background: rgba(255, 255, 255, .14); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22); transition: background 140ms ease, box-shadow 140ms ease; }
+.dots i.on { background: var(--brand); box-shadow: 0 0 calc(14px * var(--s)) rgba(229, 9, 20, .55); }
+.mbox.pin .p9 { gap: calc(12px * var(--s)); }
+.mbox.pin .key {
+  background: var(--surface2); border: 1px solid rgba(255, 255, 255, .10);
+  border-radius: calc(12px * var(--s)); font-weight: 600;
+  transition: background var(--focus-ms) ease, color var(--focus-ms) ease, transform var(--focus-ms) ease, box-shadow var(--focus-ms) ease;
+}
+.mbox.pin .key:hover { background: var(--surface3); }
+.mbox.pin .key.sm { font-size: calc(18px * var(--s)); letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); }
+.mbox.pin .key.foc {
+  background: #fff; color: #141414; transform: translateY(calc(-2px * var(--s)));
+  box-shadow: 0 0 0 var(--ring-w) var(--brand), 0 calc(10px * var(--s)) calc(26px * var(--s)) rgba(0, 0, 0, .6);
+}
+.mfoot { display: flex; justify-content: center; gap: calc(14px * var(--s)); margin-top: calc(22px * var(--s)); }
+@keyframes pinShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(calc(-9px * var(--s))); }
+  40% { transform: translateX(calc(9px * var(--s))); }
+  60% { transform: translateX(calc(-6px * var(--s))); }
+  80% { transform: translateX(calc(6px * var(--s))); }
+}
+.mbox.pin.shake { animation: pinShake 380ms cubic-bezier(.36, .07, .19, .97); }
+
+/* ==========================================================================
+   Character faces in the picker — 2:3 cards, because the art is the point
+   ========================================================================== */
+.avatar .a.has-art .pini { display: none; }   /* the initial is the fallback, not a second layer */
+.avchars.avfaces {
+  display: flex; gap: calc(14px * var(--s)); overflow-x: auto;
+  padding: calc(10px * var(--s)) calc(4px * var(--s)) calc(14px * var(--s));
+  scrollbar-width: none; scroll-behavior: smooth;
+}
+.avchars.avfaces::-webkit-scrollbar { display: none; }
+.avface {
+  position: relative; flex: none; width: calc(150px * var(--s)); height: calc(225px * var(--s));
+  border-radius: calc(16px * var(--s)); overflow: hidden; background: var(--surface2);
+  border: 1px solid rgba(255, 255, 255, .12);
+  transition: transform var(--focus-ms) ease, box-shadow var(--focus-ms) ease;
+}
+.avface img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 30%; }
+.avface.wide img { object-position: center; }
+.avface span {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: calc(28px * var(--s)) calc(8px * var(--s)) calc(9px * var(--s));
+  font-size: calc(15px * var(--s)); font-weight: 700; text-align: center;
+  background: linear-gradient(to top, rgba(0, 0, 0, .86), rgba(0, 0, 0, 0));
+}
+.avface.foc { transform: scale(1.06); box-shadow: 0 0 0 var(--ring-w) var(--brand); z-index: 30; }
+.avcred { font-size: calc(15px * var(--s)); color: var(--ink3); margin: calc(2px * var(--s)) 0 calc(20px * var(--s)); }
+
+/* ==========================================================================
+   Detail hero, as the reference sheets draw it — kicker, logo art, trending
+   ========================================================================== */
+.detail-body .kicker, .bb .kicker {
+  display: flex; align-items: center; gap: calc(14px * var(--s));
+  font-size: calc(18px * var(--s)); font-weight: 800; letter-spacing: .26em; text-transform: uppercase;
+  color: var(--ink1); margin-bottom: calc(16px * var(--s));
+}
+.detail-body .kicker b, .bb .kicker b { color: var(--brand); letter-spacing: .1em; font-weight: 900; }
+.detail-body img.logo {
+  display: block; margin: 0 0 calc(20px * var(--s));
+  max-width: min(78%, calc(820px * var(--s))); max-height: calc(240px * var(--s));
+}
+.detail-body .trend, .bb .trend {
+  display: flex; align-items: center; gap: calc(10px * var(--s));
+  font-size: calc(20px * var(--s)); color: var(--ink1); margin: calc(14px * var(--s)) 0 calc(8px * var(--s));
+}
+.detail-body .trend b, .bb .trend b { color: var(--brand); font-weight: 900; }
+.detail-hero .preview { position: absolute; inset: 0; z-index: 1; opacity: 0; transition: opacity 320ms ease; }
+.detail-hero .preview.on { opacity: 1; }
+
+/* Episodes as a strip of stills under the hero, not a list at the bottom of the page. */
+.episodes.h { display: flex; overflow-x: auto; max-width: none; gap: calc(14px * var(--s)); padding-bottom: calc(12px * var(--s)); scrollbar-width: none; scroll-behavior: smooth; }
+.episodes.h::-webkit-scrollbar { display: none; }
+.episodes.h .ep { flex: none; width: calc(360px * var(--s)); flex-direction: column; align-items: stretch; }
+.episodes.h .ep img { width: 100%; height: calc(203px * var(--s)); }
+.episodes.h .ep .en { margin-top: calc(10px * var(--s)); }
+.episodes.h .ep .eq { margin-left: 0; margin-top: calc(8px * var(--s)); }
+
+/* A shelf card that is currently previewing gets wider, so the picture can actually be seen. */
+.cards .card.playing { width: calc(460px * var(--s)); transition: width 260ms cubic-bezier(.23, 1, .32, 1); }
+.cards .card.playing .art { height: calc(259px * var(--s)); transition: height 260ms cubic-bezier(.23, 1, .32, 1); }
+
+/* The billboard turns by pushing sideways — one title leaves, the next arrives — not by fading in place. */
+.billboard .bb-art { opacity: 0; transform: translateX(7%); transition: transform 800ms cubic-bezier(.23, 1, .32, 1), opacity 420ms ease; }
+.billboard .bb-art.on { opacity: 1; transform: none; }
+.billboard .bb-art.out { opacity: 0; transform: translateX(-7%); }
+.billboard .bb > * { animation: fadeUp 480ms var(--fade-up-ease) backwards; }
+.billboard .bb > *:nth-child(2) { animation-delay: 70ms; }
+.billboard .bb > *:nth-child(3) { animation-delay: 140ms; }
+.billboard .bb > *:nth-child(4) { animation-delay: 210ms; }
+.billboard .bb > *:nth-child(5) { animation-delay: 280ms; }
+.billboard .bb > *:nth-child(6) { animation-delay: 350ms; }
+.billboard .bb > *:nth-child(7) { animation-delay: 420ms; }
+
+/* A season the metadata source has no artwork for keeps its slot in the strip rather than collapsing into a
+   broken-image icon: the episode's own number becomes the picture. */
+.episodes.h .ep .nostill {
+  height: calc(203px * var(--s)); display: grid; place-content: center;
+  background: linear-gradient(135deg, var(--surface2), var(--surface3));
+  color: var(--ink3); font-size: calc(22px * var(--s)); font-weight: 700; letter-spacing: .16em;
+}
+.li .sw.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+
+/* A card whose label is longer than the card — "Manage profiles" on a 1920 set — takes a second line rather
+   than an ellipsis. A truncated word is a question the viewer has to answer alone. */
+.avatar-manage .nm { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.12; }
+
+/* First run: the hub answers, but nothing is installed to fill a shelf. This is a setup page, not an error,
+   and it puts the remote on the fix instead of leaving a black rectangle under the nav. */
+.firstrun {
+  display: grid; justify-items: start; gap: calc(22px * var(--s));
+  padding: calc(130px * var(--s)) var(--gutter) calc(120px * var(--s));
+  max-width: calc(1020px * var(--s));
+}
+.firstrun .kicker {
+  display: flex; align-items: center; gap: calc(10px * var(--s));
+  font-size: calc(19px * var(--s)); font-weight: 700; text-transform: uppercase; letter-spacing: .26em; color: var(--ink2);
+}
+.firstrun .kicker b { color: var(--brand); letter-spacing: .1em; font-weight: 900; }
+.firstrun h1 { font-size: calc(62px * var(--s)); font-weight: 800; letter-spacing: -.02em; line-height: 1.06; }
+.firstrun > p { color: var(--ink2); font-size: var(--t-li); line-height: 1.55; max-width: calc(780px * var(--s)); }
+.firstrun .fr-steps { display: grid; gap: calc(14px * var(--s)); margin-top: calc(12px * var(--s)); width: 100%; }
+.firstrun .fr-step {
+  display: flex; align-items: center; gap: calc(20px * var(--s));
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-panel);
+  padding: calc(20px * var(--s)) calc(24px * var(--s));
+}
+.firstrun .fr-step i {
+  flex: none; width: calc(42px * var(--s)); height: calc(42px * var(--s)); border-radius: 999px;
+  background: var(--brand); color: #fff; display: grid; place-content: center;
+  font-style: normal; font-size: calc(21px * var(--s)); font-weight: 800;
+}
+.firstrun .fr-step div { display: grid; gap: calc(4px * var(--s)); }
+.firstrun .fr-step b { font-size: var(--t-li); }
+.firstrun .fr-step span { color: var(--ink3); font-size: calc(18px * var(--s)); line-height: 1.45; }
+.firstrun .bb-btns { margin-top: calc(8px * var(--s)); }

@@ -159,11 +159,13 @@ async function mount(route, _pushed) {
     node = built;
   } catch (e) {
     console.error('[scenix] screen failed', route, e);
+    brokenScreens.add(route.name);
+    hideNavItem(route.name);
     node = el('div', { class: 'screen' },
       el('div', { class: 'page-head' },
         el('h1', { text: 'This screen did not load' }),
         el('div', { class: 'sub', text: String(e && e.message || e) })),
-      el('div', { class: 'bb-btns', style: { padding: '0 var(--gutter)' } },
+      el('div', { class: 'bb-btns', style: 'padding: 0 var(--gutter)' },
         el('button', { class: 'btn white big', type: 'button', onclick: () => navigate('home') }, 'Home')));
   }
   if (token !== renderToken || !node) return;         // a newer route already won
@@ -241,6 +243,16 @@ function buildNav() {
   return nav;
 }
 
+/* A screen whose module is missing from the bundle has to leave the nav bar: on a remote, a focused item that
+   does nothing is a dead key, and a dead key costs the viewer the page they were trying to reach. */
+const brokenScreens = new Set();
+
+function hideNavItem(name) {
+  if (!nav || name === 'home' || name === 'profiles') return;
+  const b = nav.querySelector(`.nav-item[data-route="${name}"]`);
+  if (b) b.remove();
+}
+
 function setNavActive(name) {
   if (!nav) return;
   for (const n of nav.querySelectorAll('.nav-item')) n.classList.toggle('on', n.dataset.route === name);
@@ -301,12 +313,18 @@ function closeModals() {
  * The PIN pad. `pinRequired` comes from the hub's profile record; the length comes from the theme, so a
  * household that wants six digits changes one token. Digits arrive from the on-screen pad, a keyboard,
  * and the remote's number row alike, through input.js's digit sink.
+ *
+ * The hub checks the number — a PIN is never sent down to the TV, so nothing on this screen could guess it —
+ * and an older hub with no unlock endpoint falls back to whatever the record in hand happens to carry. A wrong
+ * PIN shakes the pad instead of closing it. Cancel is a real button rather than only the remote's Back key,
+ * because this dialog is also reached with a mouse and with a finger.
  */
 function askPin(profile, { reason = 'Enter your PIN' } = {}) {
   return new Promise((resolve) => {
     const need = Number(token('pin', 'length', 4));
     const expected = String(profile.pin || '');
     let got = '';
+    let busy = false;
     const dots = el('div', { class: 'dots' });
     for (let i = 0; i < need; i++) dots.appendChild(el('i'));
     const err = el('div', { class: 'err' });
@@ -320,25 +338,56 @@ function askPin(profile, { reason = 'Enter your PIN' } = {}) {
       focus.focusable(btn);
       pad.appendChild(btn);
     }
-    const box = el('div', { class: 'mbox' },
+    const cancel = el('button', { class: 'btn line', type: 'button', text: 'Cancel', onclick: () => closeModals() });
+    focus.focusable(cancel);
+    const x = el('button', {
+      class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Cancel', title: 'Cancel',
+      onclick: () => closeModals(),
+    });
+    focus.focusable(x);
+    const box = el('div', { class: 'mbox pin' }, x,
+      el('div', { class: 'pmark' }, el('span', { text: 'Scenix' })),
       el('h2', { text: profile.name }),
       el('p', { text: reason }),
-      dots, pad, err);
+      dots, pad, err,
+      el('div', { class: 'mfoot' }, cancel));
     const draw = () => { for (let i = 0; i < need; i++) dots.children[i].classList.toggle('on', i < got.length); };
     const finish = (ok) => { closeModals(); if (!ok) err.textContent = ''; resolve(ok); };
+    function refuse(message) {
+      got = '';
+      draw();
+      err.textContent = message;
+      box.classList.remove('shake');
+      void box.offsetWidth;            // the shake is a one-shot animation, so it has to be restarted
+      box.classList.add('shake');
+      focus.setFocus(pad.querySelector('.key'), { scroll: false });
+    }
     function press(k) {
+      if (busy) return;
       if (k === 'clear') { got = ''; draw(); err.textContent = ''; return; }
-      if (k === 'ok') { return check(); }
+      if (k === 'ok') return check();
       if (got.length >= need) return;
       got += k;
       draw();
       if (got.length === need) check();
     }
-    function check() {
-      if (!expected || got === expected) return finish(true);
-      got = '';
-      draw();
-      err.textContent = 'That PIN does not match';
+    async function check() {
+      if (expected && got === expected) return finish(true);
+      if (profile.id) {
+        busy = true;
+        try {
+          const r = await api.unlockProfile(profile.id, got);
+          busy = false;
+          if (r && (r.unlocked || r.noPin || r.ok)) return finish(true);
+          return refuse('That PIN does not match');
+        } catch (e) {
+          busy = false;
+          if (e && (e.status === 401 || e.status === 403)) return refuse('That PIN does not match');
+          // No unlock endpoint on this hub: fall back to the record already in front of us.
+          if (!expected) return finish(true);
+        }
+      }
+      return refuse('That PIN does not match');
     }
     // input.js routes every digit — keyboard, remote number row, or on-screen pad — to one function.
     setDigitSink(press);
@@ -512,6 +561,13 @@ async function boot() {
   await loadTheme();
   initVideo();
   buildNav();
+  // Ask now which screens actually exist, rather than finding out when someone presses OK on a dead key.
+  // Loading them costs nothing: visiting one screen loads its module anyway.
+  for (const name of Object.keys(SCREENS)) {
+    if (brokenScreens.has(name)) continue;
+    const probe = SCREENS[name]();
+    if (probe && probe.catch) probe.catch(() => { brokenScreens.add(name); hideNavItem(name); });
+  }
   initInput({
     onBack: () => { back(); return true; },
     onLetterSearch: (ch) => {

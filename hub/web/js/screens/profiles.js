@@ -18,12 +18,12 @@
  * as they were.
  */
 
-import { el } from '/ui/js/dom.js';
+import { el, clear } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { initials } from '/ui/js/format.js';
 import { session, isKids } from '/ui/js/state.js';
-import { avatarFor, paintAvatar, paintSpec, setAvatar, tileFill, CHARACTERS, PALETTES } from '/ui/js/avatars.js';
+import { avatarFor, paintAvatar, paintSpec, setAvatar, tileFill, paletteById, CHARACTERS, PALETTES } from '/ui/js/avatars.js';
 import { GENERATED, generatorSpec, characterFaces } from '/ui/js/avatarapi.js';
 
 export function screen(ctx) {
@@ -122,7 +122,7 @@ export function screen(ctx) {
     // A generated face is stored as an image reference, so the picker has to reopen on the style it came from
     // rather than falling back to a drawn character.
     const spec = start.kind === 'photo'
-      ? { kind: 'photo', src: start.src, gen: start.gen, palette: start.palette || PALETTES[0].id }
+      ? { kind: 'photo', src: start.src, gen: start.gen, fit: start.fit, palette: start.palette || PALETTES[0].id }
       : { kind: 'char', char: start.char || CHARACTERS[0].id, palette: start.palette || PALETTES[0].id };
     const seed = profile.id || String(node.__index);
     const preview = el('div', { class: 'a' });
@@ -141,25 +141,63 @@ export function screen(ctx) {
     }
     // The faces are re-tinted rather than rebuilt, so the ring never loses its place mid-arrow. Each cell
     // carries the same skin the card itself would have, so a choice previews as an avatar and not a sticker.
-    function tint() {
-      const p = PALETTES.find((x) => x.id === spec.palette) || PALETTES[0];
+    function tint(p) {
       for (const { cell, c } of cells) {
         cell.style.background = tileFill(p);
         cell.innerHTML = `<svg class="av-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${c.art(p.a)}</svg>`;
       }
     }
-    tint();
+    tint(paletteById(spec.palette) || PALETTES[0]);
 
     // Remote faces: nothing is downloaded into the product, only a reference is kept, so a new source is a line
     // in one list rather than a release. The hub may proxy any of them; see js/avatarapi.js.
     const gens = el('div', { class: 'avchars avgen' });
-    for (const g of GENERATED) {
-      const cell = el('button', {
-        class: 'avchar', type: 'button', 'aria-label': g.label, dataset: { gen: g.id },
-        onclick: () => { Object.assign(spec, generatorSpec(g.id, seed, spec.palette)); keep(); },
-      }, el('img', { class: 'av-photo', src: generatorUrlSafe(g.id, seed, spec.palette), alt: '' }));
-      focus.focusable(cell);
-      gens.appendChild(cell);
+    let variant = 0;   // another roll of the same styles, for whoever is not taken with the first set
+    const faceSeed = () => (variant ? `${seed}#${variant}` : seed);
+    function paintGens() {
+      clear(gens);
+      for (const g of GENERATED) {
+        const cell = el('button', {
+          class: 'avchar', type: 'button', 'aria-label': g.label, dataset: { gen: g.id },
+          onclick: () => { Object.assign(spec, generatorSpec(g.id, faceSeed(), spec.palette, spec.fallback)); keep(); },
+        }, el('img', { class: 'av-photo', src: generatorUrlSafe(g.id, faceSeed(), spec.palette), alt: '' }));
+        focus.focusable(cell);
+        gens.appendChild(cell);
+      }
+    }
+    paintGens();
+    // Faces are infinite and the rail is not, so the row itself offers another set. The seed is reshuffled and
+    // the hub reshuffles the same shelf the same way every time, which makes a new set free.
+    const more = el('button', {
+      class: 'avmore', type: 'button', text: 'Another set',
+      onclick: () => { variant++; paintGens(); reroll(); },
+    });
+    focus.focusable(more);
+
+    /*
+     * Real character art, already cached on the hub, which also says which pictures are tall posters — where the
+     * face sits in the upper third — and which are banners that have to be used whole. A circle would cut off
+     * exactly the art that makes these worth looking at, so this rail is a rail of 2:3 cards and the crop travels
+     * with the stored reference.
+     */
+    const facesRail = el('div', { class: 'avchars avfaces' });
+    let faces = [];
+    function drawFaces(list) {
+      faces = Array.isArray(list) ? list : [];
+      clear(facesRail);
+      faces.forEach((f, i) => {
+        const cell = el('button', {
+          class: `avface${f.fit === 'center' ? ' wide' : ''}`, type: 'button',
+          'aria-label': f.label || 'Character face', dataset: { face: String(i) },
+          onclick: () => { Object.assign(spec, { kind: 'photo', src: f.src, fit: f.fit, palette: spec.palette }); keep(); },
+        }, el('img', { src: f.src, alt: '', loading: 'lazy', decoding: 'async' }), el('span', { text: f.label || '' }));
+        focus.focusable(cell);
+        facesRail.appendChild(cell);
+      });
+    }
+    async function reroll() {
+      const list = await characterFaces(faceSeed(), 40, variant > 0).catch(() => []);
+      if (list.length) drawFaces(list);
     }
 
     const sws = el('div', { class: 'avsw' });
@@ -184,48 +222,75 @@ export function screen(ctx) {
       ctx.closeModals();
     }
 
+    // The hub's cached faces lead the picker: they are the ones a person recognises. Asked for before the modal
+    // mounts so the rail is already inside the focus scope, and a hub with nothing cached just produces a
+    // shorter picker. One quiet credit line, in the picker and nowhere else.
+    const got = await characterFaces(faceSeed(), 40).catch(() => []);
+    drawFaces(got);
+    /* The credit is built from what the hub says each face came from. Nothing here names an upstream, so a hub
+       that changes its sources changes the credit by itself. */
+    const credits = [];
+    for (const f of got) {
+      const c = f.from || f.source;
+      if (c && !credits.includes(c)) credits.push(c);
+    }
     const parts = [
       el('h2', { text: 'Choose an avatar' }),
       el('div', { class: 'who', text: `${profile.name} — move to preview, OK to keep, Back to leave it alone` }),
       el('div', { class: 'avprev' }, preview),
-      el('div', { class: 'avlabel', text: 'Scenix faces' }),
-      chars,
-    ];
-    // Character art from wherever the hub can reach: asked for before the modal mounts so the rails it produces
-    // are already in the focus scope, and a hub with no such endpoint simply produces a shorter picker.
-    const faces = await characterFaces(seed).catch(() => []);
-    if (faces.length) {
-      const rail = el('div', { class: 'avchars avchars-img' });
-      for (const f of faces) {
-        const cell = el('button', {
-          class: 'avchar', type: 'button', 'aria-label': 'Character avatar',
-          onclick: () => { Object.assign(spec, { kind: 'photo', src: f.src }); keep(); },
-        }, el('img', { class: 'av-photo', src: f.src, alt: '', loading: 'lazy' }));
-        focus.focusable(cell);
-        rail.appendChild(cell);
-      }
-      parts.push(el('div', { class: 'avlabel', text: 'Characters' }), rail);
-    }
-    parts.push(
+      got.length ? el('div', { class: 'avlabel', text: 'Characters' }) : null,
+      got.length ? facesRail : null,
+      got.length ? el('div', { class: 'avcred', text: `Faces: ${credits.length ? credits.join(', ') : 'this hub'}` }) : null,
+      more,
       el('div', { class: 'avlabel', text: 'Generated faces' }),
       gens,
+      el('div', { class: 'avlabel', text: 'Scenix faces' }),
+      chars,
       el('div', { class: 'avlabel', text: 'Colours' }),
       sws,
-      el('div', { class: 'avhint', text: 'Only a reference is kept, so a face can be changed any time. A photo the hub attaches to a profile takes precedence.' }),
-    );
+      el('div', { class: 'avhint', text: 'Only a reference is kept, so a face can be changed any time. A photo the hub attaches to a profile takes precedence, and a face that cannot be reached falls back to a drawn one.' }),
+    ];
 
     const box = el('div', { class: 'mbox avpick' }, ...parts);
-    // mountModal already owns a focus scope; focusing inside it lands on the face this person already has, so
-    // opening the picker confirms a choice instead of starting a hunt.
-    ctx.mountModal(box, () => watch());
+
+    // Moving the ring previews, OK keeps. Nothing is written until a face is chosen, so a viewer can look
+    // through every face available and leave the person exactly as they were — and landing on a colour
+    // repaints the whole rail of drawn faces at once, which is how a palette gets seen before it is picked.
+    let pw = () => {};
+    pw = focus.onFocus((n) => {
+      if (!n || !box.contains(n)) return;
+      const pal = paletteById(n.dataset.pal || spec.palette) || PALETTES[0];
+      let next;
+      const fi = n.dataset.face;
+      if (fi !== undefined && faces[Number(fi)]) {
+        const f = faces[Number(fi)];
+        next = { kind: 'photo', src: f.src, fit: f.fit, palette: pal.id };
+      } else if (n.dataset.char) next = { kind: 'char', char: n.dataset.char, palette: pal.id };
+      else if (n.dataset.gen) next = generatorSpec(n.dataset.gen, faceSeed(), pal.id, spec.fallback);
+      else if (n.dataset.pal) {
+        next = spec.gen
+          ? generatorSpec(spec.gen, faceSeed(), pal.id, spec.fallback)
+          : { kind: 'char', char: spec.char || CHARACTERS[0].id, palette: pal.id };
+      } else return;
+      paintSpec(preview, next);
+      tint(pal);
+    });
+
+    // mountModal already owns a focus scope, so the picker does not push another. Closing hands the ring back to
+    // the card it came from: whoever you were standing on is still who you are standing on.
+    ctx.mountModal(box, () => {
+      pw();
+      if (current) focus.setFocus(current, { scroll: false });
+    });
     const home = spec.gen ? gens.querySelector(`[data-gen="${spec.gen}"]`)
       : chars.querySelector(`[data-char="${spec.char}"]`);
-    focus.focusDefault(home || chars.firstChild);
+    focus.focusDefault(home || facesRail.firstChild || gens.firstChild);
   }
 
   // Watch the ring: the row slides to keep the chosen card dead centre, the rest of the row dims against the
   // halo, and the card an Edit pill belongs to holds its size while the pill itself is focused.
   let watch = () => {};
+  let settled = false;
   watch = focus.onFocus((n) => {
     const isCard = !!(n && n.classList && n.classList.contains('avatar'));
     const owner = n && n.closest ? n.closest('.avatar') : null;
@@ -234,7 +299,43 @@ export function screen(ctx) {
     if (!isCard) return;
     current = n;
     centre(n);
+    // The first placement is not a move, it is the starting position, so it is allowed to be instant. Turning
+    // the transition on afterwards is what makes every later slide read as one continuous gesture.
+    if (!settled) { settled = true; setTimeout(() => grid.classList.add('settled'), 120); }
+    // The row is clipped by this screen, and a clipped box is still a scroll container: a browser asked to
+    // bring a card into view will nudge the whole screen, halo and wordmark included. Held at zero, the only
+    // thing that moves is the row.
+    wrap.scrollLeft = 0;
+    wrap.scrollTop = 0;
   });
+
+  /*
+   * A trackpad swipe, a drag, or a scroll wheel across the row does what the arrows do: the ring moves and the
+   * row follows it. The row is never scrolled by hand, because then the centred card and the ring would
+   * disagree about who is in the middle, and the whole point of this screen is that there is only one.
+   */
+  let acc = 0;
+  let cooling = 0;
+  wrap.addEventListener('wheel', (e) => {
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!d) return;
+    acc += d;
+    const now = Date.now();
+    if (now - cooling < 190 || Math.abs(acc) < 30) return;
+    focus.move(acc > 0 ? 'right' : 'left');
+    acc = 0;
+    cooling = now;
+  }, { passive: true });
+
+  let downX = null;
+  wrap.addEventListener('pointerdown', (e) => { downX = e.clientX; });
+  wrap.addEventListener('pointerup', (e) => {
+    if (downX === null) return;
+    const dx = e.clientX - downX;
+    downX = null;
+    if (Math.abs(dx) > 50) focus.move(dx < 0 ? 'right' : 'left');
+  });
+  wrap.addEventListener('pointercancel', () => { downX = null; });
 
   wrap.appendChild(glow);
   wrap.appendChild(el('div', { class: 'pbrand' }, el('span', { class: 'brand-mark' })));

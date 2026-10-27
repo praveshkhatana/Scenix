@@ -44,12 +44,31 @@ const root = document.documentElement;
 let scale = 1;
 
 function setVar(name, value) { root.style.setProperty(name, value); }
+
+/**
+ * The hub writes an alpha pair the Android way — `#AARRGGBB` — while CSS reads eight hex digits as
+ * `#RRGGBBAA`. The same characters mean different colours: `#1AFFFFFF` is ten-percent white to a TV and opaque
+ * cyan to a browser, which quietly tints every border in the interface. An 8-digit colour is therefore treated
+ * as alpha-first here, so the asset can keep the convention the rest of the TV world uses. Six digits, three
+ * digits and `rgba()` pass through untouched — a hub that prefers the web spelling can use either.
+ */
+function cssColor(v) {
+  const s = String(v || '').trim();
+  const m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{6})$/.exec(s);
+  if (!m) return s;
+  const a = parseInt(m[1], 16) / 255;
+  const r = parseInt(m[2].slice(0, 2), 16);
+  const g = parseInt(m[2].slice(2, 4), 16);
+  const b = parseInt(m[2].slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${Math.round(a * 1000) / 1000})`;
+}
+
 function setLen(name, px) { if (px !== undefined && px !== null) setVar(name, `calc(${px}px * var(--s))`); }
 function setNum(name, n) { if (n !== undefined && n !== null) setVar(name, String(n)); }
 
 function applyTokens() {
   const c = T.colors || {};
-  for (const [k, v] of Object.entries(COLOR_VARS)) if (c[k]) setVar(v, c[k]);
+  for (const [k, v] of Object.entries(COLOR_VARS)) if (c[k]) setVar(v, cssColor(c[k]));
 
   const sp = T.spacing || {};
   for (const [k, v] of Object.entries(SPACE_VARS)) setLen(v, sp[k]);

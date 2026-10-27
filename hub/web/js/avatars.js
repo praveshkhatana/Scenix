@@ -2,20 +2,24 @@
  * js/avatars.js — who the household sees on the profile screen.
  *
  * The hub sends a profile as `{id, name, kind, age?, pinRequired}` and no picture, so the client owns the
- * face. Three sources, in order of trust:
+ * face. Four sources, in order of trust:
  *
  *   1. `profile.avatar` — a URL from the hub, used the moment that field exists. A photo has to come from
  *      the hub eventually: a TV has no file picker worth building, and the same field then drives the
  *      Android shell's account chip. Resolved through `apiUrl()` so a root-relative value works.
  *   2. A choice this viewer made on this TV (localStorage, per profile id).
- *   3. A character picked deterministically from the profile id, so the same person gets the same face on
- *      every Scenix TV in the house without the hub remembering anything.
+ *   3. A generated face, seeded from the profile id, so the same person gets the same face on every Scenix TV
+ *      in the house without the hub remembering anything. Only a reference is stored — a style and a seed —
+ *      which is why a face can be replaced at any time and nothing is shipped inside the product.
+ *   4. A face drawn here, in flat shapes, with no licence attached and no network required.
  *
- * The characters are drawn here, in flat shapes, on purpose: they are original artwork with no licence
- * attached, they scale to any TV without a bitmap, and they paint before any font or image request settles.
+ * The drawn faces are the floor, not the show. They are what appears behind a generated image while it loads
+ * and what replaces it if the address never answers, so a household with no internet still gets a person on
+ * the card rather than a hole in the screen.
  */
 
 import { apiUrl } from '/ui/js/api.js';
+import { DEFAULT_ADULT, DEFAULT_KIDS, generatorSpec } from '/ui/js/avatarapi.js';
 
 /* Palettes are pairs: the bright face colour and the deep tile colour it sits on. */
 export const PALETTES = [
@@ -160,7 +164,10 @@ export function avatarFor(profile, index = 0) {
     return stored;
   }
   const photo = profile.avatar || profile.photo || profile.image || profile.picture;
-  if (photo) return { kind: 'photo', src: String(photo) };
+  if (photo) {
+    // The hub's own faces are poster art with the face in the upper third, which is what this crop is for.
+    return { kind: 'photo', src: String(photo), fit: 'center 30%' };
+  }
   const kids = String(profile.kind || '').toLowerCase() === 'kids';
   const h = hash(profile.id || String(index));
   const chars = kids
@@ -169,11 +176,16 @@ export function avatarFor(profile, index = 0) {
   const pals = kids
     ? PALETTES.filter((p) => ['amber', 'teal', 'violet', 'moss'].includes(p.id))
     : PALETTES.filter((p) => ['slate', 'brand', 'ocean', 'clay'].includes(p.id));
-  return {
-    kind: 'char',
-    char: chars[h % chars.length].id,
-    palette: pals[(h >>> 3) % pals.length].id,
-  };
+  const palette = pals[(h >>> 3) % pals.length].id;
+  const pool = kids ? DEFAULT_KIDS : DEFAULT_ADULT;
+  // The seed is the profile id, so the face is a person's own and does not drift between TVs. The drawn face
+  // travels with the spec: if the address ever stops answering, the card repaints with a face instead of a gap.
+  return generatorSpec(
+    pool[h % pool.length],
+    String(profile.id || index),
+    palette,
+    chars[h % chars.length].id,
+  );
 }
 
 /**
@@ -204,17 +216,39 @@ export function tileFill(p) {
 export function paintSpec(face, spec) {
   if (!face || !spec) return;
   face.querySelectorAll('.av-art, .av-photo').forEach((n) => n.remove());
+  const p = paletteById(spec.palette) || PALETTES[0];
   if (spec.kind === 'photo') {
-    face.style.background = 'var(--key)';
-    face.insertAdjacentHTML('afterbegin', `<img class="av-photo" src="${apiUrl(String(spec.src).replace(/"/g, '%22'))}" alt=""/>`);
-  } else {
-    const c = characterById(spec.char) || CHARACTERS[0];
-    const p = paletteById(spec.palette) || PALETTES[0];
+    // The palette stays behind the image: an avatar SVG with a transparent margin reads as a face on a lit
+    // tile rather than as a sticker pasted onto black, and a slow request shows colour before it shows nothing.
     face.style.background = tileFill(p);
-    face.insertAdjacentHTML('afterbegin', `<svg class="av-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${c.art(p.a)}</svg>`);
+    const img = document.createElement('img');
+    img.className = 'av-photo';
+    img.alt = '';
+    // Real character art is a tall poster with the face in its upper third; cropping that to the middle shows
+    // a cape or a pair of shoes. The hub says which pictures are posters and which are banners.
+    img.style.objectFit = 'cover';
+    img.style.objectPosition = String(spec.fit || 'center 30%');
+    img.addEventListener('error', () => {
+      img.remove();
+      face.classList.remove('has-art');
+      drawChar(face, spec.fallback || spec.char, p);
+    });
+    img.src = apiUrl(String(spec.src).replace(/"/g, '%22'));
+    face.appendChild(img);
+    face.classList.add('has-art');
+  } else {
+    face.classList.remove('has-art');
+    face.style.background = tileFill(p);
+    drawChar(face, spec.char, p);
   }
   const ini = face.querySelector('.ini');
   if (ini) ini.style.display = 'none';   // the initial is a fallback, not a second layer
+}
+
+/** Draw one of the built-in faces. This is also what a failed image request falls back to. */
+function drawChar(face, charId, p) {
+  const c = characterById(charId) || CHARACTERS[0];
+  face.insertAdjacentHTML('afterbegin', `<svg class="av-art" viewBox="0 0 100 100" aria-hidden="true" focusable="false">${c.art(p.a)}</svg>`);
 }
 
 /** Paint whatever this profile should look like right now. */

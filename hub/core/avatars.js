@@ -472,7 +472,7 @@ function status() {
     cached: faceCount,
     warming: Boolean(warming),
     proxy: { dir: CACHE_DIR, base: proxyBase() || null, entries: proxyCount },
-    attributionNote: 'character pictures come from Wikipedia; each entry carries the page it came from',
+    attributionNote: 'a picture comes from the catalogue named on its entry; each one records its source and licence',
   };
 }
 

@@ -1547,7 +1547,9 @@ const server = http.createServer(async (req, res) => {
         defaults: settings.DEFAULTS,
         // The language names are returned so a settings screen can label the codes it is choosing
         // between without carrying its own translation table.
-        languageNames: ranking.LANG_NAMES,
+        // One entry per language: this map carries both ISO 639-2/T and the older bibliographic
+        // spelling of the same language, and a screen that draws every key shows "French" twice.
+        languageNames: ranking.LANG_UI,
         file: settings.FILE,
       });
     }

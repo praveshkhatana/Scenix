@@ -104,6 +104,17 @@ export const api = {
   prefs: (profile) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
   savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { method: 'POST', body: prefs, timeout: 6000 }),
   health: () => request('/healthz', { timeout: 8000 }),
+  /* Settings and administration — the hub owns all of it, and the manifest says which of it exists. */
+  settings: () => request('/app/v1/settings', { timeout: 8000 }),
+  saveSettings: (body) => request('/app/v1/settings', { method: 'PUT', body, timeout: 8000 }),
+  unlockProfile: (id, pin) => request(`/app/v1/profiles/${encodeURIComponent(id)}/unlock`, { method: 'POST', body: { pin }, timeout: 6000 }),
+  createProfile: (body) => request('/app/v1/profiles', { method: 'POST', body, timeout: 6000 }),
+  updateProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body, timeout: 6000 }),
+  deleteProfile: (id) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'DELETE', timeout: 6000 }),
+  clearCache: () => request('/app/v1/cache/clear', { method: 'POST', body: {}, timeout: 9000 }),
+  characters: (seed, limit = 40, refresh = false) => request(
+    `/app/v1/avatars/characters?limit=${Number(limit) || 40}&seed=${encodeURIComponent(String(seed || 'scenix'))}${refresh ? '&refresh=1' : ''}`,
+    { timeout: 9000 }),
 };
 
 /**
