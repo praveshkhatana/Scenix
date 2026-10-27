@@ -53,7 +53,8 @@ const opt = (name, fallback) => {
 const HUB = opt('hub', process.env.HUB_URL || 'http://127.0.0.1:' + (process.env.PORT || 8788));
 const ROWS = opt('rows', process.env.ROWS
   || 'top10,justadded,newreleases,punjabiclassics,installed,taste-action,taste-family,taste-animation').split(',');
-const PROFILE = opt('profile', process.env.PROFILE || 'raj');
+const PROFILE = opt('profile', process.env.PROFILE || '');
+if (!PROFILE) { console.error('which profile? --profile <profile-id> (see GET /app/v1/profiles)'); process.exit(2); }
 const SLEEP_MS = Number(opt('sleep', process.env.SLEEP_MS || 400));
 const BATCH = Number(opt('batch', process.env.BATCH || 200));
 const LIMIT = Number(opt('limit', process.env.LIMIT !== undefined ? process.env.LIMIT : 2000));

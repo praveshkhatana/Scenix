@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy the plugin hub to the always-on server and restart it.
-#   usage: HUB_HOST=<hub-host> HUB_USER=nagraj ./deploy-hub.sh
+#   usage: HUB_HOST=<hub-host> HUB_USER=<hub-user> ./deploy-hub.sh
 # Nothing here edits the hub code: it copies hub/ (plus any new plugin file
 # that appears in providers/ rows/ rules/) and restarts the same process.
 set -euo pipefail

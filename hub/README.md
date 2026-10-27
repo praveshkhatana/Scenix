@@ -262,7 +262,7 @@ loses its `ffmpeg` and its directory within a sweep interval.
 per-profile rule override goes:
 
 ```json
-{ "profiles": [ { "id": "raj", "rules": { "language-allowlist": { "allow": ["eng"] } } } ] }
+{ "profiles": [ { "id": "<profile-id>", "rules": { "language-allowlist": { "allow": ["eng"] } } } ] }
 ```
 
 `data/ratings.json` — the certificate database (one record per identity, forever) and the counter for the

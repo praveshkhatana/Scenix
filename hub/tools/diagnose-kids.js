@@ -4,7 +4,7 @@
  * rule dropped which title, and on what evidence.
  *
  *     node tools/diagnose-kids.js                    # both kids profiles, all scope:kids rows
- *     node tools/diagnose-kids.js --profile yug --row kids_series
+ *     node tools/diagnose-kids.js --profile <profile-id> --row kids_series
  *     node tools/diagnose-kids.js --verbose           # list every dropped title with its reason
  *
  * It boots the same plugin set the hub boots (providers, external addons, rules) and then builds each
