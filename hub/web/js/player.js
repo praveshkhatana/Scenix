@@ -567,8 +567,11 @@ export function createPlayer() {
         const tried = (e.body && e.body.tried) || [];
         bus.emit('error', {
           code: String(e.status || 'net'),
-          message: e.message || 'The hub could not answer',
+          // The hub's own words when it has a copy but cannot serve it yet. A title that is still being
+          // fetched from peers is not a broken file, and the screen has to be able to tell those apart.
+          message: (e.body && e.body.error) || e.message || 'The hub could not answer',
           tried,
+          waiting: e.status === 503 || !!(e.body && e.body.warming),
         });
         return null;
       }
@@ -619,6 +622,10 @@ export function createPlayer() {
     pause() { wanted = false; backend.pause(); },
     /** Re-ask for the copy we already chose, at the point we reached. For a cold copy, not a new one. */
     retry() {
+      // No copy was ever handed over — the hub had nothing ready to stream yet. There is no player to
+      // restart here; the only honest meaning of *try again* is to ask the hub the same question again,
+      // and asking is cheap because the hub keeps working on that torrent in the background meanwhile.
+      if (!c.target && c.session) { void c._negotiate(api.play, c.session); return; }
       if (backend.retry) backend.retry();
       else if (c.target) backend.load(c.target, { positionMs: c.state().positionMs });
       // The screen owns its own failure card; it clears when the re-ask starts producing anything.

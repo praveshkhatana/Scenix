@@ -44,6 +44,17 @@ const PREPARE_BUDGET_MS = Number(process.env.GATEWAY_BUDGET_MS || 6000);
 // A title page has all the time in the world; the Play button has none, so warming runs long.
 const WARM_BUDGET_MS = Number(process.env.GATEWAY_WARM_MS || 15000);
 const PROBE_TIMEOUT_MS = 1500;
+
+// How long a torrent we could not prepare stays blacklisted. "Not yet" and "never" are different facts
+// and must not share one timeout: a cold copy whose metadata is still arriving only needs to be asked
+// again in a moment — that is exactly what the player's *wait and try again* asks for — while a torrent
+// the engine read from end to end and found no video inside is not going to change its mind tonight.
+// Kept short on purpose: the player tells the viewer to press again in fifteen seconds, and a
+// blacklist longer than that promise would answer them from memory instead of asking the engine
+// whether the metadata has arrived yet.
+const MISS_WAITING_MS = Number(process.env.GATEWAY_MISS_WAITING_MS || 30e3);
+const MISS_ENGINE_MS = Number(process.env.GATEWAY_MISS_ENGINE_MS || 45e3);
+const MISS_DEAD_MS = Number(process.env.GATEWAY_MISS_DEAD_MS || 10 * 60e3);
 // How long an engine reachability answer is trusted before it is asked again. The same value drives
 // the background refresh, so a hub that starts with the engine already running answers its first Play
 // press correctly instead of spending half a minute calling the engine "not checked".
@@ -349,7 +360,8 @@ async function prepare(source, budgetMs, want) {
     return hit;
   }
   const failed = prepared.get('miss:' + hash);
-  if (failed && Date.now() - failed.at < 10 * 60e3) return null;
+  // The blacklist expires by kind of failure, not by one global timer.
+  if (failed && Date.now() - failed.at < (failed.ttl || MISS_DEAD_MS)) return null;
 
   // Adding is idempotent; doing it again on a live torrent is free. Prefer the magnet when the addon
   // gave us one (it carries trackers), and fall back to the bare hash, which the engine resolves over
@@ -359,10 +371,13 @@ async function prepare(source, budgetMs, want) {
 
   const deadline = Date.now() + (budgetMs || PREPARE_BUDGET_MS);
   let lastError = 'metadata not resolved';
+  let sawFiles = 0;        // did the engine ever show us the contents of this torrent
+  let engineFailed = false; // did the engine itself stop answering mid-prepare
   do {
     const r = await enginePost('/torrents', { action: 'get', hash }, 2000);
     if (r.json) {
       const files = filesOf(r.json);
+      sawFiles = Math.max(sawFiles, files.length);
       const chosen = pickFile(files, want);
       if (chosen) {
         const sizeOf = (f) => Number(f.size !== undefined ? f.size : f.length) || 0;
@@ -387,13 +402,18 @@ async function prepare(source, budgetMs, want) {
       lastError = (r.json.stat_string || 'unknown') + ', ' + files.length + ' files';
     } else {
       lastError = r.error || 'engine said nothing';
-      if (/unreachable|timeout|bad TORR_URL/.test(lastError)) break;
+      if (/unreachable|timeout|bad TORR_URL/.test(lastError)) { engineFailed = true; break; }
     }
     await new Promise((res) => setTimeout(res, 600));
   } while (Date.now() < deadline);
 
-  prepared.set('miss:' + hash, { error: lastError, at: Date.now() });
-  return { hash, error: lastError };
+  // Classify before caching, because the cache entry decides whether the next press even tries.
+  const kind = engineFailed ? 'engine' : (sawFiles === 0 ? 'waiting' : 'dead');
+  const ttl = kind === 'engine' ? MISS_ENGINE_MS : (kind === 'waiting' ? MISS_WAITING_MS : MISS_DEAD_MS);
+  prepared.set('miss:' + hash, { error: lastError, at: Date.now(), ttl, kind });
+  log('GATEWAY WAIT', 'hash=' + String(hash).slice(0, 12), 'kind=' + kind,
+    'retryIn=' + ttl + 'ms', lastError);
+  return { hash, error: lastError, kind };
 }
 
 /**

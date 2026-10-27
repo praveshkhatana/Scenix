@@ -107,6 +107,24 @@ Both signals — a frozen clock and an ending that arrives minutes early — go 
 function, so a copy cannot earn a second free reload by failing in a different way. A live channel and an
 unprobed file report no length; both are believed when they say they have ended.
 
+The hub holds up its end of the same bargain:
+
+- **No magnet is ever passed off as a stream.** Neither first-class player runs a BitTorrent client, so a
+  magnet handed over as a playable answer becomes `unknown protocol: magnet` in the decoder and a screen
+  that says the file is broken. When the gateway cannot produce HTTP, the play answer is `503` with
+  `warming: true`, `retryAfterMs` and the magnet kept for anyone who can use one — the viewer gets *not
+  started moving yet* and a chance to wait, which is the truth.
+- **A failed prepare is remembered for as long as its reason deserves**, not by one shared timer:
+
+| kind | what happened | retried after |
+| --- | --- | --- |
+| `waiting` | engine answering, torrent metadata not arrived | 30 s (`GATEWAY_MISS_WAITING_MS`) |
+| `engine` | the engine stopped answering mid-ask | 45 s (`GATEWAY_MISS_ENGINE_MS`) |
+| `dead` | the engine read the torrent; no video inside | 10 min (`GATEWAY_MISS_DEAD_MS`) |
+
+  One blacklist for all three is how a merely cold copy ends up refusing to open until somebody restarts
+  the hub — and how a promise to "wait and try again" turns out to be answered from memory.
+
 These are timing rules, not user settings: nothing here goes in `settings.json`, because "what counts as
 stuck" is a property of our player, not a household preference.
 

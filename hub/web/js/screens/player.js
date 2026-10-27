@@ -426,7 +426,8 @@ export function screen(ctx, identity) {
     if (waiting) focus.focusable(wait2);
     focus.focusable(again);
     focus.focusable(home);
-    setStatus((e && e.message) || 'Playback failed', 'bad');
+    // A copy still gathering its first bytes is not a failure, and a red status line says otherwise.
+    setStatus((e && e.message) || 'Playback failed', waiting ? 'wait' : 'bad');
     focus.focusDefault(waiting ? wait2 : again);
   }));
   offs.push(player.on('ended', () => {

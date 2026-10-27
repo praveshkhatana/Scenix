@@ -84,6 +84,9 @@ const ALT_MAX = Number(process.env.ALT_MAX || 9);
 // that has actually been measured rather than one the app gave up waiting for.
 const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 3);
 const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 11000);
+// How long a warming title asks the player to wait before pressing again. The hub says it rather than
+// the client guessing, because only the hub knows whether it is talking to an engine that is awake.
+const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 15000);
 const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 5000);
 // How much of the ranking rule's speed bar applies to a client that plays the copy itself.
 //
@@ -1267,6 +1270,25 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     return { status: 404, body: { error: 'no playable source', identity, tried } };
   }
 
+  // A magnet is not a stream. It is an invitation to run a BitTorrent client, and no client of this
+  // route is one: the TV passes it to a media decoder that reports "unknown protocol: magnet", and a
+  // browser tab cannot open it either. So when the gateway produced HTTP for nothing, say what is
+  // actually true — the hub has no copy ready to serve yet, and here is how long to wait — instead of
+  // answering 200 with something unopenable and letting the screen call it a broken file. The magnet is
+  // still in the answer, for the sake of any client that can use one and for the log.
+  if (!/^https?:\/\//i.test(String(out.url || ''))) {
+    log('PLAY WARMING', identity, labelOf(source), String(out.url).slice(0, 42));
+    return {
+      status: 503,
+      body: {
+        identity, title: kept.title || null, tried,
+        error: 'no copy of this is ready to stream from the hub yet',
+        warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
+        magnet: out.url,
+        alternatives: candidates.filter((s) => s !== source).slice(0, ALT_MAX),
+      },
+    };
+  }
   if (/^https?:\/\//i.test(out.url)) {
     const h = Object.entries(out.headers || {}).map(([k, v]) => k + ':' + v).join('||');
     out.proxiedUrl = '/app/v1/proxy?u=' + encodeURIComponent(out.url) + (h ? '&h=' + encodeURIComponent(h) : '');

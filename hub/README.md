@@ -146,6 +146,20 @@ to be played (the title's own metadata only as a fallback, because a different c
 The whole response has no other way to express length, and a client that never learns it cannot tell an
 ending from a lie.
 
+A magnet is never handed to a client as if it were a stream. A magnet is an invitation to run a
+BitTorrent client, and the two players behind this route are not one — the TV passes it to a media
+decoder that answers `unknown protocol: magnet`. When the gateway produced no HTTP for any candidate,
+`/app/v1/play` answers **503** instead: `{ error, warming: true, retryAfterMs, magnet, alternatives,
+tried }`. The screen reads that as *this copy has not started moving yet* and offers to wait, rather
+than calling an unopenable address a broken file.
+
+The same distinction exists inside `core/gateway.js`. A torrent we failed to prepare is blacklisted for
+as long as its reason deserves: `waiting` (the engine is answering but the metadata has not arrived) is
+re-tried in seconds, so the player's own retry can succeed; `engine` (the engine stopped answering) in
+tens of seconds; `dead` (the engine read the torrent and found no video inside it) for ten minutes. One
+shared timeout for all three is what turns a cold copy into a title that refuses to load until someone
+restarts the hub.
+
 What the client does with it lives in one file, `web/js/stall.js`, shared by the browser player and the
 TV's native player, and checked by `scripts/check-stall.mjs`:
 
