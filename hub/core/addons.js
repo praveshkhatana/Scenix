@@ -101,6 +101,21 @@ function seedAddons() {
   return seeds;
 }
 
+/**
+ * Whether two addresses name the same add-on. A source's configuration lives in the path, so equality has to
+ * be on the whole address, not the host: torrentio with hindi,english and torrentio without are genuinely
+ * different sources, while a trailing slash or a missing manifest name is the same one written twice.
+ */
+function sameAddress(a, b) {
+  const fix = (u) => {
+    let s = String(u || '').trim();
+    if (/\/$/.test(s)) s += 'manifest.json';
+    else if (!/manifest\.json$/.test(s)) s = s.replace(/\/+$/, '') + '/manifest.json';
+    return s;
+  };
+  return !!fix(a) && fix(a) === fix(b);
+}
+
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // ---- shared JSON cache: TTL in memory, per-item responses survive a restart ----------------------
@@ -1101,7 +1116,13 @@ function init(reg, st) {
   for (const e of list) if (!e.native) lastPriority = Math.max(lastPriority, Number(e.priority) || 40);
   for (const seed of seedAddons()) {
     const existing = byId.get(seed.id);
-    if (!existing) {
+    // Keying only on the id meant that an owner who installed a default source themselves - under whatever
+    // name that install chose - got a second copy of it under the default name at the next restart. The
+    // address decides whether two entries are the same source, exactly as it does when adding one.
+    const elsewhere = existing ? null : list.find((e) => e && !e.native && sameAddress(e.url, seed.url));
+    if (elsewhere) {
+      log('ADDONS seed skipped', seed.id, '-', seed.url, 'already installed as', elsewhere.id);
+    } else if (!existing) {
       list.push({
         id: seed.id, name: seed.name, url: seed.url,
         enabled: true, addedAt: Date.now(), priority: ++lastPriority,
@@ -1246,7 +1267,7 @@ async function add(url, name) {
   if (/\/$/.test(manifestUrl)) manifestUrl += 'manifest.json';
   if (!/manifest\.json$/.test(manifestUrl)) manifestUrl = manifestUrl.replace(/\/+$/, '') + '/manifest.json';
   for (const existing of installed.values()) {
-    if (existing && !existing.native && existing.manifestUrl === manifestUrl) {
+    if (existing && !existing.native && sameAddress(existing.manifestUrl, manifestUrl)) {
       return { ok: false, status: 409, error: 'already installed', id: existing.id };
     }
   }
