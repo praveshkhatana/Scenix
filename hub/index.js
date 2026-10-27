@@ -197,7 +197,12 @@ function hasSubtitleSource() {
  */
 function wireProfile(p) {
   const { pin, ...rest } = p || {};
-  return { ...rest, pinSet: pin != null && String(pin).length > 0 };
+  const pinSet = pin != null && String(pin).length > 0;
+  // One honest answer instead of two flags a screen has to combine right. `pinRequired` without a PIN is a
+  // gate that checks nothing, and a client that only reads the flag builds a wall the viewer cannot pass -
+  // which is what happened to a profile here whose PIN was removed during testing. The hub knows whether an
+  // unlock would actually be asked for, so it says so.
+  return { ...rest, pinSet, locked: pinSet && !!p.pinRequired };
 }
 
 /**
