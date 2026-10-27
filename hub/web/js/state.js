@@ -110,6 +110,18 @@ export function focusMemoryFor(screenKey) { return session.focusMemory.get(scree
 export function shell() {
   return (typeof window !== 'undefined' && window.Scenix) ? window.Scenix : null;
 }
+/**
+ * The preferences this profile will actually be played with. The hub sends what the owner wrote
+ * (`prefs`) beside what it means once household defaults fill the gaps (`effectivePrefs`); reading only
+ * the first loses a profile that inherits its languages from the hub, whose empty list then reaches the
+ * player and lets whatever the file's packager flagged decide the audio.
+ */
+export function effectivePrefs() {
+  const p = session.profile;
+  if (!p) return {};
+  return p.effectivePrefs || p.prefs || {};
+}
+
 export function hasNativePlayer() { return !!shell(); }
 export function shellDevice() {
   const s = shell();

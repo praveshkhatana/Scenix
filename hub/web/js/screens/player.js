@@ -22,7 +22,7 @@ import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { createPlayer, describePlayback } from '/ui/js/player.js';
-import { session, hasNativePlayer } from '/ui/js/state.js';
+import { session, hasNativePlayer, effectivePrefs } from '/ui/js/state.js';
 import { clock, langName, qualityWord, episodeLabel, size as fmtSize } from '/ui/js/format.js';
 import { token, px } from '/ui/js/theme.js';
 import { setFeatureVisible, setSurfaceLive } from '/ui/js/video.js';
@@ -487,7 +487,7 @@ export function screen(ctx, identity) {
     if (!target) return;
     center.hidden = true;
     // Subtitles from the addon are worth fetching even when the file has none of its own.
-    const langs = ((session.profile && session.profile.prefs && session.profile.prefs.subtitleLanguages) || []).join(',');
+    const langs = (effectivePrefs().subtitleLanguages || []).join(',');
     api.subs(spec.identity, session.profile && session.profile.id, langs)
       .then((r) => player.useHubSubs((r && r.subs) || []))
       .catch(() => {});

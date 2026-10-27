@@ -202,7 +202,11 @@ function wireProfile(p) {
   // gate that checks nothing, and a client that only reads the flag builds a wall the viewer cannot pass -
   // which is what happened to a profile here whose PIN was removed during testing. The hub knows whether an
   // unlock would actually be asked for, so it says so.
-  return { ...rest, pinSet, locked: pinSet && !!p.pinRequired };
+  // `prefs` is what the owner wrote; `effectivePrefs` is what the hub will actually rank with, after
+  // the household defaults fill the gaps. A settings screen edits the first and must see it untouched,
+  // while anything that plays needs the second - a profile that inherits its languages from the hub was
+  // sending an empty list to the player, so the household's first-choice audio silently stopped applying.
+  return { ...rest, pinSet, locked: pinSet && !!p.pinRequired, effectivePrefs: prefs.resolve(p) };
 }
 
 /**

@@ -24,7 +24,7 @@
  */
 
 import { api, apiUrl, streamUrl } from '/ui/js/api.js';
-import { shell, session } from '/ui/js/state.js';
+import { shell, session, effectivePrefs } from '/ui/js/state.js';
 import { token } from '/ui/js/theme.js';
 import { mainSurface } from '/ui/js/video.js';
 
@@ -176,9 +176,9 @@ class NativeBackend {
       // Which audio and subtitle languages this household asks for, in its own order. Without them the
       // shell's track selector falls back to the Android locale, so a Hindi-first viewer on an English
       // menu system gets whatever the file's packager happened to flag as default.
-      audioLanguages: ((session.profile && session.profile.prefs && session.profile.prefs.audioLanguages) || [])
+      audioLanguages: ((effectivePrefs().audioLanguages) || [])
         .join(','),
-      subtitleLanguages: ((session.profile && session.profile.prefs && session.profile.prefs.subtitleLanguages) || [])
+      subtitleLanguages: ((effectivePrefs().subtitleLanguages) || [])
         .join(','),
       torrent: target.torrent || undefined,
       kind: target.kind || undefined,
