@@ -237,6 +237,8 @@ there is.
 | `ADDON_MAX_SOURCES` / `ADDON_MIN_SIZE_MB` | 12 / 100 | **seed** `settings.addons.maxSources` / `minSizeMB`: how many copies a picker shows, and how small a file may be before it stops looking like a film. The names these shipped under before they were settings are accepted for one release |
 | `DAYS` | 45 | "just added" window |
 | `HOME_BUDGET_MS`, `ROW_BUDGET_MS`, `CATALOG_BUDGET_MS`, `META_BUDGET_MS`, `ROW_MAX` | 1500/1200/800/3000/80 | time and size ceilings: `/app/v1/*` answers from cache and never waits on the network beyond these |
+| `REMUX_FIRST_BYTE_MS` | 25000 | how long a re-mux waits for the engine to deliver its first byte before admitting the peers are not feeding this copy. It is also published in the manifest as `remux.warmingMs`, because the player decides "still warming" vs "this copy is dead" from this number rather than a guess |
+| `ADDON_MANIFEST_RETRY_MS` | 30000 | how soon an addon whose manifest did not arrive at boot may be asked again. A source that was briefly unreachable is revived by the next viewer, not by a restart |
 
 ## Data
 
