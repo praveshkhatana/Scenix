@@ -1,7 +1,7 @@
 /**
  * js/player.js — feature playback. One API, two interchangeable backends.
  *
- * The app talks to a controller: `start / pause / resume / toggle / seek / setAudio / setSub / setSpeed /
+ * The app talks to a controller: `start / pause / resume / toggle / seek / retry / setAudio / setSub / setSpeed /
  * setQuality / stop`, and reads what is happening through events (`ready, position, buffering, tracks,
  * error, ended`). Nothing outside this module touches a media element, and nothing outside it posts to
  * `/app/v1/play`. That is what lets the picture change technology without the product changing.
@@ -24,7 +24,7 @@
  */
 
 import { api, apiUrl, streamUrl } from '/ui/js/api.js';
-import { shell } from '/ui/js/state.js';
+import { shell, session } from '/ui/js/state.js';
 import { token } from '/ui/js/theme.js';
 import { mainSurface } from '/ui/js/video.js';
 
@@ -200,22 +200,39 @@ class VideoBackend {
     this.baseMs = 0;
     this.durationMs = 0;
     this.srcUrl = '';
+    this.baseUrl = '';
     this.rewindable = false;
+    this.everDecoded = false;
     this.video.muted = false;
 
     const v = this.video;
     v.addEventListener('waiting', () => emit('buffering', { buffering: true }));
     v.addEventListener('stalled', () => emit('buffering', { buffering: true, stalled: true }));
     v.addEventListener('canplay', () => emit('buffering', { buffering: false }));
-    v.addEventListener('playing', () => emit('buffering', { buffering: false }));
+    v.addEventListener('playing', () => { this.everDecoded = true; emit('buffering', { buffering: false }); });
     v.addEventListener('ended', () => emit('ended', { positionMs: v.currentTime * 1000, durationMs: v.duration * 1000 }));
     v.addEventListener('error', () => {
       const e = v.error || {};
-      const why = e.code === 4 ? 'This browser cannot open this file'
+      // A remux answer that died before its first frame is almost always the hub saying it has no video
+      // for us yet. The element sees an unusable body either way and cannot read the hub's reason, so that
+      // guess lives here: the two need different words, because one asks the viewer to wait and re-ask,
+      // while only a copy that failed after it started gets sent away in search of another.
+      // A copy the hub is still warming costs us the whole first-byte window before the element gives up,
+      // while one it refuses outright comes back in under a second. Timing is what tells those apart from
+      // the bare code, so patience is only offered when the wait really happened.
+      const waited = Date.now() - (this.srcAt || 0);
+      // The hub says how long it waits for a first byte; anything that failed after that window was refused
+      // at the end of the wait, and anything that failed sooner never survived the wait at all.
+      const warmingMs = Number((session.manifest && session.manifest.remux
+        && session.manifest.remux.warmingMs) || 25000);
+      const waiting = this.rewindable && !this.everDecoded && (e.code === 4 || e.code === 2)
+        && waited >= Math.max(2000, warmingMs - 1500);
+      const why = waiting ? 'Nothing arrived from this copy yet'
+        : e.code === 4 ? 'This browser cannot open this file'
         : e.code === 3 ? 'The stream broke while decoding'
         : e.code === 2 ? 'The hub stopped sending data'
         : 'The stream could not be opened';
-      emit('error', { code: String(e.code || ''), message: why });
+      emit('error', { code: String(e.code || ''), message: why, waiting });
     });
     v.addEventListener('loadedmetadata', () => emit('ready', {
       durationMs: (v.duration || 0) * 1000, videoWidth: v.videoWidth, videoHeight: v.videoHeight,
@@ -247,10 +264,12 @@ class VideoBackend {
     this.durationMs = Number(target.durationMs) || 0;
     this.baseMs = 0;
     const at = Math.max(0, Number(opts.positionMs) || 0);
-    this.srcUrl = url;
+    this.baseUrl = url; // the address with no offset written onto it yet
+    this.srcUrl = url;  // by default this response starts at the beginning of the title
+    this.srcAt = Date.now();
     this.rewindable = /\/app\/v1\/remux([?]|$)/.test(url); // only this endpoint takes a start time
     if (at > 1500 && this.rewindable) {
-      this.srcUrl = url + (url.includes('?') ? '&' : '?') + 'start=' + Math.round(at);
+      this.srcUrl = this.at(this.baseUrl, at);
       this.baseMs = at;
     } else if (at > 1) {
       const seekOnce = () => {
@@ -277,6 +296,22 @@ class VideoBackend {
 
   play() { const p = this.video.play(); if (p && p.catch) p.catch(() => {}); }
   pause() { this.video.pause(); }
+  /**
+   * Ask the same address again. A cold copy is not a broken one: what the hub said was "the swarm has not
+   * given me this file yet", and the honest answer is to wait a moment and re-ask where we left off rather
+   * than lose the seat and go hunting for another copy.
+   */
+  retry() {
+    if (!this.srcUrl) return;
+    this.everDecoded = false;
+    this.srcAt = Date.now();
+    const v = this.video;
+    try { v.src = this.srcUrl; v.load(); } catch (e) { /* a detached element cannot be reloaded */ }
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+  /** This response's address, with the point inside the title it starts at written onto it. */
+  at(base, ms) { return base + (base.includes('?') ? '&' : '?') + 'start=' + Math.round(ms); }
   /** Where a title position sits inside the response we are currently reading. */
   localTo(ms) { return (ms - this.baseMs) / 1000; }
   /** Is that spot already ours to play without asking the hub again? */
@@ -297,11 +332,13 @@ class VideoBackend {
     if (!this.rewindable || this.reachable(at)) {
       try { this.video.currentTime = this.localTo(at); return; } catch (e) { /* fall through to a restart */ }
     }
-    if (!this.srcUrl) return;
+    if (!this.baseUrl) return;
     // Restart the stream at that point. The picture keeps playing while the hub opens the new one.
     this.baseMs = at;
     const wasPlaying = !this.video.paused;
-    this.video.src = this.srcUrl + (this.srcUrl.includes('?') ? '&' : '?') + 'start=' + at;
+    // The loaded address moves with the offset, so a later retry lands back here instead of at the start.
+    this.srcUrl = this.at(this.baseUrl, at);
+    this.video.src = this.srcUrl;
     try { this.video.load(); } catch (e) { /* ignore */ }
     if (wasPlaying) { const p = this.video.play(); if (p && p.catch) p.catch(() => {}); }
   }
@@ -490,6 +527,13 @@ export function createPlayer() {
 
     play() { if (!c.ended) backend.play(); },
     pause() { backend.pause(); },
+    /** Re-ask for the copy we already chose, at the point we reached. For a cold copy, not a new one. */
+    retry() {
+      if (backend.retry) backend.retry();
+      else if (c.target) backend.load(c.target, { positionMs: c.state().positionMs });
+      // The screen owns its own failure card; it clears when the re-ask starts producing anything.
+      bus.emit('retrying', {});
+    },
     toggle() {
       const st = c.state();
       if (st.playing) backend.pause(); else backend.play();

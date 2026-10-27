@@ -382,19 +382,33 @@ export function screen(ctx, identity) {
     live = !(Number(t.durationMs) > 0);
     refreshStatus();
   }));
+  offs.push(player.on('retrying', () => { center.hidden = true; setStatus('Asking for this copy again...', 'wait'); }));
   offs.push(player.on('error', (e) => {
     center.hidden = false;
     center.textContent = '';
-    center.appendChild(el('div', { class: 'big', text: 'This copy would not play' }));
-    center.appendChild(el('div', { class: 'small', text: (e && e.message) || 'The hub could not open it.' }));
-    const again = el('button', { class: 'btn white big', type: 'button', text: 'Try another copy',
-      onclick: () => player.switchTo({ exclude: player.tried }).then(() => center.hidden = true) });
+    // Two different dead streams. One is a copy the swarm has not started feeding yet, and the answer is
+    // to wait and re-ask the same address; only a copy that died after it began, or that this browser
+    // cannot decode at all, is worth sending the viewer off to look for another.
+    const waiting = !!(e && e.waiting);
+    center.appendChild(el('div', { class: 'big',
+      text: waiting ? 'This copy has not started moving yet' : 'This copy would not play' }));
+    center.appendChild(el('div', { class: 'small', text: waiting
+      ? 'The hub asked the peers sharing it and nothing has arrived. Waiting longer often fixes it — '
+        + 'another copy is usually ready right away.'
+      : (e && e.message) || 'The hub could not open it.' }));
+    const wait2 = el('button', { class: 'btn white big', type: 'button', text: 'Wait and try again',
+      onclick: () => player.retry() });
+    const again = el('button', { class: waiting ? 'btn ghost big' : 'btn white big', type: 'button',
+      text: 'Try another copy',
+      onclick: () => player.switchTo({ exclude: player.tried }).then(() => { center.hidden = true; }) });
     const home = el('button', { class: 'btn ghost big', type: 'button', text: 'Back', onclick: () => ctx.back() });
+    if (waiting) center.appendChild(wait2);
     center.appendChild(el('div', { class: 'btns' }, again, home));
+    if (waiting) focus.focusable(wait2);
     focus.focusable(again);
     focus.focusable(home);
     setStatus((e && e.message) || 'Playback failed', 'bad');
-    focus.focusDefault(again);
+    focus.focusDefault(waiting ? wait2 : again);
   }));
   offs.push(player.on('ended', () => {
     setPlayIcon();
