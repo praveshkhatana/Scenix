@@ -292,6 +292,27 @@ function fitsCap(source, capBytes) {
   return !(Number.isFinite(source.sizeBytes) && source.sizeBytes > capBytes);
 }
 
+// ffprobe, a container's own label and a browser's capability check all spell the same video codec
+// differently. The picker has to compare them, so they collapse to one family name here.
+const VIDEO_CODEC_FAMILIES = {
+  h264: ['h264', 'avc', 'avc1', 'avc3', 'h.264'],
+  hevc: ['hevc', 'h265', 'hvc1', 'hev1', 'x265', 'h.265'],
+  av1: ['av1', 'aom'],
+  vp9: ['vp9'],
+  mpeg2: ['mpeg2video', 'mpeg2'],
+  mpeg4: ['mpeg4'],
+  vc1: ['vc1', 'wmv3'],
+};
+
+function codecFamily(name) {
+  const n = String(name || '').toLowerCase().trim();
+  if (!n) return null;
+  for (const [family, spellings] of Object.entries(VIDEO_CODEC_FAMILIES)) {
+    if (spellings.includes(n)) return family;
+  }
+  return n; // an unknown codec stays itself rather than silently becoming something we can rank
+}
+
 module.exports = {
   LANG_UI,
   id: 'source-ranking',
@@ -305,6 +326,7 @@ module.exports = {
   // Also shared: "what language does this copy state its audio is", which is the difference between a
   // proven Hindi track and one the uploader called Hindi in a filename.
   statedLanguages,
+  codecFamily,
   // The code -> display-name table, shared with the settings screen so the owner picks
   // between "Hindi" and "Punjabi" rather than between "hin" and "pan".
   LANG_NAMES,

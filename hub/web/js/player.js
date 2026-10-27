@@ -28,6 +28,46 @@ import { shell, session } from '/ui/js/state.js';
 import { token } from '/ui/js/theme.js';
 import { mainSurface } from '/ui/js/video.js';
 
+/*
+ * Which video codecs this browser can actually put on screen, asked of the media stack instead of
+ * guessed from a user-agent string. The hub never transcodes video, so handing a browser a copy in a
+ * codec it cannot decode is not a quality compromise - it is a black screen with working sound. The
+ * answer is a name list; an empty one means "never checked", which the hub reads as no constraint so
+ * an older client keeps the behaviour it had.
+ */
+const CODEC_PROBES = [
+  ['h264', 'video/mp4; codecs="avc1.4d0028"'],
+  ['hevc', 'video/mp4; codecs="hvc1.1.6.L153.B0"'],
+  ['av1', 'video/mp4; codecs="av01.0.05M.08"'],
+  ['vp9', 'video/mp4; codecs="vp09.00.10.08"'],
+];
+// ffprobe and a container label spell these differently from a capability check; both sides collapse
+// to the same family name before anyone compares them.
+const CODEC_SPELLINGS = {
+  avc: 'h264', avc1: 'h264', 'h.264': 'h264',
+  h265: 'hevc', hvc1: 'hevc', hev1: 'hevc', x265: 'hevc', 'h.265': 'hevc',
+};
+let codecAnswer = null;
+function playableCodecs() {
+  if (codecAnswer) return codecAnswer;
+  const ok = [];
+  for (const [name, mime] of CODEC_PROBES) {
+    try { if (window.MediaSource && window.MediaSource.isTypeSupported(mime)) ok.push(name); } catch (e) { /* no answer */ }
+  }
+  codecAnswer = ok;
+  return ok;
+}
+function codecFamily(name) {
+  const n = String(name || '').toLowerCase().trim();
+  return CODEC_SPELLINGS[n] || n || null;
+}
+/** Unknown codec or unchecked browser: assume it may play, rather than refusing a film we have not measured. */
+function canPlayVideo(codec) {
+  const list = playableCodecs();
+  if (!codec || !list.length) return true;
+  return list.includes(codecFamily(codec));
+}
+
 /* ------------------------------------------------------------------ events */
 
 function emitter() {
@@ -111,6 +151,8 @@ class NativeBackend {
   get name() { return 'native'; }
   /** The native decoder takes the container as the torrent has it — no re-mux on the hub. */
   get container() { return 'any'; }
+  /** It decodes whatever the file holds, so it puts no constraint on which copy the hub picks. */
+  codecs() { return []; }
 
   call(fn, ...args) {
     const s = this.s;
@@ -247,6 +289,8 @@ class VideoBackend {
   get name() { return 'video'; }
   /** A browser needs what Safari and Chrome can decode, so the hub re-muxes to MP4 for us. */
   get container() { return 'mp4'; }
+  /** What this browser can draw, declared so the picker never offers a codec it would only buffer. */
+  codecs() { return playableCodecs(); }
 
   /**
    * A re-muxed stream has no length to hand the browser - the hub is generating it as it goes - so the
@@ -464,6 +508,8 @@ export function createPlayer() {
         source: spec.source ? { id: spec.source.id, label: spec.source.label, provider: spec.source.provider } : spec.source || null,
         // The one field that says which container this client can play.
         container: backend.container,
+        // ...and which codecs inside any container it can decode. A capability, not a preference.
+        codecs: typeof backend.codecs === 'function' ? backend.codecs() : [],
         audio: spec.audio || c.selectedAudio || undefined,
         sub: spec.sub !== undefined ? spec.sub : c.selectedSub || undefined,
       };
@@ -647,6 +693,10 @@ export function describePlayback(player, extra = {}) {
   }
   if (t.kind === 'hls' && player.backend === 'video') {
     return { tone: 'warn', text: 'This copy is a live HLS feed: the TV plays it, a plain browser may not' };
+  }
+  if (player.backend === 'video' && t.videoCodec && !canPlayVideo(t.videoCodec)) {
+    return { tone: 'warn', text: 'This copy is ' + String(codecFamily(t.videoCodec)).toUpperCase()
+      + ', which this browser cannot draw — the TV app plays it' };
   }
   if (t.probe && t.probe.contentType === 'video/x-matroska' && player.backend === 'video') {
     return { tone: 'warn', text: 'This copy is Matroska — it can stutter in a browser until the hub finishes re-muxing' };

@@ -25,7 +25,10 @@ It is not a front end for one streaming service, and not a link scraper. It merg
 sources into **one item model**, de-duplicates the same title across them, ranks the copies by what
 your household actually wants — audio language first, then quality, then size, and a swarm that cannot
 feed the file passed over for one that can, because a buffering copy serves none of those three — and
-hands the player one stream it can sustain.
+hands the player one stream it can sustain, on a screen that can decode it: video is copied rather
+than transcoded here, so an H.265 file on a device with no H.265 decoder is not a lower-quality
+option, it is a black screen with working sound, and such a copy gives way to one the device said
+it can draw.
 
 ## Two ways to install
 

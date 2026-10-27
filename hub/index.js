@@ -944,6 +944,7 @@ function attachTracks(sources, want, streamId) {
     // its own origin.
     s.audioTracks = (entry.audioTracks || []).map((t) => ({ ...t }));
     s.subtitleTracks = (entry.subtitleTracks || []).map((t) => ({ ...t }));
+    if (entry.video && entry.video.codec) s.videoCodec = entry.video.codec;
     // The same facts in the shape a list row can render and a picker can grey out without walking the
     // track arrays: which languages this file states its audio and subtitles are in, and that they came
     // from the file rather than from the uploader's filename.
@@ -1069,6 +1070,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const asked = String(opts.container || 'any').toLowerCase();
   const container = ['any', 'mp4', 'hls'].includes(asked) ? asked : 'any';
   const nativeClient = container === 'any';
+  // Which codecs this device says it can decode, in the device's own words. A client that names nothing
+  // imposes no constraint - the TV plays whatever the torrent holds - so this only ever narrows the
+  // choices for a client that has actually checked.
+  const decodable = (Array.isArray(opts.codecs) ? opts.codecs : [])
+    .map((c) => ranking.codecFamily(c)).filter(Boolean);
   const speedBar = ranking.HEADROOM * (nativeClient ? PLAY_NATIVE_HEADROOM_SCALE : 1);
   const fitCeiling = GATEWAY_FIT / (nativeClient ? PLAY_NATIVE_HEADROOM_SCALE : 1);
 
@@ -1084,12 +1090,21 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   //
   // `wanted` (the "Source 1..N" menu) still leads the queue — an explicit choice is honoured first and
   // abandoned only when it cannot deliver.
-  const queue = [source];
-  for (const s of candidates) if (s !== source && queue.length < PLAY_MAX_TRIES) queue.push(s);
-  // Two kinds of known-bad get pushed to the back of the queue rather than dropped: a link the prober
-  // watched die, and a torrent the addon says nobody is sharing. Stable sort keeps the ranking intact.
-  const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0);
-  queue.sort((a, b) => rankDown(a) - rankDown(b));
+  // Three kinds of known-bad are held back rather than dropped: a link the prober watched die, a torrent
+  // the addon says nobody is sharing, and a copy this device has no decoder for. Held back, not deleted —
+  // when every copy of a title is H.265 a browser still deserves an answer, and an honest one.
+  const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
+    + (decodable.length && s && s.videoCodec
+      && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0);
+  // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
+  // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
+  // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
+  // whose two H.264 copies ranked fourth and fifth of twelve, a browser that had already said it cannot
+  // draw H.265 was handed a black screen with sound because three better-ranked H.265 files got there
+  // first. A viewer who picked a source by hand still leads.
+  const seated = candidates.slice().sort((a, b) => rankDown(a) - rankDown(b));
+  const queue = wanted && source ? [source, ...seated.filter((s) => s !== source)] : seated;
+  if (queue.length > PLAY_MAX_TRIES) queue.length = PLAY_MAX_TRIES;
   // Then the copies this connection can actually feed. Once the hub has measured the engine's rate, a
   // 6 GB 4K copy stops competing with a 900 MB 720p one: the smaller is tried first because the bigger
   // one is known to stall. A source that is not a torrent gets the same standing as one that fits,
@@ -1286,6 +1301,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     : null;
   // Copies, not the cache's own objects: the TV needs absolute subtitle URLs and the browser needs the
   // relative ones, and both read the same cached entry.
+  // The codec the picture is in, so the player can say "this browser cannot draw H.265" instead of
+  // serving a black screen with sound. Entries written before the probe recorded video have nothing to
+  // report, and are left unknown rather than guessed at.
+  out.videoCodec = (tracks && tracks.video && tracks.video.codec) || source.videoCodec || null;
+  if (decodable.length && out.videoCodec && !decodable.includes(ranking.codecFamily(out.videoCodec))) {
+    extraWhy.push('this device cannot decode ' + ranking.codecFamily(out.videoCodec)
+      + ', and no copy of this title it can play was found');
+  }
   out.audioTracks = ((tracks && tracks.audioTracks) || []).map((t) => ({ ...t }));
   out.subtitleTracks = ((tracks && tracks.subtitleTracks) || []).map((t) => {
     const c = { ...t };
@@ -2011,7 +2034,10 @@ const server = http.createServer(async (req, res) => {
         body.source || (body.provider ? { provider: body.provider } : null), body.type,
         { exclude: body.exclude, reprobe: body.reprobe === true, clientHost: req.headers.host,
           season: body.season, episode: body.episode,
-          container: body.container, audio: body.audio, sub: body.sub });
+          container: body.container, audio: body.audio, sub: body.sub,
+          // Which video codecs this device can draw. Not a preference and never inferred here: the client
+          // states it, and it decides which copies are worth offering this screen at all.
+          codecs: body.codecs });
       return send(res, picked.status, picked.body);
     }
 
@@ -2027,7 +2053,8 @@ const server = http.createServer(async (req, res) => {
         body.source || (body.provider ? { provider: body.provider } : null), body.type,
         { exclude: body.exclude, reprobe: body.reprobe !== false, clientHost: req.headers.host,
           season: body.season, episode: body.episode,
-          container: body.container, audio: body.audio, sub: body.sub });
+          container: body.container, audio: body.audio, sub: body.sub,
+          codecs: body.codecs });
       return send(res, picked.status, picked.body);
     }
 

@@ -239,6 +239,10 @@ there is.
 | `HOME_BUDGET_MS`, `ROW_BUDGET_MS`, `CATALOG_BUDGET_MS`, `META_BUDGET_MS`, `ROW_MAX` | 1500/1200/800/3000/80 | time and size ceilings: `/app/v1/*` answers from cache and never waits on the network beyond these |
 | `REMUX_FIRST_BYTE_MS` | 25000 | how long a re-mux waits for the engine to deliver its first byte before admitting the peers are not feeding this copy. It is also published in the manifest as `remux.warmingMs`, because the player decides "still warming" vs "this copy is dead" from this number rather than a guess |
 | `ADDON_MANIFEST_RETRY_MS` | 30000 | how soon an addon whose manifest did not arrive at boot may be asked again. A source that was briefly unreachable is revived by the next viewer, not by a restart |
+| `MEDIA_PROBE_TIMEOUT_MS` / `MEDIA_PREWARM_TIMEOUT_MS` | 30 s / 90 s | how long one `ffprobe` of one copy may run while a viewer waits on it, and how long the same look gets when nobody is. A file sitting deep inside a cold multi-episode pack costs far more than half a minute to produce its first byte, and a background probe is free to pay that |
+| `MEDIA_PROBE_RETRY_FAIL_MS` | 2 min | how soon a failed **background** probe is chased again instead of believed. The failed attempt usually warmed the very copy it timed out on |
+| `MEDIA_CONCURRENCY` / `MEDIA_PREWARM_MAX` / `MEDIA_MAX_ENTRIES` | 2 / 3 / 600 | copies probed at once, how many a title page warms in the background, and how much of that the cache keeps |
+| `MEDIA_TTL_MS` / `MEDIA_FAIL_TTL_MS` / `MEDIA_PLAY_WAIT_MS` | 30 d / 15 min / ≤1.2 s | how long a track answer is trusted, how long an unreadable copy stays unreadable, and how long a play may wait for one that is already being measured |
 
 ## Data
 
@@ -253,8 +257,12 @@ household on their behalf. Environment variables only seed this file on a hub th
 yet; the UI is the place a setting is changed. It ships with **nothing selected**: no languages, no
 playlist, so a stranger gets a working hub on first boot and then chooses.
 `data/tracks.json` — what `ffprobe` found inside each copy this hub has served (`hash:fileId` → its audio
-and subtitle tracks, languages, codecs). It is what lets the shelf say "Hindi audio · E-AC3 5.1" instead of
-guessing from a filename, and it is a cache: deleting it costs a re-probe, nothing else.
+and subtitle tracks, languages, codecs, and what its picture is encoded in). It is what lets the shelf say
+"Hindi audio · E-AC3 5.1" instead of guessing from a filename, and it is what lets the picker refuse a
+copy rather than play it badly: this hub never transcodes video, so on a browser with no H.265 decoder an
+H.265 file is not lower quality, it is a black screen with working sound. A client declares the codecs it
+can draw in `POST /app/v1/play` (`codecs: [...]`, empty for a device that decodes whatever the file holds),
+and a copy outside that list is held back for one inside it even when the household ranking preferred it.
 `data/hls/` — the playlists and segments for one browser asking for HLS; a job nobody asks for any more
 loses its `ffmpeg` and its directory within a sweep interval.
 **`profiles.json` is not in the repo**: it names real people, so only `profiles.example.json` (generic ids

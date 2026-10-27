@@ -53,6 +53,15 @@ const FAIL_TTL_MS = Number(process.env.MEDIA_FAIL_TTL_MS || 15 * 60 * 1000); // 
 const MAX_ENTRIES = Number(process.env.MEDIA_MAX_ENTRIES || 600);
 const CONCURRENCY = Math.max(1, Number(process.env.MEDIA_CONCURRENCY || 2));
 const PREWARM_MAX = Math.max(0, Number(process.env.MEDIA_PREWARM_MAX || 3));
+// A background probe gets a far longer leash than a play-path one, because nobody is waiting on it and
+// what it costs is swarm time, not the viewer's patience: measured on this box, a file sitting deep
+// inside a cold multi-episode pack took well over half a minute to produce its first byte, yet answered
+// instantly afterwards, because that attempt had already dragged the header through the engine. The play
+// budget stays short precisely because a person IS waiting there.
+const PREWARM_TIMEOUT_MS = Math.max(5000, Number(process.env.MEDIA_PREWARM_TIMEOUT_MS || 90000));
+// ...and a failed background probe is not an answer worth keeping as long as a good one: chasing it again
+// soon usually costs nothing, since the failed attempt is what warmed the copy.
+const FAIL_RETRY_MS = Math.max(15000, Number(process.env.MEDIA_PROBE_RETRY_FAIL_MS || 120000));
 // The most a Play press may wait here, and only when a probe is already running. Kept under 1.5 s so it
 // can never eat the play budget.
 const PLAY_WAIT_MS = Math.min(1200, Number(process.env.MEDIA_PLAY_WAIT_MS || 1200));
@@ -147,10 +156,20 @@ function normalize(json, engineUrl) {
       subtitleTracks.push(track);
     }
   }
+  // What the picture is encoded in. This hub never transcodes video, so a copy whose codec the device
+  // cannot decode is not a lower-quality option: it is a black screen with working sound, which is
+  // exactly how an H.265 file presents itself to a browser with no HEVC decoder.
+  const v = streams.find((st) => st && st.codec_type === 'video');
   const fmt = (json && json.format) || {};
   return {
     audioTracks,
     subtitleTracks,
+    video: v ? {
+      codec: String(v.codec_name || '').toLowerCase() || null,
+      profile: String(v.profile || '').toLowerCase() || null,
+      width: Number.isFinite(v.width) ? v.width : null,
+      height: Number.isFinite(v.height) ? v.height : null,
+    } : null,
     container: String(fmt.format_name || '').split(',')[0] || null,
     durationMs: Number.isFinite(parseFloat(fmt.duration)) ? Math.round(parseFloat(fmt.duration) * 1000) : null,
     sizeBytes: Number.isFinite(Number(fmt.size)) ? Number(fmt.size) : null,
@@ -380,8 +399,13 @@ async function tracksFor(hash, fileId, url, opts = {}) {
 function prewarm(items) {
   const list = (items || []).filter((x) => x && x.hash && x.fileId !== undefined && x.url).slice(0, PREWARM_MAX);
   for (const x of list) {
-    if (peek(x.hash, x.fileId)) continue;
-    probe(x.hash, x.fileId, x.url).catch(() => {});
+    const hit = peek(x.hash, x.fileId);
+    if (hit && hit.ok !== false) continue; // a real answer is worth keeping for months
+    if (hit && Date.now() - Number(hit.at || 0) < FAIL_RETRY_MS) continue;
+    // A failure older than the retry window is chased again rather than believed. Every empty entry this
+    // hub caches stands between the picker and the languages a copy carries, so giving up on one costs a
+    // ranking fact and not just a badge on the shelf.
+    probe(x.hash, x.fileId, x.url, { timeoutMs: PREWARM_TIMEOUT_MS, force: true }).catch(() => {});
   }
   return list.length;
 }
@@ -438,7 +462,7 @@ function status() {
     running,
     queued: queue.length,
     updatedAt: s.updatedAt || null,
-    limits: { PROBE_TIMEOUT_MS, OK_TTL_MS, FAIL_TTL_MS, MAX_ENTRIES, CONCURRENCY, PREWARM_MAX, PLAY_WAIT_MS },
+    limits: { PROBE_TIMEOUT_MS, PREWARM_TIMEOUT_MS, FAIL_RETRY_MS, OK_TTL_MS, FAIL_TTL_MS, MAX_ENTRIES, CONCURRENCY, PREWARM_MAX, PLAY_WAIT_MS },
   };
 }
 
@@ -449,5 +473,5 @@ module.exports = {
   langOf, normalize,
   keyOf,
   FILE,
-  limits: { PROBE_TIMEOUT_MS, OK_TTL_MS, FAIL_TTL_MS, MAX_ENTRIES, CONCURRENCY, PREWARM_MAX, PLAY_WAIT_MS },
+  limits: { PROBE_TIMEOUT_MS, PREWARM_TIMEOUT_MS, FAIL_RETRY_MS, OK_TTL_MS, FAIL_TTL_MS, MAX_ENTRIES, CONCURRENCY, PREWARM_MAX, PLAY_WAIT_MS },
 };
