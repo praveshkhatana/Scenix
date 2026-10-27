@@ -69,7 +69,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 |---|---|
 | `GET /healthz`, `GET /` | per-provider and per-row counts, loaded and **failed** plugins |
 | `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`), which is the only thing a client UI may branch on |
-| `GET /app/v1/profiles` | profiles and the rows each one sees |
+| `GET /app/v1/profiles` | profiles and the rows each one sees, with **both** preference views: `prefs` (what the owner typed, untouched, the thing a settings screen writes back) and `effectivePrefs` (what it resolves to once household defaults fill the gaps — the language order a player needs) |
 | `GET /app/v1/home?profile=<id>` | `{ rows: [{ id, title, card, items: […] }] }` |
 | `GET /app/v1/row/<id>?profile=<id>` | one row, for the app's "see all" |
 | `GET /app/v1/search?q=<q>&profile=<id>` | every provider's search, merged, deduped |
@@ -84,6 +84,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | `GET /app/v1/addons`, `POST /app/v1/addons`, `POST /app/v1/addons/<id>/enable\|disable`, `DELETE /app/v1/addons/<id>` | the addon-protocol addons this hub answers with, installed or shipped, and which are on |
 | `POST /app/v1/progress` `{profile, identity, positionMs, watchedMs}` | remembered in `data/progress.json`; **refused (403) for a tier-3 title while the adult switch is off** |
 | `GET`/`POST /app/v1/prefs?profile=<id>` | per-profile `qualityCap` and `xxxEnabled`, with the defaults the app should show |
+| `POST /app/v1/cache/clear` | forgets every response, probed file and judged link this process remembers, answering with the three counts it acted on (`{cleared, tracks, links}`); deleting the files by hand changes nothing until a restart, because the running hub holds them open |
 | `GET /manifest.json`, `/catalog/`, `/meta/`, `/stream/` | any addon-protocol client — same ids (`inlive___`, `ytv___`), byte-identical bodies |
 
 Every route that names a profile accepts **both** `profile=` and `profileId=` (and `profile`/`profileId` in a
