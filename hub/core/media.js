@@ -226,6 +226,11 @@ const inFlight = new Map(); // key -> Promise
 let running = 0;
 const queue = [];
 
+// What a probe learns about a copy. A later failure must not throw these away: they are the facts the
+// language ranking and the "can this screen draw it" test ask about, and an unreadable file right now says
+// nothing about what the file contains.
+const FACT_FIELDS = ['audioTracks', 'subtitleTracks', 'video', 'container', 'durationMs', 'sizeBytes', 'bitrateKbps'];
+
 function fresh(entry) {
   if (!entry || !Number.isFinite(entry.at)) return false;
   const age = Date.now() - Number(entry.at);
@@ -281,14 +286,23 @@ function runProbe(hash, fileId, url, timeoutMs) {
       clearTimeout(timer);
       if (done) return;
       done = true;
-      if (!out.trim()) {
-        return resolve({ ok: false, error: (err.split('\n').filter(Boolean)[0] || 'ffprobe exited with ' + code).slice(0, 200) });
-      }
+      const why = () => (err.split('\n').filter(Boolean)[0] || 'ffprobe exited with ' + code).slice(0, 200);
+      // An unsuccessful ffprobe still writes an empty object to stdout and exits non-zero, so "the output
+      // parsed" is not evidence that the file was read. Taking it as such recorded a successful probe of a
+      // copy nobody had opened - no audio, no subtitles, no video codec - and because a good answer is kept
+      // for weeks, one refused connection or engine 404 erased what a copy really holds far longer than any
+      // retry window. Success means the process said success and found streams to describe.
+      if (code !== 0 || !out.trim()) return resolve({ ok: false, error: why() });
+      let json;
       try {
-        resolve({ ok: true, json: JSON.parse(out) });
+        json = JSON.parse(out);
       } catch (e) {
-        resolve({ ok: false, error: 'ffprobe JSON unparseable: ' + e.message });
+        return resolve({ ok: false, error: 'ffprobe JSON unparseable: ' + e.message });
       }
+      if (!Array.isArray(json.streams) || !json.streams.length) {
+        return resolve({ ok: false, error: why() || 'no streams in this file' });
+      }
+      resolve({ ok: true, json });
     });
   });
 }
@@ -329,17 +343,33 @@ function probe(hash, fileId, url, opts = {}) {
           at: Date.now(),
           ok: Boolean(r && r.ok),
           error: r && r.error ? String(r.error).slice(0, 240) : null,
+          // When these facts were last read straight off the file, as opposed to when this record was
+          // touched. A failure inherits the answer of the good read that still stands behind it.
+          factsAt: r && r.ok ? Date.now() : null,
           ...(r && r.ok ? normalize(r.json, url) : {}),
         };
+        let stored = entry;
         if (entry.ok) {
           load().entries[key] = entry;
           scheduleSave();
         } else {
-          // Remember the failure briefly so one unreadable copy does not spawn ffprobe per view.
-          load().entries[key] = { ...entry, audioTracks: [], subtitleTracks: [] };
+          // Remember the failure briefly so one unreadable copy does not spawn ffprobe per view - but
+          // remember it on top of whatever a previous read established, not instead of it. The empty
+          // arrays here used to mean "this file has no audio tracks" for fifteen minutes after a timeout,
+          // which silently removed a copy's languages from the ranking and its codec from the decode test:
+          // the copy that had just been described most accurately became invisible to both questions.
+          const prev = load().entries[key];
+          const kept = {};
+          if (prev) for (const f of FACT_FIELDS) if (prev[f] !== undefined) kept[f] = prev[f];
+          if (!entry.factsAt) entry.factsAt = (prev && (prev.factsAt || (prev.ok === true ? prev.at : null))) || null;
+          // Resolved, not just stored: the caller waiting on this probe is the same play path that will
+          // go on to read the languages off the answer, and a record that only carries its facts on disk
+          // would leave that caller holding a file described as having no audio at all.
+          stored = { ...entry, ...kept };
+          load().entries[key] = stored;
           scheduleSave();
         }
-        resolve(entry);
+        resolve(stored);
       },
     };
     queue.push(job);
