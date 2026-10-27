@@ -158,6 +158,17 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             show("pairing")
             return
         }
+        // One contract, two surfaces. The owner decides which front end this TV draws: the web UI it
+        // shares with a browser or phone, over the same native player, or the screens this build draws
+        // itself. Nothing about the backend changes either way — the page asks for its own manifest.
+        // A `tv://` link is the one case left on the built-in path, because that link names a screen of
+        // this activity's stack and the page has no equivalent route for it yet.
+        if (ctx.prefs.shellWanted() && intent?.data == null) {
+            Log.i(TAG, "opening the web interface on this TV")
+            startActivity(Intent(this, WebShellActivity::class.java))
+            finish()
+            return
+        }
         // Ask this backend what it can do before a screen is built from it, so a TV on its own never
         // shows a row for something it has no way to supply.
         readCapabilities()

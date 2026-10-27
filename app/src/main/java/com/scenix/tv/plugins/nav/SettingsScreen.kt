@@ -22,6 +22,7 @@ import com.scenix.tv.core.HubPrefs
 import com.scenix.tv.core.LocalHub
 import com.scenix.tv.core.NavBar
 import com.scenix.tv.core.PinPad
+import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.core.ScreenPlugin
 import com.scenix.tv.core.Views
@@ -110,6 +111,28 @@ object SettingsScreen : ScreenPlugin {
             hubSearch(ctx, col, host)
         }
         textRow(ctx, col, "Data client", ctx.hub.label, editable = false, onChange = {})
+
+        section(ctx, col, "Interface")
+        // Which front end this TV draws is the owner's decision, not something a build decides for them:
+        // the page and these screens speak to the same backend, and a household may reasonably prefer
+        // either. The choice belongs to the device, so it is stored here rather than on the hub.
+        if (ctx.prefs.shellWanted()) {
+            infoRow(ctx, col, "Front end", "the web interface \u2014 the same screens a browser or phone shows")
+            actionRow(ctx, col, "Draw the built-in screens instead",
+                "this app\u2019s own browse, rows and details", "Switch") {
+                ctx.prefs.setInterfaceMode(Prefs.NATIVE)
+                host.toast("Using this TV\u2019s own screens")
+                host.refresh()
+            }
+        } else {
+            infoRow(ctx, col, "Front end", "this TV\u2019s built-in screens")
+            actionRow(ctx, col, "Use the web interface instead",
+                "the page every other device shows, over this TV\u2019s player", "Switch") {
+                ctx.prefs.setInterfaceMode(Prefs.SHELL)
+                host.toast("The web interface opens next time Scenix starts")
+                host.refresh()
+            }
+        }
 
         section(ctx, col, "Player ceilings (from res/values/config.xml)")
         infoRow(ctx, col, "Max video size", "${theme.playerMaxWidth}x${theme.playerMaxHeight}")
