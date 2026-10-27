@@ -117,7 +117,15 @@ const BOARD_LETTERS = {
 };
 
 // Evidence for tier 3 that is not a certificate. Also a table, also editable.
-const ADULT_GENRE = ['Adult', 'Erotica'];
+const ADULT_GENRE = [
+  'Adult', 'Erotica',
+  // A porn catalogue labels its own shelves plainly, and those labels are the cheapest proof there is.
+  // This is matched as a whole genre string, so "Drama" never trips on "Adults" and a documentary about
+  // work is not mistaken for a genre that only the adult industry uses.
+  'All Sex', 'Amateur', 'Ass Worship', 'Big Ass', 'Big Dick', 'Big Tits', 'Blowjob', 'Cumshot',
+  'Deepthroat', 'Doggystyle', 'Handjob', 'Facial', 'Masturbation', 'Milf', 'Pornstar', 'Hardcore',
+  'Softcore', 'Striptease', 'Taboo', 'BDSM', 'Fetish', 'Lonely', 'Step Fantasy',
+];
 const ADULT_WORDS = /\b(xxx|porn|adult only|erotic|blue film|18\+ only)\b/i;
 const PRIVATE_DIR = /^(private|adult|xxx|18\+|explicit)\b/i; // a media/ folder named like this
 
