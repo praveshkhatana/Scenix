@@ -514,6 +514,11 @@ export function createPlayer() {
     failed: [],           // copies that stalled on this title, so the quality menu can say so plainly
     session: null,          // {identity, profile, type, season, episode, title}
     ended: false,
+    /* The hub's last report about this copy's bytes, kept by noteStream. It has to be a plain property:
+       `c` below is the very object createPlayer returns, so an accessor named `stream` sits on top of the
+       writes in start() and noteStream(), and a strict-mode module refuses an assignment to a getter with
+       no setter. Readers still ask for `player.stream`; nothing about what they get changes. */
+    stream: null,
 
     on: bus.on,
 
@@ -724,8 +729,6 @@ export function createPlayer() {
     },
 
     state() { return backend.state(); },
-    /** The hub's last report about this copy's bytes, kept by noteStream. */
-    get stream() { return c.stream || null; },
     tracks() {
       return {
         audio: c.audioTracks,

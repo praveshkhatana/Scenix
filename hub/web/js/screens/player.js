@@ -133,7 +133,11 @@ export function screen(ctx, identity) {
     rate);
   const bottom = el('div', { class: 'ply-bottom ply-fade' }, bar, ctl);
 
-  const skip = el('button', { class: 'skip', type: 'button', text: 'Skip intro',
+  /* An intro is a thing the hub marks on an episode, and the first frame of a film has not been watched long
+     enough for anyone to want out of it. So the button starts put away — `gone` is opacity 0, which is also
+     how focus.js decides a control is not there — and only a position report that lands inside an intro brings
+     it back. */
+  const skip = el('button', { class: 'skip gone', type: 'button', text: 'Skip intro',
     onclick: () => { player.seek(SKIP_TO); hideSkip(); } });
   focus.focusable(skip);
   let skipShown = false;
@@ -243,7 +247,11 @@ export function screen(ctx, identity) {
       fill.style.transform = 'scaleX(0)';
       buf.style.transform = 'scaleX(1)';
       knob.style.left = '0%';
-      tLeft.textContent = 'Live';
+      /* A film or an episode whose length the hub has not measured yet is not live — it has simply not
+         started, and a torrent being probed can take a dozen seconds. Saying "Live" there sends a person
+         looking for a broadcast that is not happening. A real channel has no line at all: the marker above
+         the transport says it is happening now. */
+      tLeft.textContent = isLiveFeed ? 'Live' : '0:00';
       tRight.textContent = '';
       return;
     }
@@ -594,7 +602,13 @@ export function screen(ctx, identity) {
 
   /* ------------------------------------------------------------------ start */
 
-  focus.focusDefault(btnPlay);
+  /* Where the ring lands when the film opens. app.js asks the screen this question after the screen has
+     finished building, and with nothing to point at it takes the first control in the document — which since
+     the way out moved to the top-left would be Back, so the very first press of OK on arrival would leave
+     the film. Play is the answer: it is the biggest thing on the floor and the one a person arrives to press.
+     A live feed is the same answer, because play/pause is the only transport a channel offers. */
+  root.__defaultFocus = () => btnPlay;
+
   setPlayIcon();
   drawPosition();
   paintEdge();
