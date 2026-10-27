@@ -719,7 +719,7 @@ body.native-live, html.native-live { background: transparent; }
 }
 .pfs {
   position: relative; z-index: 10; display: flex; align-items: center; justify-content: center;
-  gap: calc(46px * var(--s));
+  gap: calc(72px * var(--s));
   will-change: transform;
   /* The row slides to bring the chosen card to the centre: spatial motion, so it is allowed to take half a
      second, and it decelerates into place instead of stopping. */
@@ -729,16 +729,19 @@ body.native-live, html.native-live { background: transparent; }
    starting position at the same moment the cards slide in from the right is what read as a stutter. */
 .pfs:not(.settled) { transition: none; }
 .avatar {
-  position: relative; width: calc(300px * var(--s));
+  position: relative; width: var(--avatar);
   transition: transform 420ms cubic-bezier(.23, 1, .32, 1), filter 300ms ease;
 }
 /* The entrance and the focus scale live on different elements — the face slides in, the card grows — because
    one property cannot carry two animations. With both on the card, the entrance held the transform, the
    focused card could not grow while it arrived, and then it snapped up the moment the entrance released. */
 .avatar .a {
-  width: calc(300px * var(--s)); height: calc(450px * var(--s)); border-radius: calc(24px * var(--s));
+  /* 280 x 420 with a 22 % corner (62 px at this size): the reference is a portrait card with soft corners,
+     and its focus cue is a heavier white edge plus a slight grow - not the large zoom that turns a row of
+     faces into one face filling the room. */
+  width: var(--avatar); height: calc(var(--avatar) * 1.5); border-radius: calc(62px * var(--s));
   position: relative; overflow: hidden; background: var(--key);
-  border: calc(2px * var(--s)) solid rgba(255, 255, 255, .10);
+  border: calc(3px * var(--s)) solid rgba(255, 255, 255, .2);
   display: grid; place-content: center;
 }
 .avatar .a .av-art, .avatar .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -754,7 +757,7 @@ body.native-live, html.native-live { background: transparent; }
 .avatar .nm {
   position: absolute; left: calc(22px * var(--s)); right: calc(22px * var(--s)); bottom: calc(66px * var(--s));
   text-align: left;
-  font-size: calc(34px * var(--s)); font-weight: 600; color: #fff; letter-spacing: -.01em;
+  font-size: var(--t-profile); font-weight: 600; color: #fff; letter-spacing: -.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .avatar .chips { position: absolute; left: calc(22px * var(--s)); bottom: calc(22px * var(--s)); display: flex; gap: calc(10px * var(--s)); }
@@ -770,8 +773,10 @@ body.native-live, html.native-live { background: transparent; }
 }
 /* Focus, per the reference: size, light and depth. No outline ring — on a full-bleed card a ring reads like
    a selection box in a photo editor, and the expansion already says everything. */
-.avatar.foc { transform: scale(1.34); z-index: 30; }
-.avatar.foc .a { border-color: rgba(255, 255, 255, .3); box-shadow: 0 calc(26px * var(--s)) calc(64px * var(--s)) rgba(0, 0, 0, .8); }
+.avatar.foc { transform: scale(1.08); z-index: 30; }
+/* The edge thickens without moving the card: the border is inside the box, so growing it by 3 px keeps the
+   row's rhythm intact. */
+.avatar.foc .a { border-width: calc(6px * var(--s)); border-color: #fff; box-shadow: 0 calc(26px * var(--s)) calc(64px * var(--s)) rgba(0, 0, 0, .8); }
 .pfs.armed .avatar:not(.foc) { filter: brightness(.5) saturate(.78); }
 .avatar .lock {
   position: absolute; top: calc(16px * var(--s)); right: calc(16px * var(--s));
@@ -796,7 +801,8 @@ body.native-live, html.native-live { background: transparent; }
    picture being chosen is the picture you will get. */
 .avprev { display: grid; place-items: center; margin-bottom: calc(18px * var(--s)); }
 .avprev .a {
-  width: calc(160px * var(--s)); height: calc(240px * var(--s)); border-radius: calc(18px * var(--s));
+  width: calc(160px * var(--s)); height: calc(240px * var(--s));
+  border-radius: calc(35px * var(--s)); /* 22 % of its own width, the same corner as a full-size card */
   position: relative; overflow: hidden; background: var(--key); border: calc(3px * var(--s)) solid rgba(255, 255, 255, .2);
 }
 .avprev .a .av-art, .avprev .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
