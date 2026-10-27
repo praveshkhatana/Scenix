@@ -698,7 +698,10 @@ export function describePlayback(player, extra = {}) {
     return { tone: 'warn', text: 'This copy is ' + String(codecFamily(t.videoCodec)).toUpperCase()
       + ', which this browser cannot draw — the TV app plays it' };
   }
-  if (t.probe && t.probe.contentType === 'video/x-matroska' && player.backend === 'video') {
+  // Warned only when the element really receives Matroska. A gateway copy arrives as fragmented MP4
+  // because the hub re-wrapped it, and warning about a container nobody ever handed the decoder turned a
+  // play that was working into one that looked like it might not be.
+  if (t.probe && t.probe.contentType === 'video/x-matroska' && player.backend === 'video' && !t.remuxed) {
     return { tone: 'warn', text: 'This copy is Matroska — it can stutter in a browser until the hub finishes re-muxing' };
   }
   if (t.negotiating || extra.negotiating) {
