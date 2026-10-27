@@ -1621,6 +1621,21 @@ const server = http.createServer(async (req, res) => {
         if (v && !v.startsWith('/') && !/^https?:\/\//.test(v)) return send(res, 400, { error: 'avatar must be a path this backend serves or an http(s) URL' });
         patch.avatar = v;
       }
+      // A PIN and the wish to be asked for one are a single decision, not two fields that happen to sit next
+      // to each other. A stored number with no flag is a gate that never opens; the flag without a number is
+      // a wall that checks nothing - Bankelal was left standing behind exactly that when a test PIN was
+      // deleted, and an older client could put any household there. So the backend keeps them together and
+      // refuses to hold the half-state at all.
+      if ('pin' in patch) {
+        const v = patch.pin == null ? '' : String(patch.pin).trim().slice(0, 12);
+        patch.pin = v || null;
+        patch.pinRequired = !!v;
+      } else if (patch.pinRequired === true) {
+        const held = store.profile(m[1]);
+        if (!held || held.pin == null || String(held.pin).trim() === '') {
+          return send(res, 400, { error: 'set a PIN before asking for one' });
+        }
+      }
       if (!Object.keys(patch).length) return send(res, 400, { error: 'nothing to change' });
       const updated = store.patchProfile(m[1], patch);
       if (!updated) return send(res, 404, { error: 'no such profile', id: m[1] });

@@ -20,7 +20,7 @@ import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { api, apiBase } from '/ui/js/api.js';
 import { backendName } from '/ui/js/player.js';
-import { session } from '/ui/js/state.js';
+import { session, isLocked } from '/ui/js/state.js';
 import { langList } from '/ui/js/format.js';
 
 export function screen(ctx) {
@@ -289,12 +289,38 @@ export function screen(ctx) {
     }
 
     /* -------------------------------------------------------------- profiles */
+
+    /* A PIN is typed the way every other PIN in this app is typed — on the remote's number row or the on-screen
+       pad — and handed straight to the hub, which is the only place the number is ever kept. */
+    async function setPin(p) {
+      const digits = await ctx.enterPin(p, isLocked(p) ? 'Choose a new PIN' : 'Choose a PIN');
+      if (!digits) return;
+      try {
+        await api.updateProfile(p.id, { pin: digits, pinRequired: true });
+        ctx.toast(`${p.name} now needs that PIN`);
+        ctx.reload();
+      } catch (e) { ctx.toast('The hub would not store that PIN'); }
+    }
+
+    async function clearPin(p) {
+      try {
+        // The hub clears the number but leaves the requirement flag behind, which is how a profile ends up
+        // "PIN wanted, none set" and a pad that can never be satisfied. Take both off in one request.
+        await api.updateProfile(p.id, { pin: null, pinRequired: false });
+        ctx.toast(`${p.name} no longer needs a PIN`);
+        ctx.reload();
+      } catch (e) { ctx.toast('The hub would not remove the PIN'); }
+    }
+
     if (caps.profileEdit) {
       const g = group('Profiles', 'Names and ages live in the hub’s profile file. A new profile starts with the house defaults and is renamed there, where a keyboard is comfortable.');
       for (const p of (session.profiles || [])) {
         const kids = p.kind === 'kids';
+        const lockedNow = isLocked(p);
         const l = line(p.name,
-          `${kids ? 'Kids' : 'Standard'} profile${(p.pinSet || p.pin) ? ' · PIN set' : ''}${p.id === profile.id ? ' · in use now' : ''}`);
+          `${kids ? 'Kids' : 'Standard'} profile`
+          + (lockedNow ? ' · PIN set' : (p.pinRequired ? ' · PIN wanted, none set' : ''))
+          + (p.id === profile.id ? ' · in use now' : ''));
         const sw = el('button', { class: `sw${kids ? ' on' : ''}`, type: 'button', role: 'switch',
           'aria-checked': kids ? 'true' : 'false', 'aria-label': `Kids mode for ${p.name}`, title: 'Kids mode' }, el('i'));
         sw.onclick = async (ev) => {
@@ -305,6 +331,22 @@ export function screen(ctx) {
         };
         focus.focusable(sw);
         l.appendChild(sw);
+        /* The kids gate is only half a feature while a parent can switch a profile to Kids but cannot put a
+           PIN behind it. One row per profile: set it, change it, or take it off again. */
+        const pinBtn = el('button', {
+          class: 'btn ghost', type: 'button', text: lockedNow ? 'Change PIN' : 'Set PIN',
+          'aria-label': `${lockedNow ? 'Change' : 'Set'} the PIN for ${p.name}`, onclick: () => setPin(p),
+        });
+        focus.focusable(pinBtn);
+        l.appendChild(pinBtn);
+        if (lockedNow) {
+          const offBtn = el('button', {
+            class: 'btn ghost', type: 'button', text: 'Remove PIN', 'aria-label': `Remove the PIN for ${p.name}`,
+            onclick: () => clearPin(p),
+          });
+          focus.focusable(offBtn);
+          l.appendChild(offBtn);
+        }
         if (p.id !== profile.id) l.appendChild(roundBtn('close', () => remove(p), `Remove ${p.name}`));
         g.appendChild(l);
       }

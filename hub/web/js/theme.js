@@ -46,11 +46,15 @@ let scale = 1;
 function setVar(name, value) { root.style.setProperty(name, value); }
 
 /**
- * The hub writes an alpha pair the Android way — `#AARRGGBB` — while CSS reads eight hex digits as
- * `#RRGGBBAA`. The same characters mean different colours: `#1AFFFFFF` is ten-percent white to a TV and opaque
- * cyan to a browser, which quietly tints every border in the interface. An 8-digit colour is therefore treated
- * as alpha-first here, so the asset can keep the convention the rest of the TV world uses. Six digits, three
- * digits and `rgba()` pass through untouched — a hub that prefers the web spelling can use either.
+ * Eight hex digits mean two different colours depending on which side of the house they were written on:
+ * `#AARRGGBB` is ten-percent white to a TV, and opaque cyan to a browser — which is how every border, chip and
+ * nav label tinted at once. Both theme files now spell transparency `rgba()`, which each client parses
+ * identically, and eight-digit hex is banned from token files by `scripts/check-theme-colours.mjs`.
+ *
+ * This stays on as a tolerance, not a convention: a value pasted out of an Android studio or a design tool is
+ * read the way its author meant it rather than silently repainting the interface. Enforcing the ban with a
+ * check that fails costs nothing; enforcing it by letting the page go visibly wrong would re-expose every
+ * screen to the original failure. Six digits, three digits and `rgba()` pass straight through.
  */
 function cssColor(v) {
   const s = String(v || '').trim();

@@ -35,6 +35,20 @@ export function isKids(profile = session.profile) {
   return String(profile.kind || '').toLowerCase() === 'kids' || !!profile.isKids;
 }
 
+/**
+ * Does this profile actually need a PIN right now?
+ *
+ * The hub answers with one honest boolean, `locked`. An older hub answers with `pinRequired` and `pinSet` and
+ * expects the page to AND them, which is what the fallback does. The distinction matters: a profile whose PIN
+ * was removed but whose requirement flag was left behind is not locked, and a pad demanding four digits that
+ * nothing can check is a door with no handle.
+ */
+export function isLocked(profile) {
+  if (!profile) return false;
+  if (typeof profile.locked === 'boolean') return profile.locked;
+  return !!profile.pinRequired && !!(profile.pinSet || profile.pin);
+}
+
 export function setProfile(p) {
   session.profile = p || null;
   try { if (p) localStorage.setItem(LS.profile, p.id); } catch (e) { /* private mode */ }

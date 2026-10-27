@@ -22,7 +22,7 @@ import { el, clear } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { initials } from '/ui/js/format.js';
-import { session, isKids } from '/ui/js/state.js';
+import { session, isKids, isLocked } from '/ui/js/state.js';
 import { avatarFor, paintAvatar, paintSpec, setAvatar, tileFill, paletteById, CHARACTERS, PALETTES } from '/ui/js/avatars.js';
 import { GENERATED, generatorSpec, characterFaces } from '/ui/js/avatarapi.js';
 
@@ -50,7 +50,7 @@ export function screen(ctx) {
 
   function choose(profile, node) {
     if (busy || !profile) return;
-    if (profile.pinRequired) {
+    if (isLocked(profile)) {
       busy = true;
       ctx.askPin(profile).then((ok) => {
         busy = false;
@@ -69,7 +69,7 @@ export function screen(ctx) {
     // element that flies to the nav bar. A name left behind on the old card would break the illusion halfway.
     face.appendChild(el('div', { class: 'scrim' }));
     face.appendChild(el('span', { class: 'pini', text: initials(profile.name) }));
-    if (profile.pinRequired) face.appendChild(el('span', { class: 'lock' }, icon('lock')));
+    if (isLocked(profile)) face.appendChild(el('span', { class: 'lock' }, icon('lock')));
     const chips = el('div', { class: 'chips' });
     if (kids) chips.appendChild(el('span', { class: 'pc', text: 'Kids' }));
     const age = profile.age ?? profile.ageBand;
@@ -105,7 +105,7 @@ export function screen(ctx) {
    */
   function editProfile(profile, node) {
     if (!profile) return;
-    if (profile.pinRequired) {
+    if (isLocked(profile)) {
       ctx.askPin(profile).then((ok) => { if (ok) openPicker(profile, node); });
       return;
     }
@@ -409,7 +409,7 @@ export function screen(ctx) {
     afterSplash(() => {
       const node = grid.querySelector(`.avatar[data-profile="${auto}"]`);
       const p = session.profiles.find((x) => x.id === auto);
-      if (node && p && !p.pinRequired) choose(p, node);
+      if (node && p && !isLocked(p)) choose(p, node);
     });
   }
   const pick = params.get('pick');

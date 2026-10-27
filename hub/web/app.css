@@ -1217,3 +1217,12 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .firstrun .fr-step b { font-size: var(--t-li); }
 .firstrun .fr-step span { color: var(--ink3); font-size: calc(18px * var(--s)); line-height: 1.45; }
 .firstrun .bb-btns { margin-top: calc(8px * var(--s)); }
+
+/* A profile row now carries a switch, PIN buttons and a remove button. Buttons inside a row are cut down to
+   chip size so the person's name stays the loudest thing there, and the row is allowed to wrap rather than
+   squeeze the name out at 1080p. */
+.li { flex-wrap: wrap; }
+.li .btn.ghost {
+  padding: calc(8px * var(--s)) calc(16px * var(--s));
+  font-size: var(--t-chip); white-space: nowrap;
+}

@@ -80,6 +80,8 @@ const ctx = {
   mountModal,
   closeModals,
   askPin,
+  /** Ask for a new PIN rather than checking one: resolves the digits, or null when the viewer backs out. */
+  enterPin: (profile, reason = 'Choose a PIN') => askPin(profile, { reason, mode: 'set' }),
   setProfile,
   switchProfile,
   reload() { const r = routeStack[routeStack.length - 1]; if (r) mount(r, false); },
@@ -310,16 +312,18 @@ function closeModals() {
 }
 
 /**
- * The PIN pad. `pinRequired` comes from the hub's profile record; the length comes from the theme, so a
- * household that wants six digits changes one token. Digits arrive from the on-screen pad, a keyboard,
- * and the remote's number row alike, through input.js's digit sink.
+ * The PIN pad has two moods. To open a profile it checks the number against the hub, and `state.isLocked`
+ * decides whether the pad is worth showing at all — a pad demanding digits nothing can check is a door with no
+ * handle. With `mode: 'set'` it instead collects a new number and hands it back to the caller. The length comes
+ * from the theme, so a household that wants six digits changes one token. Digits arrive from the on-screen pad,
+ * a keyboard, and the remote's number row alike, through input.js's digit sink.
  *
  * The hub checks the number — a PIN is never sent down to the TV, so nothing on this screen could guess it —
  * and an older hub with no unlock endpoint falls back to whatever the record in hand happens to carry. A wrong
  * PIN shakes the pad instead of closing it. Cancel is a real button rather than only the remote's Back key,
  * because this dialog is also reached with a mouse and with a finger.
  */
-function askPin(profile, { reason = 'Enter your PIN' } = {}) {
+function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
   return new Promise((resolve) => {
     const need = Number(token('pin', 'length', 4));
     const expected = String(profile.pin || '');
@@ -352,7 +356,7 @@ function askPin(profile, { reason = 'Enter your PIN' } = {}) {
       dots, pad, err,
       el('div', { class: 'mfoot' }, cancel));
     const draw = () => { for (let i = 0; i < need; i++) dots.children[i].classList.toggle('on', i < got.length); };
-    const finish = (ok) => { closeModals(); if (!ok) err.textContent = ''; resolve(ok); };
+    const finish = (ok) => { closeModals(); if (!ok) err.textContent = ''; resolve(mode === 'set' ? (ok ? got : null) : ok); };
     function refuse(message) {
       got = '';
       draw();
@@ -372,6 +376,8 @@ function askPin(profile, { reason = 'Enter your PIN' } = {}) {
       if (got.length === need) check();
     }
     async function check() {
+      // Setting a PIN there is nothing to compare against yet: the number only has to be complete.
+      if (mode === 'set') return finish(got.length === need);
       if (expected && got === expected) return finish(true);
       if (profile.id) {
         busy = true;
@@ -482,7 +488,7 @@ async function switchProfile(profile, node) {
 
 async function unlock(p) {
   if (!p) return false;
-  if (p.pinRequired && !await askPin(p)) return false;
+  if (state.isLocked(p) && !await askPin(p)) return false;
   setProfile(p);
   return true;
 }
