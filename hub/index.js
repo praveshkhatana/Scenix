@@ -1984,7 +1984,7 @@ const server = http.createServer(async (req, res) => {
       }
       // A PIN and the wish to be asked for one are a single decision, not two fields that happen to sit next
       // to each other. A stored number with no flag is a gate that never opens; the flag without a number is
-      // a wall that checks nothing - one profile was left standing behind exactly that when a test PIN was
+      // a wall that checks nothing - Bankelal was left standing behind exactly that when a test PIN was
       // deleted, and an older client could put any household there. So the backend keeps them together and
       // refuses to hold the half-state at all.
       if ('pin' in patch) {
@@ -2097,7 +2097,15 @@ const server = http.createServer(async (req, res) => {
       }
       // Then one pass over the finished screen: billboard to the front, and not the same title twice
       // (see arrangeHome). Every row is already built and ruled, so this costs nothing but a Set.
-      return send(res, 200, { rows: arrangeHome(built) });
+      // A row that ends up with nothing in it is not a shelf with no posters on it: it is a heading over
+      // an empty strip, which is what "the tiles below are empty" really was. A cold addon cache, a strict
+      // language allowlist or a maturity rule can each empty a row, and the honest answer is that this
+      // screen has no such row right now.
+      const filled = built.filter((r) => r.items.length);
+      if (filled.length !== built.length) {
+        log('HOME', 'dropped empty row(s):', built.filter((r) => !r.items.length).map((r) => r.id).join(','));
+      }
+      return send(res, 200, { rows: arrangeHome(filled) });
     }
 
     m = /^\/app\/v1\/row\/([^/]+)$/.exec(path);
