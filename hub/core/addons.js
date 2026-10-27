@@ -40,6 +40,8 @@ const TTL_MS = Number(process.env.ADDON_TTL_MS || 6 * 60 * 60 * 1000); // freshn
 const FETCH_TIMEOUT_MS = Number(process.env.ADDON_TIMEOUT_MS || 8000);
 const META_WAIT_MS = Number(process.env.ADDON_META_WAIT_MS || 6000); // a detail page may wait this long
 const MANIFEST_WAIT_MS = Number(process.env.ADDON_MANIFEST_WAIT_MS || 8000);
+/** How soon after a failed manifest another ask may try again. A floor so a dead upstream is not hammered. */
+const MANIFEST_RETRY_MS = Number(process.env.ADDON_MANIFEST_RETRY_MS || 30000);
 // How many copies a picker shows, and how small a file has to be before it stops looking like a film.
 // Both are the owner's setting (settings.addons), read per request; the env vars only seed it at install
 // time. The names these shipped under were borrowed from someone else's protocol and are honoured for one
@@ -154,7 +156,9 @@ function getJson(url, { wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT
         return parsed;
       })
       .catch((e) => {
-        if (tag) log('ADDON UPSTREAM FAIL', tag, url, e.message);
+        // A connect failure often arrives as an AggregateError with no message at all; a blank log line
+        // is exactly how one of these hunts went blind, so name the failure by whatever it does carry.
+        if (tag) log('ADDON UPSTREAM FAIL', tag, url, e.message || e.code || e.name || String(e));
         return hit ? hit.body : null;
       })
       .finally(() => inflight.delete(url));
@@ -539,9 +543,29 @@ class External {
     return r.types.includes(type);
   }
 
+  /**
+   * Ask for the manifest again if we never got one. An addon whose manifest failed to arrive was mounted
+   * but mute until its six-hour refresh tick: every catalog answered from cache and every metadata or stream
+   * ask said "no such title", which on a bad second at boot meant a home screen with no rows and titles that
+   * could not be opened at all - with nothing recorded about why. So every ask revives it, rate-limited, and
+   * the reason lands in `lastError` where the health endpoint and the owner's addons list can show it.
+   */
+  async ensureManifest() {
+    if (this.manifest) return true;
+    const now = Date.now();
+    if (this.nextManifestTry && now < this.nextManifestTry) return false;
+    this.nextManifestTry = now + MANIFEST_RETRY_MS;
+    return !!(await this.loadManifest({ wait: true }));
+  }
+
   async loadManifest({ wait = false } = {}) {
     const body = await getJson(this.manifestUrl, { wait, staleOk: true, timeoutMs: MANIFEST_WAIT_MS, tag: this.id });
-    if (!body || typeof body !== 'object') return null;
+    if (!body || typeof body !== 'object') {
+      this.lastError = 'no manifest came back from ' + this.manifestUrl;
+      return null;
+    }
+    this.lastError = null;
+    this.nextManifestTry = 0;
     this.manifest = body;
     this.resources = {};
     for (const r of (Array.isArray(body.resources) ? body.resources : [])) {
@@ -610,7 +634,7 @@ class External {
   }
 
   async catalogs() {
-    if (!this.manifest) this.loadManifest(); // background: the first home after install is just empty
+    if (!this.manifest) this.ensureManifest(); // background: a shelf answers from cache, the next ask has it
     // `type` travels with the descriptor: a shelf that wants movies has to be able to tell a movie
     // catalog from a series catalog without reaching into the addon's internals.
     return this.cats.map((c) => ({ id: c.id, name: c.name, type: c.type, extra: c.extra }));
@@ -747,6 +771,7 @@ class External {
    * asked first, and only an unknown identity falls back to guessing.
    */
   async meta(identity, hint) {
+    await this.ensureManifest();
     if (!this.has('meta') || !addressableBy(identity, this.id)) return null;
     const known = this.types.get(identity) || null;
     // What the caller says beats what we guessed. One ask without a type used to settle the question for
@@ -785,6 +810,7 @@ class External {
    * different addons end up as one tile's ranked picker.
    */
   sources(item) {
+    if (!this.manifest) this.ensureManifest(); // background: rows are served from cache, this revives for the next one
     if (!this.has('stream')) return [];
     // `streamId` is the episode address (`imdb:tt123:1:4`) when the caller is playing one episode of a
     // series; the tile's own `identity` stays the show so dedupe, progress and rows keep working.
@@ -819,6 +845,7 @@ class External {
    * this: the home screen answers from cache and the same sources show up on the next request.
    */
   async fetchStreams(identity) {
+    await this.ensureManifest();
     if (!this.has('stream') || !addressableBy(identity, this.id)) return [];
     await getJson(this.streamPath(identity),
       { wait: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
@@ -861,6 +888,7 @@ class External {
   }
 
   async play(identity, source) {
+    await this.ensureManifest();
     if (!this.has('stream')) return null;
     const index = this.streamIndex.get(identity);
     if (!index || !index.size) return null;
@@ -901,6 +929,7 @@ class External {
   }
 
   async subtitles(identity, langs) {
+    await this.ensureManifest();
     if (!this.has('subtitles') || !addressableBy(identity, this.id)) return [];
     const type = this.types.get(identity) || 'movie';
     const rid = remoteIdFor(identity, this.id);
