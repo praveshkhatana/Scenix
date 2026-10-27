@@ -27,7 +27,7 @@ const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
   '--autoplay-policy=no-user-gesture-required', '--mute-audio',
   `--user-data-dir=${fs.mkdtempSync(os.tmpdir() + '/playproof-')}`,
-  '--remote-debugging-port=' + PORT, url,
+  '--remote-debugging-port=' + PORT, 'about:blank',
 ], { stdio: 'ignore' });
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -57,6 +57,23 @@ function onEvent(method, p) {
 }
 await call('Network.enable');
 await call('Runtime.enable');
+// A page of our own, so the element we poll is the same kind the app uses and its error code is readable.
+await call('Page.enable');
+// Same origin as the stream itself, which is how the app loads it; a foreign-origin document changes what
+// the media stack is willing to fetch and the answer stops meaning anything.
+const origin = new URL(url).origin;
+await call('Page.navigate', { url: origin + '/healthz' });
+await wait(400);
+console.log('element pointed at:', await (async () => {
+  const r = await call('Runtime.evaluate', { expression:
+    `(() => { const v = document.createElement('video');`
+    + ` v.autoplay = true; v.muted = true; v.playsInline = true;`
+    + ` v.style.cssText = 'width:640px;height:360px;background:#000';`
+    + ` document.body.appendChild(v); v.src = ${JSON.stringify(url)};`
+    + ` v.play().catch(() => {}); return 'ready'; })()`,
+    returnByValue: true });
+  return String(r.result?.result?.value).slice(0, 150);
+})());
 await wait(2500); // let the media document open its first connections
 
 const PROBE = `(() => {
@@ -79,7 +96,7 @@ for (let s = 0; s < SECONDS; s++) {
   if (st.err) break;
   await wait(1000);
 }
-console.log('media requests seen:', responses.length);
+console.log('media requests seen:', JSON.stringify(responses.slice(-4)));
 for (const r of responses.filter((x) => x.type === 'Media' || /video|mp4/.test(x.mime || '') || x.range !== '-').slice(0, 6)) {
   console.log(`  ${r.status} ${r.mime || r.type} range=${r.range} len=${r.length}`);
 }
