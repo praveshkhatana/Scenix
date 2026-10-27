@@ -1984,7 +1984,7 @@ const server = http.createServer(async (req, res) => {
       }
       // A PIN and the wish to be asked for one are a single decision, not two fields that happen to sit next
       // to each other. A stored number with no flag is a gate that never opens; the flag without a number is
-      // a wall that checks nothing - Bankelal was left standing behind exactly that when a test PIN was
+      // a wall that checks nothing - one profile was left standing behind exactly that when a test PIN was
       // deleted, and an older client could put any household there. So the backend keeps them together and
       // refuses to hold the half-state at all.
       if ('pin' in patch) {
