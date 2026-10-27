@@ -39,7 +39,7 @@ const KIDS_BLOCK = (process.env.KIDS_BLOCK || 'Animax,MediBizTV,BVG,Vyas,DD Kisa
   .split(',').map((s) => s.trim()).filter(Boolean);
 
 // Ratings inside the strict (≤ 12) band. TV-PG belongs here, not in the teen band: it means parental
-// guidance, our own ladder scores it tier 0, and leaving it out killed a series for Anaya whose *only*
+// guidance, our own ladder scores it tier 0, and leaving it out killed a series for one child whose *only*
 // stated certificate was TV-PG — a rating that passed the maturity rule and then died on this list.
 const STRICT_MATURITY = ['G', 'PG', 'U', 'TV-Y', 'TV-Y7', 'TV-Y7-FV', 'TV-G', 'TV-PG', 'U/A 7+'];
 // What a 13-17 profile may additionally watch: India's UA, the 12A/12 certificates, the 13+ band.
