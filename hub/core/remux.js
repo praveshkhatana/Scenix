@@ -259,8 +259,9 @@ function serve(req, res, u, cors, tracksLookup) {
     }, { 'Retry-After': '3' });
   }
   // A browser — and `curl -r` — asks for a byte range. A remux is generated as it runs, so the total
-  // length is not knowable and the range can only be honoured from the front: 206 with an open-ended
-  // Content-Range, and the stream stops at the byte the client asked for. Ignoring the header, which is
+  // length is not knowable and the range can only be honoured from the front: a 206 whose Content-Range
+  // names the exact bytes it will send (total `*` when the total is unknowable), or a plain 200 when the
+  // client only asked for everything from byte 0 onwards - which is what a browser's media element does. Ignoring the header, which is
   // what this did first, means `curl -r 0-2000000` on a 2 GB film downloaded all 2 GB and the check that
   // was supposed to prove the container worked never finished. A range starting past byte 0 can only be
   // served by asking ffmpeg to start at a *time*, which is a guess about where the bytes are: the guess is
@@ -280,6 +281,7 @@ function serve(req, res, u, cors, tracksLookup) {
   const id = crypto.randomBytes(5).toString('hex');
   const t0 = Date.now();
   let attempt = 0;
+  let gen = 0; // which attempt owns this response right now
   let settled = false;
   let bytes = 0;
   let child = null;
@@ -327,8 +329,14 @@ function serve(req, res, u, cors, tracksLookup) {
     return started;
   };
 
+  let starved = ''; // set once any attempt proves the engine had no bytes for us yet
+
   const tryNext = (why) => {
     if (settled) return;
+    // Remember an engine that has not answered yet. The next plan may fail through a different
+    // handler whose message says only "ffmpeg exited 0", and losing this fact at that point is what turns
+    // a cold torrent into a hard failure the viewer is told about.
+    if (/served nothing|from the engine/.test(why)) starved = why;
     if (attempt > 0) log('REMUX RETRY', 'id=' + id, 'from=' + plans[attempt - 1], 'to=' + plans[attempt], 'because=' + why);
     if (attempt >= plans.length) {
       if (watch) clearInterval(watch);
@@ -348,25 +356,39 @@ function serve(req, res, u, cors, tracksLookup) {
     const plan = plans[attempt];
     const args = baseArgs(p, plan, 'mp4');
     child = spawnFfmpeg(args, id);
+    const mine = child; // the outer `child` moves on when we retry; these handlers must not follow it
+    const my = ++gen;
     children.set(id, { child, url: target, hash: who.hash, started: t0, mode: 'mp4', plan, note: plan });
     attempt++;
     armWatch(plan);
 
     const first = (chunk) => {
-      child.stdout.removeListener('data', first);
-      if (res.writableEnded) return;
+      mine.stdout.removeListener('data', first);
+      // A killed child still has buffered bytes, and they arrive after the next attempt is already running -
+      // which is how a remux here wrote its status line twice and took the whole hub down with
+      // ERR_HTTP_HEADERS_SENT. Whoever is speaking, only the current attempt may answer the client.
+      if (my !== gen || settled || res.headersSent || res.writableEnded) return;
       const head = {
         'Content-Type': 'video/mp4',
         'Cache-Control': 'no-store',
         'X-Remux': 'fmp4 audio=' + plan + ' video=copy',
       };
-      if (range) head['Content-Range'] = 'bytes ' + (seekApprox ? range.from : 0) + '-*';
+      // Only a bounded range is a genuine partial response. An open-ended one - `Range: bytes=0-`, the probe
+      // every browser sends first - gets the whole stream under a plain 200, because a 206 has to name the
+      // last byte it will send and a stream with no end has none. The form used here before (`bytes 0-*`, a
+      // star standing where the last byte belongs) is not valid HTTP, and Chrome answered it by giving up on
+      // the source entirely: the identical bytes, answered 200, decode and advance normally.
+      const bounded = !!range && range.limit > 0;
+      if (bounded) {
+        head['Content-Range'] = 'bytes ' + range.from + '-' + (range.from + range.limit - 1) + '/'
+          + (tracks && tracks.sizeBytes ? tracks.sizeBytes : '*');
+      }
       if (seekApprox) head['X-Remux-Seek'] = 'approximate:' + seekMs + 'ms';
-      res.writeHead(range ? 206 : 200, Object.assign(head, cors));
-      const limit = range ? range.limit : 0; // 0 means the client set no upper bound
+      res.writeHead(bounded ? 206 : 200, Object.assign(head, cors));
+      const limit = bounded ? range.limit : 0; // 0 means the client set no upper bound
       let served = 0;
       const pump = (c) => {
-        if (res.writableEnded || settled) return;
+        if (my !== gen || res.writableEnded || settled) return;
         if (limit && served + c.length > limit) {
           res.write(c.slice(0, limit - served));
           served = limit;
@@ -381,18 +403,20 @@ function serve(req, res, u, cors, tracksLookup) {
       };
       pump(chunk);
       child.stdout.on('data', pump);
-      child.stdout.on('end', () => {
+      mine.stdout.on('end', () => {
+        if (my !== gen) return;
         clearInterval(watch);
         if (!res.writableEnded) res.end();
       });
     };
-    child.stdout.on('data', (c) => {
+    mine.stdout.on('data', (c) => {
+      if (my !== gen) return; // bytes from an attempt we abandoned must not feed this one's watchdog
       bytes += c.length;
       lastByte = Date.now();
     });
-    child.stdout.on('data', first); // first chunk decides the status line; pipe handles the rest
-    child.on('close', (code) => {
-      if (settled) return;
+    mine.stdout.on('data', first); // first chunk decides the status line; pipe handles the rest
+    mine.on('close', (code) => {
+      if (my !== gen || settled) return;
       if (bytes === 0) {
         // Nothing came out: a wrong map or a codec the container rejects. Try the next plan honestly.
         const why = (child._stderr() || 'ffmpeg exited ' + code);
@@ -401,10 +425,19 @@ function serve(req, res, u, cors, tracksLookup) {
         } else {
           clearInterval(watch);
           rejected++;
+          // Same judgement as the last-resort branch of tryNext, reached from the other direction: this
+          // child produced nothing, and either we already know the engine is still fetching the piece or
+          // ffmpeg exited cleanly with an empty pipe, which is what reading a cold engine looks like.
+          const quiet = !String(child._stderr() || '').trim() && code === 0;
+          const cold = !!who.hash && (starved || quiet);
+          const detail = starved || why;
           if (!res.headersSent) {
-            sendJson(res, cors, 502, { error: 'remux failed', detail: why, hash: who.hash, fileId: who.fileId });
+            sendJson(res, cors, cold ? 503 : 502, cold
+              ? { error: 'warming', warming: true, detail, retryAfterMs: 5000, hash: who.hash, fileId: who.fileId }
+              : { error: 'remux failed', detail: why, hash: who.hash, fileId: who.fileId },
+              cold ? { 'Retry-After': '5' } : null);
           } else if (!res.writableEnded) res.end();
-          finish('failed', why);
+          finish('failed', detail);
         }
         return;
       }
