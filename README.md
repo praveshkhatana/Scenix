@@ -23,8 +23,9 @@ device, and no vendor decides what your family may watch.
 
 It is not a front end for one streaming service, and not a link scraper. It merges several content
 sources into **one item model**, de-duplicates the same title across them, ranks the copies by what
-your household actually wants — audio language first, then quality, then size, with seeders treated as
-a hard requirement rather than a tiebreak — and hands the player one stream it can sustain.
+your household actually wants — audio language first, then quality, then size, and a swarm that cannot
+feed the file passed over for one that can, because a buffering copy serves none of those three — and
+hands the player one stream it can sustain.
 
 ## Two ways to install
 

@@ -36,6 +36,9 @@ const probe = require('../core/probe');
 const settings = require('../core/settings');
 
 /** Weights live here, in one block, so "make quality matter more" is a two-character change. */
+/** Below this many peers a torrent cannot deliver a film in real time; see `starvedSwarm` in the table. */
+const STARVED_SEEDERS = 5;
+
 const W = {
   outsideLanguages: -1000, // 1. hard: an audio language this profile never watches
   overSizeCap: -1000, // 2. hard
@@ -59,6 +62,14 @@ const W = {
   // viewer the live copy instead. It sits ABOVE `audioFirst` on purpose: a Hindi copy nobody is seeding
   // cannot play, so it must lose to an English copy that can.
   deadSwarm: -1500,
+  // A few seeders is not a dead copy, it is a copy that cannot be fed in real time. Measured this month on
+  // a Hindi title: the ranked winner had 3 seeders and served no bytes at all in 140 seconds, while a copy
+  // of the same film with 225 seeders sat below it in the list. That is the buffering complaint in one row.
+  // The penalty is large enough to lose to any copy the swarm can actually feed, and deliberately smaller
+  // than `audioFirst`: where the file itself proves it carries the profile's language, switching copies
+  // means switching language, and this household ranks that above bitrate. A thin swarm loses to a healthy
+  // one only when what it offers in exchange is a name on a release title.
+  starvedSwarm: -450,
   qualityMatch: 160, // 5. exactly the picture level this profile asked for
   qualityStep: 40, // per quality band away from what was asked
   qualityOverAsk: 20, // sharper than asked: still good, just not the level the cap was sized for
@@ -524,6 +535,12 @@ module.exports = {
       // the dead ones out of that contest and says so on the row, so the picker walks to a live copy
       // before it ever reaches this one. `seeders === 0` is the addon's own number; an addon that states
       // nothing leaves it null and is not penalised for it.
+      if (s.kind === 'torrent' && s.seeders > 0 && s.seeders < STARVED_SEEDERS) {
+        score += W.starvedSwarm;
+        s.starvedSwarm = true;
+        why.push(s.seeders + (s.seeders === 1 ? ' seeder' : ' seeders')
+          + ': too few peers to feed this file at its own bitrate, so it stalls');
+      }
       if (s.kind === 'torrent' && s.seeders === 0) {
         score += W.deadSwarm;
         s.deadSwarm = true; // a fact about the metadata, stated whether or not probing is on
