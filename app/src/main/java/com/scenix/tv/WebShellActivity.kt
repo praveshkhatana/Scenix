@@ -142,6 +142,14 @@ class WebShellActivity : Activity() {
             textZoom = 100
             javaScriptCanOpenWindowsAutomatically = false
         }
+        // A remote-controlled page is otherwise invisible from the outside: a screenshot shows pixels and
+        // says nothing about which element holds focus, what route the app thinks it is on, or why a control
+        // was skipped. Debug builds expose this page to a DevTools client forwarded over the adb link that
+        // already reaches the TV, so the interface can be inspected on the device actually running it.
+        if ((app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+
         // Transparent so the picture below shows through and the page's gradients scrim it.
         web.setBackgroundColor(0x00000000)
     }
