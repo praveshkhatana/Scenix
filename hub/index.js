@@ -1322,13 +1322,18 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const byIndex = (list, prefix, idx) => (idx == null ? null : list.find((t) => t.id === prefix + ':' + idx)) || null;
   const byLanguage = (list, raw) => (typeof raw === 'string' && /^[a-z]{2,3}$/i.test(raw) && !/^\d+$/.test(raw)
     ? list.find((t) => t.language === String(raw).toLowerCase()) : null) || null;
+  // The household's codes and the file's codes are not always spelled alike, so both sides go through the
+  // same normalizer this hub uses for every other language claim it makes.
+  const prefAudio = (prefs.resolve(profile).audioLanguages || []).map((c) => media.langOf(c));
   const chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
-    // Nothing asked for: name the track the hub would recommend, which is the one the container marks
-    // default, else the first in the profile's own language order, else the first there is. The native
-    // player uses this as its starting selection, so a Hindi copy starts in Hindi without the viewer
-    // knowing the word "audio" exists.
+    // Nothing asked for: name the track the hub would recommend. The profile's own language order comes
+    // first, and only then whatever flag the packager stamped on the file — measured on a torrent whose
+    // Italian track carries the container's default bit while its English one sits second, and honouring
+    // the file over the household played a Hindi-first viewer an Italian film. The native player takes
+    // this as its starting selection, so a Hindi copy starts in Hindi without the viewer knowing the word
+    // "audio" exists.
+    || out.audioTracks.find((t) => prefAudio.includes(media.langOf(t.language)))
     || out.audioTracks.find((t) => t.default)
-    || out.audioTracks.find((t) => (prefs.resolve(profile).audioLanguages || []).includes(t.language))
     || out.audioTracks[0] || null;
   out.selectedAudio = chosenAudio ? chosenAudio.id : null;
   const chosenSub = byIndex(out.subtitleTracks, 's', wantSub) || byLanguage(out.subtitleTracks, opts.sub);
