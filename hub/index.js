@@ -1594,10 +1594,16 @@ const server = http.createServer(async (req, res) => {
       });
     }
     if (path === '/app/v1/settings' && req.method === 'PUT') {
-      const body = await readBody(req);
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      const raw = await readBody(req);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return send(res, 400, { error: 'expected a JSON object of settings' });
       }
+      // Two shapes reach this route: the settings object itself, or that object wrapped in
+      // `{ settings: ... }`, which is what our own screens send. Merging the wrapper as if it were one
+      // more setting meant every change made from the interface was filed under a key nothing reads, and
+      // the hub answered 200 without changing anything - a settings screen that looked saved and wasn't.
+      const body = (raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings))
+        ? raw.settings : raw;
       const before = settings.get();
       const next = settings.set(body);
       const effects = {};
