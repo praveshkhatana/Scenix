@@ -15,6 +15,7 @@
  * keeps the order the addons published them in.
  */
 const liveHealth = require('../core/live-health');
+const settings = require('../core/settings');
 
 module.exports = {
   id: 'live',
@@ -28,7 +29,15 @@ module.exports = {
     const items = await ctx.library();
     // More candidates than the row shows, so a rule filtering one channel does not shorten the wall.
     const channels = items.filter((it) => it.type === 'channel');
-    channels.sort(liveHealth.compare);
-    return channels.slice(0, 200);
+    // The owner's own order wins; anything it does not mention keeps the health-then-number order.
+    // This is the order the remote zaps through, so it is also the order of the channel manager.
+    const wanted = (settings.get().live || {}).order || [];
+    const rank = new Map(wanted.map((id, i) => [id, i]));
+    channels.sort((a, b) => {
+      const ar = rank.has(a.identity) ? rank.get(a.identity) : Number.MAX_SAFE_INTEGER;
+      const br = rank.has(b.identity) ? rank.get(b.identity) : Number.MAX_SAFE_INTEGER;
+      return ar - br || liveHealth.compare(a, b);
+    });
+    return channels.slice(0, 600);
   },
 };

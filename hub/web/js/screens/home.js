@@ -27,6 +27,17 @@ export function screen(ctx) {
 
   /* ---- billboard -------------------------------------------------------- */
 
+  /**
+   * A billboard is the one tile a viewer presses Play on without opening its page first. The hub can only
+   * start a cold copy while it is being looked at, so opening the title in the background is what makes
+   * that first press fast: the metadata call resolves the file and fills the first slice of the buffer.
+   * Failures are silent — a title with no ready copy is the player's problem to explain, not the shelf's.
+   */
+  function prewarm(item) {
+    if (!item || !item.identity) return;
+    api.meta(item.identity, session.profile && session.profile.id).catch(() => {});
+  }
+
   function startRotation(row) {
     if (rotate) clearInterval(rotate);
     const ms = token('hero', 'rotateMs', 6000);
@@ -35,8 +46,13 @@ export function screen(ctx) {
       if (dead || document.hidden) return;
       // A preview that is running is the viewer paying attention: rotation waits for it.
       if (previewFor) return;
+      // And a viewer walking the shelves is not looking at the billboard. Rebuilding its text and
+      // thumbnails every six seconds while they browse is pure work for a picture they have left.
+      const a = document.activeElement;
+      if (a && !a.closest('.billboard') && !a.closest('.nav')) return;
       const next = (row.__index() + 1) % row.__items.length;
       row.__setItem(next);
+      prewarm(row.__items[next]);
       for (const b of row.querySelectorAll('.bb-btns .btn, .bb-btns .round')) focus.focusable(b);
     }, ms);
   }
@@ -46,7 +62,7 @@ export function screen(ctx) {
     if (!item || dead) return;
     const trailer = await getTrailer(item.identity, session.profile && session.profile.id);
     if (dead || slot.__items[slot.__index()] !== item) return;
-    if (trailer && startPreview(slot.__previewSlot, trailer)) previewFor = slot;
+    if (trailer && startPreview(slot.__previewSlot, trailer, item.backdrop || item.poster)) previewFor = slot;
   }
 
   /* ---- shelves ---------------------------------------------------------- */
@@ -67,7 +83,7 @@ export function screen(ctx) {
     node.style.setProperty('--i', String(index));
     shelves.appendChild(node);
 
-    if ((node.__items || []).length) { lazyMount(node, { root }); return node; }
+    if ((node.__items || []).length) { lazyMount(node, { root, preload: '700px' }); return node; }
 
     // The hub answers `/home` fast with some shelves still empty; those fill themselves in when reached.
     const size = row.card === 'poster' ? 'poster' : 'landscape';
@@ -92,7 +108,7 @@ export function screen(ctx) {
           node.__mounted = true;
           return list;
         };
-        lazyMount(node, { root });
+        lazyMount(node, { root, preload: '700px' });
       } catch (e) {
         filled = false;
         sk.classList.remove('skeleton');
@@ -109,7 +125,7 @@ export function screen(ctx) {
     // A shelf the hub left empty still has to be reachable: it joins the same mount queue and fills
     // itself when the viewer walks near it.
     node.__ensure = fill;
-    lazyMount(node, { root });
+    lazyMount(node, { root, preload: '700px' });
     return node;
   }
 
@@ -192,6 +208,7 @@ export function screen(ctx) {
         list: (item) => ctx.list(item),
       });
       root.insertBefore(bb, shelves);
+      prewarm(hero.items[0]);
       startRotation(bb);
     }
     for (let i = 0; i < rest.length; i++) buildRow(rest[i], i);
@@ -214,7 +231,7 @@ export function screen(ctx) {
         if (dead || focus.getFocus() !== node) return;
         const art = card.querySelector('.art');
         // A card that is actually moving picture is given room to be one: wider, and at the trailer's ratio.
-        if (trailer && art && startPreview(art, trailer)) { previewFor = node; card.classList.add('playing'); }
+        if (trailer && art && startPreview(art, trailer, card.querySelector('img')?.src || item.backdrop || item.poster)) { previewFor = node; card.classList.add('playing'); }
       }, delay);
     } else if (inBillboard && bb) {
       dwell = setTimeout(() => { if (!dead) previewBillboard(bb); }, delay);
@@ -228,7 +245,7 @@ export function screen(ctx) {
     if (rotate) clearInterval(rotate);
     if (dwell) clearTimeout(dwell);
     stopPreview();
-    dropMountedRows();
+    dropMountedRows(root);
     for (const d of disposers) { try { d(); } catch (e) { /* ignore */ } }
   };
 

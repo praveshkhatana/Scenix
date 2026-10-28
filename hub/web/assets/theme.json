@@ -44,12 +44,12 @@
     "captionGap": 12,
     "metaGap": 6,
     "navHeight": 96,
-    "billboardHeight": 842,
-    "chipTop": 788,
+    "billboardHeight": 800,
+    "chipTop": 746,
     "navGap": 40,
     "chipGap": 14,
     "buttonGap": 22,
-    "heroBottom": 78,
+    "heroBottom": 70,
     "panelPad": 28,
     "panelPadV": 24,
     "panelRowGap": 10,
@@ -103,9 +103,9 @@
     "panelNote": 18
   },
   "focus": {
-    "ringWidth": 5,
-    "scale": 1.10,
-    "durationMs": 200,
+    "ringWidth": 4,
+    "scale": 1.06,
+    "durationMs": 140,
     "shadowElevation": 12
   },
   "boot": {
@@ -117,12 +117,12 @@
     "switchMs": 800
   },
   "anim": {
-    "cardFadeInMs": 600,
+    "cardFadeInMs": 180,
     "rowScrollMs": 240,
     "screenFadeMs": 180,
     "fadeUpMs": 600,
     "fadeUpShift": 20,
-    "fadeUpStagger": 70,
+    "fadeUpStagger": 30,
     "fadeUpEase": "cubic-bezier(0.43,0.13,0.23,0.96)",
     "delayChildrenMs": 100,
     "staggerCap": 7,

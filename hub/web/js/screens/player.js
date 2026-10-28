@@ -43,7 +43,7 @@ export function screen(ctx, identity) {
      again — that is the `live` flag below, and it only ever decides whether the bar can be moved along,
      never which controls exist. */
   const kind = String(spec.type || '').toLowerCase();
-  const isLiveFeed = kind === 'channel' || kind === 'live';
+  let isLiveFeed = kind === 'channel' || kind === 'live';
   const isSeries = kind === 'series';
 
   /* ---------------------------------------------------------------- picture */
@@ -209,6 +209,11 @@ export function screen(ctx, identity) {
   /** One honest line, refreshed whenever the hub or the backend says something new. */
   function refreshStatus(extra = {}) {
     const d = describePlayback(player, extra);
+    // The buffer line is true and useful once; left up for the whole film it is a debug readout. A viewer
+    // who has been watching for a moment does not need to be told the hub is holding bytes for them.
+    if (d && /^The hub (is holding|started with)/.test(d.text) && playingSince && Date.now() - playingSince > 7000) {
+      return setStatus('', null);
+    }
     if (d) return setStatus(d.text, d.tone === 'info' ? 'wait' : d.tone);
     const st = player.state();
     if (st.buffering) return setStatus('Buffering…', 'wait');
@@ -428,6 +433,8 @@ export function screen(ctx, identity) {
   // away a question the viewer has not answered yet. Only their own choice, or the picture actually
   // starting to move again, closes it.
   let asking = false;
+  let playingSince = 0;
+  let bufferNoteTimer = null;
 
   const offs = [];
   offs.push(player.on('negotiating', () => {
@@ -436,7 +443,25 @@ export function screen(ctx, identity) {
     center.appendChild(el('div', { class: 'big', text: 'Getting the picture' }));
     center.hidden = false;
   }));
+  offs.push(player.on('preparing', (d) => {
+    // The hub has the copy but has not put a byte on the wire yet. Keep the screen calm and say what
+    // is happening; the controller asks again by itself, so there is nothing for the viewer to press.
+    setStatus('Preparing this copy - the first seconds are being fetched', 'wait');
+    center.hidden = false;
+    center.textContent = '';
+    center.appendChild(el('div', { class: 'big', text: 'Preparing this copy' }));
+    center.appendChild(el('div', { class: 'small',
+      text: 'The hub is warming the first few seconds. It will start on its own; no need to press anything.' }));
+  }));
+  function armBufferNote() {
+    if (bufferNoteTimer) clearTimeout(bufferNoteTimer);
+    bufferNoteTimer = setTimeout(() => {
+      if (status && /^The hub is holding/.test(status.textContent)) setStatus('', null);
+    }, 7000);
+  }
   offs.push(player.on('ready', () => {
+    if (!playingSince) playingSince = Date.now();
+    armBufferNote();
     if (!asking) center.hidden = true;
     setPlayIcon();
     drawPosition();
@@ -451,6 +476,10 @@ export function screen(ctx, identity) {
     btnSub.lastChild.textContent = subLabel();
   }));
   offs.push(player.on('target', (t) => {
+    playingSince = 0;
+    // A channel played by identity (a deep link, a zap) has no `type` in the URL. The hub names the kind
+    // in its answer, so the floor becomes a live floor even when the route did not say so.
+    if (t && (t.live === true || String(t.type || '').toLowerCase() === 'channel')) isLiveFeed = true;
     player.sources(t.alternatives || t.sources || []);
     btnQuality.lastChild.textContent = qualityLabel();
     if (t.title && !spec.title) title.textContent = t.title;
@@ -482,6 +511,21 @@ export function screen(ctx, identity) {
       ? 'The hub asked the peers sharing it and nothing has arrived. Waiting longer often fixes it — '
         + 'another copy is usually ready right away.'
       : (e && e.message) || 'The hub could not open it.' }));
+    // A live channel has no "another copy": it has another channel. The remote's left/right already zap,
+    // and the failure card must offer the same thing instead of sending the viewer to a source picker that
+    // does not exist on a live feed.
+    if (isLiveFeed) {
+      const next = el('button', { class: 'btn white big', type: 'button', text: 'Next channel',
+        onclick: () => ctx.zap(1) });
+      const prev = el('button', { class: 'btn ghost big', type: 'button', text: 'Previous channel',
+        onclick: () => ctx.zap(-1) });
+      const home = el('button', { class: 'btn ghost big', type: 'button', text: 'Back', onclick: () => ctx.back() });
+      center.appendChild(el('div', { class: 'btns' }, next, prev, home));
+      focus.focusable(next); focus.focusable(prev); focus.focusable(home);
+      setStatus('This channel is not answering', 'bad');
+      focus.focusDefault(next);
+      return;
+    }
     const wait2 = el('button', { class: 'btn white big', type: 'button', text: 'Wait and try again',
       onclick: () => player.retry() });
     const again = el('button', { class: waiting ? 'btn ghost big' : 'btn white big', type: 'button',
@@ -565,6 +609,16 @@ export function screen(ctx, identity) {
     if (key === 'MediaPlayPause' || key === 'PlayPause') { player.toggle(); setPlayIcon(); return true; }
     // A live feed has no position for a remote to jump around, so the transport keys are left to the router
     // rather than spending them on a seek that cannot land.
+    // A channel has no position, so left/right are the channel keys. This is the same habit as a
+    // set-top box: the remote's arrows change the channel, and there is no scrubber to land on.
+    if (isLiveFeed && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      ctx.zap(key === 'ArrowLeft' ? -1 : 1);
+      return true;
+    }
+    if (isLiveFeed && (key === 'MediaTrackNext' || key === 'MediaTrackPrevious')) {
+      ctx.zap(key === 'MediaTrackNext' ? 1 : -1);
+      return true;
+    }
     if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(10000); return true; }
     if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-10000); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
@@ -661,6 +715,7 @@ export function screen(ctx, identity) {
     player.stop();
     player.dispose();
     setFeatureVisible(false);
+    if (bufferNoteTimer) clearTimeout(bufferNoteTimer);
     if (native) setSurfaceLive(false);
     for (const off of offs) { try { off(); } catch (e) { /* already gone */ } }
   };

@@ -131,25 +131,42 @@ object ProfilesScreen : ScreenPlugin {
         }
     }
 
-    /** The PIN gate: set on first use, verify afterwards. */
+    /**
+     * The PIN gate.
+     *
+     * The hub owns a profile PIN. This screen used to treat "the hub says there is a PIN" as "set a PIN
+     * now", which let anyone overwrite a protected profile's code on first use — the reported "PIN isn't
+     * working". It now verifies against the hub whenever the hub says the profile is locked, and only
+     * falls back to this TV's local hash for standalone mode (this app hosting its own profiles).
+     */
     private fun gate(host: ScreenHost, root: FrameLayout, profile: Profile) {
         val ctx = host.app
-        val needsPin = profile.hasPin || ctx.prefs.hasPin(profile.id)
-        if (!needsPin) {
+        val onHub = ctx.hub !is LocalHub
+        val hubLocked = onHub && profile.hasPin
+        val localLocked = ctx.prefs.hasPin(profile.id)
+        if (!hubLocked && !localLocked) {
             host.enterProfile(profile)
             return
         }
-        val setting = !ctx.prefs.hasPin(profile.id)
         val pad = PinPad(
             ctx = ctx,
-            title = if (setting) "Set a PIN for ${profile.name}" else ctx.app.getString(R.string.pin_title),
-            subtitle = if (setting) "This profile is marked protected. The PIN stays on this TV \u2014 it is stored hashed and never sent to the hub."
-                else "Enter the PIN for ${profile.name}",
+            title = ctx.app.getString(R.string.pin_title),
+            subtitle = "Enter the PIN for ${profile.name}",
             onDone = { entered ->
-                if (setting) {
-                    ctx.prefs.setPin(profile.id, entered)
-                    closePin(root)
-                    host.enterProfile(profile)
+                if (hubLocked) {
+                    ctx.hub.unlockProfile(profile.id, entered) { ok, err ->
+                        BrowseHelper.runOnUiThread {
+                            if (ok == true) {
+                                closePin(root)
+                                host.enterProfile(profile)
+                            } else {
+                                val msg = if (err != null && err.contains("429"))
+                                    "Too many attempts \u2014 wait a few minutes"
+                                else "Wrong PIN \u2014 try again"
+                                (pinOverlay?.tag as? PinPad)?.showError(msg)
+                            }
+                        }
+                    }
                 } else if (ctx.prefs.checkPin(profile.id, entered)) {
                     closePin(root)
                     host.enterProfile(profile)

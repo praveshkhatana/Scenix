@@ -49,6 +49,20 @@ interface HubClient {
     fun progress(identity: String, positionMs: Long, profileId: String?, episode: Episode? = null)
 
     /**
+     * `POST /app/v1/profiles/<id>/unlock` — the hub is the only place a profile PIN is kept. A backend that
+     * does not own profiles (this TV on its own) answers "not supported" and the picker uses its local
+     * fallback for that mode.
+     */
+    fun unlockProfile(profileId: String, pin: String, cb: HubCb<Boolean>) {
+        cb.onResult(false, "unsupported")
+    }
+
+    /** `PUT /app/v1/profiles/<id>` with `pin` and the current PIN. Null removes it. */
+    fun setProfilePin(profileId: String, pin: String?, currentPin: String?, cb: HubCb<Boolean>) {
+        cb.onResult(false, "unsupported")
+    }
+
+    /**
      * Cheap reachability probe, used at startup and every retry. The app falls back to the bundled
      * fixtures when this says no, so a TV on flaky Wi-Fi still shows a home screen.
      */
@@ -97,6 +111,13 @@ object HubError {
     fun status(code: Int): String = "HTTP $code"
 
     fun forbidden(error: String?): Boolean = error != null && error.contains("403")
+
+    /**
+     * A 503 with `warming` is the hub saying "this copy exists, it has not produced a byte yet". It is the
+     * one error a player must answer by waiting and asking again, not by spending the next source.
+     */
+    fun warming(error: String?): Boolean = error != null &&
+        (error.contains("503") || error.contains("warming") || error.contains("being prepared"))
 
     /** Anything that is not a deliberate "you may not see this" — the hub is down or the path is wrong. */
     fun unreachable(error: String?): Boolean = error != null && !forbidden(error)
@@ -171,6 +192,19 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
         { o -> PlayTarget.from(o) },
         cb,
     )
+
+    override fun unlockProfile(profileId: String, pin: String, cb: HubCb<Boolean>) =
+        post("/app/v1/profiles/" + enc(profileId) + "/unlock",
+            JSONObject().put("pin", pin),
+            { o -> o.optBoolean("ok") || s(o, "unlocked").isNotBlank() }, cb)
+
+    override fun setProfilePin(profileId: String, pin: String?, currentPin: String?, cb: HubCb<Boolean>) =
+        put("/app/v1/profiles/" + enc(profileId),
+            JSONObject()
+                .put("pin", pin ?: JSONObject.NULL)
+                .put("pinRequired", pin != null)
+                .put("pinCurrent", currentPin ?: ""),
+            { o -> o.optBoolean("ok") }, cb)
 
     override fun trailer(identity: String, cb: HubCb<String?>) = trailer(identity, null, cb)
 
@@ -260,13 +294,20 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
     private fun <T> post(path: String, body: JSONObject, parse: (JSONObject) -> T, cb: HubCb<T>) =
         dispatch("POST", base() + path, body, parse, cb)
 
+    private fun <T> put(path: String, body: JSONObject, parse: (JSONObject) -> T, cb: HubCb<T>) =
+        dispatch("PUT", base() + path, body, parse, cb)
+
     private fun <T> dispatch(method: String, url: String, body: JSONObject?, parse: (JSONObject) -> T, cb: HubCb<T>) {
         try {
             pool.execute {
                 var value: T? = null
                 var err: String? = null
                 try {
-                    val o = if (method == "GET") getRaw(url) else postRaw(url, body ?: JSONObject())
+                    val o = when (method) {
+                        "GET" -> getRaw(url)
+                        "PUT" -> putRaw(url, body ?: JSONObject())
+                        else -> postRaw(url, body ?: JSONObject())
+                    }
                     if (o == null) err = "no response from $url" else value = parse(o)
                 } catch (t: Throwable) {
                     err = t.message ?: t.javaClass.simpleName
@@ -288,13 +329,25 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
             if (code !in 200..299) {
                 Log.w(TAG, "GET $url -> $code")
                 // 403 is a decision, not a failure: HubError.forbidden() reads this string.
-                throw java.io.IOException(HubError.status(code))
+                throw java.io.IOException(HubError.status(code) + explain(conn))
             }
             return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
         } finally {
             conn.disconnect()
         }
     }
+
+    /**
+     * The hub's own words on a refused answer. A 503 is not a broken stream: it is "this copy is still
+     * being prepared", and the player decides whether to wait from `warming`/`retryAfterMs`. Dropping the
+     * body turned every such answer into "the hub could not open it" and sent the viewer through every
+     * source on the title. The text is bounded so a huge error page cannot become an IOException message.
+     */
+    private fun explain(conn: HttpURLConnection): String = try {
+        val body = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        val clean = body.replace(Regex("\\s+"), " ").trim().take(400)
+        if (clean.isBlank()) "" else " $clean"
+    } catch (t: Throwable) { "" }
 
     private fun postRaw(url: String, body: JSONObject): JSONObject? {
         val conn = open(url, "POST")
@@ -306,7 +359,25 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
             val code = conn.responseCode
             if (code !in 200..299) {
                 Log.w(TAG, "POST $url -> $code")
-                throw java.io.IOException(HubError.status(code))
+                throw java.io.IOException(HubError.status(code) + explain(conn))
+            }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            return if (text.isBlank()) JSONObject() else JSONObject(text)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun putRaw(url: String, body: JSONObject): JSONObject? {
+        val conn = open(url, "PUT")
+        try {
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                Log.w(TAG, "PUT $url -> $code")
+                throw java.io.IOException(HubError.status(code) + explain(conn))
             }
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             return if (text.isBlank()) JSONObject() else JSONObject(text)
@@ -318,8 +389,11 @@ class HttpHub(context: Context, private val prefs: Prefs) : HubClient {
     private fun open(url: String, method: String): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.requestMethod = method
-        conn.connectTimeout = 6000
-        conn.readTimeout = 12000
+        // A Play press now spends up to ~8 s in the hub learning what a copy can carry, then the first
+        // bytes of a cold torrent can take a few more. Twelve seconds was below the hub's own budget, so
+        // the client gave up while the hub was still working. Waiting is not failing.
+        conn.connectTimeout = 10000
+        conn.readTimeout = 30000
         conn.instanceFollowRedirects = true
         conn.setRequestProperty("Accept", "application/json")
         conn.setRequestProperty("User-Agent", "Scenix/0.1 (Android TV)")

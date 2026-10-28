@@ -17,7 +17,7 @@
  *     per-episode length, so the strip does not claim either.
  */
 
-import { el, clear, toast } from '/ui/js/dom.js';
+import { el, clear, toast, imageUrl } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
@@ -53,7 +53,7 @@ export function screen(ctx, identity) {
   function paint() {
     hero.textContent = '';
     body.textContent = '';
-    const bg = el('img', { class: 'bg', src: item.backdrop || item.poster || '', alt: '', decoding: 'async' });
+    const bg = el('img', { class: 'bg', src: imageUrl(item.backdrop || item.poster || ''), alt: '', decoding: 'async' });
     hero.appendChild(bg);
     // The trailer plays inside the hero frame, behind the words, exactly as it does on the home billboard.
     const preview = el('div', { class: 'preview' });
@@ -69,8 +69,11 @@ export function screen(ctx, identity) {
     const kind = item.type === 'live' || item.live ? 'Live TV' : item.type === 'series' ? 'Series' : 'Movie';
     dh.appendChild(el('div', { class: 'kicker' }, el('b', { text: 'Scenix' }), el('span', { text: kind })));
     // A logotype is artwork; plain text is the fallback rather than the design.
-    if (item.logo) dh.appendChild(el('img', { class: 'logo', src: item.logo, alt: item.title || '' }));
-    else dh.appendChild(el('h1', { text: item.title || '' }));
+    if (item.logo) {
+      const logo = el('img', { class: 'logo', src: item.logo, alt: item.title || '' });
+      logo.addEventListener('error', () => logo.replaceWith(el('h1', { text: item.title || '' })));
+      dh.appendChild(logo);
+    } else dh.appendChild(el('h1', { text: item.title || '' }));
 
     /* The metadata line: only the parts the hub actually answered for. */
     const mat = el('div', { class: 'mat' });
@@ -386,7 +389,7 @@ export function screen(ctx, identity) {
     if (trailerTried && hero.querySelector('video')) return;
     getTrailerSafe().then((t) => {
       if (!t) { toast('No trailer for this title on this hub.'); return; }
-      startPreview(hero.__previewSlot || hero, t);
+      startPreview(hero.__previewSlot || hero, t, item.backdrop || item.poster);
     });
   }
   async function getTrailerSafe() {

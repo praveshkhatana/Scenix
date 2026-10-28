@@ -22,6 +22,7 @@ import { api, apiBase } from '/ui/js/api.js';
 import { backendName } from '/ui/js/player.js';
 import { session, isLocked } from '/ui/js/state.js';
 import { langList } from '/ui/js/format.js';
+import { withAdultProof } from '/ui/js/profileedit.js';
 
 export function screen(ctx) {
   const root = el('div', { class: 'screen settings' });
@@ -34,11 +35,17 @@ export function screen(ctx) {
   let prefs = null;        // /app/v1/prefs → prefs
   let installed = [];      // /app/v1/addons → addons
   let rowList = null;      // /app/v1/settings → rows, when this backend has any to offer
+  let liveInfo = null;     // /app/v1/settings → live {channels, groups}, the channel manager's data
   let busy = false;
 
   root.appendChild(el('div', { class: 'page-head' },
     el('h1', { text: 'Settings' }),
     el('div', { class: 'sub', text: 'What your hub is configured to do, and what this profile asks for inside it.' })));
+  // A section index. Settings is a long page by nature; a remote should not have to walk it to find
+  // the one group it came for. The chips are built from the headings that actually exist, so a backend
+  // that offers fewer sections simply shows fewer chips.
+  const toc = el('div', { class: 'settings-toc' });
+  root.appendChild(toc);
   const cols = el('div', { class: 'settings-cols' });
   const left = el('div');
   const right = el('div');
@@ -147,14 +154,25 @@ export function screen(ctx) {
   async function writePrefs(patch) {
     if (busy) return;
     busy = true;
-    Object.assign(prefs, patch);
+    let ok = true;
     try {
-      await api.savePrefs(profile.id, prefs);
-      ctx.toast('Saved for this profile');
+      // Turning the dark-red zone on is an adult act on this hub, not a checkbox a child can flip.
+      // The hub is asked first; only its refusal makes us ask for an adult PIN, and the same call is
+      // repeated with the proof. Every other preference is a normal write.
+      if (patch.xxxEnabled === true) {
+        const out = await withAdultProof(ctx, 'turn adult titles on',
+          (extra) => api.savePrefs(profile.id, Object.assign({}, prefs, patch, extra)));
+        ok = out !== null;
+      } else {
+        await api.savePrefs(profile.id, Object.assign({}, prefs, patch));
+      }
+      if (ok) { Object.assign(prefs, patch); ctx.toast('Saved for this profile'); }
     } catch (e) {
-      ctx.toast('The hub would not take that change');
+      ok = false;
+      ctx.toast(e && e.status === 403 ? 'An adult PIN is needed for that' : 'The hub would not take that change');
     }
     busy = false;
+    if (!ok) ctx.reload();
   }
   async function writeSettings(patch) {
     if (busy) return;
@@ -246,9 +264,28 @@ export function screen(ctx) {
         g.appendChild(l);
         if (canHub) chipSet(g, Object.keys(names), setting.languages, (k) => names[k] || k, (list) => writeSettings({ languages: list }));
       }
-      if (setting.live && setting.live.playlist) {
-        const l = line('Live TV playlist', 'A channel list the hub reads at startup. It is edited in the hub’s settings file, where a URL can be typed comfortably.');
-        l.appendChild(value(setting.live.playlist));
+      if (setting.live) {
+        const l = line('Live TV playlist',
+          'The M3U address this hub reads. Paste it here; the channel manager chooses which of its channels this house keeps.');
+        l.appendChild(value(setting.live.playlist || 'no playlist set'));
+        if (canHub) {
+          const b = el('button', { class: 'btn line', type: 'button', text: setting.live.playlist ? 'Change' : 'Set playlist' });
+          focus.focusable(b);
+          b.onclick = async () => {
+            const url = await ctx.enterText({
+              title: 'Live TV playlist',
+              reason: 'An M3U address. The hub reads it, then the channel manager lets you choose what to keep.',
+              placeholder: 'https://example.org/playlist.m3u',
+              initial: setting.live.playlist || '',
+              action: 'Save',
+              validate: (v) => (!v ? 'Type an address first.'
+                : !/^https?:\/\//i.test(v) ? 'That has to start with http:// or https://.' : null),
+            });
+            if (url === null) return;
+            await writeSettings({ live: Object.assign({}, setting.live, { playlist: url }) });
+          };
+          l.appendChild(b);
+        }
         g.appendChild(l);
       }
       if (caps.addonAdmin && setting.addons) {
@@ -329,6 +366,27 @@ export function screen(ctx) {
           (v) => (v === 1 ? 'One slow stretch' : `${v} slow stretches`));
         right.appendChild(g2);
       }
+    }
+
+    /* ---------------------------------------------------------------- live TV */
+
+    // A channel line-up is hundreds of rows. It gets its own screen rather than a wall of switches here:
+    // the thing an owner needs to see is the list, its order and what is on, not a summary of counts.
+    if (setting && setting.live && (liveInfo || setting.live.playlist)) {
+      const g = group('Live TV', 'The channels this hub keeps, in the order the remote zaps through them. Hiding a channel stops it being probed, searched or played — the playlist is untouched.');
+      const counts = liveInfo && Array.isArray(liveInfo.channels)
+        ? `${liveInfo.channels.filter((c) => c.enabled !== false).length} shown of ${liveInfo.channels.length} published`
+        : (setting.live.playlist ? 'playlist loaded' : 'no playlist yet');
+      const l = line('Channel line-up', counts);
+      const go = el('button', { class: 'btn line', type: 'button', text: 'Manage channels' });
+      focus.focusable(go);
+      go.onclick = () => ctx.navigate('channels');
+      l.appendChild(go);
+      g.appendChild(l);
+      if (!setting.live.playlist) {
+        g.appendChild(el('p', { class: 'note', text: 'Set a playlist address first: Settings → This hub → Live TV playlist.' }));
+      }
+      right.appendChild(g);
     }
 
     /* ---------------------------------------------------------------- home rows */
@@ -571,7 +629,21 @@ export function screen(ctx) {
     api.health().then(() => row('Hub reachable', 'yes', 'ok')).catch(() => row('Hub reachable', 'no answer', 'no'));
     right.appendChild(d);
 
+    paintToc();
     focus.focusDefault(root.querySelector('.chip') || root.querySelector('.sw') || root.querySelector('.round'));
+  }
+
+  function paintToc() {
+    toc.textContent = '';
+    for (const h of root.querySelectorAll('.sgroup > h3')) {
+      const b = el('button', { class: 'chip', type: 'button', text: h.textContent || '' });
+      focus.focusable(b);
+      b.onclick = () => {
+        try { h.scrollIntoView({ block: 'start', behavior: 'auto' }); } catch (e) { /* older engine */ }
+      };
+      toc.appendChild(b);
+    }
+    toc.hidden = toc.children.length < 2;
   }
 
   function remove(p) {
@@ -600,6 +672,7 @@ export function screen(ctx) {
     const ad = a3 ? (a3.addons || []) : null;
     installed = Array.isArray(ad) ? ad : null === ad ? [] : ad;
     setting = s ? (s.settings || s) : null;
+    liveInfo = (s && s.live) || null;
     names = (s && s.languageNames) || {};
     prefs = p ? (p.prefs || p) : null;
     paint();

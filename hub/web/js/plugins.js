@@ -11,7 +11,7 @@
  * particular shelf (the rank numerals) while every other `poster` row keeps the default.
  */
 
-import { el, clear, posterImg } from '/ui/js/dom.js';
+import { el, clear, posterImg, imageUrl } from '/ui/js/dom.js';
 import { icon } from '/ui/js/icons.js';
 import { focusable } from '/ui/js/focus.js';
 import { runtime, timeLeft, episodeLabel, langList, since } from '/ui/js/format.js';
@@ -175,7 +175,7 @@ registerCard('channel', (item, ctx) => {
 
 /* --------------------------------------------------------------- row plugins */
 
-const MAX_CARDS = 30;   // a 440-channel addon row must not become 440 DOM nodes on a 1 GB TV
+const MAX_CARDS = 18;   // a 440-channel addon row must not become 440 DOM nodes on a 1 GB TV
 
 /** Build the shelf frame; the cards mount when the row is actually reached (see mountCards). */
 function rail(row, ctx, opts = {}) {
@@ -246,20 +246,35 @@ registerRow('top10', (row, ctx) => {
    them — which on a remote is a dead end, because there is no card there to step onto and therefore no
    scroll to bring them to life. Measuring against the scroller instead always answers. */
 
-let scroller = null;
-let queued = [];
-let frame = 0;
-let preloadPx = 1200;
+/*
+ * One lane per mounted screen, not one global lane.
+ *
+ * The rows on the old Home screen and the rows on the new one share nothing. When they shared a single
+ * queue, the old screen's teardown ran *after* the new screen had already queued its rows — the route
+ * change builds the new screen first, then disposes the old one — so every Home press emptied the new
+ * queue and left fourteen shelves with no cards in them. A lane keyed by the screen element is the
+ * smallest way to make teardown local.
+ */
+const lanes = new Map(); // root element -> { scroller, queued, frame, preloadPx, onScroll }
 
-function pump() {
-  frame = 0;
-  if (!scroller || !queued.length) return;
-  const vb = scroller.getBoundingClientRect();
-  const top = vb.top - preloadPx;
-  const bottom = vb.bottom + preloadPx;
+function laneFor(root) {
+  let lane = lanes.get(root);
+  if (!lane) {
+    lane = { scroller: root, queued: [], frame: 0, preloadPx: 1200, onScroll: null };
+    lanes.set(root, lane);
+  }
+  return lane;
+}
+
+function pump(lane) {
+  lane.frame = 0;
+  if (!lane.scroller || !lane.queued.length) return;
+  const vb = lane.scroller.getBoundingClientRect();
+  const top = vb.top - lane.preloadPx;
+  const bottom = vb.bottom + lane.preloadPx;
   const rest = [];
   let mounted = 0;
-  for (const node of queued) {
+  for (const node of lane.queued) {
     if (!node.isConnected || node.__mounted) continue;
     const r = node.getBoundingClientRect();
     if (r.bottom >= top && r.top <= bottom) {
@@ -268,33 +283,42 @@ function pump() {
       mounted++;
     } else rest.push(node);
   }
-  queued = rest;
+  lane.queued = rest;
   // Mounting changes the page's height, which moves everything below it. Look again next frame.
-  if (mounted && queued.length) schedule();
+  if (mounted && lane.queued.length) schedule(lane);
 }
 
-function schedule() { if (!frame) frame = requestAnimationFrame(pump); }
+function schedule(lane) { if (!lane.frame) lane.frame = requestAnimationFrame(() => pump(lane)); }
 
-function detach() {
-  if (!scroller) return;
-  scroller.removeEventListener('scroll', schedule);
-  scroller = null;
+function detach(lane) {
+  if (lane.frame) { cancelAnimationFrame(lane.frame); lane.frame = 0; }
+  if (lane.scroller && lane.onScroll) lane.scroller.removeEventListener('scroll', lane.onScroll);
+  lane.onScroll = null;
 }
 
 export function lazyMount(rowNode, { root = null, preload = '1200px' } = {}) {
   if (!rowNode || rowNode.__mounted) return;
   if (!rowNode.__ensure && !(rowNode.__items || []).length) return;
   if (!root) { if (rowNode.__ensure) rowNode.__ensure(); else rowNode.__mount(rowNode.__items); return; }
-  if (root !== scroller) { detach(); scroller = root; scroller.addEventListener('scroll', schedule, { passive: true }); }
-  preloadPx = Math.max(0, parseFloat(preload) || 1200);
-  if (queued.indexOf(rowNode) < 0) queued.push(rowNode);
-  schedule();
+  const lane = laneFor(root);
+  if (!lane.onScroll) {
+    lane.onScroll = () => schedule(lane);
+    lane.scroller.addEventListener('scroll', lane.onScroll, { passive: true });
+  }
+  lane.preloadPx = Math.max(0, parseFloat(preload) || 1200);
+  if (lane.queued.indexOf(rowNode) < 0) lane.queued.push(rowNode);
+  schedule(lane);
 }
 
-export function dropMountedRows() {
-  detach();
-  queued = [];
-  if (frame) { cancelAnimationFrame(frame); frame = 0; }
+/** Drop one screen's lane, or every lane when no screen is named. */
+export function dropMountedRows(root = null) {
+  if (root) {
+    const lane = lanes.get(root);
+    if (lane) { detach(lane); lanes.delete(root); }
+    return;
+  }
+  for (const lane of lanes.values()) detach(lane);
+  lanes.clear();
 }
 
 /* ------------------------------------------------------------------ billboard */
@@ -346,7 +370,7 @@ export function billboard(row, ctx) {
   const arts = el('div', { class: 'bb-arts' });
   for (const item of items) {
     arts.appendChild(el('div', { class: 'bb-art' },
-      el('img', { src: item.backdrop || item.poster || '', alt: '', decoding: 'async' }),
+      el('img', { src: imageUrl(item.backdrop || item.poster || ''), alt: '', decoding: 'async' }),
       el('div', { class: 'scrim' })));
   }
   const preview = el('div', { class: 'preview' }, el('div', { class: 'scrim' }));
@@ -384,8 +408,13 @@ export function billboard(row, ctx) {
     const kind = item.type === 'live' ? 'Live TV' : item.type === 'series' ? 'Series' : 'Movie';
     text.appendChild(el('div', { class: 'kicker' }, el('b', { text: 'Scenix' }), el('span', { text: kind })));
     // The title as artwork when the hub has lettering for it, and as heavy type when it does not.
-    if (item.logo) text.appendChild(el('img', { class: 'logo', src: item.logo, alt: item.title }));
-    else text.appendChild(el('h1', { text: item.title }));
+    if (item.logo) {
+      const logo = el('img', { class: 'logo', src: item.logo, alt: item.title || '' });
+      // A logo is a remote picture. When it 404s or the CDN is down, the title has to fall back to type,
+      // not disappear: a billboard with no name is a poster, not a product.
+      logo.addEventListener('error', () => logo.replaceWith(el('h1', { text: item.title || '' })));
+      text.appendChild(logo);
+    } else text.appendChild(el('h1', { text: item.title || '' }));
 
     const rating = ratingOf(item);
     if (rating || Number(item.match) > 0) {

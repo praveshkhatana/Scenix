@@ -44,7 +44,11 @@ const DEFAULTS = {
   languages: [],
   // Live TV. One playlist URL, because that is what an owner can actually find and paste; empty means no
   // live TV row rather than a row full of somebody else's country.
-  live: { playlist: '' },
+  // Live TV: one playlist URL and the owner's selection over it. `hidden` names channel identities
+  // (`norm:<slug>`) the household does not want; `groupsHidden` removes a whole genre; `order` is the
+  // owner's own sequence, with anything it does not mention following in the provider's order. All three
+  // ship empty, so a fresh hub shows the playlist as published and the owner edits from the UI.
+  live: { playlist: '', hidden: [], groupsHidden: [], order: [] },
   // How the addon host behaves. These were env-var constants; they are the owner's to set now.
   addons: { maxSources: 12, minSizeMB: 100, sizeFilter: '200MB-1.5GB,1.5GB-8GB' },
   // Which of this hub's home rows a viewer sees, and in what order. Both lists are empty by default:
@@ -165,7 +169,12 @@ function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
     languages: normalizeLanguages(s.languages),
-    live: { playlist: String((s.live || {}).playlist || '').trim().slice(0, 400) },
+    live: {
+      playlist: String((s.live || {}).playlist || '').trim().slice(0, 400),
+      hidden: idList((s.live || {}).hidden),
+      groupsHidden: idList((s.live || {}).groupsHidden),
+      order: idList((s.live || {}).order),
+    },
     addons: {
       maxSources: Math.max(1, Math.min(60, Number((s.addons || {}).maxSources) || DEFAULTS.addons.maxSources)),
       minSizeMB: Math.max(0, Math.min(10000, Number((s.addons || {}).minSizeMB) || DEFAULTS.addons.minSizeMB)),

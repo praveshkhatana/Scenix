@@ -92,6 +92,10 @@ object PlayerScreen : ScreenPlugin {
     private var ioRetries = 0
     private var ioRetryIndex = -1
 
+    /** How many times this source has answered "still preparing"; reset when the source changes. */
+    private var prepRetries = 0
+    private var prepFor = -1
+
     /** When this screen took over, and the last key it saw — this remote reports one press twice. */
     private var openedAtMs = 0L
     private var lastKeyCode = -1
@@ -313,6 +317,7 @@ object PlayerScreen : ScreenPlugin {
             return
         }
         index = i.coerceIn(0, ranked.size - 1)
+        if (prepFor != index) { prepFor = index; prepRetries = 0 }
         val src = ranked[index]
         val gen = ++generation
         // The hub's own play budget is ~11 s (it may be fetching a cold copy), so the wait is
@@ -335,6 +340,16 @@ object PlayerScreen : ScreenPlugin {
                         setStatus("Not available for this profile.")
                         readout?.text = "This profile's content rules keep this title out. Switch profile from the top-right menu to watch it."
                         showControls()
+                        return@runOnUiThread
+                    }
+                    // The hub is preparing a cold copy. Ask again in a beat instead of spending every
+                    // other source on the same first-byte wait; the hub keeps the reader open.
+                    if (HubError.warming(error) && prepRetries < 6) {
+                        prepRetries++
+                        setStatus("Preparing this copy\u2026")
+                        readout?.text = "The hub is warming this copy. This can take a few seconds."
+                        showControls()
+                        handler.postDelayed({ if (gen == generation) openAt(index, resumeAt, null) }, 1000L + prepRetries * 500L)
                         return@runOnUiThread
                     }
                     setStatus("The hub could not open ${Format.provider(src)} (${error ?: "no answer"})")

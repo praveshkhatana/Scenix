@@ -137,6 +137,7 @@ class Copy {
     this.starved = false;
     this.starvedAt = 0;
     this.seeks = 0;
+    this.primeTarget = 0;    // a title-page pre-roll stops here, so browsing one title does not pull 96 MB
     this.listeners = new Set();
   }
 
@@ -358,11 +359,14 @@ class Copy {
       this.base = this.chunks[0].start + this.chunks[0].buf.length;
       this.chunks.shift();
     }
-    // Over the bound: drop from the front (the far side of a seek or the head of a measurement).
+    // Over the bound: drop from the front (the far side of a seek or the head of a measurement). A
+    // title-page pre-roll has a smaller cap than a viewer's cushion; it is the same code path so a
+    // detail page costs a fixed slice of RAM instead of the whole buffer.
+    const cap = this.primeTarget ? Math.min(this.bound(c), this.primeTarget) : this.bound(c);
     let guard = 0;
-    while (this.held() > this.bound(c) && this.chunks.length && guard++ < 256) {
+    while (this.held() > cap && this.chunks.length && guard++ < 256) {
       const ch = this.chunks[0];
-      const excess = this.held() - this.bound(c);
+      const excess = this.held() - cap;
       if (ch.buf.length > excess) {
         this.base = ch.start + excess;
         this.chunks[0] = { start: this.base, buf: ch.buf.subarray(excess) };
@@ -371,7 +375,7 @@ class Copy {
       this.base = ch.start + ch.buf.length;
       this.chunks.shift();
     }
-    const full = this.held() >= this.bound(c);
+    const full = this.held() >= cap;
     if (full && this.up && !this.paused) {
       this.up.pause();
       this.paused = true;
@@ -517,6 +521,7 @@ async function sustain(copy, opts = {}) {
   const need = Number(opts.needMbps);
   if (Number.isFinite(need) && need > 0) copy.needMbps = need;
   const at = Number.isFinite(Number(opts.at)) ? Math.max(0, Number(opts.at)) : copy.base;
+  copy.primeTarget = 0;   // a real viewer is reading now: the full bound applies
   const t0 = Date.now();
   copy.openedAt = t0;
   copy.windows = [];
@@ -568,12 +573,33 @@ async function sustain(copy, opts = {}) {
 }
 
 /**
+ * Start filling a copy before anyone presses Play.
+ *
+ * A title page is where the swarm has time the Play button does not. This opens the same buffer the
+ * player will read and fills a fixed slice of it (24 MB by default), then pauses. On Play, the measurement
+ * finds those bytes already in RAM (`cached: true`), so the press is a LAN read instead of a cold wait.
+ * It is deliberately small: browsing ten titles must not pin a gigabyte of film.
+ */
+function prime(who, opts = {}) {
+  const c = acquire(who);
+  if (!c) return false;
+  const need = Number(opts.needMbps);
+  if (Number.isFinite(need) && need > 0) c.needMbps = need;
+  const bytes = Number(opts.bytes);
+  c.primeTarget = Math.max(2 * MB, Math.min(c.bound(cfg()), Number.isFinite(bytes) ? bytes : 24 * MB));
+  c.anchor = Math.max(0, Number(opts.at) || 0);
+  c.ensureReader(c.anchor);
+  return true;
+}
+
+/**
  * Keep pulling until the cushion holds this much picture, or the clock says start anyway.
  * Called after the copy is chosen, from the same buffer the measurement filled, so on a warm copy this
  * returns at once and the first frame costs the player nothing.
  */
 async function preBuffer(copy, opts = {}) {
   const c = cfg();
+  copy.primeTarget = 0;
   const wantSec = clampNum(opts.sec != null ? opts.sec : c.preSec, c.preSec, 0, 600);
   const wantBytes = clampNum(opts.bytes != null ? opts.bytes : c.preMB, c.preMB, MB, 4096 * MB);
   const budgetMs = clampNum(opts.budgetMs != null ? opts.budgetMs : c.preMs, c.preMs, 0, 30000);
@@ -867,5 +893,5 @@ function parseWho(u) {
 
 module.exports = {
   cfg, acquire, get, drop, noteNeed, isSlow, clearSlow,
-  sustain, preBuffer, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
+  sustain, preBuffer, prime, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
 };

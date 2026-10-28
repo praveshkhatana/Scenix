@@ -68,6 +68,11 @@ export function typingActive() { return !!typingTarget; }
 
 export function initInput({ onBack, onLetterSearch } = {}) {
   document.addEventListener('keydown', (e) => {
+    // A real form field owns its own keys. The old capture handler treated Backspace as "go back" even
+    // while an <input> was focused, so a desktop or phone user could not delete a character: the page
+    // navigated away first. On the TV the field is a div and the D-pad pad below it, so nothing is lost.
+    const target = e.target;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
     const key = normalize(e);
     if (!key) return;
 
@@ -77,9 +82,12 @@ export function initInput({ onBack, onLetterSearch } = {}) {
     // Auto-repeat from a keyboard: never a second press.
     if (e.repeat && !isTyping) { e.preventDefault(); return; }
 
-    // The Sony remote fires one press twice. Ignore the echo.
+    // The Sony remote fires one press twice. Ignore the echo — but never for a digit: a PIN of 1000 or
+    // a house number typed on a real keyboard repeats a key on purpose, and dropping the second 0 makes
+    // the code wrong with no visible reason.
     const now = Date.now();
-    if (!isTyping && key === lastKey && now - lastAt < REPEAT_WINDOW_MS) {
+    const isDigit = /^[0-9]$/.test(key);
+    if (!isTyping && !isDigit && key === lastKey && now - lastAt < REPEAT_WINDOW_MS) {
       lastAt = now;
       e.preventDefault();
       return;

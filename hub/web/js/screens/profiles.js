@@ -29,8 +29,20 @@ import { initials } from '/ui/js/format.js';
 import { session, isKids, isLocked } from '/ui/js/state.js';
 import { paintAvatar } from '/ui/js/avatars.js';
 import { openAvatarPicker } from '/ui/js/avatarmodal.js';
+import { refreshProfiles } from '/ui/js/profileedit.js';
+
+let refreshed = false;
 
 export function screen(ctx) {
+  // The gate is the one screen a household reaches after changing something somewhere else (a PIN set on
+  // another device, a profile removed on the hub). The session copy is a cache; refresh it once when the
+  // door opens so a lock that was just put on a person is actually asked for on this screen.
+  if (!refreshed) {
+    refreshed = true;
+    refreshProfiles()
+      .then(() => { if (location.hash.startsWith('#/profiles')) ctx.reload(); })
+      .catch(() => {});
+  }
   const wrap = el('div', { class: 'screen pwrap' });
   // The halo is scenery, not a control: it holds the centre of the screen warm so the focused card has
   // something to stand against on a wall of black.

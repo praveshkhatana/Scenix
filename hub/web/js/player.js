@@ -131,7 +131,11 @@ class NativeBackend {
     listen('scenix:position', (d) => { this.merge(d); emit('position', this.state()); });
     listen('scenix:tracks', (d) => emit('tracks', { audio: normAudio(d.audio), text: normText(d.text) }));
     listen('scenix:buffering', (d) => emit('buffering', { buffering: !!d.buffering, seeders: d.seeders }));
-    listen('scenix:error', (d) => emit('error', { code: d.code, message: d.message || 'The player stopped' }));
+    listen('scenix:error', (d) => emit('error', {
+      code: d.code,
+      message: d.message || 'The player stopped',
+      waiting: !!d.waiting,
+    }));
     listen('scenix:ended', (d) => { this.merge(d); emit('ended', d); });
     this.poll = setInterval(() => {
       const st = this.state();
@@ -566,22 +570,38 @@ export function createPlayer() {
       }
       swapping = true;
       bus.emit('negotiating', { identity: spec.identity });
-      let target;
-      try {
-        target = await fn(body);
-      } catch (e) {
-        const tried = (e.body && e.body.tried) || [];
-        bus.emit('error', {
-          code: String(e.status || 'net'),
-          // The hub's own words when it has a copy but cannot serve it yet. A title that is still being
-          // fetched from peers is not a broken file, and the screen has to be able to tell those apart.
-          message: (e.body && e.body.error) || e.message || 'The hub could not answer',
-          tried,
-          waiting: e.status === 503 || !!(e.body && e.body.warming),
-        });
-        return null;
+      let target = null;
+      // A cold copy is a copy that has not started, not a copy that failed. The hub now answers 503
+      // `warming` in ~a second and keeps its reader open; asking again is how that copy starts. Three
+      // attempts at the hub's own retryAfterMs turn "nothing plays" into a short, honest wait.
+      const PREPARE_TRIES = 7;
+      for (let attempt = 0; attempt < PREPARE_TRIES; attempt++) {
+        try {
+          target = await fn(body);
+          break;
+        } catch (e) {
+          const waiting = e.status === 503 || !!(e.body && e.body.warming);
+          if (waiting && attempt < PREPARE_TRIES - 1) {
+            const wait = Math.max(900, Math.min(4000, Number((e.body && e.body.retryAfterMs) || 1500) + attempt * 400));
+            bus.emit('preparing', { attempt: attempt + 1, retryAfterMs: wait, reason: e.body && e.body.error });
+            await new Promise((r) => setTimeout(r, wait));
+            continue;
+          }
+          swapping = false;
+          const tried = (e.body && e.body.tried) || [];
+          bus.emit('error', {
+            code: String(e.status || 'net'),
+            // The hub's own words when it has a copy but cannot serve it yet. A title that is still being
+            // fetched from peers is not a broken file, and the screen has to be able to tell those apart.
+            message: (e.body && e.body.error) || e.message || 'The hub could not answer',
+            tried,
+            waiting,
+          });
+          return null;
+        }
       }
       if (!target || !target.url) {
+        swapping = false;
         bus.emit('error', {
           code: 'no-source',
           message: 'Nothing on this hub could be opened for this title',

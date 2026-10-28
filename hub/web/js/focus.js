@@ -31,12 +31,47 @@ export function isFocusable(node) { return node && node.hasAttribute && node.has
 
 export function getFocus() { return current; }
 
+/*
+ * One layout read per focus move.
+ *
+ * A D-pad step used to call getBoundingClientRect() and getComputedStyle() once per focusable, several
+ * times over (group members, geometric fallback, band walk). On this panel that is four or five forced
+ * style/layout passes per key. The cache below is alive only for the length of one move: rectangles are
+ * read once, reused by every strategy, and thrown away before anything can change.
+ */
+let moveCache = null;
+
+function beginMove() { moveCache = { pool: null, rects: new Map(), styles: new Map() }; }
+function endMove() { moveCache = null; }
+
+function rectOf(node) {
+  if (moveCache) {
+    const held = moveCache.rects.get(node);
+    if (held) return held;
+    const r = node.getBoundingClientRect();
+    moveCache.rects.set(node, r);
+    return r;
+  }
+  return node.getBoundingClientRect();
+}
+
+function styleOf(node) {
+  if (moveCache) {
+    const held = moveCache.styles.get(node);
+    if (held) return held;
+    const st = window.getComputedStyle(node);
+    moveCache.styles.set(node, st);
+    return st;
+  }
+  return window.getComputedStyle(node);
+}
+
 function visible(node) {
   if (!node || !node.isConnected) return false;
   if (node.getAttribute('aria-hidden') === 'true') return false;
-  const r = node.getBoundingClientRect();
+  const r = rectOf(node);
   if (r.width < 2 || r.height < 2) return false;
-  const st = window.getComputedStyle(node);
+  const st = styleOf(node);
   if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
   return true;
 }
@@ -44,7 +79,10 @@ function visible(node) {
 function root() { return scopes.length ? scopes[scopes.length - 1] : document.body; }
 
 export function candidates() {
-  return Array.from(root().querySelectorAll(`[${ATTR}]`)).filter(visible);
+  if (moveCache && moveCache.pool) return moveCache.pool;
+  const pool = Array.from(root().querySelectorAll(`[${ATTR}]`)).filter(visible);
+  if (moveCache) moveCache.pool = pool;
+  return pool;
 }
 
 export function onFocus(cb) { listeners.push(cb); return () => { const i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); }; }
@@ -83,8 +121,6 @@ function groupMembers(group, node) {
 }
 
 /* ---- geometric navigation: what is really above or below on this screen ---- */
-
-function rectOf(node) { return node.getBoundingClientRect(); }
 
 function geometric(from, dir, pool) {
   const a = rectOf(from);
@@ -168,6 +204,15 @@ function bandStep(from, dir) {
 }
 
 export function move(dir) {
+  beginMove();
+  try {
+    return moveWithin(dir);
+  } finally {
+    endMove();
+  }
+}
+
+function moveWithin(dir) {
   if (!current || !visible(current)) {
     const first = candidates()[0];
     if (first) setFocus(first);

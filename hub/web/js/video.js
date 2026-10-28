@@ -39,6 +39,13 @@ function ensurePreview() {
   previewVideo.setAttribute('playsinline', '');
   previewVideo.preload = 'none';
   previewVideo.setAttribute('aria-hidden', 'true');
+  // A browser paints a flat grey rectangle with a play glyph in it before a video has a frame. That is
+  // the "grey play thumbnail" a viewer sees for half a second before every trailer. The still artwork is
+  // the poster until the first frame is actually decoded; only then does the picture fade in.
+  previewVideo.style.background = 'transparent';
+  const ready = () => { if (previewWrap) previewWrap.classList.add('ready'); };
+  previewVideo.addEventListener('loadeddata', ready);
+  previewVideo.addEventListener('canplay', ready);
   previewVideo.addEventListener('error', () => stopPreview());
   previewWrap.appendChild(previewVideo);
   return previewVideo;
@@ -75,10 +82,12 @@ export function previewSrc(target) {
 }
 
 /** Start the muted preview in `slot`. Resolves false when there is nothing to play. */
-export async function startPreview(slot, target) {
+export async function startPreview(slot, target, poster) {
   const src = previewSrc(target);
   if (!src) return false;
   const v = attachPreview(slot);
+  if (poster) v.poster = String(poster);
+  if (previewWrap) previewWrap.classList.remove('ready');
   if (v.src !== src) {
     v.src = src;
     v.load();
@@ -101,7 +110,7 @@ export function stopPreview() {
   }
   if (previewWrap && previewWrap.parentNode) previewWrap.parentNode.removeChild(previewWrap);
   document.querySelectorAll('.preview.on').forEach((n) => n.classList.remove('on'));
-  if (previewWrap) previewWrap.classList.remove('on');
+  if (previewWrap) { previewWrap.classList.remove('on'); previewWrap.classList.remove('ready'); }
 }
 
 /** Hide the preview without destroying it — used when a screen is torn down. */
@@ -147,6 +156,11 @@ export function setFeatureVisible(on) {
  */
 export function setSurfaceLive(on) {
   live = !!on;
+  // The shell owns the picture surface. Tell it when the surface is wanted: a full-screen TextureView
+  // behind a browse screen is a composited layer paid for nothing.
+  try {
+    if (window.Scenix && typeof window.Scenix.surface === 'function') window.Scenix.surface(!!on);
+  } catch (e) { /* an older shell simply keeps its surface */ }
   const root = document.documentElement;
   if (live) {
     root.classList.add('native-live');

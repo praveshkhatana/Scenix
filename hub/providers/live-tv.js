@@ -57,7 +57,8 @@ const REFRESH_MS = 6 * 60 * 60 * 1000; // playlist re-fetch every 6 h
 const HEALTH_REFRESH_MS = Number(process.env.LIVE_HEALTH_REFRESH_MS || 30 * 60 * 1000);
 const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
-let channels = []; // {id, name, group, groups, logo, url, quality, langs, langCodes}
+let allChannels = []; // everything the playlist published, including what the owner switched off
+let channels = []; // the selected list the rest of the hub sees: {id, name, group, groups, logo, url, quality, langs, langCodes}
 let loading = null;
 let lastFetch = 0;
 let lastPlaylistUrl = ''; // what the last successful fetch actually pulled, so changing it takes effect
@@ -214,7 +215,8 @@ async function refresh(force = false) {
             }
           }
         }
-        channels = parsed;
+        allChannels = parsed;
+        channels = selected(parsed);
         lastFetch = Date.now();
         lastPlaylistUrl = url;
         lastError = null;
@@ -300,6 +302,46 @@ function qbits(q) {
 
 function identityForName(name) {
   return 'norm:' + slug(name);
+}
+
+/**
+ * The owner's selection over the playlist. This is deliberately applied to the published list rather than
+ * to the row: a hidden channel must not be probed, numbered, searched or played, and a hidden group must
+ * leave the catalogue as one decision. `allChannels` keeps the published list so the channel manager can
+ * offer a hidden channel back.
+ */
+function selected(list) {
+  const live = (settings.get().live || {});
+  const hidden = new Set(live.hidden || []);
+  const groups = new Set(live.groupsHidden || []);
+  return list.filter((c) => {
+    if (hidden.has(identityForName(c.name))) return false;
+    if ((c.groups || []).some((g) => groups.has(g))) return false;
+    return true;
+  });
+}
+
+/** The published channels, with the owner's selection state, for the Settings screen. */
+function channelList() {
+  const live = (settings.get().live || {});
+  const hidden = new Set(live.hidden || []);
+  const groups = new Set(live.groupsHidden || []);
+  return allChannels.map((c) => ({
+    identity: identityForName(c.name),
+    name: c.name,
+    group: c.group,
+    groups: c.groups,
+    logo: c.logo || null,
+    quality: c.quality || null,
+    enabled: !hidden.has(identityForName(c.name)) && !(c.groups || []).some((g) => groups.has(g)),
+    number: liveHealth.numberFor(identityForName(c.name)) || null,
+  }));
+}
+
+function channelGroups() {
+  const set = new Set();
+  for (const c of allChannels) for (const g of c.groups || []) set.add(g);
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 /** Group the parsed channel variants into §1 items (identity = norm:<slug(name)>). */
@@ -483,6 +525,15 @@ module.exports = {
     loading = null;
     return refresh(true).catch((e) => console.log(new Date().toISOString(), 'live reload failed:', e.message));
   },
+
+  /** The playlist did not change, only which channels the owner wants. No network, no re-probe. */
+  reselect() {
+    channels = selected(allChannels);
+    return channels;
+  },
+
+  channelList,
+  channelGroups,
 
   /** Cache-only: returns [] until the first playlist fetch lands, never blocks the caller. */
   async catalog(catalogId, extra = {}) {

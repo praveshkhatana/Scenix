@@ -84,6 +84,10 @@ class WebShellActivity : Activity() {
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
         }
+        // A browse screen has no picture: keeping a full-screen TextureView behind the page costs the
+        // panel a whole composited layer for nothing. The page asks for it when a film starts
+        // (`Scenix.surface(true)`), and hands it back when the player closes.
+        video.visibility = View.GONE
         root.addView(video, match())
         web = WebView(this)
         configureWeb()
@@ -237,10 +241,16 @@ class WebShellActivity : Activity() {
          */
         override fun onPlayerError(error: PlaybackException) {
             android.util.Log.w("ScenixWeb", "playback error ${error.errorCodeName}", error)
+            // A first-byte timeout is a cold copy, not a broken file. Saying which is which lets the
+            // page offer "wait" (and retry by itself) instead of sending the viewer to another source.
+            val name = error.errorCodeName
+            val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
+                name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
             emit("scenix:error", mapOf(
-                "code" to error.errorCodeName,
+                "code" to name,
                 "message" to (error.message ?: ""),
                 "positionMs" to (player?.currentPosition ?: 0L),
+                "waiting" to waiting,
             ))
         }
 
@@ -360,6 +370,18 @@ class WebShellActivity : Activity() {
 
         @JavascriptInterface
         fun device(): String = deviceName()
+
+        /**
+         * Whether the native picture surface is part of the frame. On a browse screen it is not: a
+         * transparent WebView over a TextureView is a second full-screen layer the GPU has to compose on
+         * every scroll. On the player it is, and the page's background must be transparent so the picture
+         * shows through. One call, two states, no guessing from the shell.
+         */
+        @JavascriptInterface
+        fun surface(on: Boolean) = onMain {
+            video.visibility = if (on) View.VISIBLE else View.GONE
+            web.setBackgroundColor(if (on) android.graphics.Color.TRANSPARENT else android.graphics.Color.rgb(20, 20, 20))
+        }
 
         /** `{url, headers, positionMs, subs:[{url,language,label,format}], audio, sub, title}` */
         @JavascriptInterface

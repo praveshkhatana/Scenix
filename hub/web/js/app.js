@@ -29,6 +29,7 @@ const SCREENS = {
   search:   () => import('/ui/js/screens/search.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
+  channels: () => import('/ui/js/screens/channels.js'),
   add:      () => import('/ui/js/screens/add.js'),
   manage:   () => import('/ui/js/screens/manage.js'),
 };
@@ -78,8 +79,31 @@ const ctx = {
   open(item) { if (item && item.identity) navigate('detail', item.identity); },
   play(item, opts) {
     if (!item || !item.identity) return;
-    state.session.pendingPlay = Object.assign({ identity: item.identity, type: item.type }, opts || {});
+    if (item.type === 'channel' || item.live) state.session.zapping = item.identity;
+    // Carry the name with the identity: the player can draw its top line before the hub has answered,
+    // and a live channel that fails still says which channel it was.
+    state.session.pendingPlay = Object.assign({
+      identity: item.identity, type: item.type, title: item.title,
+      subtitle: (item.live && item.live.now) || item.tagline || '',
+    }, opts || {});
     navigate('play', item.identity);
+  },
+  /**
+   * Live TV has no seek bar, so left/right are the channel keys, the way a set-top box behaves. The list
+   * is the hub's live row in the owner's order; wrapping at the ends is deliberate (channel 1 -> last).
+   */
+  zap(delta) {
+    const rows = (state.session.home && state.session.home.rows) || [];
+    const row = rows.find((r) => r.id === 'live') || rows.find((r) => r.card === 'channel');
+    const items = (row && row.items) || [];
+    if (!items.length) { toast('No other channels are loaded'); return; }
+    const current = state.session.zapping || (state.session.pendingPlay && state.session.pendingPlay.identity);
+    let at = items.findIndex((i) => i.identity === current);
+    if (at < 0) at = 0;
+    const next = items[(at + (delta < 0 ? -1 : 1) + items.length) % items.length];
+    state.session.zapping = next.identity;
+    state.session.pendingPlay = { identity: next.identity, type: 'channel', live: true, title: next.title };
+    navigate('play', next.identity);
   },
   list(item) {
     if (!item) return;
@@ -351,7 +375,9 @@ function askText({ title = '', reason = '', placeholder = '', initial = '', acti
   return new Promise((resolve) => {
     const err = el('div', { class: 'err' });
     let answered = false;
-    const entry = entryField({ glyph: 'globe', placeholder, initial });
+    // A URL is the one thing nobody can type on a remote. On a pointer device this is a real input,
+    // so paste, selection and Ctrl/Cmd+V work; on the TV it stays the D-pad pad.
+    const entry = entryField({ glyph: 'globe', placeholder, initial, native: !window.Scenix });
     let box;
     const answer = (value) => {
       if (answered) return;

@@ -97,9 +97,11 @@ export const api = {
   meta: (identity, profile) => request(`/app/v1/meta/${encodeURIComponent(identity)}${profile ? `?profile=${encodeURIComponent(profile)}` : ''}`, { timeout: 8000 }),
   trailer: (identity, profile) => request(`/app/v1/trailer/${encodeURIComponent(identity)}?profile=${encodeURIComponent(profile)}`, { timeout: 8000 }),
   subs: (identity, profile, langs) => request(`/app/v1/subs/${encodeURIComponent(identity)}?profile=${encodeURIComponent(profile)}&langs=${encodeURIComponent(langs || '')}`, { timeout: 8000 }),
-  // The hub spends up to ~11s measuring copies before it answers, and says the client should allow 12.
-  play: (body) => request('/app/v1/play', { method: 'POST', body, timeout: 14000 }),
-  switchSource: (body) => request('/app/v1/switch', { method: 'POST', body, timeout: 14000 }),
+  // The hub now answers a Play press inside ~8 s, but a cold copy can still take a few more seconds to
+  // produce its first byte. The old 14 s was below the hub's own worst case, so a working request was
+  // aborted by the client and shown as "the hub did not answer".
+  play: (body) => request('/app/v1/play', { method: 'POST', body, timeout: 30000 }),
+  switchSource: (body) => request('/app/v1/switch', { method: 'POST', body, timeout: 30000 }),
   progress: (body) => request('/app/v1/progress', { method: 'POST', body, timeout: 6000 }),
   prefs: (profile) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
   savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { method: 'POST', body: prefs, timeout: 6000 }),

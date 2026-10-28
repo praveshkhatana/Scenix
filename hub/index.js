@@ -20,6 +20,7 @@
 
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const zlib = require('zlib');
 const { URL, URLSearchParams } = require('url');
 
@@ -85,12 +86,12 @@ const ALT_MAX = Number(process.env.ALT_MAX || 9);
 // that starts and keeps going beats a link that "succeeds" in 0.3s and dies in the player. The total
 // stays inside the 12s read timeout the TV app puts on this call, so the last candidate tried is one
 // that has actually been measured rather than one the app gave up waiting for.
-const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 3);
-const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 11000);
+const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 2);
+const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 5000);
 // How long a warming title asks the player to wait before pressing again. The hub says it rather than
 // the client guessing, because only the hub knows whether it is talking to an engine that is awake.
-const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 15000);
-const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 5000);
+const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 2000);
+const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 1500);
 // How much of the ranking rule's speed bar applies to a client that plays the copy itself.
 //
 // A browser over MSE and a native player on a TV are not equally nervous about a swarm that delivers at
@@ -201,9 +202,74 @@ function hasSubtitleSource() {
  * typed on a TV cannot be read off the network by whoever is listening, and a client that wants to know
  * whether to show a keypad asks with `pinSet`.
  */
+/*
+ * A profile PIN never leaves the box in a form anyone can read, and it never sits on disk in one either.
+ * A four-digit code has only ten thousand answers, so the defence is not a longer hash: it is a slow hash
+ * (scrypt, per-profile salt) plus a rate limit on the unlock route. The tag in front of the hash is what
+ * lets a record written before this change still be opened once, and be rewritten hashed on its next save.
+ */
+const PIN_TAG = 'scrypt';
+function hashPin(pin) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(pin), salt, 32).toString('hex');
+  return PIN_TAG + ':' + salt + ':' + hash;
+}
+function isHashedPin(v) { return typeof v === 'string' && v.startsWith(PIN_TAG + ':'); }
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a == null ? '' : a));
+  const y = Buffer.from(String(b == null ? '' : b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+function profileHasPin(p) {
+  return !!(p && (isHashedPin(p.pinHash) || (p.pin != null && String(p.pin).trim() !== '')));
+}
+function pinMatches(p, given) {
+  if (!p || given == null) return false;
+  if (isHashedPin(p.pinHash)) {
+    const parts = String(p.pinHash).split(':');
+    if (parts.length !== 3) return false;
+    const got = crypto.scryptSync(String(given), parts[1], 32);
+    const want = Buffer.from(parts[2], 'hex');
+    return want.length === got.length && crypto.timingSafeEqual(want, got);
+  }
+  // A record written before the hash existed is compared once, in constant time, and hashed on next save.
+  return p.pin != null && safeEqual(p.pin, given);
+}
+
+/** One slow attempt per profile, counted in memory; ten wrong numbers in five minutes is a brute force. */
+const unlockTries = new Map(); // profile id -> { count, until }
+function unlockAllowed(id) {
+  const now = Date.now();
+  const row = unlockTries.get(String(id));
+  if (!row || row.until <= now) return true;
+  return row.count < 10;
+}
+function unlockFailed(id) {
+  const now = Date.now();
+  const row = unlockTries.get(String(id)) || { count: 0, until: now + 5 * 60e3 };
+  row.count++;
+  if (row.until <= now) row.until = now + 5 * 60e3;
+  unlockTries.set(String(id), row);
+}
+function unlockSucceeded(id) { unlockTries.delete(String(id)); }
+
+/** Hash every plaintext PIN the seed or an older build left behind, once, at boot. */
+function migratePins() {
+  let changed = 0;
+  for (const p of store.profiles()) {
+    if (p && p.pin != null && String(p.pin).trim() !== '' && !isHashedPin(p.pinHash)) {
+      store.patchProfile(p.id, { pinHash: hashPin(String(p.pin).trim()), pin: null });
+      changed++;
+    }
+  }
+  if (changed) log('PINS hashed at rest:', changed);
+}
+
+migratePins();
+
 function wireProfile(p) {
-  const { pin, ...rest } = p || {};
-  const pinSet = pin != null && String(pin).length > 0;
+  const { pin, pinHash, ...rest } = p || {};
+  const pinSet = profileHasPin(p);
   // One honest answer instead of two flags a screen has to combine right. `pinRequired` without a PIN is a
   // gate that checks nothing, and a client that only reads the flag builds a wall the viewer cannot pass -
   // which is what happened to a profile here whose PIN was removed during testing. The hub knows whether an
@@ -238,7 +304,7 @@ function wireProfile(p) {
    so a screen can tell "this act belongs to an adult" apart from "you typed the wrong number".
 */
 function pinHolders() {
-  return store.profiles().filter((p) => p.pin != null && String(p.pin).trim() !== '');
+  return store.profiles().filter((p) => profileHasPin(p));
 }
 
 /**
@@ -262,7 +328,7 @@ function adultProofOk(body) {
   if (!holders.length) return true;
   const given = proofGiven(body);
   if (!given) return false;
-  return holders.some((p) => String(p.pin).trim() === given);
+  return holders.some((p) => pinMatches(p, given));
 }
 
 /** The refusal itself, worded by whether a wrong number was typed or none was offered. */
@@ -491,6 +557,22 @@ async function buildRow(row, ctx, budgetMs) {
   const items = await pipeline(raw || [], ctx);
   // Trim after the rules: a row may hand back more candidates than it wants on screen.
   return items.slice(0, row.max || ROW_MAX);
+}
+
+/**
+ * Tier 3 ("the dark-red zone") has exactly one shelf: Late Night. Turning the switch on must not turn
+ * Just Added, Top 10, Continue Watching or a taste row into a porn wall; that is not what the switch says
+ * and it is not what a household expects to see when it opens Home. Direct detail/meta/play still work, so
+ * a title the owner asked for can be opened by name, but the general shelves never advertise it.
+ */
+const ADULT_ROW_ID = 'latenight';
+// The first screen is a preview, not the whole shelf. Eighteen cards fit two screens of a TV row and
+// keep the home payload (and the DOM the WebView must build) roughly a third smaller than thirty.
+const HOME_ROW_MAX = Number(process.env.HOME_ROW_MAX || 18);
+function generalItems(rowId, items) {
+  if (!Array.isArray(items)) return items;
+  if (rowId === ADULT_ROW_ID) return items;
+  return items.filter((it) => Number(it && it.tier) !== 3);
 }
 
 // How many billboard tiles to answer with. The app paints the first one full-bleed; the rest are the
@@ -1292,7 +1374,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       { ...cand, url: o.url, infoHash: o.infoHash },
       // The prepare budget is clamped to the time left, not left at its own default: the app puts a
       // 12 s read timeout on this call, and a hub that answers at 15 s might as well not have answered.
-      { clientHost: opts.clientHost, budgetMs: Math.max(1200, deadline - Date.now() - 1500),
+      { clientHost: opts.clientHost,
+        // A cold torrent's metadata can take much longer than a Play press may. One press gets a short
+        // look; the engine keeps the torrent, so the client's own retry finds it already resolved.
+        budgetMs: Math.max(1200, Math.min(2500, deadline - Date.now() - 1200)),
         // A season pack is one torrent holding the whole season. The engine has to be told which file
         // inside it this press means, or the biggest file wins and a Play on S01E04 plays S01E01.
         want: ep ? { season: ep.season, episode: ep.episode } : null },
@@ -1544,7 +1629,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const bufWho = { hash: out.torrent.hash, fileId: out.torrent.fileId };
     const buf = readahead.get(bufWho);
     if (buf) {
-      const leftMs = Math.max(0, deadline - Date.now() - 700);
+      // Enough to prove the copy is moving, not a six-second wait in front of a black screen. The
+      // cushion keeps filling while the player reads it, so the rest of the pre-roll is free.
+      const leftMs = Math.max(0, Math.min(1500, deadline - Date.now() - 400));
       const pb = await readahead.preBuffer(buf, { budgetMs: leftMs });
       const need = ranking.estimateMbps(source, kept);
       out.prebuffer = {
@@ -1558,6 +1645,22 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       log('PLAY PREBUFFER', identity, labelOf(source),
         'MB=' + pb.MB, 'sec=' + (pb.sec == null ? '?' : pb.sec), 'ms=' + pb.ms,
         'complete=' + pb.complete, 'targetMB=' + (pb.targetMB == null ? '?' : pb.targetMB));
+      // A gateway link that produced no byte at all is not a stream yet, however honest the ranking was
+      // about its peers. Answer "preparing" and leave the reader open; the client asks again a beat later
+      // and finds the head already in RAM. A 200 here is what produced "This copy has not started moving
+      // yet" on the TV after a twelve-second wait.
+      if (!pb.complete && !(Number(out.measuredBytes) > 0) && out.warming !== false) {
+        log('PLAY WARMING', identity, labelOf(source), 'prebuffer incomplete, no measured byte');
+        return {
+          status: 503,
+          body: {
+            identity, title: kept.title || null, tried,
+            error: 'this copy is still being prepared',
+            warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
+            alternatives: candidates.filter((s) => s !== source).slice(0, ALT_MAX),
+          },
+        };
+      }
     }
   }
 
@@ -1749,6 +1852,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // The probe of the file we are about to play wins over the title's metadata: they disagree when the copy
   // is a different cut, and the file on disk is what the client will actually be watching.
   out.durationMs = (out.probe && out.probe.durationMs) || kept.durationMs || null;
+  // The kind of thing this is, so a player that arrived by identity (a deep link, a zap) does not have to
+  // guess whether it is holding a film or a channel.
+  out.type = kept.type || (out.kind === 'hls' ? 'channel' : 'movie');
+  out.live = out.type === 'channel';
+  out.title = kept.title || null;
   out.status = source.status || null;
   out.tagline = source.tagline || null;
   // What the picker rejected on the way here. When playback fails this is the difference between a
@@ -1904,6 +2012,14 @@ const server = http.createServer(async (req, res) => {
         rows: registry.rows.map((r) => ({
           id: r.id, title: r.title, card: r.card || 'card', scope: r.scope || 'all',
         })),
+        // Live TV's published channels and groups, with the owner's current selection state. The
+        // channel manager needs the list the playlist published, not the filtered one it shows.
+        live: (() => {
+          const p = registry.byId['live-tv'];
+          return p && typeof p.channelList === 'function'
+            ? { channels: p.channelList(), groups: p.channelGroups() }
+            : { channels: [], groups: [] };
+        })(),
         file: settings.FILE,
       });
     }
@@ -1930,6 +2046,17 @@ const server = http.createServer(async (req, res) => {
           || before.languages.join(',') !== next.languages.join(','))) {
         live.reload();
         effects.liveReload = 'requested';
+      } else if (live && typeof live.reselect === 'function') {
+        // Same playlist, different selection: filtering the list already in memory is enough, and a
+        // network fetch here would make a toggle in Settings wait on iptv-org.
+        const was = before.live || {};
+        const now = next.live || {};
+        if (String(was.hidden || '') !== String(now.hidden || '')
+          || String(was.groupsHidden || '') !== String(now.groupsHidden || '')
+          || String(was.order || '') !== String(now.order || '')) {
+          live.reselect();
+          effects.liveSelection = 'applied';
+        }
       }
       invalidateCaches();
       log('SETTINGS changed', JSON.stringify({
@@ -1989,11 +2116,13 @@ const server = http.createServer(async (req, res) => {
       // refuses to hold the half-state at all.
       if ('pin' in patch) {
         const v = patch.pin == null ? '' : String(patch.pin).trim().slice(0, 12);
-        patch.pin = v || null;
+        // The client sends digits; the box keeps a scrypt hash and a per-profile salt, never the digits.
+        patch.pinHash = v ? hashPin(v) : null;
+        patch.pin = null;
         patch.pinRequired = !!v;
       } else if (patch.pinRequired === true) {
         const held = store.profile(m[1]);
-        if (!held || held.pin == null || String(held.pin).trim() === '') {
+        if (!held || !profileHasPin(held)) {
           return send(res, 400, { error: 'set a PIN before asking for one' });
         }
       }
@@ -2010,10 +2139,10 @@ const server = http.createServer(async (req, res) => {
          heard of, which is a second way to mint a profile - one that answered to no rule on the create route at
          all, since it was never a create. */
       if (!held) return send(res, 404, { error: 'no such profile', id: m[1] });
-      const holdsGate = ['pin', 'pinRequired', 'kind', 'age', 'rules', 'prefs', 'languages'].some((k) => k in patch);
-      if (held && held.pin != null && String(held.pin).trim() !== '' && holdsGate) {
+      const holdsGate = ['pin', 'pinHash', 'pinRequired', 'kind', 'age', 'rules', 'prefs', 'languages'].some((k) => k in patch);
+      if (held && profileHasPin(held) && holdsGate) {
         const given = !body || body.pinCurrent == null ? '' : String(body.pinCurrent).trim();
-        if (given !== String(held.pin).trim()) {
+        if (!pinMatches(held, given)) {
           log('PROFILE LOCK REFUSED', m[1], 'gate change without the current PIN');
           return send(res, 403, { error: 'this profile is locked: its current PIN is needed to change that', locked: m[1] });
         }
@@ -2023,7 +2152,7 @@ const server = http.createServer(async (req, res) => {
          well: into the adult band, up past the age a child was held to, or rewriting the filters a Kids profile
          is screened by. Producing that profile's own number answers this too, deliberately: the request carries
          one field, and a change asked for twice would leave a screen holding two answers for it. */
-      const ownProof = !!(held && held.pin != null && proofGiven(body) === String(held.pin).trim());
+      const ownProof = !!(held && profileHasPin(held) && pinMatches(held, proofGiven(body)));
       if (isAdultChange(held, patch) && !ownProof && !adultProofOk(body)) {
         return refuseAdult(res, body, 'change that profile');
       }
@@ -2041,9 +2170,9 @@ const server = http.createServer(async (req, res) => {
          looked up by id in the list itself: the number compared has to be the one on the person being removed. */
       const body = await readBody(req);
       const held = store.profiles().find((p) => String(p.id) === String(m[1]));
-      if (held && held.pin != null && String(held.pin).trim() !== '') {
+      if (held && profileHasPin(held)) {
         const given = !body || body.pinCurrent == null ? '' : String(body.pinCurrent).trim();
-        if (given !== String(held.pin).trim()) {
+        if (!pinMatches(held, given)) {
           log('PROFILE LOCK REFUSED', m[1], 'removal without the current PIN');
           return send(res, 403, { error: 'this profile is locked: its current PIN is needed to remove it', locked: m[1] });
         }
@@ -2061,14 +2190,19 @@ const server = http.createServer(async (req, res) => {
     }
     m = /^\/app\/v1\/profiles\/([^/]+)\/unlock$/.exec(path);
     if (m && req.method === 'POST') {
+      if (!unlockAllowed(m[1])) {
+        return send(res, 429, { error: 'too many attempts; wait a few minutes', retryAfterMs: 300000 });
+      }
       const body = await readBody(req);
       const held = store.profile(m[1]);
-      const pin = held && held.pin != null ? String(held.pin) : '';
       const asked = String((body && body.pin) || '');
-      if (!pin) return send(res, 200, { ok: true, unlocked: m[1], noPin: true });
-      return asked === pin
-        ? send(res, 200, { ok: true, unlocked: m[1] })
-        : send(res, 403, { error: 'wrong PIN', unlocked: null });
+      if (!held || !profileHasPin(held)) return send(res, 200, { ok: true, unlocked: m[1], noPin: true });
+      if (pinMatches(held, asked)) {
+        unlockSucceeded(m[1]);
+        return send(res, 200, { ok: true, unlocked: m[1] });
+      }
+      unlockFailed(m[1]);
+      return send(res, 403, { error: 'wrong PIN', unlocked: null });
     }
 
     if (path === '/app/v1/home') {
@@ -2083,7 +2217,7 @@ const server = http.createServer(async (req, res) => {
           card: row.card,
           order: row.order,
           scope: row.scope || 'all',
-          items: await buildRow(row, ctx, HOME_BUDGET_MS),
+          items: generalItems(row.id, await buildRow(row, ctx, HOME_BUDGET_MS)).slice(0, HOME_ROW_MAX),
         })),
       );
       // Owner order, applied once the rows exist: names in `rows.order` come first in that sequence and
@@ -2119,7 +2253,7 @@ const server = http.createServer(async (req, res) => {
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
       return send(res, 200, {
         id: row.id, title: row.title, card: row.card, order: row.order, scope: row.scope || 'all',
-        items: await buildRow(row, ctx),
+        items: generalItems(row.id, await buildRow(row, ctx)),
       });
     }
 
@@ -2141,7 +2275,7 @@ const server = http.createServer(async (req, res) => {
           all.push(...(await ctx.catalog(p.id, c.id, { search: q }, SEARCH_BUDGET_MS)));
         }
       }
-      const items = await pipeline(all, ctx);
+      const items = generalItems('search', await pipeline(all, ctx));
       return send(res, 200, { q, items: items.slice(0, SEARCH_MAX) });
     }
 

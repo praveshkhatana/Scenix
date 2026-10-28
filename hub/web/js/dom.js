@@ -62,8 +62,18 @@ export function scrollBehavior() { return prefersReducedMotion() ? 'auto' : 'smo
  * A remote image that never breaks a row: lazy, neutral placeholder behind it, and the placeholder stays
  * if the image 404s or the CDN is unreachable. Rows must survive a missing picture.
  */
+/** Ask the CDN for a screen-sized picture, not the master. A 4K original is not more detail on a TV. */
+export function imageUrl(src) {
+  const u = String(src || '');
+  if (!u) return '';
+  if (/image\.tmdb\.org\/t\/p\/original\//i.test(u)) return u.replace(/\/t\/p\/original\//i, '/t/p/w500/');
+  if (/images\.metahub\.space\/backdrop\/large\//i.test(u)) return u.replace('/backdrop/large/', '/backdrop/medium/');
+  return u;
+}
+
 export function posterImg(src, alt, cls) {
   const img = el('img', { alt: alt || '', loading: 'lazy', decoding: 'async', class: cls || '' });
+  src = imageUrl(src);
   if (src) {
     img.addEventListener('error', () => { img.remove(); });   // the gradient placeholder underneath stays
     img.src = src;

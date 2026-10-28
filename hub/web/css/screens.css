@@ -70,16 +70,16 @@
 .bb-btns { flex-wrap: wrap; }
 .bb-btns .bb-meta { flex: 0 0 100%; }
 .bb-thumbs {
-  flex: 0 0 100%; display: flex; align-items: flex-end; gap: calc(44px * var(--s));
+  flex: 0 0 100%; display: flex; align-items: flex-end; gap: calc(24px * var(--s));
   margin-top: calc(14px * var(--s));
 }
 .bb-thumb {
-  width: calc(272px * var(--s)); height: calc(174px * var(--s)); padding: 0; border: 0; overflow: hidden;
+  width: calc(200px * var(--s)); height: calc(115px * var(--s)); padding: 0; border: 0; overflow: hidden;
   border-radius: var(--r-chip); background: var(--surface2); cursor: pointer; opacity: .62;
   transition: opacity var(--focus-ms) ease-out, transform var(--focus-ms) ease-out;
 }
-.bb-thumb:first-child { width: calc(350px * var(--s)); height: calc(224px * var(--s)); }
-.bb-thumb:last-child { width: calc(184px * var(--s)); height: calc(118px * var(--s)); }
+.bb-thumb:first-child { width: calc(260px * var(--s)); height: calc(150px * var(--s)); }
+.bb-thumb:last-child { width: calc(140px * var(--s)); height: calc(80px * var(--s)); }
 .bb-thumb.on { opacity: 1; box-shadow: inset 0 0 0 calc(3px * var(--s)) var(--brand); }
 .bb-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 /* The ring is the card's ring — the same width, the same colour, the same step up — because one of these
@@ -495,3 +495,32 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
   display: flex; justify-content: center; gap: calc(14px * var(--s));
   margin-top: calc(26px * var(--s));
 }
+
+/* ==========================================================================
+   Live TV channel manager
+   ========================================================================== */
+.channel-manager { padding: calc(28px * var(--s)) var(--gutter) calc(60px * var(--s)); }
+.chbar { display: grid; gap: calc(14px * var(--s)); margin: calc(18px * var(--s)) 0 calc(22px * var(--s)); }
+.chgroups { display: flex; flex-wrap: wrap; align-items: center; gap: calc(10px * var(--s)); }
+.chlabel { color: var(--ink3); font-size: var(--t-meta); min-width: calc(120px * var(--s)); }
+.chg { display: flex; align-items: center; gap: calc(10px * var(--s)); padding: calc(6px * var(--s)) calc(10px * var(--s));
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-chip); }
+.chg span { font-size: var(--t-chip); color: var(--ink1); }
+.chip.off { opacity: .45; }
+.chlist { display: grid; gap: calc(8px * var(--s)); }
+.chrow {
+  display: grid; grid-template-columns: calc(58px * var(--s)) calc(44px * var(--s)) minmax(0, 1fr) auto auto auto;
+  align-items: center; gap: calc(14px * var(--s));
+  padding: calc(10px * var(--s)) calc(16px * var(--s));
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-list, calc(6px * var(--s)));
+}
+.chrow:focus-within { border-color: var(--focus-ring); background: var(--surface2); }
+.chrow.off { opacity: .5; }
+.chno { font-size: var(--t-li); font-weight: 800; color: var(--ink3); text-align: right; }
+.chlogo { width: calc(44px * var(--s)); height: calc(34px * var(--s)); display: grid; place-items: center; }
+.chlogo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.chname b { display: block; font-size: var(--t-li); color: var(--ink); font-weight: 700; }
+.chname span { display: block; font-size: var(--t-meta); color: var(--ink3); margin-top: calc(2px * var(--s)); }
+.chrow .round { width: calc(38px * var(--s)); height: calc(38px * var(--s)); }
+.chfoot { display: flex; align-items: center; gap: calc(18px * var(--s)); margin-top: calc(22px * var(--s)); }
+.chfoot .note { color: var(--ink3); font-size: var(--t-meta); }

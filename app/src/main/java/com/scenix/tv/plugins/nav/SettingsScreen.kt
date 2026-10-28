@@ -148,26 +148,85 @@ object SettingsScreen : ScreenPlugin {
         }
         actionRow(
             ctx, col, "Parental PIN",
-            if (profile != null && ctx.prefs.hasPin(profile.id)) "set on this TV" else "not set",
+            when {
+                profile == null -> "no profile selected"
+                ctx.hub !is LocalHub && profile.hasPin -> "set on the hub"
+                ctx.prefs.hasPin(profile.id) -> "set on this TV"
+                else -> "not set"
+            },
             "Change PIN",
         ) {
             val p = profile ?: return@actionRow
             var overlay: View? = null
+            fun close() { overlay?.let { PinPad.close(container, it) }; overlay = null }
+
+            // In hub mode the PIN belongs to the hub, and the same number has to open the profile on
+            // every screen. Standalone keeps the TV-local hash it has always used.
+            if (ctx.hub !is LocalHub) {
+                fun setOnHub(current: String?) {
+                    val pad = PinPad(
+                        ctx = ctx,
+                        title = "New PIN for ${p.name}",
+                        subtitle = "Four digits. Stored hashed on the hub, never sent back to this TV.",
+                        onDone = { entered ->
+                            ctx.hub.setProfilePin(p.id, entered, current) { ok, err ->
+                                BrowseHelper.runOnUiThread {
+                                    if (ok == true) {
+                                        close()
+                                        host.toast("PIN saved for ${p.name}")
+                                        host.refresh()
+                                    } else {
+                                        (overlay?.tag as? PinPad)?.showError(
+                                            if (err != null && err.contains("403")) "The current PIN did not match"
+                                            else "The hub would not store that PIN",
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        onCancel = { close() },
+                    )
+                    val v = pad.view().also { it.tag = pad }
+                    overlay = v
+                    container.addView(v)
+                }
+                fun verifyThenSet() {
+                    val pad = PinPad(
+                        ctx = ctx,
+                        title = "Current PIN for ${p.name}",
+                        subtitle = "The hub asks for the PIN already on this profile before changing it.",
+                        onDone = { entered ->
+                            ctx.hub.unlockProfile(p.id, entered) { ok, _ ->
+                                BrowseHelper.runOnUiThread {
+                                    if (ok == true) { close(); setOnHub(entered) }
+                                    else (overlay?.tag as? PinPad)?.showError("Wrong PIN")
+                                }
+                            }
+                        },
+                        onCancel = { close() },
+                    )
+                    val v = pad.view().also { it.tag = pad }
+                    overlay = v
+                    container.addView(v)
+                }
+                if (p.hasPin) verifyThenSet() else setOnHub(null)
+                return@actionRow
+            }
+
             val pad = PinPad(
                 ctx = ctx,
                 title = if (ctx.prefs.hasPin(p.id)) "New PIN for ${p.name}" else "Set a PIN for ${p.name}",
-                subtitle = "Stored hashed on this TV. Four digits. Cancel leaves it as it was.",
+                subtitle = "Standalone mode keeps this PIN hashed on this TV. Four digits.",
                 onDone = { entered ->
                     ctx.prefs.setPin(p.id, entered)
-                    overlay?.let { PinPad.close(container, it) }
+                    close()
                     host.toast("PIN saved for ${p.name}")
                 },
-                onCancel = {
-                    overlay?.let { PinPad.close(container, it) }
-                },
+                onCancel = { close() },
             )
-            overlay = pad.view()
-            container.addView(overlay)
+            val v = pad.view().also { it.tag = pad }
+            overlay = v
+            container.addView(v)
         }
 
         section(ctx, col, "Hide rows on this profile")

@@ -29,6 +29,7 @@ const { URL } = require('url');
 // One-way dependency: the engine knows which file a torrent is, and only that makes it worth asking the
 // file what languages it carries. core/media.js never asks about the engine.
 const media = require('./media');
+const readahead = require('./readahead');
 
 const MODE = String(process.env.GATEWAY || 'off').toLowerCase();
 const ENGINE = String(process.env.TORR_URL || 'http://127.0.0.1:8090').replace(/\/+$/, '');
@@ -443,6 +444,7 @@ async function prepare(source, budgetMs, want) {
  */
 function prewarm(sources, want) {
   if (MODE !== 'http') return;
+  let primed = false;
   for (const s of (sources || []).slice(0, 4)) {
     if (s && s.kind === 'torrent') {
       // `want` is the season/episode the viewer is actually looking at. Without it a season pack resolves
@@ -456,6 +458,10 @@ function prewarm(sources, want) {
         .then((r) => {
           if (r && r.hash && r.fileId !== undefined) {
             media.prewarm([{ hash: r.hash, fileId: r.fileId, url: enginePlayUrl(r.hash, r.fileId) }]);
+            // Only the first candidate gets a byte cushion. The rest are metadata-warm, which is enough
+            // for a failover; pulling 24 MB for each of four candidates would spend the box's RAM on
+            // films nobody pressed Play on.
+            if (!primed) { primed = true; readahead.prime({ hash: r.hash, fileId: r.fileId }); }
           }
         })
         .catch(() => {});

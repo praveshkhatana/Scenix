@@ -8,7 +8,9 @@ set -euo pipefail
 HOST="${HUB_HOST:?set HUB_HOST}"
 USER_="${HUB_USER:?set HUB_USER}"
 PORT="${HUB_PORT:-8788}"
-SRC="$(cd "$(dirname "$0")/hub" && pwd)"
+GATEWAY="${GATEWAY:-http}"
+TORR_URL="${TORR_URL:-http://127.0.0.1:8090}"
+SRC="$(cd "$(dirname "$0")/../hub" && pwd)"
 DEST="tvhub"
 
 echo "== copying $SRC -> $USER_@$HOST:~/$DEST"
@@ -16,6 +18,7 @@ echo "== copying $SRC -> $USER_@$HOST:~/$DEST"
 rsync -a --delete \
   --exclude 'data/' \
   --exclude 'media/' \
+  --exclude 'profiles.json' \
   --exclude 'node_modules/' \
   --exclude '*.log' \
   "$SRC/" "$USER_@$HOST:~/$DEST/"
@@ -31,7 +34,7 @@ for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do
   fi
 done
 sleep 1
-setsid nohup env LOG_REQUESTS=1 PORT=$PORT \\
+setsid nohup env LOG_REQUESTS=1 PORT=$PORT GATEWAY=$GATEWAY TORR_URL=$TORR_URL \\
     YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
     node index.js > hub.log 2>&1 < /dev/null &
 sleep 4
