@@ -115,6 +115,10 @@ class PlayerActivity : Activity() {
     private var liveChannels: List<Item> = emptyList()
     private var liveLoaded = false
     private var pausedForBackground = false
+    /** True while the viewer asked for the picture's own audio instead of the hub's language mix. */
+    private var mixDisabled = false
+    /** The last `audioMix` the hub negotiated, kept so the Audio menu can switch back to it. */
+    private var mixHint: JSONObject? = null
 
     // ---- media ----------------------------------------------------------------------------
     private var player: ExoPlayer? = null
@@ -355,6 +359,8 @@ class PlayerActivity : Activity() {
         }
         if (source != null) body.put("source", source)
         if (exclude.isNotEmpty()) body.put("exclude", JSONArray(exclude.toList()))
+        // The donor is on by default; the Audio menu's "Original audio" turns it off for this title.
+        if (mixDisabled) body.put("audioMix", false)
         return body
     }
 
@@ -367,6 +373,8 @@ class PlayerActivity : Activity() {
         tried.clear()
         failovers = 0
         sameCopyRetried = false
+        mixDisabled = false
+        mixHint = null
         selectedAudioId = null
         selectedSubId = null
         audioChosen = false
@@ -433,6 +441,17 @@ class PlayerActivity : Activity() {
         nextEpisode = reply.optJSONObject("nextEpisode")
         alternatives = reply.optJSONArray("alternatives") ?: JSONArray()
         audioTracks = reply.optJSONArray("audioTracks") ?: JSONArray()
+        val mix = reply.optJSONObject("audioMix")
+        if (mix != null) {
+            mixHint = mix
+            if (!mixDisabled) {
+                val lang = str(mix, "languageName").ifBlank { langName(str(mix, "language")) }
+                val donor = str(mix, "source")
+                if (lang.isNotBlank()) {
+                    setStatus(lang + " audio" + if (donor.isNotBlank()) " · " + donor else "")
+                }
+            }
+        }
         embeddedSubs = reply.optJSONArray("subtitleTracks") ?: JSONArray()
         val picked = reply.optJSONObject("picked")
         if (picked != null) {
@@ -1116,6 +1135,7 @@ class PlayerActivity : Activity() {
                 parent.addView(menuRow(t.label, "", t.selected) { chooseAudio(t.id) })
             }
             if (actual.isEmpty()) parent.addView(noteRow("No audio list from this copy"))
+            addMixToggle(parent)
             return
         }
         parent.addView(menuRow(
@@ -1125,8 +1145,46 @@ class PlayerActivity : Activity() {
             val t = audioTracks.optJSONObject(i) ?: continue
             val id = str(t, "id")
             if (id.isBlank()) continue
-            parent.addView(menuRow(trackWords(t), "", selectedAudioId == id) { chooseAudio(id) })
+            val mixed = str(t, "kind") == "audio-mix"
+            // A mixed row is named by its language alone; its donor's label is the note, not a second
+            // copy of the same words ("Hindi · Test Hindi audio · Hindi" truncated at 560 px).
+            val label = if (mixed) langName(str(t, "language")) else trackWords(t)
+            val note = if (mixed) "mixed from " + str(answer?.optJSONObject("audioMix"), "source") else ""
+            parent.addView(menuRow(label, note, selectedAudioId == id) { chooseAudio(id) })
         }
+        addMixToggle(parent)
+    }
+
+    /**
+     * The hub may have replaced the picture's audio with the household's language. A viewer who wants
+     * the original needs a way back, and a viewer who turned it off needs a way in again; both are the
+     * same round-trip to /play with `audioMix` on or off at the current playhead.
+     */
+    private fun addMixToggle(parent: LinearLayout) {
+        val mix = mixHint ?: return
+        val name = str(mix, "languageName").ifBlank { langName(str(mix, "language")) }
+        if (mixDisabled) {
+            parent.addView(menuRow(
+                "$name audio", "mixed from " + str(mix, "source"), false,
+            ) { reloadAudio(mix = true) })
+        } else {
+            parent.addView(menuRow(
+                "Original audio", "without the $name mix", false,
+            ) { reloadAudio(mix = false) })
+        }
+    }
+
+    private fun reloadAudio(mix: Boolean) {
+        val spec = spec ?: return
+        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        mixDisabled = !mix
+        audioChosen = false
+        selectedAudioId = null
+        pendingAudio = null
+        audioApplied = false
+        closeMenu()
+        showCenter(if (mix) "Loading the mixed audio…" else "Loading the original audio…", true)
+        resolvePlay(spec, pos, WARM_TRIES)
     }
 
     private fun subtitleRows(parent: LinearLayout) {
@@ -1413,6 +1471,11 @@ class PlayerActivity : Activity() {
         if (maturity.isNotBlank()) bits.add(maturity)
         val advisories = intent?.getStringArrayListExtra(EXTRA_ADVISORIES)?.filter { it.isNotBlank() }
         if (!advisories.isNullOrEmpty()) bits.add(advisories.joinToString(" · "))
+        val mix = answer?.optJSONObject("audioMix")
+        if (mix != null && !mixDisabled) {
+            val lang = str(mix, "languageName").ifBlank { langName(str(mix, "language")) }
+            if (lang.isNotBlank()) bits.add("$lang audio")
+        }
         metaView.text = bits.joinToString("  ·  ")
         liveBadge.visibility = if (live) View.VISIBLE else View.GONE
     }
@@ -1844,6 +1907,8 @@ class PlayerActivity : Activity() {
         tried.clear()
         failovers = 0
         sameCopyRetried = false
+        mixDisabled = false
+        mixHint = null
         selectedAudioId = null
         selectedSubId = null
         audioChosen = false
@@ -2231,9 +2296,12 @@ class PlayerActivity : Activity() {
         if (t == null) return "Track"
         val lang = str(t, "language").ifBlank { str(t, "lang") }
         val title = str(t, "title")
-        val codec = str(t, "codec").uppercase()
-        val head = if (title.isNotBlank()) title else langName(lang)
-        return listOf(head, codec).filter { it.isNotBlank() }.joinToString(" · ")
+        val codec = codecName(str(t, "codec"))
+        // The language is what a person is choosing; a donor's row title ("480p · 500 MB") is where
+        // it came from, not its name.
+        val head = if (lang.isNotBlank()) langName(lang) else title.ifBlank { "Track" }
+        val extra = title.takeIf { it.isNotBlank() && !it.equals(head, true) }.orEmpty()
+        return listOf(head, extra, codec).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
     private fun sourceWords(src: JSONObject?): String {

@@ -102,8 +102,18 @@ class BrowseActivity : Activity() {
                     .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
             )
         })
-        bar.addView(navButton("Search", app.theme.px(24f)) { openWeb("#/search") })
-        bar.addView(navButton("Settings", app.theme.px(28f)) { openWeb("#/settings") })
+        bar.addView(navButton("Search", app.theme.px(24f)) {
+            startActivity(
+                Intent(this@BrowseActivity, SearchActivity::class.java)
+                    .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
+            )
+        })
+        bar.addView(navButton("Settings", app.theme.px(28f)) {
+            startActivity(
+                Intent(this@BrowseActivity, SettingsActivity::class.java)
+                    .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
+            )
+        })
         return bar
     }
 

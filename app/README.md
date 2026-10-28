@@ -32,8 +32,12 @@ Nothing is installed or deployed from here.
   the remote-first chrome itself: flat icon transport, Audio/Subtitles/Speed/Quality sheets, CH
   Up/Down zapping on live TV, and a next-episode roll with Undo. Play no longer hands off to the web
   player. See [../design/native-browse.md](../design/native-browse.md).
-- **The web product** — `WebShellActivity` loads `http://<backend>/` in a WebView for Search and
-  Settings. Those are the same `hub/web/` files a browser gets.
+- **Native Search + Settings** — `SearchActivity` is a remote A-Z keyboard over the hub's
+  `/app/v1/search` index, with the same poster cards and focus ring as Home. `SettingsActivity`
+  covers audio language, subtitle language, quality ceiling, the profile gate, and one row into the
+  web settings for the long tail. Search and Settings no longer load a WebView.
+- **The web product** — `WebShellActivity` still loads `http://<backend>/` for the full web settings,
+  browser deep links and the web player. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
   sequentially into `cache/torrents`, picks the requested file or episode, and serves it through the
   loopback HTTP server with Range support. The player sees an ordinary file. A copy larger than the
@@ -58,10 +62,10 @@ Nothing is installed or deployed from here.
 
 ## What the app is not
 
-There is no native Search or Settings stack. Home, Detail and Player are the native product
-surfaces, because scroll smoothness and a remote-first chrome cannot be bought back from a WebView
-on this panel. A tile still opens native Detail, and Play opens the native player. There is no
-per-device "front end" switch.
+The native product surfaces are Profiles/PIN, Home, Search, Detail, Settings and the player. The
+long tail of settings (addons, sources, categories, PINs, household rules) is still the hub's web
+page, reached by one native row; a browser deep link keeps the web player. There is no per-device
+"front end" switch.
 
 ## Contract
 

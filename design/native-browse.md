@@ -1,7 +1,7 @@
 # Native Home / browse / player
 
-The television draws the profile gate, Home, Detail and Playback itself; Search and Settings stay on
-the merged web interface.
+The television draws the profile gate, Home, Search, Detail, Settings and Playback itself; the long
+tail of settings (addons, sources, household rules) is one row away in the web UI.
 
 ```
 ProfilesActivity (native) ── PinActivity for a locked profile
@@ -20,6 +20,9 @@ ProfilesActivity (native) ── PinActivity for a locked profile
         │ BACK
         ▼
   DetailActivity
+
+  SearchActivity  ── GET /search ──► results grid ──► DetailActivity
+  SettingsActivity ── GET/POST /prefs ──► audio + subtitle language, quality ceiling
 ```
 
 ## Why
@@ -37,8 +40,9 @@ reload.
 ## Contract
 
 - `BrowseApi` is the only native API path. It calls `/app/v1/home`, `/app/v1/meta/<id>`,
-  `/app/v1/play`, `/app/v1/switch`, `/app/v1/subs/<id>` and `/app/v1/progress`, with the same
-  optional Basic token as the shell. No native screen parses or ranks sources.
+  `/app/v1/play`, `/app/v1/switch`, `/app/v1/subs/<id>`, `/app/v1/progress`, `/app/v1/search` and
+  `/app/v1/prefs`, with the same optional Basic token as the shell. No native screen parses or ranks
+  sources.
 - `ProfilesActivity` is the front door. It reads `/app/v1/profiles`, draws the same household faces
   the web gate does, and asks `PinActivity` for a 4-digit code on a locked profile; the hub checks
   the PIN (`POST /app/v1/profiles/<id>/unlock`), never the TV. A chosen profile opens
@@ -65,7 +69,15 @@ reload.
 ## Rendering
 
 - `BrowseActivity` — top bar (Profile/Search/Settings), a vertical RecyclerView whose first item is
-  the hero and whose remaining items are shelves. Ranked rows draw their numeral over the poster;
+  the hero and whose remaining items are shelves. Search opens `SearchActivity`; Settings opens
+  `SettingsActivity`; neither drops into a WebView.
+- `SearchActivity` — a remote A-Z keyboard (space, delete) beside a 4-column poster grid. A query
+  goes to `/app/v1/search` after a 320 ms pause, results are drawn with the same card/focus language
+  as Home, and OK opens native Detail. Back clears the query first, then leaves.
+- `SettingsActivity` — audio language, subtitle language, quality ceiling, the profile gate, and one
+  "Everything else / Open the web settings" row for addons, sources and household rules. It reads
+  and writes the same `/app/v1/prefs` the web page does; choosing a language moves it to the front
+  of the existing list instead of replacing the fallbacks. Ranked rows draw their numeral over the poster;
   Continue Watching draws its position line; posters and landscape rows are sized from the card kind.
 - `DetailActivity` — native hero, metadata/advisories/overview, cast strip and episode list with
   stills. Long titles are capped at 1100 px and get a smaller size, and a record with no maturity or
@@ -84,6 +96,10 @@ reload.
 - Subtitles come from the play answer's `subtitleTracks` (embedded) and `GET /app/v1/subs` (side-
   loaded files). Audio, subtitle and speed choices survive a source switch; a subtitle that arrives
   after the picture started is added by reloading the same copy at the same playhead once.
+- When the hub mixes in a language the picture does not carry (`audioMix`), the header says
+  "Hindi audio", the Audio sheet names the mixed row by language and its donor, and an
+  **Original audio** row re-requests `/play` with `audioMix:false` at the same playhead. A row turns
+  the mix back on after that.
 - Chrome appears on any key and fades after `player.controlsHideMs` (default 6 s) while a film is
   playing. An open menu, error card, next-episode card or undo chip pins it; the ring is moved off
   the bar before the fade so nothing is hidden while focused.
@@ -113,8 +129,12 @@ reload.
 
 ## What this does not solve
 
-- Search and Settings still pay the WebView cost. Home, Detail, Profiles, PIN and Playback are native.
-- Skip-intro is not native: the hub's play answer has no intro window, so no button is invented.
+- The long tail of Settings (addons, sources, categories, PINs, household rules) is still the web
+  UI, reached by one native row. The TV-relevant preferences are native.
+- Skip-intro needs `introEndMs` from the hub; today the play answer carries no intro window, so no
+  button is invented. The web player has the same data condition.
+- Native Search matches the hub's index; a search for a title the hub does not know returns nothing,
+  as on the web.
 - Trailer previews on dwelling cards remain a web-only behaviour; native cards show stills.
 - Side-loaded subtitles over an HLS/DASH copy depend on Media3's behaviour; embedded tracks and
   direct-HTTP subtitle files are the tested path. Debrid needs a live real-debrid token to verify.

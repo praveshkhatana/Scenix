@@ -55,6 +55,33 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** The person's playback preferences, as the web settings page reads them. */
+    fun prefs(profileId: String, done: (prefs: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/prefs", "profile=" + enc(profileId), "GET", null, 12000) { root, _, error ->
+            done(root?.optJSONObject("prefs"), error)
+        }
+    }
+
+    /** `POST /app/v1/prefs` merges the patch into the profile and answers the resolved prefs. */
+    fun savePrefs(profileId: String, patch: JSONObject, done: (prefs: JSONObject?, error: String?) -> Unit) {
+        val body = JSONObject(patch.toString()).put("profile", profileId)
+        request("/app/v1/prefs", "", "POST", body, 12000) { root, _, error ->
+            done(root?.optJSONObject("prefs"), error)
+        }
+    }
+
+    /** The hub's search index, hit as the letters arrive: `GET /app/v1/search?q=&profile=`. */
+    fun search(profileId: String, query: String, done: (items: List<Item>?, error: String?) -> Unit) {
+        request(
+            "/app/v1/search",
+            "q=" + enc(query) + "&profile=" + enc(profileId),
+            "GET", null, 15000,
+        ) { root, _, error ->
+            val arr = root?.optJSONArray("items")
+            if (arr == null) done(emptyList(), error) else done(Item.list(arr), null)
+        }
+    }
+
     /** The household, for the native profile gate. PINs are checked by `unlock` below. */
     fun profiles(done: (profiles: List<ProfileInfo>?, error: String?) -> Unit) {
         request("/app/v1/profiles", "", "GET", null, 15000) { root, _, error ->
