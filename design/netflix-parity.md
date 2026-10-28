@@ -36,9 +36,9 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Audio menu gains an explicit default/off-equivalent row symmetric with Subtitles' "Off".
 
 ## E. Detail page
-- [ ] Resume progress bar (Netflix red line) under the hero buttons showing watch position for partially watched titles.
+- [x] Resume progress bar (Netflix red line) under the hero buttons showing watch position for partially watched titles.
 - [x] Episodes become a vertical list with per-episode synopsis + still that expands on dwell (today a horizontal still strip, detail.js:281-302).
-- [ ] Season selector uses the settings dial pattern instead of numbered chips (detail.js:164-181).
+- [x] Season selector uses the settings dial pattern instead of numbered chips (detail.js:164-181).
 - [ ] More-like-this has an honest empty state when the pool is thin (detail.js:419-445 silently drops the row).
 
 ## F. The remaining screens get the settings remote standard
@@ -69,3 +69,6 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Scrub time ghost on every arrow/media seek, fading after 1.4 s (D4; thumbnails need a sprite endpoint the hub lacks) — commit ca6f215, live probe: pill showed "11:30" with three held presses advancing 600→690 s
 - [x] Audio menu "Default · picked by your languages" row above the track list, ticked when nothing is manually chosen (D5) — live probe: Default(off)+Hindi(on) rows in the open menu
 - [x] Next-episode countdown from `autoplayCountdownMs`, auto-roll into S1 E2 with a focusable Undo chip back to the finished episode (D3) — verified stubbed end-to-end: "Starting in 7s" → roll at token expiry → Undo returned to S1 E1 with the chip gone
+- [x] Resume progress bar under the hero buttons plus the Resume tag that stopped saying "left" twice (E1) — commit 155b485
+- [x] Episodes as a vertical list — number, still, name, runtime and the synopsis the hub actually sends (E2) — commit 736ac3a, live screenshot on a 7-episode series: 8 rows with synopses and stills
+- [x] Seasons as one settings-style row + wheel dial instead of numbered chips (E3) — commit 4def596, live probes on a 3-season stub: row shows "Season 3 · 4 episodes", Down turns to Season 2, OK refills the list and moves the ring, Back cancels untouched
