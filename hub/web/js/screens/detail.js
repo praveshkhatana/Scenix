@@ -495,7 +495,15 @@ export function screen(ctx, identity) {
         if (sameType || sharesGenre) { seen.add(it.identity); pool.push(it); }
       }
     }
-    if (pool.length < 3) return;
+    if (!pool.length) {
+      // An honest empty state instead of silence: this row speaks about this hub's own shelves, so when
+      // they hold nothing alike it says so rather than pretending the section never existed. A thin pool
+      // still gets the row — one lookalike is still an answer, and hiding it is the lie.
+      root.appendChild(el('div', { class: 'sect-empty' },
+        el('h2', { class: 'sect-title' }, el('span', { text: 'More like this' })),
+        el('p', { text: 'This hub has not found anything similar yet.' })));
+      return;
+    }
     const synth = { id: `related-${item.identity}`, card: 'poster', title: 'More like this', items: pool.slice(0, 24) };
     const builder = rowFor(synth);
     const node = builder(synth, {
