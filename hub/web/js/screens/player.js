@@ -124,6 +124,23 @@ export function screen(ctx, identity) {
      which is only safe while they are all on the same floor, so every one of them lives inside the chrome that
      fades in and out together. */
   const times = el('div', { class: 'times' }, tLeft, trk, tRight);
+
+  // The scrub preview Netflix answers every Left/Right with: the time you landed on, shown over the
+  // picture just above the bar, fading out by itself. Thumbnails would need a seekable sprite endpoint
+  // the hub does not serve yet, so the honest version is the timestamp.
+  const ghost = el('div', { class: 'ply-ghost' });
+  ghost.hidden = true;
+  root.appendChild(ghost);
+  let ghostTimer = null;
+  function showGhost() {
+    const st = player.state();
+    const dur = Number(st.durationMs) || 0;
+    if (live || isLiveFeed || !dur) return;
+    ghost.textContent = clock(Math.max(0, Math.min(dur, Number(st.positionMs) || 0)));
+    ghost.hidden = false;
+    if (ghostTimer) clearTimeout(ghostTimer);
+    ghostTimer = setTimeout(() => { ghost.hidden = true; }, 1400);
+  }
   // A channel has no position to move along, so the line that shows one is replaced by the only fact that
   // stream supports: it is happening now.
   const liveMark = el('div', { class: 'live-mark' }, el('i', { class: 'dot' }), el('span', { text: 'Live' }));
@@ -889,8 +906,8 @@ export function screen(ctx, identity) {
       ctx.zap(key === 'MediaTrackNext' ? 1 : -1);
       return true;
     }
-    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(SEEK_FWD); return true; }
-    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-SEEK_BACK); return true; }
+    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(SEEK_FWD); showGhost(); return true; }
+    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-SEEK_BACK); showGhost(); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       const a = document.activeElement;
@@ -898,6 +915,7 @@ export function screen(ctx, identity) {
       // band instead. Same rule as before the chips moved into the bar — they just have to be named now.
       if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
         player.seekBy(key === 'ArrowLeft' ? -SEEK_BACK : SEEK_FWD);
+        showGhost();
         return true;
       }
       return false;
@@ -920,6 +938,7 @@ export function screen(ctx, identity) {
     const a = document.activeElement;
     if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
       player.seekBy(e.key === 'ArrowLeft' ? -SEEK_BACK : SEEK_FWD);
+      showGhost();
       e.preventDefault();
     }
   };

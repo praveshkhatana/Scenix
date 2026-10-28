@@ -684,6 +684,13 @@ body.native-live, html.native-live { background: transparent; }
    jitter as it ticks down. */
 .nextup .cd { margin-top: calc(12px * var(--s)); font-size: var(--t-meta); color: var(--ink2); }
 .nextup .cd b { color: #fff; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* The scrub preview: a timestamp that answers every arrow-key seek, centred just above the bar. */
+.ply-ghost {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(178px * var(--s)); z-index: 9;
+  padding: calc(6px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-badge);
+  background: rgba(0, 0, 0, .82); border: 1px solid var(--border);
+  font-size: calc(30px * var(--s)); font-weight: 700; color: #fff; font-variant-numeric: tabular-nums;
+}
 /* The undo chip the auto-roll leaves on the next episode's picture, above the bar and clear of it. */
 .ply-undo {
   position: absolute; left: calc(64px * var(--s)); bottom: calc(170px * var(--s)); z-index: 9;
