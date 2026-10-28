@@ -39,7 +39,6 @@ import { pushHandler, popHandler } from '/ui/js/input.js';
 // Skip intro button over the first minute and a half of every series, whether or not it had an intro.
 const SKIP_DEFAULT_LENGTH = 90000;
 const NEXT_WINDOW = 7000;       // spec B: the next-episode card appears in the last 7 s
-const HIDE_AFTER = 5000;
 
 export function screen(ctx, identity) {
   const spec = Object.assign({ identity }, session.pendingPlay || {});
@@ -265,21 +264,25 @@ export function screen(ctx, identity) {
 
   function hide() {
     if (openKind) return;
-    // The ring used to be a reason to hold the chrome up. On a TV it is not one: the bar is the only thing
-    // anyone can focus here, so keeping it up would keep it up forever and the film would be watched through
-    // a control panel — the way out at the top and the next episode at the edge included. Only a control
-    // that is genuinely outside the chrome, the skip button, holds it on, and the first key press brings
-    // everything back, the ring included.
     const a = document.activeElement;
     if (a && skip.parentNode === root && a === skip) { arm(); return; }
     if (player.state().playing === false) { arm(); return; }
+    // Netflix never drops the overlay out from under the ring: a viewer whose focus sits inside the
+    // chrome is working in it, not idling, so the timer re-arms instead of fading the controls away
+    // and leaving an invisible caret. The chrome only leaves once focus has stepped out of it (or the
+    // page holds no focus at all) and playback has settled — the first key press brings everything
+    // back, the ring included.
+    if (a && a !== document.body && a !== root && chrome.some((n) => n.contains(a))) { arm(); return; }
     hidden = true;
     for (const n of chrome) n.classList.add('hide');
   }
 
   function arm() {
     if (idle) clearTimeout(idle);
-    idle = setTimeout(hide, HIDE_AFTER);
+    // The theme owns this number: `player.controlsHideMs` in theme.json, floored so a mis-set token
+    // cannot make the bar flicker out between two key presses.
+    const ms = Math.max(1500, Number(token('player', 'controlsHideMs', 6000)) || 6000);
+    idle = setTimeout(hide, ms);
   }
 
   function setStatus(txt, tone) {
