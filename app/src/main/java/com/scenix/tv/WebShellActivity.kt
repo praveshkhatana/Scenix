@@ -62,6 +62,7 @@ import java.util.concurrent.TimeUnit
  */
 class WebShellActivity : Activity() {
 
+    private lateinit var root: FrameLayout
     private lateinit var web: WebView
     private lateinit var video: PlayerView
     private var player: ExoPlayer? = null
@@ -76,7 +77,7 @@ class WebShellActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        val root = FrameLayout(this)
+        root = FrameLayout(this)
         // PlayerView owns the picture and the captions. Its default surface is a TextureView, which
         // composites *inside* the view hierarchy — that is exactly what lets the transparent WebView sit
         // on top with the control bar painted over live video. A SurfaceView would punch through instead.
@@ -90,7 +91,7 @@ class WebShellActivity : Activity() {
         // panel a whole composited layer for nothing. The page asks for it when a film starts
         // (`Scenix.surface(true)`), and hands it back when the player closes.
         video.visibility = View.GONE
-        root.addView(video, match())
+
         web = WebView(this)
         configureWeb()
         root.addView(web, match())
@@ -208,6 +209,8 @@ class WebShellActivity : Activity() {
         val p = builder.build()
         Ceilings.applyDefaults(p, ctx)
         p.addListener(listener())
+        if (video.parent == null) root.addView(video, 0, match())
+        video.visibility = View.VISIBLE
         video.setPlayer(p)
         player = p
         return p
@@ -374,7 +377,15 @@ class WebShellActivity : Activity() {
          */
         @JavascriptInterface
         fun surface(on: Boolean) = onMain {
-            video.visibility = if (on) View.VISIBLE else View.GONE
+            if (on) {
+                if (video.parent == null) root.addView(video, 0, match())
+                video.visibility = View.VISIBLE
+            } else {
+                video.visibility = View.GONE
+                // Detach the TextureView entirely on a browse screen. Hidden it still belongs to the
+                // window's layer tree; detached it costs neither a surface nor a composite pass.
+                (video.parent as? ViewGroup)?.removeView(video)
+            }
             web.setBackgroundColor(if (on) android.graphics.Color.TRANSPARENT else android.graphics.Color.rgb(20, 20, 20))
         }
 

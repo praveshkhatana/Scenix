@@ -3,9 +3,9 @@
  *
  * Android TV's WebView delivers the D-pad as ordinary `keydown` events (`Arrow*`, `Enter`), and some
  * firmwares fire one physical press twice. That exact bug made the old native player pause a film the
- * instant it opened, so a repeat of the same key inside ~300 ms is treated as one press here. A physical
+ * instant it opened, so a repeat of the same key inside ~120 ms is treated as one press here. A physical
  * keyboard auto-repeat (`event.repeat`) is dropped outright, and typing into a field is exempt from the
- * 300 ms rule — otherwise "tt" typed fast loses a letter.
+ * 120 ms rule — otherwise "tt" typed fast loses a letter.
  *
  * Every handled key calls `preventDefault()`: the browser otherwise scrolls a page sideways, and the TV
  * shell otherwise treats Enter as a click on whatever element it last had.
@@ -13,7 +13,7 @@
 
 import * as focus from '/ui/js/focus.js';
 
-const REPEAT_WINDOW_MS = 300;
+const REPEAT_WINDOW_MS = 120;
 
 const NAV_KEYS = new Set([
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'NumpadEnter',

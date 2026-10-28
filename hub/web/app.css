@@ -212,7 +212,7 @@ ul { list-style: none; }
 
 .screen {
   position: absolute; inset: 0;
-  overflow-y: auto; overflow-x: hidden;
+  overflow-y: auto; overflow-x: hidden; overflow-anchor: none;
   overscroll-behavior: none;
   /* Instant, not eased. Every D-pad step scrolls this container, and an eased scroll animates the repaint of
      everything on the page for a third of a second on top of the card that is already scaling into focus.
@@ -443,6 +443,10 @@ ul { list-style: none; }
 .cards {
   display: flex; gap: var(--gap);
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  /* Focus navigation moves the scroll position itself. Anchor adjustment would then move the page a
+     second time around an image or a recycled row, which is the layout-shift burst measured on the
+     panel. The engine's scroll is the only anchor here. */
+  overflow-anchor: none;
   /* Vertical padding is the room a focused card needs to scale into without being clipped by the
      scroller — overflow: visible does not exist on an axis next to overflow-x: auto. */
   padding: calc(40px * var(--s)) var(--gutter) calc(76px * var(--s));
@@ -462,7 +466,7 @@ ul { list-style: none; }
   position: relative; flex: none; width: var(--card-w);
   /* transform only. A box-shadow transition repaints the whole area around a card on every frame, and a
      shelf is thirty of them; the ring simply arrives with the card. */
-  transition: transform var(--focus-ms) ease-out, width 240ms cubic-bezier(.23,1,.32,1);
+  transition: transform var(--focus-ms) ease-out;
   /* Layout and style containment: the card's own relayout is then kept inside the card instead of
      invalidating the shelf. Not paint containment - that would clip the focus ring. */
   contain: layout style;

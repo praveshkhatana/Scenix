@@ -122,12 +122,27 @@ function scrollFor(node) {
 }
 
 function scrollTo(node) {
-  /* Instant. A smooth scroll animates the container, which repaints everything visible for a third of a
-     second after every key, on top of the focus zoom and on top of whatever the shelf is already doing.
-     Remote navigation wants the next card under the ring immediately. */
-  const behavior = 'auto';
-  try { node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior }); }
-  catch (e) { try { node.scrollIntoView(); } catch (e2) { /* ignore */ } }
+  /* Instant, and only the two scrollers that actually need to move. `scrollIntoView({block,inline})`
+     walks every scrollable ancestor and lets the engine choose a scroll anchoring point; on this panel
+     that produced a layout/anchor pass after every key. The shelf scrolls horizontally, the screen
+     vertically, and a card already inside both is left alone. */
+  const row = node.closest ? node.closest('.cards') : null;
+  if (row && row.scrollWidth > row.clientWidth + 1) {
+    const view = row.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    const pad = 24;
+    if (card.left < view.left + pad) row.scrollLeft -= (view.left + pad - card.left);
+    else if (card.right > view.right - pad) row.scrollLeft += (card.right - (view.right - pad));
+  }
+  const screen = node.closest ? node.closest('.screen') : null;
+  if (screen && screen.scrollHeight > screen.clientHeight + 1) {
+    const view = screen.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    const top = view.top + 96;       // keep the ring out from under the fixed nav
+    const bottom = view.bottom - 24;
+    if (card.top < top) screen.scrollTop -= (top - card.top);
+    else if (card.bottom > bottom) screen.scrollTop += (card.bottom - bottom);
+  }
 }
 
 /* ---- group navigation: walking a row or a grid by index ---- */

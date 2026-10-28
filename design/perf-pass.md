@@ -94,3 +94,23 @@ The steady state is now smooth on this panel; the remaining spikes are in the **
 images and row layouts are being created, not in the focus or recycle path. The shell also paints the
 WebView opaque on browse screens and switches it transparent only while the native surface is live,
 so a hidden PlayerView is not blended behind every shelf.
+
+## 6. The scroll path itself
+
+Profiling the panel showed the focus handler was sub-millisecond; the cost was scroll/raster. Four
+small structural changes followed:
+
+- `focus.scrollTo` no longer calls `scrollIntoView` on every key. It moves the shelf horizontally and
+  the screen vertically by the amount the ring actually needs, so the engine does not walk every
+  scrollable ancestor and re-anchor.
+- `overflow-anchor: none` on the screen and the shelf. Focus navigation already chooses the scroll
+  position; scroll anchoring was adjusting it a second time around images and recycled rows.
+- The card transition no longer includes `width`. Width is a layout property; the transition made a
+  shelf relayout around a preview that was expanding. Transform remains the only card transition.
+- The native `PlayerView` is detached on browse screens instead of merely hidden, and the WebView is
+  opaque there. A browse screen now has one composited layer, not a hidden TextureView underneath it.
+- The remote duplicate window fell from 300 ms to 120 ms, so a deliberate fast D-pad press is not
+  mistaken for a firmware echo.
+
+The cold first pass remains content/raster bound on this 2 GB panel; the steady state is the target
+and the warm measurement above is the one to compare after future changes.
