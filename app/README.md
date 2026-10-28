@@ -12,7 +12,8 @@ Nothing is installed or deployed from here.
 
 ## What the app is
 
-- **Setup** — `PairingScreen` finds a hub on the LAN, accepts a typed address, or starts the bundled
+- **Setup** — `MainActivity` probes for a hub. One that answers is opened at once; if none does,
+  `PairingScreen` lists the hubs heard on the LAN, accepts a typed address, or starts the bundled
   standalone host. This is the only native screen in the product.
 - **The product** — `WebShellActivity` loads `http://<backend>/` in a WebView. Every screen you use
   (home, detail, search, settings, player chrome) is the same `hub/web/` code a browser gets.

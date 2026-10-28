@@ -103,10 +103,12 @@ Nothing in a build names a machine. The client finds a hub by:
 3. **Remembered** — the last working address is tried first; a hub that stops answering falls back to
    the other candidates and says so on screen rather than spinning.
 
-With nothing paired and no choice recorded, the app asks once which of these three it should use
-instead of browsing an empty library or spinning on a network that has no hub in it. The answer is
-remembered on the device. Pairing is a first-run step, not a setting inside the product; to point a
-paired device at a different backend, clear the app's data so setup runs again.
+With nothing paired and no choice recorded, the app probes the LAN once. A hub that answers is opened
+without a question, because a stranger's first run should not require a decision the network can make.
+If nothing answers, setup asks which of these three to use instead of browsing an empty library or
+spinning forever; the answer is remembered on the device. Pairing is a first-run step, not a setting
+inside the product; to point a paired device at a different backend, clear the app's data so setup
+runs again.
 
 ## Naming
 
