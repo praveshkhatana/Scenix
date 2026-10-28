@@ -94,6 +94,21 @@ export function since(ts) {
   return `${months} month${months === 1 ? '' : 's'} ago`;
 }
 
+/** "ac3" is noise on a menu; "Dolby Digital" is what the box on the back of a Blu-ray says. */
+export function codecName(code) {
+  const raw = String(code || '').trim();
+  if (!raw) return '';
+  const c = raw.toLowerCase().replace(/^audio[_\s-]+/, '');
+  const names = {
+    ac3: 'Dolby Digital', eac3: 'Dolby Digital+', ec3: 'Dolby Digital+',
+    dts: 'DTS', 'dts-hd': 'DTS-HD', dts_hd: 'DTS-HD', dtshd: 'DTS-HD', dca: 'DTS',
+    truehd: 'Dolby TrueHD',
+    aac: 'AAC', aac_lc: 'AAC', mp3: 'MP3', opus: 'Opus', vorbis: 'Vorbis',
+    flac: 'FLAC', alac: 'ALAC', pcm: 'Uncompressed', pcm_s16le: 'Uncompressed', wav: 'Uncompressed',
+  };
+  return names[c] || raw;
+}
+
 export function initials(name) {
   const s = String(name || '?').trim();
   if (!s) return '?';

@@ -30,7 +30,7 @@ import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { createPlayer, describePlayback } from '/ui/js/player.js';
 import { session, hasNativePlayer, effectivePrefs } from '/ui/js/state.js';
-import { clock, langName, qualityWord, episodeLabel, size as fmtSize } from '/ui/js/format.js';
+import { clock, langName, qualityWord, codecName, episodeLabel, size as fmtSize } from '/ui/js/format.js';
 import { token, px } from '/ui/js/theme.js';
 import { setFeatureVisible, setSurfaceLive } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
@@ -70,7 +70,12 @@ export function screen(ctx, identity) {
   const subtitle = el('div', { class: 'ps', text: spec.subtitle || '' });
   const cert = String(spec.maturity || '');
   const advisories = Array.isArray(spec.advisories) ? spec.advisories : [];
+  // A channel says so beside its own name too, not only in the transport mark that fades with the bar —
+  // the same habit as the native player's red LIVE badge. If the hub names the feed later (a deep link or
+  // a zap played by identity), the target handler inserts this where a card's certificate sits.
+  const liveBadge = el('span', { class: 'plive', text: 'LIVE' });
   const content = el('div', { class: 'pcontent' },
+    isLiveFeed ? liveBadge : null,
     el('span', { class: 'pccert', text: cert || 'Not rated' }),
     advisories.length ? el('span', { class: 'pcadv', text: advisories.join(' · ') }) : null);
   const status = el('div', { class: 'ply-status' });
@@ -100,7 +105,7 @@ export function screen(ctx, identity) {
   };
   const btnBack = pbtn('back', '', 'Back', () => ctx.back());
   const btnRew = pbtn('rew', '', `Rewind ${Math.round(SEEK_BACK / 1000)}s`, () => player.seekBy(-SEEK_BACK), 'rew');
-  const btnPlay = pbtn('play', 'play', 'Play', () => player.toggle());
+  const btnPlay = pbtn('play', 'play', 'Play', () => togglePlayback());
   const btnFwd = pbtn('fwd', '', `Forward ${Math.round(SEEK_FWD / 1000)}s`, () => player.seekBy(SEEK_FWD), 'fwd');
   // Not in the row with the transport: the next episode waits at the right edge of the picture, where it can
   // be seen coming without covering the one that is playing.
@@ -377,6 +382,15 @@ export function screen(ctx, identity) {
     btnPlay.setAttribute('title', label);
   }
 
+  // Play and pause from one place, whichever path asked for it. The native player writes the position down
+  // the moment the film stops; the web player waits ten seconds between posts otherwise, so pausing and
+  // walking away loses up to that beat of "continue watching".
+  function togglePlayback() {
+    player.toggle();
+    setPlayIcon();
+    postProgress();
+  }
+
   /* ----------------------------------------------------------------- transport */
 
   let live = false;   // a channel has no position to scrub to
@@ -441,8 +455,10 @@ export function screen(ctx, identity) {
       next: n.next || null,
       title: n.title || spec.title,
       subtitle: episodeLabel(n.season !== undefined ? n.season : spec.season + 1, n.episode !== undefined ? n.episode : (spec.episode || 0) + 1),
-      // The next screen carries one window to undo the roll — and only when the roll was ours, not a press.
-      ...(fromAuto && AUTO_MS > 0 ? { undo: {
+      // The next screen carries one window to undo the roll — after an automatic roll or a pressed
+      // "Play next" alike. A viewer who pressed it on the remote can still change their mind mid-episode,
+      // and the native player offers the chip in both cases.
+      ...(AUTO_MS > 0 ? { undo: {
         identity: spec.identity, type: spec.type, title: spec.title,
         season: spec.season, episode: spec.episode,
       } } : {}),
@@ -595,7 +611,7 @@ export function screen(ctx, identity) {
       if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'The hub has not reported the audio tracks for this copy yet. It usually arrives with the first frame.' }));
       for (const t of list) {
         panel.appendChild(row(langName(t.language) || t.title || `Track ${t.id}`,
-          [t.codec, t.default ? 'default' : ''].filter(Boolean).join(' · '),
+          [codecName(t.codec), t.default ? 'default' : ''].filter(Boolean).join(' · '),
           String(t.id) === String(player.selectedAudio),
           () => { player.setAudio(t.id).then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
       }
@@ -616,11 +632,18 @@ export function screen(ctx, identity) {
           () => { player.setSub(t.id).then(() => { paintChips(); menuDone(); }); }));
       }
     } else if (kind === 'quality') {
-      panel.appendChild(el('h4', {}, icon('globe'), el('span', { text: 'Quality' })));
+      // The heading names the copy playing right now, so opening the menu answers "what am I watching"
+      // before the viewer has to read down the list looking for the ticked row.
+      panel.appendChild(el('h4', {}, icon('globe'), el('span', { text: `Quality · ${qualityLabel()}` })));
       panel.appendChild(row('Let the hub choose', 'it ranks every copy it can find',
         !(player.target && player.target.picked && player.pinned),
         () => { player.pinned = false; player.setQuality('auto').then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
-      for (const s of player.sources || []) {
+      // `player.sources(list)` is the setter, and it writes the list onto itself - so until a play answer
+      // has named a copy, the property still holds the function rather than an array. Walking it then
+      // threw "function is not iterable" and killed the Quality sheet for exactly the titles that were
+      // still resolving.
+      const copies = Array.isArray(player.sources) ? player.sources : [];
+      for (const s of copies) {
         // Spec D: a copy that already froze on this title stays offered - it may be the biggest file and the
         // viewer may want to gamble - but it is dimmed and labelled, because pretending it is as good as the
         // others is how someone ends up re-choosing the broken link five times in a row.
@@ -638,7 +661,7 @@ export function screen(ctx, identity) {
     } else if (kind === 'speed') {
       panel.appendChild(el('h4', {}, icon('speed'), el('span', { text: 'Speed' })));
       const segs = el('div', { class: 'segs' });
-      for (const x of [0.5, 0.75, 1, 1.25, 1.5, 2]) {
+      for (const x of [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]) {
         const b = el('button', { class: `seg${player.rate === x ? ' on' : ''}`, type: 'button', text: `${x}x`,
           onclick: () => { player.setSpeed(x); paintChips(); menuDone(); } });
         focus.focusable(b);
@@ -750,7 +773,10 @@ export function screen(ctx, identity) {
     playingSince = 0;
     // A channel played by identity (a deep link, a zap) has no `type` in the URL. The hub names the kind
     // in its answer, so the floor becomes a live floor even when the route did not say so.
-    if (t && (t.live === true || String(t.type || '').toLowerCase() === 'channel')) isLiveFeed = true;
+    if (t && (t.live === true || String(t.type || '').toLowerCase() === 'channel')) {
+      isLiveFeed = true;
+      if (!liveBadge.isConnected) content.insertBefore(liveBadge, content.firstChild);
+    }
     player.sources(t.alternatives || t.sources || []);
     paintChips();
     // The play answer is often the first thing that knows the channel's stable number, so the badge gets
@@ -894,7 +920,7 @@ export function screen(ctx, identity) {
       if (openKind) { backOut(); return true; }
       return false;
     }
-    if (key === 'MediaPlayPause' || key === 'PlayPause') { player.toggle(); setPlayIcon(); return true; }
+    if (key === 'MediaPlayPause' || key === 'PlayPause') { togglePlayback(); return true; }
     // A TV viewer expects Down to reveal what can be changed. Opening the settings sheet on the first
     // Down is more discoverable than walking right through transport buttons to the small icons.
     if (key === 'ArrowDown' && !openKind && !asking && center.hidden) { openMenu('all'); return true; }
@@ -914,6 +940,9 @@ export function screen(ctx, identity) {
     if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(SEEK_FWD); showGhost(); return true; }
     if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-SEEK_BACK); showGhost(); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
+    // On a film or an episode, the remote's Previous-track key goes back to the top of what is playing —
+    // the same habit as skipping to the start of a track. (On a channel the key zaps, handled above.)
+    if (key === 'MediaTrackPrevious' && !isLiveFeed) { player.seek(0); showGhost(); return true; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       const a = document.activeElement;
       // The track is the scrubber; the transport buttons and the menu chips in the same row step along the
@@ -1003,7 +1032,7 @@ export function screen(ctx, identity) {
   // The hub keeps "continue watching" alive from what we post, so a TV that is turned off mid-film is not a
   // title that was finished.
   const postMs = Number(token('player', 'progressPostMs', 10000));
-  const post = setInterval(() => {
+  function postProgress() {
     const st = player.state();
     if (!st.positionMs) return;
     api.progress({
@@ -1018,12 +1047,16 @@ export function screen(ctx, identity) {
       // copy instead of reloading one the hub can already prove is too slow.
       player.noteStream(r && r.stream);
     }).catch(() => {});
-  }, postMs);
+  }
+  const post = setInterval(postProgress, postMs);
 
   root.addEventListener('pointermove', show);
   root.__dispose = () => {
     clearInterval(idle);
     clearInterval(post);
+    // Leaving mid-film is exactly when the next screen needs to know where the film was. The native player
+    // writes the position down on exit; without this the web player loses up to one post interval.
+    postProgress();
     popHandler(handler);
     closeMenu();
     // A zap to another channel disposes this screen with the sheet mid-slide and the badge mid-flash:
