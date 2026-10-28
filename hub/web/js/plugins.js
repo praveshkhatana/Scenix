@@ -177,6 +177,26 @@ registerCard('channel', (item, ctx) => {
 
 const MAX_CARDS = 18;   // a 440-channel addon row must not become 440 DOM nodes on a 1 GB TV
 
+/**
+ * The last tile of every shelf. The row header's "Explore all" was a mouse target: on a remote the ring
+ * never reached it, so a viewer had no way to see the rest of a category. A tile at the end of the rail is
+ * the same gesture as every other card — walk to it, press OK.
+ */
+function seeAllTile(row, ctx, size) {
+  const count = (row.items || []).length;
+  const b = el('button', {
+    class: `card seeall ${size}`, type: 'button',
+    'aria-label': `See all ${row.title || 'titles'}`,
+    onclick: (e) => { e.stopPropagation(); if (ctx.explore) ctx.explore(row); },
+  },
+  el('div', { class: 'art' },
+    el('span', { class: 'seeall-ico' }, icon('chevRight')),
+    el('div', { class: 'seeall-t', text: 'See all' }),
+    el('div', { class: 'seeall-n', text: `${count}${count >= MAX_CARDS ? '+' : ''} titles` })));
+  focusable(b);
+  return b;
+}
+
 /** Build the shelf frame; the cards mount when the row is actually reached (see mountCards). */
 function rail(row, ctx, opts = {}) {
   const size = opts.size || 'poster';
@@ -195,6 +215,7 @@ function rail(row, ctx, opts = {}) {
     for (let i = 0; i < shown.length; i++) {
       list.appendChild(render(shown[i], Object.assign({}, ctx, { index: i, row })));
     }
+    list.appendChild(seeAllTile(row, ctx, size));
     node.__mounted = true;
     return list;
   };
@@ -227,6 +248,7 @@ registerRow('top10', (row, ctx) => {
       if (a) a.parentNode.insertBefore(num, a);
       list.appendChild(c);
     });
+    list.appendChild(seeAllTile(row, ctx, 'rank'));
     node.__mounted = true;
     return list;
   };

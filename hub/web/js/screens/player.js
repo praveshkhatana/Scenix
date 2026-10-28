@@ -146,6 +146,33 @@ export function screen(ctx, identity) {
   nextUp.hidden = true;
 
   const center = el('div', { class: 'ply-center' });
+
+  /* The loading surface: the title's own artwork in the middle, with a bar that fills as the hub gets
+     the copy ready. A spinner is a generic "wait"; the logo says which film is being fetched, and the bar
+     says the wait is moving. The nodes are kept and refilled so the bar animates instead of restarting. */
+  const loadLogo = el('div', { class: 'ply-loadlogo' });
+  if (spec.logo) {
+    const img = el('img', { src: spec.logo, alt: spec.title || '' });
+    img.addEventListener('error', () => img.replaceWith(el('div', { class: 'ply-loadtitle', text: spec.title || 'Scenix' })));
+    loadLogo.appendChild(img);
+  } else {
+    loadLogo.appendChild(el('div', { class: 'ply-loadtitle', text: spec.title || 'Scenix' }));
+  }
+  const loadFill = el('i');
+  const loadBar = el('div', { class: 'ply-loadbar' }, loadFill);
+  const loadText = el('div', { class: 'ply-loadtext' });
+  function showLoading(text, pct) {
+    if (!center.contains(loadBar)) {
+      center.textContent = '';
+      center.appendChild(loadLogo);
+      center.appendChild(loadBar);
+      center.appendChild(loadText);
+    }
+    loadText.textContent = text || '';
+    loadFill.style.width = `${Math.max(6, Math.min(92, Number(pct) || 12))}%`;
+    center.hidden = false;
+  }
+
   const panel = el('div', { class: 'panel', style: 'bottom: calc(100% + 16px); right: 0;' });
   panel.hidden = true;
   bottom.appendChild(panel);
@@ -363,10 +390,20 @@ export function screen(ctx, identity) {
     openKind = kind;
     panel.hidden = false;
     panel.textContent = '';
-    if (kind === 'audio') {
+    if (kind === 'all') {
+      panel.appendChild(el('h4', {}, icon('sliders'), el('span', { text: 'Playback settings' })));
+      const nAudio = (player.audioTracks || []).length;
+      panel.appendChild(row('Audio', audioLabel() + (nAudio ? ` · ${nAudio} track${nAudio === 1 ? '' : 's'}` : ' · not reported yet'),
+        false, () => openMenu('audio')));
+      panel.appendChild(row('Subtitles', subLabel(), !!(player.selectedSub), () => openMenu('sub')));
+      panel.appendChild(row('Quality', qualityLabel(), false, () => openMenu('quality')));
+      if (!isLiveFeed) panel.appendChild(row('Speed', player.rate === 1 ? 'Normal' : `${player.rate}x`, false, () => openMenu('speed')));
+      panel.appendChild(row('Source', (player.target && player.target.picked && (player.target.picked.label || player.target.picked.provider)) || 'hub choice', false, () => openMenu('quality')));
+      panel.appendChild(el('div', { class: 'note', text: 'Left/right change the row; OK opens the choice; Back returns here.' }));
+    } else if (kind === 'audio') {
       panel.appendChild(el('h4', {}, icon('audio'), el('span', { text: 'Audio' })));
       const list = player.audioTracks || [];
-      if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'This copy carries one audio track, so there is nothing to switch.' }));
+      if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'The hub has not reported the audio tracks for this copy yet. It usually arrives with the first frame.' }));
       for (const t of list) {
         panel.appendChild(row(langName(t.language) || t.title || `Track ${t.id}`,
           [t.codec, t.default ? 'default' : ''].filter(Boolean).join(' · '),
@@ -439,19 +476,14 @@ export function screen(ctx, identity) {
   const offs = [];
   offs.push(player.on('negotiating', () => {
     setStatus('Finding a copy that will play on this TV…', 'wait');
-    center.textContent = '';
-    center.appendChild(el('div', { class: 'big', text: 'Getting the picture' }));
-    center.hidden = false;
+    showLoading('Finding the best copy for this TV…', 14);
   }));
   offs.push(player.on('preparing', (d) => {
     // The hub has the copy but has not put a byte on the wire yet. Keep the screen calm and say what
     // is happening; the controller asks again by itself, so there is nothing for the viewer to press.
+    const attempt = Number(d && d.attempt) || 1;
     setStatus('Preparing this copy - the first seconds are being fetched', 'wait');
-    center.hidden = false;
-    center.textContent = '';
-    center.appendChild(el('div', { class: 'big', text: 'Preparing this copy' }));
-    center.appendChild(el('div', { class: 'small',
-      text: 'The hub is warming the first few seconds. It will start on its own; no need to press anything.' }));
+    showLoading('Preparing this copy…', 24 + attempt * 10);
   }));
   function armBufferNote() {
     if (bufferNoteTimer) clearTimeout(bufferNoteTimer);
@@ -461,8 +493,10 @@ export function screen(ctx, identity) {
   }
   offs.push(player.on('ready', () => {
     if (!playingSince) playingSince = Date.now();
+    loadFill.style.width = '100%';
     armBufferNote();
-    if (!asking) center.hidden = true;
+    const st = player.state();
+    if (!asking && (st.positionMs > 400 || st.playing)) center.hidden = true;
     setPlayIcon();
     drawPosition();
     refreshStatus();
@@ -470,7 +504,12 @@ export function screen(ctx, identity) {
     player.subMargin(Math.round(bottom.getBoundingClientRect().height || px(140)));
   }));
   offs.push(player.on('position', () => { drawPosition(); drawNext(); tickSkip(); }));
-  offs.push(player.on('buffering', (d) => { refreshStatus(d && d.on === false ? {} : {}); drawPosition(); }));
+  offs.push(player.on('buffering', (d) => {
+    refreshStatus(d && d.on === false ? {} : {});
+    drawPosition();
+    const st = player.state();
+    if (d && d.buffering && st.positionMs < 800) showLoading('Buffering the first seconds…', 68);
+  }));
   offs.push(player.on('tracks', () => {
     btnAudio.lastChild.textContent = audioLabel();
     btnSub.lastChild.textContent = subLabel();
@@ -490,7 +529,11 @@ export function screen(ctx, identity) {
     paintEdge();
     refreshStatus();
   }));
-  offs.push(player.on('retrying', () => { center.hidden = true; setStatus('Asking for this copy again...', 'wait'); }));
+  offs.push(player.on('retrying', () => {
+    // A retry is still the loading screen, not a black picture: keep the title mark and the bar.
+    setStatus('Asking for this copy again...', 'wait');
+    showLoading('Asking for this copy again…', 58);
+  }));
   // Self-heal, in order: the playhead froze, we asked the hub for this same copy at this same point, and if
   // that brought it back the note disappears on its own. Only a second freeze interrupts anyone.
   offs.push(player.on('healing', (d) => setStatus(
@@ -607,6 +650,9 @@ export function screen(ctx, identity) {
       return false;
     }
     if (key === 'MediaPlayPause' || key === 'PlayPause') { player.toggle(); setPlayIcon(); return true; }
+    // A TV viewer expects Down to reveal what can be changed. Opening the settings sheet on the first
+    // Down is more discoverable than walking right through transport buttons to the small icons.
+    if (key === 'ArrowDown' && !openKind && !asking) { openMenu('all'); return true; }
     // A live feed has no position for a remote to jump around, so the transport keys are left to the router
     // rather than spending them on a seek that cannot land.
     // A channel has no position, so left/right are the channel keys. This is the same habit as a

@@ -85,6 +85,7 @@ const ctx = {
     state.session.pendingPlay = Object.assign({
       identity: item.identity, type: item.type, title: item.title,
       subtitle: (item.live && item.live.now) || item.tagline || '',
+      logo: item.logo || '', poster: item.poster || '', backdrop: item.backdrop || '',
     }, opts || {});
     navigate('play', item.identity);
   },

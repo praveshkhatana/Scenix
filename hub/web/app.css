@@ -1383,3 +1383,46 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 }
 .settings-toc .chip { font-size: var(--t-chip); }
 .search-empty[hidden] { display: none; }
+
+/* The last tile of a shelf: the remote's way into the rest of a category. */
+.card.seeall .art {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(10px * var(--s)); text-align: center;
+  background: linear-gradient(150deg, rgba(255,255,255,.10), rgba(255,255,255,.03));
+  border: 1px dashed rgba(255,255,255,.28);
+}
+.card.seeall .seeall-ico {
+  width: calc(54px * var(--s)); height: calc(54px * var(--s)); border-radius: 50%;
+  border: calc(2px * var(--s)) solid #fff; display: grid; place-content: center; color: #fff;
+}
+.card.seeall .seeall-ico .ico { width: calc(26px * var(--s)); height: calc(26px * var(--s)); }
+.card.seeall .seeall-t { font-size: calc(24px * var(--s)); font-weight: 800; color: #fff; }
+.card.seeall .seeall-n { font-size: calc(16px * var(--s)); color: var(--ink2); }
+.card.seeall.foc .art { border-color: #fff; background: rgba(255,255,255,.16); }
+
+/* Trailer tile at the front of an episode strip: artwork with a play mark, never a grey square. */
+.ep.trailer .trailer-art {
+  position: relative; width: calc(168px * var(--s)); height: calc(95px * var(--s));
+  flex: none; overflow: hidden; border-radius: var(--r-badge); background: #0f1620;
+}
+.ep.trailer .trailer-art img { width: 100%; height: 100%; object-fit: cover; }
+.trailer-play {
+  position: absolute; inset: 0; display: grid; place-content: center;
+  background: rgba(0, 0, 0, .32); color: #fff;
+}
+.trailer-play .ico { width: calc(42px * var(--s)); height: calc(42px * var(--s)); }
+
+/* The player's loading surface: the title's own mark, a bar that fills, one honest line. */
+.ply-center { background: radial-gradient(60% 60% at 50% 45%, rgba(0,0,0,.55), rgba(0,0,0,.86)); }
+.ply-loadlogo { min-height: calc(90px * var(--s)); display: grid; place-items: center; }
+.ply-loadlogo img { max-width: calc(520px * var(--s)); max-height: calc(150px * var(--s)); object-fit: contain; }
+.ply-loadtitle { font-size: calc(64px * var(--s)); font-weight: 900; letter-spacing: -.03em; text-align: center; }
+.ply-loadbar {
+  width: calc(360px * var(--s)); height: calc(4px * var(--s)); margin-top: calc(26px * var(--s));
+  border-radius: 999px; background: rgba(255,255,255,.22); overflow: hidden;
+}
+.ply-loadbar i {
+  display: block; height: 100%; width: 8%; border-radius: inherit; background: var(--brand);
+  transition: width 520ms cubic-bezier(.23,1,.32,1);
+}
+.ply-loadtext { margin-top: calc(14px * var(--s)); font-size: calc(18px * var(--s)); color: var(--ink2); text-align: center; }

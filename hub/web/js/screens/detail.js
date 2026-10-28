@@ -288,7 +288,7 @@ export function screen(ctx, identity) {
     const TRAILER_DWELL = Number(token('preview', 'delayMs', 1500));
     const armTrailer = () => {
       if (dwell || item.live) return;
-      dwell = setTimeout(playTrailer, TRAILER_DWELL);
+      dwell = setTimeout(() => playTrailer(true), TRAILER_DWELL);
     };
     const cancelTrailer = () => { if (dwell) { clearTimeout(dwell); dwell = null; } };
     focus.onFocus((n) => {
@@ -352,9 +352,12 @@ export function screen(ctx, identity) {
 
   /** The trailer is an episode of one, filed at the front of the strip. */
   function trailerTile() {
+    const still = item.backdrop || item.poster;
     const b = el('button', { class: 'ep trailer', type: 'button', 'aria-label': 'Play trailer',
       onclick: () => playTrailer() },
-    el('div', { class: 'nostill' }, icon('play', { solid: true })),
+    el('div', { class: 'trailer-art' },
+      still ? el('img', { src: imageUrl(still), alt: '', loading: 'lazy' }) : null,
+      el('span', { class: 'trailer-play' }, icon('play', { solid: true }))),
     el('div', {}, el('div', { class: 'en', text: 'Trailer' })));
     focus.focusable(b);
     return b;
@@ -385,10 +388,10 @@ export function screen(ctx, identity) {
   }
 
   let trailerTried = false;
-  function playTrailer() {
+  function playTrailer(silent = false) {
     if (trailerTried && hero.querySelector('video')) return;
     getTrailerSafe().then((t) => {
-      if (!t) { toast('No trailer for this title on this hub.'); return; }
+      if (!t) { if (!silent) toast('No trailer for this title on this hub.'); return; }
       startPreview(hero.__previewSlot || hero, t, item.backdrop || item.poster);
     });
   }

@@ -72,7 +72,9 @@ function visible(node) {
   const r = rectOf(node);
   if (r.width < 2 || r.height < 2) return false;
   const st = styleOf(node);
-  if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+  // Opacity is deliberately not a visibility test. The player's chrome fades in on the same keypress that
+  // asks the ring to enter it; rejecting an element mid-transition made the controls unreachable.
+  if (st.visibility === 'hidden' || st.display === 'none') return false;
   return true;
 }
 
@@ -93,7 +95,7 @@ export function setFocus(node, { scroll = true, source = 'key' } = {}) {
   current = node;
   node.classList.add('foc');
   try { node.focus({ preventScroll: true }); } catch (e) { /* older engines: class + ring still work */ }
-  if (scroll) scrollTo(node);
+  if (scroll) scrollFor(node);
   for (const cb of listeners) { try { cb(node, source); } catch (e) { console.error('[scenix] focus listener', e); } }
   return true;
 }
@@ -101,6 +103,22 @@ export function setFocus(node, { scroll = true, source = 'key' } = {}) {
 export function blurFocus() {
   if (current) current.classList.remove('foc');
   current = null;
+}
+
+/**
+ * Where the page should sit when the ring lands on `node`.
+ *
+ * A hero is not a card: scrolling just enough to show its Play button leaves the title above the top
+ * edge, which is exactly the "I can see the banner but not the film" state on a detail page. Entering a
+ * billboard or a detail hero goes to the top of the screen, so the name and the button are one picture.
+ */
+function scrollFor(node) {
+  if (node.closest && node.closest('.nav')) return;
+  if (node.closest && node.closest('.billboard, .detail-hero')) {
+    const screen = node.closest('.screen');
+    if (screen) { screen.scrollTop = 0; return; }
+  }
+  scrollTo(node);
 }
 
 function scrollTo(node) {
@@ -151,7 +169,7 @@ function geometric(from, dir, pool) {
    its own centre and swallows the centres of the shelves above and below it, and the ring stops moving.
    So vertical steps walk bands in layout order and land in the same column the viewer was in. */
 
-const BAND_SEL = '.nav, .bb-btns, .billboard, .mbox, .sheet, .firstrun, .keys';
+const BAND_SEL = '.nav, .bb-btns, .billboard, .detail-hero, .mbox, .sheet, .firstrun, .keys';
 
 function bandOf(node) {
   let n = node;
@@ -191,6 +209,17 @@ function bandStep(from, dir) {
   const rest = dir === 'down' ? list.slice(idx + 1) : list.slice(0, idx).reverse();
   for (const b of rest) {
     if (!b.items.length) continue;
+    // Coming up from a shelf into the billboard, the right answer is the Play button, not whichever
+    // thumbnail happens to be under the same column. The queue is still reachable with one more step.
+    if (b.el.classList && b.el.classList.contains('billboard')) {
+      const play = b.el.querySelector('.bb-btns .btn, .bb-btns .round');
+      if (play) return play;
+    }
+    // Same for a detail page: entering the hero from a shelf should land on Play/Resume.
+    if (b.el.classList && b.el.classList.contains('detail-hero')) {
+      const play = b.el.querySelector('.detail-actions .btn');
+      if (play) return play;
+    }
     let best = b.items[0];
     let bestD = Infinity;
     for (const c of b.items) {
