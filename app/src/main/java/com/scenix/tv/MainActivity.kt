@@ -59,6 +59,10 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         if (forceSetup) {
             // A repair pass must not trust yesterday's list: it may contain a router that answered
             // SSDP once, or a hub that has since moved. The address field still carries the saved one.
+            // The previous activity's watcher is stopped here too, so choosing a backend does not
+            // restart a watcher that belongs to a screen that no longer exists.
+            ctx.watch?.stop()
+            ctx.watch = null
             ctx.prefs.setDiscoveredHubs(emptyList())
             showPairing()
             return
