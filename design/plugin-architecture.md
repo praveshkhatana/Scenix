@@ -169,6 +169,7 @@ Kotlin, `minSdk 26`, Views (no Compose — 2 GB / 32-bit TV), Media3 ExoPlayer, 
 ```
 core/               HubProbe · HubDiscovery · HubWatch · Models · Prefs · Format · Views
                     LocalHub · LocalServer · FixtureServer · LoopbackServer · AddonClient
+                    TorrentEngine
 plugins/nav/        PairingScreen — first-run hub discovery, manual address, or standalone
 WebShellActivity    the product: WebView page + Media3 surface + window.Scenix bridge
 ```

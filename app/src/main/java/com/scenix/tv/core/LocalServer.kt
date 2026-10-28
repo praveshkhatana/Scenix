@@ -113,7 +113,18 @@ class LocalServer private constructor(
                 if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
                 else {
                     val answered = hub.playJson(o)
-                    res.json(if (answered.has("error")) 409 else 200, answered)
+                    // A local torrent answer is a path this server owns. Make it absolute for the page
+                    // and the native player, which do not share this server's base URL otherwise.
+                    val u = answered.optString("url", "")
+                    if (u.startsWith("/app/v1/torrent/")) {
+                        answered.put("url", "http://127.0.0.1:$port$u")
+                    }
+                    val code = when {
+                        !answered.has("error") -> 200
+                        answered.optBoolean("warming") -> 503
+                        else -> 409
+                    }
+                    res.json(code, answered)
                 }
             }
 
@@ -246,11 +257,73 @@ class LocalServer private constructor(
             path == "/app/v1/avatars/warm" && method == "POST" ->
                 res.json(200, JSONObject().put("ok", true).put("faces", 0))
 
+            path.startsWith("/app/v1/torrent/") -> torrent(res, method, path)
+
             else -> static(res, path)
         }
     }
 
-    // ---- the bundled page ------------------------------------------------------------------------
+    /**
+     * A prepared torrent file with HTTP Range support. The first chunk is awaited before the head is
+     * written so a cold swarm answers 503 (warming) rather than a truncated 200; after that every read
+     * waits only for the pieces covering that byte range.
+     */
+    private fun torrent(res: Res, method: String, path: String) {
+        val rest = path.removePrefix("/app/v1/torrent/")
+        val hash = decode(rest.substringBefore('/'))
+        val fileId = rest.substringAfter('/', "").toIntOrNull()
+        if (hash.isBlank() || fileId == null) {
+            return res.json(400, JSONObject().put("error", "torrent and file are required"))
+        }
+        val opened = TorrentEngine.find(hash, fileId)
+            ?: return res.json(404, JSONObject().put("error", "torrent not prepared").put("hash", hash))
+        val size = opened.prepared.size
+        var start = 0L
+        var end = size - 1
+        var partial = false
+        val range = res.headers["range"]?.trim().orEmpty()
+        if (range.startsWith("bytes=", ignoreCase = true)) {
+            val spec = range.substringAfter('=').substringBefore(',').trim()
+            val a = spec.substringBefore('-').trim()
+            val b = spec.substringAfter('-', "").trim()
+            start = when {
+                a.isEmpty() && b.isNotEmpty() -> (size - b.toLongOrNull().orZero()).coerceAtLeast(0L)
+                else -> a.toLongOrNull() ?: 0L
+            }
+            end = if (b.isEmpty()) size - 1 else b.toLongOrNull()?.coerceAtMost(size - 1) ?: (size - 1)
+            partial = true
+        }
+        if (start < 0 || start >= size || end < start) {
+            return res.json(416, JSONObject().put("error", "range not satisfiable"))
+        }
+        val length = end - start + 1
+        val type = TorrentEngine.mimeOf(opened.prepared.name)
+        val extra = LinkedHashMap<String, String>()
+        extra["Accept-Ranges"] = "bytes"
+        if (partial) extra["Content-Range"] = "bytes $start-$end/$size"
+        if (method == "HEAD") {
+            res.begin(if (partial) 206 else 200, type, length, extra)
+            return res.end()
+        }
+
+        // Wait for the first chunk before committing the status line. A cold copy then answers 503,
+        // which the player already knows how to retry; a 200 followed by silence is not honest.
+        val first = TorrentEngine.read(opened, start, TORRENT_CHUNK)
+            ?: return res.json(503, JSONObject().put("error", "torrent warming").put("warming", true).put("retryAfterMs", 5000))
+        res.begin(if (partial) 206 else 200, type, length, extra)
+        if (!res.write(first)) return
+        var at = start + first.size
+        while (at <= end) {
+            val want = minOf(TORRENT_CHUNK.toLong(), end - at + 1).toInt()
+            val chunk = TorrentEngine.read(opened, at, want) ?: break
+            if (chunk.isEmpty()) break
+            if (!res.write(chunk)) break
+            at += chunk.size
+        }
+        res.end()
+    }
+
+    private fun Long?.orZero(): Long = this ?: 0L
 
     private fun addonErrorCode(error: String): Int = when (error) {
         "already installed" -> 409
@@ -260,6 +333,7 @@ class LocalServer private constructor(
 
 
     companion object {
+        private const val TORRENT_CHUNK = 256 * 1024
         @Volatile private var instance: LocalServer? = null
 
         /**

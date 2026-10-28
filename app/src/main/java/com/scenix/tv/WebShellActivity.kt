@@ -171,8 +171,10 @@ class WebShellActivity : Activity() {
             WebView.setWebContentsDebuggingEnabled(true)
         }
 
-        // Transparent so the picture below shows through and the page's gradients scrim it.
-        web.setBackgroundColor(0x00000000)
+        // Opaque on browse screens: a transparent WebView over a hidden PlayerView is a whole
+        // composited layer blended for nothing. `Scenix.surface(true)` switches it to transparent
+        // when there is a picture behind it.
+        web.setBackgroundColor(android.graphics.Color.rgb(20, 20, 20))
     }
 
     private fun deviceName(): String =

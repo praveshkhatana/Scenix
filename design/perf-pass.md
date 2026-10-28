@@ -77,3 +77,20 @@ which gets most of the node count back without touching the focus reveal.
 
 Card visuals, card counts (18 + See all), row order, the billboard, the detail page, search grids, channels,
 the `See all` tile, and every screen's use of `lazyMount`/`dropMountedRows`. The hub is untouched.
+
+
+## 5. Device result after the recycler (28 Oct, BRAVIA VU1)
+
+The panel was walked with the D-pad after Home had loaded; `dumpsys gfxinfo com.scenix.tv` was reset
+immediately before each run.
+
+| Run | Frames | Janky | p50 | p90 | p95 |
+|---|---:|---:|---:|---:|---:|
+| First cold walk after launch | 361 | 195 (54.0 %) | 18 ms | 200 ms | 300 ms |
+| Cold walk with a fresh content fill | 815 | 612 (75.1 %) | 21 ms | 65 ms | 150 ms |
+| Warm 20-step walk after a short warm-up | 873 | 48 (5.5 %) | 10 ms | 14 ms | 17 ms |
+
+The steady state is now smooth on this panel; the remaining spikes are in the **first** pass, where
+images and row layouts are being created, not in the focus or recycle path. The shell also paints the
+WebView opaque on browse screens and switches it transparent only while the native surface is live,
+so a hidden PlayerView is not blended behind every shelf.

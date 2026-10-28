@@ -67,9 +67,12 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
                 val method = parts[0].uppercase()
                 val target = parts[1]
                 var length = 0
+                val headers = HashMap<String, String>()
                 while (true) {
                     val h = rawLine(input) ?: break
                     if (h.isBlank()) break
+                    val colon = h.indexOf(':')
+                    if (colon > 0) headers[h.substring(0, colon).trim().lowercase()] = h.substring(colon + 1).trim()
                     if (h.length >= 15 && h.substring(0, 15).equals("Content-Length:", ignoreCase = true)) {
                         length = h.substring(15).trim().toIntOrNull() ?: 0
                     }
@@ -78,7 +81,7 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
                 // read ahead into its own buffer, and the bytes the body is waiting for would already be
                 // gone: every POST (play, progress, prefs, addon install) hung with no reply.
                 val body = if (length > 0) String(readBody(input, length), Charsets.UTF_8) else ""
-                route(method, target, body, Res(s.getOutputStream()))
+                route(method, target, body, Res(s.getOutputStream(), headers))
             }
         } catch (t: Throwable) {
             Log.w(TAG, "request failed: ${t.message}")
@@ -194,25 +197,36 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
     }
 
     /** One request's worth of answers, written to one socket: every route answers exactly once. */
-    protected inner class Res(private val stream: OutputStream) {
+    protected inner class Res(private val stream: OutputStream, val headers: Map<String, String>) {
         fun json(code: Int, o: JSONObject) =
             send(code, "application/json; charset=utf-8", o.toString().toByteArray(Charsets.UTF_8))
 
-        fun send(code: Int, type: String, bytes: ByteArray) {
+        fun send(code: Int, type: String, bytes: ByteArray, extra: Map<String, String> = emptyMap()) {
+            begin(code, type, bytes.size.toLong(), extra)
+            write(bytes)
+            end()
+        }
+
+        /** Headers only, when a stream follows. Every response writes its head exactly once. */
+        fun begin(code: Int, type: String, length: Long, extra: Map<String, String> = emptyMap()) {
             val status = when (code) {
                 200 -> "OK"
+                206 -> "Partial Content"
                 400 -> "Bad Request"
                 403 -> "Forbidden"
                 404 -> "Not Found"
                 409 -> "Conflict"
                 413 -> "Payload Too Large"
+                416 -> "Range Not Satisfiable"
                 502 -> "Bad Gateway"
                 503 -> "Service Unavailable"
                 else -> "Error"
             }
             // The same rule a hub's static server uses: text is re-checked every time, so a page that changed
             // in a rebuild is never hidden behind a cache, and a picture that cannot change on this TV is kept.
-            val cache = if (type.startsWith("text/") || type.startsWith("application/json")) {
+            val cache = if (type.startsWith("text/") || type.startsWith("application/json") ||
+                type.startsWith("video/")
+            ) {
                 "no-cache"
             } else {
                 "public, max-age=86400"
@@ -220,23 +234,33 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
             val head = buildString {
                 append("HTTP/1.1 ").append(code).append(' ').append(status).append("\r\n")
                 append("Content-Type: ").append(type).append("\r\n")
-                append("Content-Length: ").append(bytes.size).append("\r\n")
+                append("Content-Length: ").append(length).append("\r\n")
                 append("Cache-Control: ").append(cache).append("\r\n")
+                for ((k, v) in extra) append(k).append(": ").append(v).append("\r\n")
                 append("Connection: close\r\n\r\n")
             }
-            try {
-                stream.write(head.toByteArray(Charsets.UTF_8))
-                stream.write(bytes)
-                stream.flush()
-            } catch (t: Throwable) {
-                Log.w(TAG, "response write failed: ${t.message}")
-            }
+            write(head.toByteArray(Charsets.UTF_8))
+        }
+
+        fun write(bytes: ByteArray): Boolean = try {
+            stream.write(bytes)
+            stream.flush()
+            true
+        } catch (t: Throwable) {
+            // The player closes a range connection when it seeks. Reporting that is what stops a
+            // torrent stream from reading the rest of a film into a socket nobody is listening to.
+            Log.w(TAG, "response write failed: ${t.message}")
+            false
+        }
+
+        fun end() {
+            try { stream.flush() } catch (t: Throwable) { Log.w(TAG, "response flush failed: ${t.message}") }
         }
     }
 
     companion object {
         private const val TAG = "ScenixServer"
-        const val POOL_THREADS = 3
+        const val POOL_THREADS = 8
         const val MAX_BODY = 256 * 1024
         // The ceiling a hub's own static server holds a page file to. The whole bundle is well under it; the
         // number is there so one wrong file cannot fill a TV's memory.

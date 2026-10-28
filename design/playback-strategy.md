@@ -27,7 +27,7 @@ and a single 4.2 GB MKV cannot provide it.
 
 | Approach | Mechanism | Licence | Fit for us |
 |---|---|---|---|
-| **In-process core** (desktop apps) | an in-app Rust core runs the torrent engine inside the app and hands the player a `127.0.0.1` URL | MIT | Proven, but it means a Rust torrent engine living inside our 2 GB / 32-bit app, competing with the HW decoder |
+| **In-process core** (desktop apps, and standalone Scenix) | an in-process engine downloads sequentially and hands the player a local HTTP stream | MIT / BSD | Shipped for standalone as libtorrent4j on armeabi-v7a; it competes with the HW decoder and needs free storage, so the hub remains the recommended shape |
 | **Companion engine app** (companion-engine pattern, used by companion player apps) | a separate app runs the engine + local HTTP server; players just open `http://127.0.0.1:PORT/…` | GPL-family for the well-known ones | **Best fit**: zero licence contamination (separate app, no linking), reuses an engine that already works on Android TV |
 | **Server-side gateway** | the *hub host* runs the engine and serves the torrent to clients as an ordinary seekable HTTP stream | ours | **The Scenix-like answer**: the hub box is x86 with 32 GB and 85 Mbps wired; the TV then plays plain HTTP with no torrent code at all |
 | **Player with built-in torrent demuxer** (mpv/ffmpeg + libtorrent) | the demuxer speaks `magnet:` directly | LGPL/GPL | Good on desktop; on 32-bit Android TV it is a heavy native dependency |
@@ -74,6 +74,12 @@ surface through `window.Scenix`.
    (`core/gateway.js`, `GATEWAY=off|http`) and the engine later, as an explicit, optional,
    documented dependency — the hub stays dependency-free by default.
 4. `external` — hand the URL to another app via intent when the device has one that can play it.
+
+Standalone has its own fourth path: `TorrentEngine` (libtorrent4j, armeabi-v7a) downloads a magnet
+sequentially into the app cache, chooses the wanted file, and serves it through the loopback server
+with HTTP Range. Playback, pause and seek are therefore the same Media3 path as a direct file; a seek
+into pieces that have not arrived waits for those pieces instead of pretending. The engine refuses a
+file larger than the free space and downloads only the chosen episode from a season pack.
 
 `mode` is the only thing that changes when a gateway is enabled: `sources[]`, `POST /app/v1/play`
 and the UI stay identical. That is the contract. A browser that cannot draw the codec gets a

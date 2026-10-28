@@ -150,7 +150,7 @@ class LocalHub private constructor(context: Context) {
         // stated here as false rather than left out: an absent key reads as "unknown", and the whole
         // point is that nothing here is unknown.
         val caps = JSONObject()
-            .put("gateway", false)     // no engine fetches a torrent here: a source is a URL or nothing
+            .put("gateway", true)      // a local libtorrent engine streams torrents over loopback HTTP
             .put("live", false)        // no channel list to tune
             .put("localFiles", false)  // no device file browser: sources come from addons
             .put("remux", false)       // a file plays as it is, or not at all
@@ -328,11 +328,50 @@ class LocalHub private constructor(context: Context) {
         val profileId = s(body, "profile", "").ifBlank { null }
         val sources = applyCaps(collectSources(address, type, wait = true), profileId)
         val wanted = s(body, "source", s(body, "provider", ""))
-        val pick = sources.firstOrNull { it.mode == "direct" && (wanted.isBlank() || it.label == wanted || it.provider == wanted) }
+        val named = sources.firstOrNull { wanted.isNotBlank() && (it.label == wanted || it.provider == wanted) }
+        val torrentRoom = TorrentEngine.freeBytes(appContext) - 300L * 1024 * 1024
+        val torrents = sources.filter { it.mode == "torrent" }
+        // Prefer a copy whose size the addon stated and which fits. An unknown-size 2160p entry is not
+        // a reason to fail while a 1080p copy that fits is sitting next to it.
+        val fitting = torrents.filter { it.sizeBytes > 0 && it.sizeBytes <= torrentRoom }
+            .ifEmpty { torrents.filter { it.sizeBytes == 0L } }
+        val pick = named
             ?: sources.firstOrNull { it.mode == "direct" }
+            ?: fitting.firstOrNull()
+            ?: torrents.firstOrNull()
             ?: return JSONObject()
                 .put("error", "nothing here is a file this TV can open on its own")
                 .put("sources", JSONArray(sources.map { sourceJson(it) }))
+
+        if (pick.mode == "torrent") {
+            if (pick.sizeBytes > 0 && pick.sizeBytes > torrentRoom) {
+                return JSONObject()
+                    .put("error", "this copy is larger than the free space on this TV")
+                    .put("sources", JSONArray(sources.map { sourceJson(it) }))
+            }
+            val uri = torrentFor(address, pick)
+                ?: return JSONObject().put("error", "this copy has no magnet the local engine can use")
+            val prepared = TorrentEngine.prepare(appContext, uri, season, episode)
+                ?: return JSONObject()
+                    .put("error", "the local torrent engine could not prepare this copy")
+                    .put("warming", true)
+                    .put("retryAfterMs", 5000)
+                    .put("sources", JSONArray(sources.map { sourceJson(it) }))
+            return JSONObject()
+                .put("url", "/app/v1/torrent/${prepared.hash}/${prepared.fileId}")
+                .put("kind", "http")
+                .put("mode", "gateway") // libtorrent streams it; the player sees ordinary HTTP
+                .put("headers", JSONObject())
+                .put("proxied", true)
+                .put("why", JSONArray(pick.why))
+                .put("sizeBytes", prepared.size)
+                .put("sourceName", prepared.name)
+                .put("episode", if (season > 0 && episode > 0) JSONObject()
+                    .put("season", season).put("episode", episode) else JSONObject.NULL)
+                .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
+                    .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+        }
+
         val url = urlFor(address, pick) ?: return JSONObject().put("error", "stream link expired, open the title again")
         return JSONObject()
             .put("url", url)
@@ -818,6 +857,7 @@ class LocalHub private constructor(context: Context) {
         val t = communityType(type) ?: return emptyList()
         val found = ArrayList<Source>()
         val urls = HashMap<String, String>()
+        val torrents = HashMap<String, String>()
         for (am in addonManifests()) {
             if (!am.has("stream") || !addressableBy(address, am.spec.id)) continue
             val streams = addons.streams(am, t, remoteIdFor(address, am.spec.id), wait, ttlMs = ttlMs()) ?: continue
@@ -826,9 +866,13 @@ class LocalHub private constructor(context: Context) {
                 val src = parseStream(e, am.spec.name) ?: continue
                 found.add(src)
                 urlOf(src)?.let { urls[srcKey(src)] = it }
+                if (src.kind == "torrent") torrentUri(e)?.let { torrents[srcKey(src)] = it }
             }
         }
-        if (found.isNotEmpty()) sourceUrls[address] = urls
+        if (found.isNotEmpty()) {
+            sourceUrls[address] = urls
+            sourceTorrents[address] = torrents
+        }
         return rankSources(found)
     }
 
@@ -836,10 +880,22 @@ class LocalHub private constructor(context: Context) {
 
     private fun urlFor(address: String, src: Source): String? = sourceUrls[address]?.get(srcKey(src))
 
+    private fun torrentFor(address: String, src: Source): String? = sourceTorrents[address]?.get(srcKey(src))
+
+    /** A magnet in whichever field the addon chose, or a magnet built from a bare info hash. */
+    private fun torrentUri(e: JSONObject): String? {
+        val magnet = listOf(s(e, "externalUrl", ""), s(e, "url", ""), s(e, "magnet", ""))
+            .firstOrNull { it.startsWith("magnet:", true) }
+        if (!magnet.isNullOrBlank()) return magnet
+        val hash = s(e, "infoHash", s(e, "hash", ""))
+        return if (Regex("^[a-fA-F0-9]{40}$").matches(hash)) "magnet:?xt=urn:btih:$hash" else null
+    }
+
     /** Sources carry no URL, so the one an addon gave is remembered beside it under its shown fields. */
     private fun srcKey(src: Source): String = "${src.provider}|${src.kind}|${src.quality}|${src.sizeBytes}|${src.label}"
 
     private val sourceUrls = HashMap<String, HashMap<String, String>>()
+    private val sourceTorrents = HashMap<String, HashMap<String, String>>()
 
     private val MEDIA_EXT = Regex("\\.(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(\\?|#|$)", RegexOption.IGNORE_CASE)
 
@@ -875,7 +931,7 @@ class LocalHub private constructor(context: Context) {
         }
         val why = when {
             playable -> listOf(URL_TAG + direct, "$addonName \u00B7 a file this TV reads on its own")
-            isTorrent -> listOf("torrent \u00B7 no engine in standalone mode")
+            isTorrent -> listOf("$addonName \u00B7 the local torrent engine streams this")
             else -> listOf("not a file this player can open")
         }
         return Source(
@@ -885,8 +941,16 @@ class LocalHub private constructor(context: Context) {
             quality = quality,
             sizeBytes = size ?: 0L,
             risk = if (!playable && !isTorrent) "not a file" else "",
-            mode = if (playable) "direct" else "none",
-            score = if (playable) 1.0 + qualityRank(quality) * 0.1 else 0.0,
+            mode = when {
+                playable -> "direct"
+                isTorrent -> "torrent"
+                else -> "none"
+            },
+            score = when {
+                playable -> 1.0 + qualityRank(quality) * 0.1
+                isTorrent -> 0.5 + qualityRank(quality) * 0.1
+                else -> 0.0
+            },
             why = why,
         )
     }

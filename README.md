@@ -41,7 +41,7 @@ it can draw.
 |---|---|---|
 | What you run | the hub on any box on your network, plus the app | the app alone |
 | Configuration | the Hub UI, in any browser | the same UI, hosted in the app |
-| Torrent playback | one gateway reader shared by the household | direct HTTP sources only; no torrent engine on the device |
+| Torrent playback | one gateway reader shared by the household | a local libtorrent engine; downloads to the TV cache and is limited by free space |
 | Live TV, local files, shared cache | yes | no |
 
 Both speak the same `/app/v1` contract, so the interface is identical and the app only branches on

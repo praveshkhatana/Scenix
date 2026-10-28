@@ -37,8 +37,8 @@ playback bridge. Two implementations satisfy it:
    on the network or hosted anywhere         inside itself (LocalHub)
         │                                        │
         ├─ addons, profiles, settings            ├─ addons (same protocol)
-        ├─ torrent engine + gateway              ├─ local cache + local DB
-        ├─ live TV, local files, trailers        ├─ direct HTTP sources only
+        ├─ torrent engine + gateway              ├─ local libtorrent + local DB
+        ├─ live TV, local files, trailers        ├─ direct HTTP/HLS and torrents
         └─ serves the shared UI                  └─ UI bundled in the app
                  │                                        │
                  └────────── one client UI ───────────────┘
@@ -58,16 +58,18 @@ catalogue DB. The app is thin: pair, browse, play.
 
 ### Standalone mode
 One app, no server, nothing to install twice — the simple shape. The app runs the contract itself,
-talks to addons directly, and serves the same bundled interface on a loopback port. Trade-offs, stated
-honestly: no torrent gateway and no torrent engine on the device, so only direct HTTP/HLS and local
-sources play; no shared cache; heavier on a 2 GB panel. That is why the hub remains the recommended
-shape and standalone is the easy one, not the better one.
+talks to addons directly, and serves the same bundled interface on a loopback port. It also carries a
+libtorrent engine for the 32-bit ARM panel: a magnet is downloaded sequentially into the app cache and
+served to the player as ordinary seekable HTTP. Trade-offs, stated honestly: the engine shares the
+TV's 2 GB and CPU with decoding, a large film needs free storage (the app refuses a copy that does not
+fit), and a far seek waits for those pieces; the hub still does this better with one engine and a
+disk. Standalone remains the easy shape, not the better one.
 
 Both shapes have run on the same panel in the same build, with only an owner setting changed between
 them. In hub mode the shell loaded the paired hub's address and played through the gateway. In
 standalone the app started its own contract host on a loopback port chosen at boot, served the
 identical page out of its own assets, and answered `GET /app/v1/manifest` with the richer flags turned
-off — `gateway:false, live:false, localFiles:false, remux:false, tracks:false` beside `search:true,
+off — `live:false, localFiles:false, remux:false, tracks:false` beside `gateway:true, search:true,
 settingsAdmin:true, profileEdit:true, addonAdmin:true` — with one profile created on first run. That
 state drew no audio-track or subtitle control, which is the capability rule doing its job rather than a
 diminished screen.

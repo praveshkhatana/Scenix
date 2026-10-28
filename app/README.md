@@ -22,6 +22,10 @@ Nothing is installed or deployed from here.
   clearing data; `--es token …` sets the access token for a test launch.
 - **The product** — `WebShellActivity` loads `http://<backend>/` in a WebView. Every screen you use
   (home, detail, search, settings, player chrome) is the same `hub/web/` code a browser gets.
+- **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
+  sequentially into `cache/torrents`, picks the requested file or episode, and serves it through the
+  loopback HTTP server with Range support. The player sees an ordinary file. A copy larger than the
+  free space is refused, and a far seek waits for its pieces.
 - **Playback** — a native Media3 `ExoPlayer` sits behind the WebView. The page calls the
   `window.Scenix` bridge (`play`, `pause`, `resume`, `seek`, `skip`, `stop`, `setSpeed`, `select`,
   `setQuality`, `setSubMarginBottom`, `openExternal`, `openSetup`, `state`) and draws no video of its
