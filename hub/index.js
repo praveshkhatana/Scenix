@@ -224,6 +224,7 @@ function capabilities() {
     localFiles: !!registry.byId['local-files'],
     remux: remux.status().binFound === true, // a browser can be handed fragmented MP4 / HLS
     tracks: media.status().binFound === true, // audio and subtitle languages are read from the files
+    audioMix: remux.status().binFound === true, // a donor audio stream can be muxed into the picture
     announce: process.env.ANNOUNCE !== '0', // a client can find this hub without being told its address
 
     // The rest of the vocabulary is about what a client may *change*, not about what it may watch. The
@@ -1388,6 +1389,75 @@ function resumeOffset(source, item, positionMs) {
   return Math.max(0, Math.min(size - 1, Math.floor(size * (pos / dur))));
 }
 
+/**
+ * What a source says about one language. `fromTracks` is the file's own measurement; `fromClaims` is the
+ * addon's label. When a copy's tracks have been read, the tracks win, exactly as the ranking rule does.
+ */
+function audioEvidence(source, lang) {
+  const tracks = Array.isArray(source.audioTracks) ? source.audioTracks : [];
+  const fromTracks = tracks.some((t) => media.langOf(t.language) === lang);
+  const claims = Array.isArray(source.audioLangs) ? source.audioLangs
+    : (Array.isArray(source._langs) ? source._langs : []);
+  const fromClaims = claims.some((l) => media.langOf(l) === lang);
+  return { fromTracks, fromClaims };
+}
+
+function hasAudioLanguage(source, lang) {
+  const e = audioEvidence(source, lang);
+  if (Array.isArray(source.audioTracks) && source.audioTracks.length) return e.fromTracks;
+  return e.fromClaims;
+}
+
+/** The donor track's container index, or null when the source only claims a language. */
+function audioOrdinal(source, lang) {
+  const tracks = Array.isArray(source.audioTracks) ? source.audioTracks : [];
+  const t = tracks.find((x) => media.langOf(x.language) === lang);
+  if (!t || !/^a:(\d+)$/.test(String(t.id))) return null;
+  return Number(String(t.id).slice(2));
+}
+
+/** How a donor's audio may enter MP4: copy when its codec fits, otherwise AAC. */
+function audioPlanFor(source, lang) {
+  const tracks = Array.isArray(source.audioTracks) ? source.audioTracks : [];
+  if (!tracks.length) return 'aac';
+  const ord = audioOrdinal(source, lang);
+  if (ord == null) return 'aac';
+  const plan = remux.planFor({ audioTracks: tracks }, ord);
+  return plan === 'copy' ? 'copy' : 'aac';
+}
+
+/**
+ * Ask the donor addon for a playable URL. A torrent donor needs the gateway; an audio-only or direct
+ * donor is already an HTTP stream. This is deliberately separate from the primary picker: the donor is
+ * allowed to be an audio-only row, and it must never be used as the picture.
+ */
+async function resolveAudioDonor(source, identity, opts, deadline) {
+  const addon = registry.byId[source && source._addon];
+  if (!addon || typeof addon.play !== 'function') return null;
+  const left = deadline - Date.now();
+  if (left <= 0) return null;
+  let o = null;
+  try {
+    o = await withBudget(Promise.resolve().then(() => addon.play(identity, source)),
+      Math.min(META_BUDGET_MS, left), null, 'audio donor ' + addon.id);
+  } catch (e) {
+    log('AUDIO DONOR FAIL', identity, addon.id + ': ' + e.message);
+    return null;
+  }
+  if (!o || !o.url) return null;
+  let url = o.url;
+  if (source.kind === 'torrent') {
+    const r = await gateway.resolve(
+      { ...source, url: o.url, infoHash: o.infoHash },
+      { clientOrigin: opts.clientOrigin,
+        budgetMs: Math.max(1000, Math.min(2500, deadline - Date.now())) },
+    );
+    if (!r.url) return null;
+    url = r.url;
+  }
+  return { url, headers: o.headers || source._headers || {}, kind: o.kind || source.kind };
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
   const item = await ctx.resolve(identity, type);
@@ -1437,7 +1507,12 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // ranking wins. Either way the ranking is the rules' output, not this file's opinion.
   const pool = sources.filter((s) => !isExcluded(s, skip));
   const allExcluded = !pool.length;
-  const candidates = allExcluded ? sources : pool;
+  const broad = allExcluded ? sources : pool;
+  // An audio-only row is a donor, not a picture: it must never become the primary source when any video
+  // copy exists. It stays in the candidate list only when a title has no picture at all.
+  const videoPool = broad.filter((s) => !(s.audioOnly === true || s.kind === 'audio'));
+  const candidates = videoPool.length ? videoPool : broad;
+  const prefAudio = (prefs.resolve(profile).audioLanguages || []).map((c) => media.langOf(c));
   let source = candidates[0];
   if (wanted) {
     const match = candidates.find((s) => (wanted.label && s.label === wanted.label)
@@ -1964,8 +2039,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const byLanguage = (list, raw) => (typeof raw === 'string' && /^[a-z]{2,3}$/i.test(raw) && !/^\d+$/.test(raw)
     ? list.find((t) => t.language === String(raw).toLowerCase()) : null) || null;
   // The household's codes and the file's codes are not always spelled alike, so both sides go through the
-  // same normalizer this hub uses for every other language claim it makes.
-  const prefAudio = (prefs.resolve(profile).audioLanguages || []).map((c) => media.langOf(c));
+  // same normalizer this hub uses for every other language claim it makes. `prefAudio` was resolved with
+  // the profile before ranking, so the audio picker and the donor search use the same order.
   const chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
     // Nothing asked for: name the track the hub would recommend. The profile's own language order comes
     // first, and only then whatever flag the packager stamped on the file — measured on a torrent whose
@@ -1982,16 +2057,112 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // native player keeps its own default.
   out.selectedSub = chosenSub ? chosenSub.id : null;
 
-  if (out.mode === 'gateway' && out.torrent && (out.container === 'mp4' || out.container === 'hls')) {
-    const engine = gateway.enginePlayUrl(out.torrent.hash, out.torrent.fileId);
-    // The container stream index the remux will map, which is what decides whether that audio is legal
-    // in MP4 or has to become AAC.
-    const audioIdx = wantAudio != null ? wantAudio
-      : (chosenAudio ? Number(String(chosenAudio.id).slice(2)) : null);
-    const audioPlan = remux.planFor(tracks, Number.isInteger(audioIdx) ? audioIdx : null);
+  // ---- separate audio donor ---------------------------------------------------------------
+  //
+  // A picture and its audio do not have to come from the same copy. If the chosen video copy does not
+  // state the household's language, the hub looks for an audio-only row, or another copy whose file
+  // states that track, and re-wraps the picture with the donor's audio as a second input. The donor is
+  // never the primary video source; it is an input to remux, not a replacement for the picture.
+  const mixOpt = opts.audioMix && typeof opts.audioMix === 'object' ? opts.audioMix : null;
+  const mixRequested = opts.audioMix !== false && !(mixOpt && mixOpt.enabled === false);
+  let desiredLang = null;
+  if (mixRequested) {
+    if (mixOpt && mixOpt.language) desiredLang = media.langOf(mixOpt.language);
+    else if (typeof opts.audio === 'string' && !/^a:?\d+$/i.test(opts.audio)) desiredLang = media.langOf(opts.audio);
+    else if (opts.audio == null && prefAudio.length) desiredLang = prefAudio[0];
+    else if (chosenAudio) desiredLang = media.langOf(chosenAudio.language);
+  }
+  const primaryHas = desiredLang ? hasAudioLanguage(source, desiredLang) : false;
+  const forcedMix = !!(mixOpt && mixOpt.force === true);
+  let donor = null;
+  if (desiredLang && mixRequested && (forcedMix || !primaryHas)) {
+    const donorPool = (allExcluded ? sources : pool).filter((s) => s !== source && !isExcluded(s, skip));
+    let list = donorPool.filter((s) =>
+      audioEvidence(s, desiredLang).fromTracks || audioEvidence(s, desiredLang).fromClaims);
+    if (mixOpt && mixOpt.source) {
+      const want = mixOpt.source;
+      list = list.filter((s) => String(s.id) === String(want) || s.label === want
+        || (s._addon && (s._addon === want || s.provider === want)));
+    }
+    // A donor that needs no swarm is first, and a track the file itself states beats a filename claim.
+    list.sort((a, b) => {
+      const pa = (a.audioOnly ? 0 : 2) + (audioEvidence(a, desiredLang).fromTracks ? 0 : 1)
+        + (a.kind === 'torrent' ? 1 : 0);
+      const pb = (b.audioOnly ? 0 : 2) + (audioEvidence(b, desiredLang).fromTracks ? 0 : 1)
+        + (b.kind === 'torrent' ? 1 : 0);
+      return pa - pb;
+    });
+    for (const cand of list.slice(0, 6)) {
+      if (Date.now() >= deadline) break;
+      const target = await resolveAudioDonor(cand, kept.streamId || identity, opts, deadline);
+      if (!target) continue;
+      donor = { source: cand, target };
+      break;
+    }
+  }
+  let audioUrl = null;
+  let audioOrd = null;
+  let audioPlan = null;
+  if (donor) {
+    audioUrl = donor.target.url;
+    audioOrd = audioOrdinal(donor.source, desiredLang);
+    if (audioOrd == null) audioOrd = 0;
+    audioPlan = audioPlanFor(donor.source, desiredLang);
+    const track = {
+      id: 'a:1',
+      language: desiredLang,
+      title: donor.source.label || donor.source.provider || 'audio donor',
+      codec: null,
+      default: true,
+      kind: 'audio-mix',
+    };
+    // The remux output has one audio track, the donor, so the list the player sees is that output,
+    // not the primary copy's original tracks.
+    out.audioTracks = [track];
+    out.selectedAudio = 'a:1';
+    out.audioMix = {
+      language: desiredLang,
+      languageName: ranking.LANG_NAMES[desiredLang] || desiredLang,
+      source: donor.source.label || donor.source.provider || null,
+      provider: donor.source.provider || null,
+      addon: donor.source._addon || null,
+      confirmed: audioEvidence(donor.source, desiredLang).fromTracks,
+      claimed: audioEvidence(donor.source, desiredLang).fromClaims,
+      audioTrack: 'a:1',
+      plan: audioPlan,
+    };
+    extraWhy.push('audio: mixed ' + (ranking.LANG_NAMES[desiredLang] || desiredLang)
+      + ' from ' + (donor.source.label || donor.source.provider || 'a donor')
+      + ' while keeping the picture copy');
+  }
+
+  const remuxNeeded = !!donor || (out.mode === 'gateway' && out.torrent
+    && (out.container === 'mp4' || out.container === 'hls'));
+  if (remuxNeeded) {
+    if (donor && out.container === 'any') out.container = 'mp4';
+    const engine = out.mode === 'gateway' && out.torrent
+      ? gateway.enginePlayUrl(out.torrent.hash, out.torrent.fileId)
+      : out.url;
+    // With a donor, the container stream index is the donor track; without one, it is the chosen track
+    // inside the picture. The remux code maps `1:a:<ord>` for a donor and `0:a:<ord>` for the picture.
+    const audioIdx = donor ? null
+      : (wantAudio != null ? wantAudio
+        : (chosenAudio ? Number(String(chosenAudio.id).slice(2)) : null));
+    const plan = donor ? audioPlan : remux.planFor(tracks, Number.isInteger(audioIdx) ? audioIdx : null);
+    const common = {
+      url: engine,
+      audio: out.selectedAudio,
+      sub: out.selectedSub,
+      audioUrl,
+      audioOrd,
+      audioPlan: plan,
+      tracks,
+      headers: out.headers,
+      audioHeaders: donor && donor.target.headers ? donor.target.headers : null,
+    };
     const rel = out.container === 'mp4'
-      ? remux.mp4Url({ url: engine, audio: out.selectedAudio, sub: out.selectedSub })
-      : remux.hlsUrl({ url: engine, audio: out.selectedAudio, sub: out.selectedSub, tracks });
+      ? remux.mp4Url(common)
+      : remux.hlsUrl(common);
     out.proxiedUrl = rel;
     out.url = (opts.clientOrigin || 'http://127.0.0.1:' + PORT) + rel;
     out.proxied = true;
@@ -1999,18 +2170,21 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     out.remux = {
       container: out.container,
       video: 'copy',
-      audio: audioPlan,
-      audioCodec: chosenAudio ? chosenAudio.codec : null,
+      audio: plan,
+      audioCodec: donor ? null : (chosenAudio ? chosenAudio.codec : null),
       subtitle: out.selectedSub ? 'mov_text' : null,
+      mixedAudio: !!donor,
     };
-    extraWhy.push(out.container === 'mp4'
-      ? 'container: fragmented MP4, video copied'
-        + (audioPlan === 'aac'
-          ? ', audio re-encoded to AAC because '
-            + (chosenAudio && chosenAudio.codec ? chosenAudio.codec.toUpperCase() : 'that codec')
-            + ' cannot live in an MP4 a browser will play'
-          : audioPlan === 'none' ? ', this copy has no audio track' : ', audio copied')
-      : 'container: HLS segments, video copied');
+    extraWhy.push(donor
+      ? 'container: fragmented MP4, video copied, donor audio re-encoded into the film'
+      : out.container === 'mp4'
+        ? 'container: fragmented MP4, video copied'
+          + (plan === 'aac'
+            ? ', audio re-encoded to AAC because '
+              + (chosenAudio && chosenAudio.codec ? chosenAudio.codec.toUpperCase() : 'that codec')
+              + ' cannot live in an MP4 a browser will play'
+            : plan === 'none' ? ', this copy has no audio track' : ', audio copied')
+        : 'container: HLS segments, video copied');
   } else if (out.container !== 'any') {
     extraWhy.push(out.mode === 'gateway'
       ? 'container: asked for ' + out.container + ', but this copy is not a torrent — handed over as it is'
@@ -2880,7 +3054,7 @@ async function handle(req, res) {
         body.source || (body.provider ? { provider: body.provider } : null), body.type,
         { exclude: body.exclude, reprobe: body.reprobe === true, clientOrigin: origin(req),
           season: body.season, episode: body.episode,
-          container: body.container, audio: body.audio, sub: body.sub,
+          container: body.container, audio: body.audio, sub: body.sub, audioMix: body.audioMix,
           // Where the viewer already is: the hub measures and pre-buffers the part of the file they are
           // about to watch, not the part of it they finished an hour ago.
           positionMs: body.positionMs,
@@ -2902,7 +3076,7 @@ async function handle(req, res) {
         body.source || (body.provider ? { provider: body.provider } : null), body.type,
         { exclude: body.exclude, reprobe: body.reprobe !== false, clientOrigin: origin(req),
           season: body.season, episode: body.episode,
-          container: body.container, audio: body.audio, sub: body.sub,
+          container: body.container, audio: body.audio, sub: body.sub, audioMix: body.audioMix,
           // Where the viewer already is, so the hub measures and pre-buffers the part of the file they are
           // about to watch instead of the part they watched an hour ago.
           positionMs: body.positionMs,

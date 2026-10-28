@@ -51,6 +51,11 @@ const DEFAULTS = {
   live: { playlist: '', hidden: [], groupsHidden: [], order: [] },
   // How the addon host behaves. These were env-var constants; they are the owner's to set now.
   addons: { maxSources: 12, minSizeMB: 100, sizeFilter: '200MB-1.5GB,1.5GB-8GB' },
+  // Owner-defined source packs. Both are descriptors, not code: a native addon reads them by id and
+  // builds URLs from the templates the owner wrote. `igc` supplies video/stream sources; `audio`
+  // supplies audio-only sources that can be muxed with a higher-quality picture. Empty means off.
+  igc: { sources: [] },
+  audio: { sources: [] },
   // Which of this hub's home rows a viewer sees, and in what order. Both lists are empty by default:
   // every hub ships the rows its own plugins define, in the order those plugins ask for, and an owner's
   // edits land here as an override rather than a rewrite. `hidden` names rows to leave off the screen;
@@ -231,6 +236,50 @@ function normalizeCategories(raw) {
 }
 
 /**
+ * Owner-defined source descriptors for the `igc` and `audio` addons.
+ *
+ * A descriptor is deliberately generic: `id` names it, `name` is the label a screen shows, and `url` is
+ * a template with placeholders (`{title}`, `{year}`, `{type}`, `{season}`, `{episode}`, `{lang}`). The
+ * addon substitutes them and sends the resulting URL; no provider host is written into code. Missing or
+ * malformed entries are dropped rather than allowed to produce a broken row.
+ */
+function normalizeSourcePacks(raw, audioOnly) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const id = String(entry.id || '').trim().toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    if (!id || seen.has(id)) continue;
+    const url = String(entry.url || entry.template || '').trim().slice(0, 1500);
+    if (!url) continue;
+    const name = String(entry.name || entry.label || '').trim().slice(0, 60) || id;
+    const languages = normalizeLanguages(entry.languages == null ? entry.language : entry.languages);
+    const quality = String(entry.quality || '').trim().slice(0, 20);
+    let type = String(entry.type || '').trim().toLowerCase();
+    if (type === 'tv') type = 'series';
+    if (!['movie', 'series', 'channel', 'any', ''].includes(type)) type = 'any';
+    const headers = {};
+    if (entry.headers && typeof entry.headers === 'object' && !Array.isArray(entry.headers)) {
+      for (const [k, v] of Object.entries(entry.headers)) {
+        const key = String(k || '').trim().slice(0, 60);
+        const value = String(v == null ? '' : v).trim().slice(0, 300);
+        if (key && value) headers[key] = value;
+      }
+    }
+    seen.add(id);
+    out.push({
+      id, name, url, languages, quality, type, headers,
+      enabled: entry.enabled !== false,
+      audioOnly: audioOnly === true,
+      manifestUrl: String(entry.manifestUrl || '').trim().slice(0, 600),
+    });
+  }
+  return out;
+}
+
+/**
  * The optional debrid settings, in the one shape core/debrid.js reads. `provider` is a slug because it
  * names a file in core/debrid/; the token is kept verbatim (trimmed) because providers do not all use
  * the same alphabet, and a token that is shortened or lowercased is a token that does not work.
@@ -265,6 +314,8 @@ function normalize(s) {
       order: idList((s.rows || {}).order),
     },
     categories: normalizeCategories(s.categories),
+    igc: { sources: normalizeSourcePacks((s.igc || {}).sources, false) },
+    audio: { sources: normalizeSourcePacks((s.audio || {}).sources, true) },
     avatar: {
       baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300),
       superheroApi: String((s.avatar || {}).superheroApi == null

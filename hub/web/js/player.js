@@ -513,6 +513,7 @@ export function createPlayer() {
     textTracks: [],
     selectedAudio: null,
     selectedSub: null,
+    audioMix: null,
     rate: 1,
     tried: [],
     failed: [],           // copies that stalled on this title, so the quality menu can say so plainly
@@ -564,8 +565,11 @@ export function createPlayer() {
         codecs: typeof backend.codecs === 'function' ? backend.codecs() : [],
         audio: spec.audio || c.selectedAudio || undefined,
         sub: spec.sub !== undefined ? spec.sub : c.selectedSub || undefined,
+        // Keep the donor decision across a source switch or a track re-negotiation. Sending the mix
+        // object is what makes the hub find the same language again rather than starting from scratch.
+        audioMix: spec.audioMix !== undefined ? spec.audioMix : (c.audioMix || undefined),
       };
-      for (const k of ['exclude', 'audio', 'sub', 'type', 'season', 'episode', 'source']) {
+      for (const k of ['exclude', 'audio', 'sub', 'type', 'season', 'episode', 'source', 'audioMix']) {
         if (body[k] === undefined || body[k] === null || body[k] === '') delete body[k];
       }
       swapping = true;
@@ -621,6 +625,9 @@ export function createPlayer() {
       if (t.length) c.textTracks = t;
       c.selectedAudio = target.selectedAudio || c.selectedAudio;
       c.selectedSub = target.selectedSub !== undefined ? target.selectedSub : c.selectedSub;
+      // A mixed answer has one output audio track (the donor). If this copy has no donor, clear the mix
+      // so a later re-negotiation does not ask for the old language.
+      c.audioMix = target.audioMix || null;
       bus.emit('tracks', { audio: c.audioTracks, text: c.textTracks, from: 'hub' });
 
       const pos = spec.positionMs !== undefined ? spec.positionMs

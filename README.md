@@ -67,6 +67,14 @@ The playback bridge is the same idea: the TV app draws its interface in a WebVie
 natively underneath it, so a 1080p HEVC torrent with E-AC3 audio and ASS subtitles plays exactly as it
 sits on disk. Browsers get a remuxed copy instead; the file is never transcoded.
 
+## Watching in your own language
+
+An owner can add an IGC source pack, an audio-only pack, or a catalog addon like FrameXTV from Settings,
+without touching a line of code. When no single copy of a title carries the profile's first audio
+language, the hub keeps the best picture and mixes the audio of another source into it — the same
+remuxing machinery, a second input. See [design/source-packs.md](design/source-packs.md) for the
+descriptor format, how a donor is chosen, and what was measured.
+
 ## Optional debrid
 
 A debrid account is not required, and there is no paid tier of Scenix. If you already have one, Settings →

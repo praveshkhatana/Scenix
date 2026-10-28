@@ -80,6 +80,19 @@ const subCache = new Map(); // key -> { at, body }
 let binSeen = { found: null, version: null, note: 'not checked', at: 0 };
 let rejected = 0;
 
+/** Headers for ffmpeg's HTTP input, and for the `h`/`ah` parameters on a remux URL. */
+function headerLine(headers) {
+  return Object.entries(headers || {}).map(([k, v]) => k + ': ' + String(v)).join('\r\n');
+}
+function headersFromParam(raw) {
+  const out = {};
+  for (const part of String(raw || '').split('||')) {
+    const at = part.indexOf(':');
+    if (at > 0) out[part.slice(0, at)] = part.slice(at + 1);
+  }
+  return out;
+}
+
 function checkBin() {
   let r;
   try {
@@ -157,10 +170,20 @@ function baseArgs(p, plan, format) {
   // The cushion sits in front of ffmpeg too: the bytes this hub already pulled for the Play press and for
   // the first frame are the bytes ffmpeg reads next, and a swarm gets one sequential reader instead of two
   // competing ones pushing each other's cache out. Off, or for a non-torrent input, this is what it was.
+  if (p.headers && Object.keys(p.headers).length) args.push('-headers', headerLine(p.headers));
   args.push('-i', readahead.wrapInput(p.url) || p.url);
+  if (p.audioUrl) {
+    // A second input is the donor copy for a language the picture itself does not carry. The same time
+    // offset is applied to both inputs, so a seek lands the picture and the donor audio on the same cut.
+    if (p.audioHeaders && Object.keys(p.audioHeaders).length) args.push('-headers', headerLine(p.audioHeaders));
+    if (startMs > 0) args.push('-ss', (startMs / 1000).toFixed(3));
+    args.push('-i', p.audioUrl);
+  }
   args.push('-map', '0:v');
   if (plan !== 'none') {
-    args.push('-map', p.audioIdx != null ? '0:' + p.audioIdx : '0:a:0');
+    args.push('-map', p.audioUrl
+      ? '1:a:' + (p.audioOrd == null ? 0 : p.audioOrd)
+      : (p.audioIdx != null ? '0:' + p.audioIdx : '0:a:0'));
   }
   if (p.subIdx != null) args.push('-map', '0:' + p.subIdx);
   if (format === 'mp4') {
@@ -246,10 +269,27 @@ function serve(req, res, u, cors, tracksLookup) {
   const who = parseEngineUrl(target);
   const audioIdx = streamIndex(u.searchParams.get('a'), 'a');
   const subIdx = streamIndex(u.searchParams.get('s'), 's');
+  const audioUrl = String(u.searchParams.get('au') || '');
+  if (audioUrl && !/^https?:\/\//i.test(audioUrl)) {
+    rejected++;
+    return sendJson(res, cors, 400, { error: 'remux audio donor needs an absolute http url in au' });
+  }
+  const audioOrd = audioUrl ? (streamIndex(u.searchParams.get('ao'), 'a') || 0) : null;
+  const requestedPlan = String(u.searchParams.get('ap') || '').toLowerCase();
+  const audioPlan = ['copy', 'aac', 'none'].includes(requestedPlan)
+    ? requestedPlan
+    : (audioUrl ? 'aac' : '');
+  const headers = headersFromParam(u.searchParams.get('h'));
+  const audioHeaders = headersFromParam(u.searchParams.get('ah'));
   const startMs = Math.max(0, Number(u.searchParams.get('start')) || 0);
   const durMs = Math.max(0, Number(u.searchParams.get('dur')) || 0);
   const tracks = who.hash && tracksLookup ? tracksLookup(who.hash, who.fileId) : null;
-  const plans = audioPlans(tracks, audioIdx);
+  // The donor's audio is not in the picture's container, so the primary track list cannot decide how it
+  // enters MP4. The play path already chose `ap` from the donor's own codec; the fallback walk changes a
+  // failed `copy` to `aac` and leaves `none` alone.
+  const plans = audioUrl
+    ? (audioPlan === 'copy' ? ['copy', 'aac'] : [audioPlan || 'aac'])
+    : audioPlans(tracks, audioIdx);
   if (subIdx != null) {
     const t = tracks && (tracks.subtitleTracks || []).find((x) => x.id === 's:' + subIdx);
     if (tracks && !t) {
@@ -283,7 +323,7 @@ function serve(req, res, u, cors, tracksLookup) {
       seekApprox = true;
     }
   }
-  const p = { url: target, audioIdx, subIdx, startMs: seekMs, durMs };
+  const p = { url: target, audioIdx, subIdx, startMs: seekMs, durMs, audioUrl, audioOrd, audioPlan, headers, audioHeaders };
   const id = crypto.randomBytes(5).toString('hex');
   const t0 = Date.now();
   let attempt = 0;
@@ -387,7 +427,7 @@ function serve(req, res, u, cors, tracksLookup) {
       const head = {
         'Content-Type': 'video/mp4',
         'Cache-Control': 'no-store',
-        'X-Remux': 'fmp4 audio=' + plan + ' video=copy',
+        'X-Remux': 'fmp4 audio=' + plan + ' video=copy' + (p.audioUrl ? ' mix=1' : ''),
       };
       // Only a bounded range is a genuine partial response. An open-ended one - `Range: bytes=0-`, the probe
       // every browser sends first - gets the whole stream under a plain 200, because a 206 has to name the
@@ -471,6 +511,7 @@ function serve(req, res, u, cors, tracksLookup) {
   });
   log('REMUX START', 'id=' + id, 'container=mp4', 'hash=' + (who.hash || '-').slice(0, 12),
     'file=' + who.fileId, 'audio=' + (p.audioIdx == null ? 'first' : p.audioIdx),
+    p.audioUrl ? 'mix=1 auOrd=' + p.audioOrd + ' ap=' + p.audioPlan : 'mix=0',
     'sub=' + (p.subIdx == null ? 'none' : p.subIdx), 'start=' + startMs + 'ms',
     range ? 'range=' + range.from + '-' + (range.to == null ? '' : range.to) : 'range=none',
     seekApprox ? 'seek=approximate-' + seekMs + 'ms' : '',
@@ -486,6 +527,15 @@ function mp4Url(p) {
   if (p.audio != null) q.set('a', String(p.audio));
   if (p.sub != null) q.set('s', String(p.sub));
   if (p.startMs) q.set('start', String(Math.round(p.startMs)));
+  if (p.audioUrl) {
+    q.set('au', p.audioUrl);
+    if (p.audioOrd != null) q.set('ao', String(p.audioOrd));
+    if (p.audioPlan) q.set('ap', String(p.audioPlan));
+  }
+  const h = headerLine(p.headers || {});
+  if (h) q.set('h', h);
+  const ah = headerLine(p.audioHeaders || {});
+  if (ah) q.set('ah', ah);
   return '/app/v1/remux?' + q.toString();
 }
 
@@ -584,8 +634,19 @@ function hlsUrl(p) {
   const dir = path.join(HLS_DIR, id);
   try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* the sweep will say so */ }
   hlsJobs.set(id, {
-    params: { url: p.url, audioIdx: streamIndex(p.audio, 'a'), subIdx: streamIndex(p.sub, 's'), startMs: p.startMs || 0, dir },
-    plan: p.plan || planFor(p.tracks, streamIndex(p.audio, 'a')),
+    params: {
+      url: p.url,
+      audioIdx: streamIndex(p.audio, 'a'),
+      subIdx: streamIndex(p.sub, 's'),
+      startMs: p.startMs || 0,
+      dir,
+      audioUrl: p.audioUrl || '',
+      audioOrd: p.audioUrl ? (p.audioOrd == null ? 0 : p.audioOrd) : null,
+      audioPlan: p.audioUrl ? (p.audioPlan || 'aac') : '',
+      headers: p.headers || {},
+      audioHeaders: p.audioHeaders || {},
+    },
+    plan: p.plan || p.audioPlan || (p.audioUrl ? 'aac' : planFor(p.tracks, streamIndex(p.audio, 'a'))),
     child: null, lastSeen: Date.now(), dir, started: 0,
   });
   return '/app/v1/hls/' + id + '/index.m3u8';
