@@ -84,6 +84,15 @@
             android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Native TV playback. The hub still ranks and hands over the copy; this activity draws the
+             picture (Media3) and the remote-first chrome around it. Browsers keep the web player. -->
+        <activity
+            android:name=".PlayerActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".BrowseActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"

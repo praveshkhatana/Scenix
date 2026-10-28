@@ -7,6 +7,7 @@ import android.util.Base64
 import android.util.Log
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Prefs
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -32,30 +33,34 @@ data class ProfileInfo(
 )
 
 /**
- * The small native read path for the browse surface. The hub remains the source of truth; this only
- * fetches `/app/v1/home` and turns the same item JSON into the model the native cards render.
+ * The native read path: Home, Detail, the player and the progress writes that keep Continue Watching
+ * alive. The hub is still the source of truth — this only speaks the same `/app/v1` contract the web
+ * page does, with the same optional Basic token, and never ranks or re-shapes a source itself.
  *
- * It deliberately does not become a second HubClient: there is one call here because there is one
- * native screen. Detail, Player and Settings still use the web contract.
+ * Three workers: a play answer can take the hub's whole play budget, a progress tick must still get
+ * through, and a subtitle request may not hold either up. Callbacks are always delivered on the main
+ * thread.
  */
 class BrowseApi(private val context: Context, private val prefs: Prefs) {
 
     private val main = Handler(Looper.getMainLooper())
-    private val pool = Executors.newSingleThreadExecutor { r -> Thread(r, "scenix-browse").apply { isDaemon = true } }
+    private val pool = Executors.newFixedThreadPool(3) { r ->
+        Thread(r, "scenix-browse").apply { isDaemon = true }
+    }
 
     fun load(profileId: String, done: (rows: List<BrowseRow>?, error: String?) -> Unit) {
-        fetch("/app/v1/home", "profile=${URLEncoder.encode(profileId, "UTF-8")}") { root, error ->
+        request("/app/v1/home", "profile=" + enc(profileId), "GET", null, 20000) { root, _, error ->
             done(root?.let { parse(it) }, error)
         }
     }
 
-    /** One title, exactly the record the web detail page reads: cast, advisories, episodes included. */
+    /** The household, for the native profile gate. PINs are checked by `unlock` below. */
     fun profiles(done: (profiles: List<ProfileInfo>?, error: String?) -> Unit) {
-        fetch("/app/v1/profiles", "") { root, error ->
+        request("/app/v1/profiles", "", "GET", null, 15000) { root, _, error ->
             val arr = root?.optJSONArray("profiles") ?: root?.optJSONArray("items")
             if (arr == null) {
                 done(null, error ?: "The hub did not send profiles")
-                return@fetch
+                return@request
             }
             val out = ArrayList<ProfileInfo>()
             for (i in 0 until arr.length()) {
@@ -77,10 +82,13 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     }
 
     fun unlock(profileId: String, pin: String, done: (ok: Boolean, error: String?) -> Unit) {
-        post(
+        request(
             "/app/v1/profiles/${URLEncoder.encode(profileId, "UTF-8")}/unlock",
-            JSONObject().put("pin", pin)
-        ) { root, error ->
+            "",
+            "POST",
+            JSONObject().put("pin", pin),
+            15000,
+        ) { root, _, error ->
             done(root?.optBoolean("ok") == true, error)
         }
     }
@@ -91,51 +99,63 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     }
 
     fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
-        val path = "/app/v1/meta/${URLEncoder.encode(identity, "UTF-8").replace("+", "%20")}"
-        fetch(path, "profile=${URLEncoder.encode(profileId, "UTF-8")}") { root, error ->
+        val path = "/app/v1/meta/" + enc(identity)
+        request(path, "profile=" + enc(profileId), "GET", null, 20000) { root, _, error ->
             done(root?.optJSONObject("item") ?: root, error)
         }
     }
 
-    private fun post(path: String, body: JSONObject, done: (JSONObject?, String?) -> Unit) {
-        pool.execute {
-            var root: JSONObject? = null
-            var error: String? = null
-            try {
-                val conn = URL(WebShellActivity.apiBase(context) + path).openConnection() as HttpURLConnection
-                try {
-                    conn.connectTimeout = 10000
-                    conn.readTimeout = 15000
-                    conn.requestMethod = "POST"
-                    conn.doOutput = true
-                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    conn.setRequestProperty("Accept", "application/json")
-                    val token = prefs.hubToken()
-                    if (token.isNotBlank()) {
-                        val basic = Base64.encodeToString("scenix:$token".toByteArray(), Base64.NO_WRAP)
-                        conn.setRequestProperty("Authorization", "Basic $basic")
-                    }
-                    conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-                    if (conn.responseCode !in 200..299) {
-                        error = "The hub answered ${conn.responseCode}"
-                    } else {
-                        val text = conn.inputStream.bufferedReader().use { it.readText() }
-                        root = if (text.isBlank()) JSONObject() else JSONObject(text)
-                    }
-                } finally {
-                    conn.disconnect()
-                }
-            } catch (t: Throwable) {
-                Log.w(TAG, "native POST $path failed", t)
-                error = t.message ?: "The hub is not answering"
-            }
-            main.post { done(root, error) }
+    /**
+     * `POST /app/v1/play`. The reply body is handed over even on a non-2xx answer: a `503 warming`
+     * carries `retryAfterMs`, `alternatives` and the hub's own words, and that is the difference
+     * between "still preparing" and an error card. `error` here means only that no JSON came back.
+     */
+    fun play(body: JSONObject, done: (answer: JSONObject?, status: Int, error: String?) -> Unit) =
+        request("/app/v1/play", "", "POST", body, 40000) { root, status, error ->
+            done(root, status, error)
+        }
+
+    /** `POST /app/v1/switch` — the same question again, with the copies already tried excluded. */
+    fun switchSource(body: JSONObject, done: (answer: JSONObject?, status: Int, error: String?) -> Unit) =
+        request("/app/v1/switch", "", "POST", body, 40000) { root, status, error ->
+            done(root, status, error)
+        }
+
+    /**
+     * `GET /app/v1/subs/<identity>?profile=&lang=`. Optional: a subtitle list that arrives late is
+     * still usable, a hub without subtitle addons answers an empty list, and neither delays playback.
+     */
+    fun subs(
+        identity: String,
+        profileId: String,
+        langs: String,
+        done: (subs: JSONArray?, error: String?) -> Unit,
+    ) {
+        val query = ArrayList<String>()
+        if (profileId.isNotBlank()) query.add("profile=" + enc(profileId))
+        if (langs.isNotBlank()) query.add("lang=" + enc(langs))
+        request("/app/v1/subs/" + enc(identity), query.joinToString("&"), "GET", null, 12000) { root, _, error ->
+            done(root?.optJSONArray("subs"), error)
         }
     }
 
-    private fun fetch(path: String, query: String, done: (JSONObject?, String?) -> Unit) {
+    /** `POST /app/v1/progress`. Fire-and-forget: losing one tick must never disturb the picture. */
+    fun progress(body: JSONObject, done: (answer: JSONObject?, error: String?) -> Unit = { _, _ -> }) =
+        request("/app/v1/progress", "", "POST", body, 10000) { root, _, error ->
+            done(root, error)
+        }
+
+    private fun request(
+        path: String,
+        query: String,
+        method: String,
+        body: JSONObject?,
+        timeoutMs: Int,
+        done: (JSONObject?, Int, String?) -> Unit,
+    ) {
         pool.execute {
             var root: JSONObject? = null
+            var status = 0
             var error: String? = null
             try {
                 val base = WebShellActivity.apiBase(context)
@@ -143,19 +163,33 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 try {
                     conn.connectTimeout = 10000
-                    conn.readTimeout = 20000
-                    conn.requestMethod = "GET"
+                    conn.readTimeout = timeoutMs
+                    conn.requestMethod = method
                     conn.setRequestProperty("Accept", "application/json")
                     val token = prefs.hubToken()
                     if (token.isNotBlank()) {
                         val basic = Base64.encodeToString("scenix:$token".toByteArray(), Base64.NO_WRAP)
                         conn.setRequestProperty("Authorization", "Basic $basic")
                     }
-                    if (conn.responseCode !in 200..299) {
-                        error = "The hub answered ${conn.responseCode}"
-                    } else {
-                        val body = conn.inputStream.bufferedReader().use { it.readText() }
-                        root = JSONObject(body)
+                    if (body != null) {
+                        conn.doOutput = true
+                        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                    }
+                    status = conn.responseCode
+                    val stream = if (status in 200..299) conn.inputStream else conn.errorStream
+                    val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                    if (text.isNotBlank()) {
+                        root = try {
+                            JSONObject(text)
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "native $path answered non-JSON", t)
+                            null
+                        }
+                    }
+                    if (status !in 200..299) {
+                        error = root?.optString("error", "")?.takeIf { it.isNotBlank() }
+                            ?: "The hub answered $status"
                     }
                 } finally {
                     conn.disconnect()
@@ -164,7 +198,7 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 Log.w(TAG, "native request $path failed", t)
                 error = t.message ?: "The hub is not answering"
             }
-            main.post { done(root, error) }
+            main.post { done(root, status, error) }
         }
     }
 
@@ -193,5 +227,11 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         return out
     }
 
-    private companion object { const val TAG = "ScenixBrowse" }
+    private companion object {
+        const val TAG = "ScenixBrowse"
+
+        /** A path segment that survives a title identity and never doubles a slash. */
+        fun enc(value: String): String =
+            URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+    }
 }

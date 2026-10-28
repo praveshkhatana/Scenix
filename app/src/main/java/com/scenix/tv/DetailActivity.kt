@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -24,8 +23,8 @@ import org.json.JSONObject
 /**
  * Native title page. The catalogue and the decision about which copy plays still live on the hub;
  * this page draws the record the web detail page reads (cast, advisories, episodes) with native
- * focus and scrolling. Play hands off to the shared web player, where the already-native Media3
- * surface does the decoding.
+ * focus and scrolling. Play opens the native [PlayerActivity]; the hub still ranks and hands over
+ * the copy, so nothing here parses or chooses a source.
  */
 class DetailActivity : Activity() {
 
@@ -263,12 +262,37 @@ class DetailActivity : Activity() {
     }
 
     private fun startPlay(season: Int, episode: Int) {
-        val q = if (season > 0 && episode > 0) "?season=$season&episode=$episode" else ""
-        val route = "?profile=${Uri.encode(profileId)}#/play/${Uri.encode(identity)}$q"
+        val record = item ?: return
+        val progress = record.optJSONObject("progress")
+        val progressEpisode = progress?.optJSONObject("episode")
+        // Resume only the episode the viewer actually stopped in. A Play on S1 E1 must not open at
+        // S1 E4's playhead just because that is what Continue Watching remembers.
+        val sameEpisode = season > 0 && episode > 0 &&
+            progressEpisode?.optInt("season", 0) == season &&
+            progressEpisode?.optInt("episode", 0) == episode
+        val position = if ((season <= 0 && episode <= 0) || sameEpisode) {
+            progress?.optLong("positionMs", 0L) ?: 0L
+        } else 0L
+        val advisories = ArrayList<String>()
+        record.optJSONArray("advisories")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val v = arr.optString(i, "")
+                if (v.isNotBlank()) advisories.add(v)
+            }
+        }
         startActivity(
-            Intent(this, WebShellActivity::class.java)
-                .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, route))
-                .putExtra(WebShellActivity.EXTRA_FROM_BROWSE, true)
+            Intent(this, PlayerActivity::class.java)
+                .putExtra(PlayerActivity.EXTRA_PROFILE, profileId)
+                .putExtra(PlayerActivity.EXTRA_IDENTITY, identity)
+                .putExtra(PlayerActivity.EXTRA_TYPE, record.optString("type", "movie"))
+                .putExtra(PlayerActivity.EXTRA_TITLE, record.optString("title", ""))
+                .putExtra(PlayerActivity.EXTRA_SEASON, season)
+                .putExtra(PlayerActivity.EXTRA_EPISODE, episode)
+                .putExtra(PlayerActivity.EXTRA_POSITION_MS, position)
+                .putExtra(PlayerActivity.EXTRA_MATURITY, record.optString("maturity", ""))
+                .putExtra(PlayerActivity.EXTRA_POSTER, record.optString("poster", ""))
+                .putExtra(PlayerActivity.EXTRA_LOGO, record.optString("logo", ""))
+                .putStringArrayListExtra(PlayerActivity.EXTRA_ADVISORIES, advisories)
         )
     }
 
