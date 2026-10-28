@@ -12,6 +12,13 @@ Already landed (no boxes): player quality/audio/speed menus + live zap badge, se
 whole-row list items + dial + checklist + actions modals + inline toggles, Add-ons own tab, Movies/
 Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate.
 
+**Native-first hybrid (as of 2026-10-28).** TV Home/browse is now native (`BrowseActivity` +
+RecyclerViews); Detail, Player, Search and Settings stay web. The profile gate hands off through
+`Scenix.openNativeBrowse(profileId)` — do not change that flow without coordinating. A box that
+changes Home shelves, card types, ribbons or focus behaviour is not done until it is mirrored in the
+native adapter (mark it `native:` in its Done line) or explicitly noted `web-only`; token changes in
+theme.json must be checked on both sides. WebView Home scrolling work is parked for TV.
+
 ## A. Motion language (the base everything else rides on)
 - [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms (today runtime says 4 px / 160 ms).
 - [x] Eased scrolling in focus.js using the existing `--row-scroll-ms` token: rows center the focused tile with an eased scroll instead of instant `scrollTo` with a 24 px reveal (focus.js:124-146); vertical page scroll in bands eases too. — the centering half landed: a walking tile is now centered in its shelf, not edge-revealed (verified live: center-offset 0 px, one direct scrollLeft assignment). The easing half is deliberately not done — fb9d371/8324937 measured this panel's scroll cost and app.css documents `scroll-behavior: auto` as the honest TV choice; Netflix itself snaps rows per key.
@@ -44,7 +51,7 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 ## F. The remaining screens get the settings remote standard
 (whole-row list items with value + chevron; dial for numbers/single choice; checklist for multi; actions modal where several verbs exist; inline whole-row toggle for one switch.)
 - [x] Channels screen: convert chip filters, corner switches and round steppers (channels.js:95-187) to rowShell/pickRow/actionRow.
-- [ ] Categories builder: convert the chip ladder and per-row sw/up/down/Rename/Delete (categories.js:178-309) to the same rows + actions modal.
+- [x] Categories builder: convert the chip ladder and per-row sw/up/down/Rename/Delete (categories.js:178-309) to the same rows + actions modal.
 - [ ] Manage person sheet: replace old line()+text buttons and radioSet chips (manage.js:142-223) with actionRow/pickRow.
 - [ ] Add-profile: kind/age chips → pickRow dial, languages chipSet → multiRow checklist (add.js:119-171).
 - [ ] "N series · Top 10 in India today" style ranked ribbon on top-10 shelf cards (plugins.js badges() emits none today).
@@ -74,3 +81,4 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Seasons as one settings-style row + wheel dial instead of numbered chips (E3) — commit 4def596, live probes on a 3-season stub: row shows "Season 3 · 4 episodes", Down turns to Season 2, OK refills the list and moves the ring, Back cancels untouched
 - [x] More-like-this honest empty state (E4): an empty pool says so under its heading instead of vanishing, and a thin pool still gets the row (commit 05ff3ba, live probes on stubbed shelves: 0 lookalikes → "This hub has not found anything similar yet.", 2 → a short row)
 - [x] Channels screen on the remote standard (F1): shared js/rows.js (pickRow/multiRow/actionRow from settings), Browse as a dial, group switches as one checklist, each channel one row whose OK asks Hide/Show/Move; the ring returns to its row after every commit (commit 8fa4f60, live probes on a stub playlist: dial filtered to News, checklist turned Sports off with "News" left in the value, hide verb flipped Alpha News to Hidden)
+- [x] Categories builder on the remote standard (F2): add ladder as three dials (source, catalogue, genre) plus an Add row, each shelf one actionRow whose OK offers Hide/Show, Move, Rename, Delete; web-only (categories screen). Live probes on a stubbed catalogOptions: dial commits step the ring to the next line, hide verb flipped My Action to Hidden with the footer reading "0 of 2 on Home" and the ring restored — commit 7a6a99b
