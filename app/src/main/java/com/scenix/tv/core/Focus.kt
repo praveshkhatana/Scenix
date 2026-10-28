@@ -105,35 +105,6 @@ object Focus {
         return null
     }
 
-    /**
-     * Put focus where the viewer expects it the moment a screen appears. Calling requestFocus()
-     * while building the view does nothing — the view is not in the window yet.
-     */
-    fun focusOnAttach(root: View, pick: (View) -> View? = { firstActionableIn(it) }) {
-        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: View) {
-                v.post {
-                    if (v.isAttachedToWindow) {
-                        val t = pick(v)
-                        if (t == null || !t.requestFocus()) focusFirst(v)
-                    }
-                }
-            }
-            override fun onViewDetachedFromWindow(v: View) = Unit
-        })
-    }
-
-    /** First view a viewer could actually act on, in reading order. */
-    private fun firstActionableIn(view: View): View? {
-        if (canClick(view) && view.isFocusable && shown(view)) return view
-        if (view is ViewGroup) {
-            for (i in 0 until view.childCount) {
-                firstActionableIn(view.getChildAt(i))?.let { return it }
-            }
-        }
-        return null
-    }
-
     /** Ask a container to hand focus to its first focusable child. */
     fun focusFirst(container: View): Boolean = container.requestFocus() || focusFirstIn(container)
 

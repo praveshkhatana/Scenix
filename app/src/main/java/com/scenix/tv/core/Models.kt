@@ -267,7 +267,7 @@ data class Profile(
     val id: String = "",
     val name: String = "",
     val isKids: Boolean = false,
-    val hasPin: Boolean = false,     // hub-side flag; the PIN itself lives on the app (Prefs)
+    val hasPin: Boolean = false,     // hub-side flag; the PIN itself never leaves the hub
     val hiddenRows: List<String> = emptyList(),
     val languages: List<String> = emptyList(),
     // Track order the player prefers. Absent on an older hub, where `languages` is used instead.

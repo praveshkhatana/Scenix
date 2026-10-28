@@ -23,7 +23,11 @@ duplicated the same product and has been removed.
 - `core/PinPad.kt`, `core/CardKit.kt`, `core/Camera.kt`, `core/NavBar.kt`, `core/FocusGlass.kt`,
   `core/Preview.kt`.
 - `core/ImageLoader.kt` and its `AppContext`/`ScenixApp` wiring (the web UI loads its own artwork).
-- The `Cards`, `Rows`, `Rules` and `Players` registries and their plugin interfaces.
+- The `Cards`, `Rows`, `Rules` and `Players` registries and their plugin interfaces, and then the
+  last `ScreenPlugin` registry too: with one setup screen there is nothing left to look up.
+- App-side profile state: the profile id, the local PIN hash, hidden rows, local My List,
+  not-interested and autoplay preferences in `Prefs` (the hub owns all of that now).
+- Theme, view and formatter helpers that only the deleted screens called.
 - The per-device "front end" preference (`interface_mode`, `shellWanted`, `SHELL`/`NATIVE`) and
   the Settings switch that changed it.
 - `res/values/ids.xml` (view tags used only by the deleted image loader and card/row renderers), the
@@ -31,8 +35,8 @@ duplicated the same product and has been removed.
 
 ## What remains
 
-- **Pairing/setup:** `plugins/nav/PairingScreen`, the only registered `ScreenPlugin`. A fresh TV uses
-  it to find an announcing hub, type an address, or choose standalone. Picking either writes the
+- **Pairing/setup:** `plugins/nav/PairingScreen`, a plain object called by `MainActivity`. A fresh TV
+  uses it to find an announcing hub, type an address, or choose standalone. Picking either writes the
   preference and calls `ScreenHost.openShell()`.
 - **Launcher:** `MainActivity` builds the app context, applies `hub_url`/`fixture` launch switches,
   runs a single `HubWatch` pass and either shows `PairingScreen` (nothing paired, nothing answers)
@@ -43,8 +47,7 @@ duplicated the same product and has been removed.
 - **Player bridge:** `WebShellActivity`, `Ceilings`, and the media3 stack under the transparent
   WebView. The shell exposes the native player to the page through `window.Scenix`; the page draws
   the interface and controls.
-- **Shared UI/core:** `AppContext`, `ScreenHost`, `Registry`/`Registries`, `Plugin`/`ScreenPlugin`,
-  `Theme`, `Views`, `Focus`, `Format`, `PluginCatalog`.
+- **Shared UI/core:** `AppContext`, `ScreenHost`, `Theme`, `Views`, `Focus`, `Format`.
 
 ## Deep links
 

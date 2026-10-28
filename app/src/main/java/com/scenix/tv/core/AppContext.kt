@@ -4,7 +4,7 @@ import android.app.Application
 import android.widget.FrameLayout
 
 /**
- * Everything the remaining native UI may reach: theme, prefs, registries and the hub client.
+ * Everything the native setup screen may reach: theme, prefs and the hub client.
  * The web shell does not use this object for its interface — it only borrows the same [Prefs] to
  * find the page — so this surface stays deliberately small.
  */
@@ -12,7 +12,6 @@ class AppContext(
     val app: Application,
     val theme: Theme,
     val prefs: Prefs,
-    val registries: Registries,
 ) {
     /** Replaced by MainActivity when `--es fixture …` asks for the offline asset client. */
     var hub: HubClient = HttpHub(app, prefs)

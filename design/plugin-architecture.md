@@ -170,12 +170,11 @@ Kotlin, `minSdk 26`, Views (no Compose — 2 GB / 32-bit TV), Media3 ExoPlayer, 
 core/               HubClient · Models · Prefs · HubDiscovery · HubWatch · Format · Views
 plugins/nav/        PairingScreen — first-run hub discovery, manual address, or standalone
 WebShellActivity    the product: WebView page + Media3 surface + window.Scenix bridge
-PluginCatalog.kt    names the one remaining screen
 ```
 
 The app holds **no content knowledge and no product screens**. It answers three questions: which
-backend, how to paint a video the page asks for, and where a `tv://` link goes. `PluginCatalog` exists
-so setup is still a plugin, not so the native UI can grow back.
+backend, how to paint a video the page asks for, and where a `tv://` link goes. `PairingScreen` is a
+plain setup object; the screen/card/rule plugin registries went with the native front end.
 
 ## 5. What "change anything later" costs in practice
 

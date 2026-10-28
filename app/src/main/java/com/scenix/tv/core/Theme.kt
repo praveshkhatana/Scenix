@@ -26,9 +26,7 @@ class Theme private constructor(
     private val radii: JSONObject,
     private val spacing: JSONObject,
     private val type: JSONObject,
-    private val cards: JSONObject,
     private val focus: JSONObject,
-    private val anim: JSONObject,
     private val player: JSONObject,
 ) {
     // ---- colours ---------------------------------------------------------------------------
@@ -42,22 +40,12 @@ class Theme private constructor(
     val ink2 get() = color("ink2", "#B3B3B3")
     val ink3 get() = color("ink3", "#7D7D7D")
     val brand get() = color("brand", "#E50914")
-    val match get() = color("match", "#46D369")
-    val kids get() = color("kids", "#F2C33A")
-    val live get() = color("live", "#E50914")
 
     // ---- spacing / metrics, already in device pixels ---------------------------------------
     fun space(name: String, fallback: Float): Int = px(spacing.optDouble(name, fallback.toDouble()).toFloat())
     fun radius(name: String, fallback: Float): Int = px(radii.optDouble(name, fallback.toDouble()).toFloat())
 
     val gutter get() = space("gutter", 64f)
-    val gap get() = space("gap", 16f)
-    val rowGap get() = space("rowGap", 34f)
-    val captionGap get() = space("captionGap", 12f)
-    val metaGap get() = space("metaGap", 12f)
-    val navHeight get() = space("navHeight", 96f)
-    val billboardHeight get() = space("billboardHeight", 760f)
-    val chipTop get() = space("chipTop", 788f)
 
     // ---- type scale (device pixels; callers use COMPLEX_UNIT_PX) ----------------------------
     fun type(name: String, fallback: Float): Float =
@@ -70,22 +58,6 @@ class Theme private constructor(
     val focusDurationMs get() = focus.optInt("durationMs", 200)
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
 
-    fun animMs(name: String, fallback: Int): Int = anim.optInt(name, fallback)
-
-    // ---- per-card-type geometry -------------------------------------------------------------
-    /** Card geometry for a card id. Unknown ids inherit the `poster` shape (forward compatible). */
-    fun cardSpec(cardType: String): CardSpec {
-        val o = cards.optJSONObject(cardType) ?: cards.optJSONObject("poster") ?: JSONObject()
-        return CardSpec(
-            width = px(o.optDouble("width", 300.0).toFloat()),
-            // aspect = height / width: 1.5 is 2:3 portrait, 0.5625 is 16:9
-            aspect = o.optDouble("aspect", 1.5).toFloat(),
-            caption = o.optBoolean("caption", true),
-            fullBleed = o.optBoolean("fullBleed", false),
-            numeralGutter = px(o.optDouble("numeralGutter", 0.0).toFloat()),
-        )
-    }
-
     // ---- player ceilings --------------------------------------------------------------------
     val playerMaxWidth get() = player.optInt("maxVideoWidth", 1280)
     val playerMaxHeight get() = player.optInt("maxVideoHeight", 720)
@@ -94,7 +66,6 @@ class Theme private constructor(
     val playerForwardBufferMs get() = player.optInt("forwardBufferMs", 120_000)
     val playerMinBufferMs get() = player.optInt("minBufferMs", 15_000)
     val playerPlaybackBufferMs get() = player.optInt("playbackBufferMs", 5_000)
-    val playerProgressPostMs get() = player.optInt("progressPostMs", 10_000)
     val playerMinWidth get() = player.optInt("minVideoWidth", 320)
     val playerMinHeight get() = player.optInt("minVideoHeight", 180)
     val seekBackMs get() = player.optInt("seekBackMs", 10_000)
@@ -103,20 +74,9 @@ class Theme private constructor(
     /** Convert a mockup pixel to a device pixel. */
     fun px(v: Float): Int = Math.round(v * scale)
 
-    /** The mark shown on billboards ("N" in the mockup, ours is configurable per theme). */
-    fun brandMark(): String = root.optString("brandMark", "G")
-
     /** Generic token read so a NEW plugin can own its own tokens without editing this file. */
     fun token(group: String, key: String, fallback: Double): Double =
         root.optJSONObject(group)?.optDouble(key, fallback) ?: fallback
-
-    data class CardSpec(
-        val width: Int,
-        val aspect: Float,
-        val caption: Boolean,
-        val fullBleed: Boolean,
-        val numeralGutter: Int,
-    )
 
     companion object {
         private const val TAG = "ScenixTheme"
@@ -151,9 +111,7 @@ class Theme private constructor(
                 radii = root.optJSONObject("radii") ?: JSONObject(),
                 spacing = root.optJSONObject("spacing") ?: JSONObject(),
                 type = root.optJSONObject("type") ?: JSONObject(),
-                cards = root.optJSONObject("cards") ?: JSONObject(),
                 focus = root.optJSONObject("focus") ?: JSONObject(),
-                anim = root.optJSONObject("anim") ?: root.optJSONObject("animation") ?: JSONObject(),
                 player = root.optJSONObject("player") ?: JSONObject(),
             )
         }

@@ -16,8 +16,8 @@ import com.scenix.tv.core.HubAddress
 import com.scenix.tv.core.HubDiscovery
 import com.scenix.tv.core.HttpHub
 import com.scenix.tv.core.LocalHub
+import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.ScreenHost
-import com.scenix.tv.core.ScreenPlugin
 import com.scenix.tv.core.Views
 
 /**
@@ -34,15 +34,13 @@ import com.scenix.tv.core.Views
  * Once a choice is made the watcher is told to look again (`ctx.watch?.rechoose()`), so the new
  * backend is live immediately, and the app opens the web shell — the only product after setup.
  */
-object PairingScreen : ScreenPlugin {
-    override val id get() = "pairing"
-    override val title get() = "Set up"
-    override val order = 600
+object PairingScreen {
+    const val id = "pairing"
 
     /** One line of feedback on the field: what was wrong with the address just typed. */
     private var addressError: String? = null
 
-    override fun render(host: ScreenHost) {
+    fun render(host: ScreenHost) {
         val ctx = host.app
         val theme = ctx.theme
         val container = host.container()
@@ -119,8 +117,7 @@ object PairingScreen : ScreenPlugin {
         val ctx = host.app
         ctx.prefs.setHubUrl(url)
         ctx.prefs.setHubName(url, name)
-        ctx.prefs.setBackendChoice("hub")
-        ctx.prefs.setStandalone(false)
+        ctx.prefs.setBackendChoice(Prefs.BACKEND_HUB)
         // Same rule as the launch switch: naming a hub means "show me the real library", so the
         // bundled-sample pin cannot survive it.
         ctx.prefs.setFixture("")
@@ -133,8 +130,7 @@ object PairingScreen : ScreenPlugin {
     /** Standalone: this app hosts the contract itself, so there is no reachability question to ask. */
     private fun goStandalone(host: ScreenHost) {
         val ctx = host.app
-        ctx.prefs.setBackendChoice("standalone")
-        ctx.prefs.setStandalone(true)
+        ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
         ctx.prefs.setFixture("")
         ctx.hub = LocalHub.get(ctx.app)
         ctx.offline = false

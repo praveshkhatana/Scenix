@@ -27,8 +27,8 @@ Nothing is installed or deployed from here.
 ## What the app is not
 
 There is no native Home, Detail, Search, Live, Movies, Series, Settings or Player stack, and no
-per-device "front end" switch. Those were a second product and have been removed. `PluginCatalog`
-still names the setup screen so setup remains a plugin, not so the native UI can grow back.
+per-device "front end" switch. Those were a second product and have been removed. `PairingScreen` is
+a plain setup object; there is no native screen registry left to grow back.
 
 ## Contract
 
