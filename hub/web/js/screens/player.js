@@ -652,7 +652,7 @@ export function screen(ctx, identity) {
     if (key === 'MediaPlayPause' || key === 'PlayPause') { player.toggle(); setPlayIcon(); return true; }
     // A TV viewer expects Down to reveal what can be changed. Opening the settings sheet on the first
     // Down is more discoverable than walking right through transport buttons to the small icons.
-    if (key === 'ArrowDown' && !openKind && !asking) { openMenu('all'); return true; }
+    if (key === 'ArrowDown' && !openKind && !asking && center.hidden) { openMenu('all'); return true; }
     // A live feed has no position for a remote to jump around, so the transport keys are left to the router
     // rather than spending them on a seek that cannot land.
     // A channel has no position, so left/right are the channel keys. This is the same habit as a
