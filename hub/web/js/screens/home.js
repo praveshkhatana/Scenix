@@ -15,6 +15,15 @@ import { startPreview, stopPreview } from '/ui/js/video.js';
 import { session, rememberFocus } from '/ui/js/state.js';
 
 export function screen(ctx) {
+  // On the television this page is the profile gate and the rest of the flow; Home itself is native.
+  // A browser has no Scenix bridge and keeps the web shelves. The profile is what the native reader
+  // needs, and it is the only thing that crosses the boundary.
+  try {
+    if (session.profile && window.Scenix && typeof window.Scenix.openNativeBrowse === 'function') {
+      window.Scenix.openNativeBrowse(session.profile.id);
+    }
+  } catch (e) { /* an older shell keeps the web home */ }
+
   const root = el('div', { class: 'screen home' });
   const shelves = el('div', { class: 'rows pulled' });
   root.appendChild(shelves);
@@ -51,7 +60,8 @@ export function screen(ctx) {
       const a = document.activeElement;
       if (a && !a.closest('.billboard') && !a.closest('.nav')) return;
       const next = (row.__index() + 1) % row.__items.length;
-      row.__setItem(next);
+      // The timed turn fades (art cross-fade + copy column leave/arrive); a press-driven turn does not.
+      row.__setItem(next, true);
       prewarm(row.__items[next]);
       for (const b of row.querySelectorAll('.bb-btns .btn, .bb-btns .round')) focus.focusable(b);
     }, ms);
@@ -249,7 +259,10 @@ export function screen(ctx) {
         const art = card.querySelector('.art');
         // A card that is actually moving picture is given room to be one: wider, and at the trailer's ratio.
         if (trailer && art) {
-          const ok = await startPreview(art, trailer, card.querySelector('img')?.src || item.backdrop || item.poster);
+          // The card's own still is the poster to fade out of: this handler was referencing an `item`
+          // from an enclosing scope that never existed, so the fallback path threw instead of previewing.
+          const img = card.querySelector('img');
+          const ok = await startPreview(art, trailer, img ? img.src : null);
           if (!dead && focus.getFocus() === node && ok) { previewFor = node; card.classList.add('playing'); }
         }
       }, delay);

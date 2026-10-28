@@ -1227,10 +1227,14 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .cards .card.playing { width: calc(460px * var(--s)); }
 .cards .card.playing .art { height: var(--card-h); }
 
-/* The billboard turns by pushing sideways — one title leaves, the next arrives — not by fading in place. */
-.billboard .bb-art { opacity: 0; transform: translateX(7%); transition: transform 800ms cubic-bezier(.23, 1, .32, 1), opacity 420ms ease; }
-.billboard .bb-art.on { opacity: 1; transform: none; }
-.billboard .bb-art.out { opacity: 0; transform: translateX(-7%); }
+/* The billboard turns by cross-fading, not by pushing sideways: the leaving art goes under the arriving
+   one over the theme's `rotateFadeMs`, which is what Netflix's hero does and what a panel can composite
+   cheaply (opacity only — no translate layers above a playing video). The copy column leaves with the
+   art via `.swapping`, and its children still stagger in on arrival. */
+.billboard .bb-art { opacity: 0; transition: opacity var(--rotate-fade-ms, 500ms) ease; }
+.billboard .bb-art.on { opacity: 1; }
+.billboard .bb { transition: opacity calc(var(--rotate-fade-ms, 500ms) / 2) ease; }
+.billboard .bb.swapping { opacity: 0; }
 /* Opacity only: the billboard rebuilds its column on every rotation, so this rule runs again every few
    seconds over six elements at once, and a translate on each of them asks the panel to composite six moving
    layers above a playing video. */

@@ -98,6 +98,11 @@ function applyTokens() {
   if (a.screenFadeMs !== undefined) setNum('--screen-ms', `${a.screenFadeMs}ms`);
   if (a.fadeUpStagger !== undefined) setNum('--stagger', `${a.fadeUpStagger}ms`);
 
+  // The billboard's rotation window is a token like every other motion: one number in theme.json drives
+  // both the art crossfade and the copy column's fade.
+  const hero = T.hero || {};
+  if (hero.rotateFadeMs !== undefined) setNum('--rotate-fade-ms', `${hero.rotateFadeMs}ms`);
+
   const cards = T.cards || {};
   const poster = cards.poster || {};
   if (poster.width) {

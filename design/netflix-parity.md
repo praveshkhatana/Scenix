@@ -20,8 +20,8 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Screen transitions: brief outgoing fade on route change (app.js mount() removes the old node instantly while the new fades 180 ms — make the pair cross-fade ≤220 ms, transform+opacity only). — the outgoing screen gets `.exiting` (z-index over the incoming one, `screenOut` var(--screen-ms) fade, removed after 220 ms) and loses its focus stops immediately; verified live: the class appears on route change and `--screen-ms` is 180 ms.
 
 ## B. Billboard
-- [ ] Replace the sideways push rotation (translateX 7% + 420 ms) with a token-driven crossfade using `hero.rotateFadeMs=500`; copy column fades with the art on every turn, not just first mount (plugins.js:561-570 rebuilds text with clear()).
-- [ ] Fix the dwell fallback bug: home.js:252 references an out-of-scope `item` — use the card's own item.
+- [x] Replace the sideways push rotation (translateX 7% + 420 ms) with a token-driven crossfade using `hero.rotateFadeMs=500`; copy column fades with the art on every turn, not just first mount (plugins.js:561-570 rebuilds text with clear()). — `theme.js` publishes `--rotate-fade-ms` from the hero token; `.bb-art` transitions on that value with no transform; timed rotations call `__setItem(next, true)` which fades the copy column out, rebuilds at half the window and back in. Press-driven turns (dots, thumbnails, My List) still paint instantly. Verified live: computed `--rotate-fade-ms: 500ms`, art transition 0.5 s, `swapping` observed on a timed turn.
+- [x] Fix the dwell fallback bug: home.js:252 references an out-of-scope `item` — use the card's own item. — the dwell handler now passes the card's own `<img>` src to `startPreview` instead of throwing on `item.backdrop`.
 
 ## C. Tile dwell preview (Netflix's signature moment)
 - [ ] Retime to Netflix: retime the preview token so expansion happens after ~250 ms dwell and the trailer starts at ~1 s (theme.json preview.delayMs is 350 today; split into two timers as home.js:234 comment already promises).

@@ -12,7 +12,7 @@
  * particular shelf (the rank numerals) while every other `poster` row keeps the default.
  */
 
-import { el, clear, posterImg, imageUrl } from '/ui/js/dom.js';
+import { el, clear, posterImg, imageUrl, prefersReducedMotion } from '/ui/js/dom.js';
 import { icon } from '/ui/js/icons.js';
 import { focusable, getFocus } from '/ui/js/focus.js';
 import { runtime, timeLeft, episodeLabel, langList, since } from '/ui/js/format.js';
@@ -552,17 +552,11 @@ export function billboard(row, ctx) {
   slot.appendChild(dots);
 
   let index = -1;
-  let prevIndex = -1;
-  const setItem = (i) => {
+  const paintItem = (i) => {
     const item = items[i];
     if (!item) return false;
-    prevIndex = index;
     index = i;
-    for (let k = 0; k < arts.children.length; k++) {
-      arts.children[k].classList.toggle('on', k === i);
-      // The title that is leaving keeps its own slide for a moment so the two never occupy the same frame.
-      arts.children[k].classList.toggle('out', k === prevIndex && prevIndex !== i);
-    }
+    for (let k = 0; k < arts.children.length; k++) arts.children[k].classList.toggle('on', k === i);
     for (let k = 0; k < dots.children.length; k++) dots.children[k].classList.toggle('on', k === i);
 
     const on = inMyList(item.identity);
@@ -660,6 +654,24 @@ export function billboard(row, ctx) {
       const again = queue.querySelector(`.bb-thumb[data-at="${heldAt}"]`);
       if (again) again.focus();
     }
+    return true;
+  };
+  // One turn of the billboard. Art has always cross-faded by class; what a timed rotation adds is the
+  // copy column leaving and arriving with it, so the sheet turns as one picture instead of a new set of
+  // words snapping in over the old art. A press-driven turn — a dot, a thumbnail, a My List toggle —
+  // still paints instantly: an instant answer to the remote is not a trailer beat.
+  const HALF_FADE_MS = Math.max(80, Math.round(token('hero', 'rotateFadeMs', 500) / 2));
+  let swapTimer = null;
+  const setItem = (i, fade = false) => {
+    if (swapTimer) { clearTimeout(swapTimer); swapTimer = null; }
+    if (!fade || prefersReducedMotion()) return paintItem(i);
+    if (!items[i]) return false;
+    text.classList.add('swapping');
+    swapTimer = setTimeout(() => {
+      swapTimer = null;
+      paintItem(i);
+      text.classList.remove('swapping');
+    }, HALF_FADE_MS);
     return true;
   };
   setItem(0);
