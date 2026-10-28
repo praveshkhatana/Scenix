@@ -329,7 +329,7 @@ class BrowseActivity : Activity() {
             card.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(6f)).apply {
                 gravity = Gravity.BOTTOM
             })
-            Focus.attach(card, card, app, theme.radius("card", 6f), elevate = false)
+            Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
             return CardHolder(card, art, name, num, progress)
         }
 

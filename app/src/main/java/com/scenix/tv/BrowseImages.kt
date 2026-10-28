@@ -25,6 +25,9 @@ object BrowseImages {
 
     fun load(view: ImageView, url: String?, targetWidthPx: Int = 420) {
         val clean = url?.trim().orEmpty()
+        // RecyclerView rebinds a card every time it leaves and re-enters the window. Re-setting the
+        // same bitmap clears the drawable first, which costs a frame and a bitmap upload for nothing.
+        if (view.tag == clean && view.drawable != null) return
         view.tag = clean
         view.setImageDrawable(null)
         if (clean.isEmpty()) return

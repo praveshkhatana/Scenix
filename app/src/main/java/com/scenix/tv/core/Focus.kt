@@ -24,6 +24,7 @@ object Focus {
         ctx: AppContext,
         ringRadiusPx: Int = 0,
         scale: Boolean = true,
+        animateScale: Boolean = true,
         elevate: Boolean = true,
         onClick: (() -> Unit)? = null,
     ) {
@@ -66,8 +67,16 @@ object Focus {
             val target = if (has) theme.focusScale else 1f
             val elev = if (has) theme.focusElevationPx.toFloat() else 0f
             if (scale) {
-                v.animate().scaleX(target).scaleY(target).setDuration(ms)
-                    .setInterpolator(AccelerateDecelerateInterpolator()).start()
+                if (animateScale) {
+                    // A 200 ms lift re-composites the whole 1080p surface for a dozen frames. On the
+                    // Mali-G31 panel that is where the missed deadlines came from, so card shelves
+                    // ask for the instant lift below and only small chrome animates.
+                    v.animate().scaleX(target).scaleY(target).setDuration(minOf(ms, 100L))
+                        .setInterpolator(AccelerateDecelerateInterpolator()).start()
+                } else {
+                    v.scaleX = target
+                    v.scaleY = target
+                }
             }
             // A translated Z animates a shadow pass every frame. On the 2 GB panel the cards get the
             // ring and scale, not an elevation animation; setup keeps it because it has one button.
