@@ -61,4 +61,4 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms — verified computed `--ring-w` 5 px, `--focus-ms` 200 ms on the live page (commit 14e07b1)
 - [x] Modal entrance + toast exit motion (A3, A4) — commit dfdf3a6
 - [x] Route cross-fade on screen transitions (A5) — commit 7d72003
-- [x] Shelf centering for the walking tile (A2, centering half; easing deliberately kept instant per panel perf work) — commit pending
+- [x] Shelf centering for the walking tile (A2, centering half; easing deliberately kept instant per panel perf work) — commit 7568ba6
