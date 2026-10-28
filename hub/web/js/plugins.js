@@ -392,7 +392,7 @@ export function billboard(row, ctx) {
   const arts = el('div', { class: 'bb-arts' });
   for (const item of items) {
     arts.appendChild(el('div', { class: 'bb-art' },
-      el('img', { src: imageUrl(item.backdrop || item.poster || ''), alt: '', decoding: 'async' }),
+      el('img', { src: imageUrl(item.poster || item.backdrop || ''), alt: '', decoding: 'async' }),
       el('div', { class: 'scrim' })));
   }
   const preview = el('div', { class: 'preview' }, el('div', { class: 'scrim' }));
@@ -506,7 +506,7 @@ export function billboard(row, ctx) {
       });
       // The hub's shared art helper: a tile whose picture is missing stays an empty panel rather than
       // becoming a broken-image icon in the middle of the billboard.
-      art(tile, items[at].backdrop || items[at].poster, items[at].title);
+      art(tile, items[at].poster || items[at].backdrop, items[at].title);
       queue.appendChild(tile);
     }
     btns.appendChild(queue);
