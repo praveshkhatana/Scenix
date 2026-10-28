@@ -807,6 +807,23 @@ export function createPlayer() {
     onStuck: (d) => bus.emit('stuck', d),
   });
 
+  // The decoder is the authority on the tracks that actually exist in the file. The hub's answer is the
+  // authority on what it measured; when the hub could not measure (no ffprobe, a cold copy), the native
+  // player's `scenix:tracks` event is the only list the settings sheet can offer. Keep the controller's
+  // list in step with it instead of showing "0 tracks" over a file that has two.
+  bus.on('tracks', (d) => {
+    if (!d || d.from === 'hub' || d.from === 'player') return;
+    const a = d.audio || [];
+    const t = d.text || [];
+    if (a.length) c.audioTracks = a;
+    if (t.length) c.textTracks = t;
+    if (a.length && !c.selectedAudio) {
+      const def = a.find((x) => x.default) || a[0];
+      c.selectedAudio = def && def.id;
+    }
+    bus.emit('tracks', { audio: c.audioTracks, text: c.textTracks, from: 'player' });
+  });
+
   // A new copy is a clean slate: no reload has been spent on this one and no question has been asked about it.
   bus.on('error', () => { swapping = false; });
   bus.on('target', () => { wanted = true; starving = false; stall.reset(); });
