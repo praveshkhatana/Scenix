@@ -560,6 +560,9 @@ ul { list-style: none; }
 .detail-body .mat { display: flex; gap: calc(14px * var(--s)); align-items: center; font-size: var(--t-mat); color: var(--ink1); margin-bottom: calc(22px * var(--s)); flex-wrap: wrap; }
 .detail-body .blurb { font-size: calc(23px * var(--s)); color: var(--ink1); max-width: calc(1100px * var(--s)); margin-bottom: calc(26px * var(--s)); }
 .detail-actions { display: flex; gap: calc(18px * var(--s)); align-items: center; margin-bottom: calc(34px * var(--s)); flex-wrap: wrap; }
+/* The resume position under the hero buttons: Netflix's thin red progress line. */
+.resume-line { width: calc(460px * var(--s)); max-width: 70%; height: calc(5px * var(--s)); margin: calc(-18px * var(--s)) 0 calc(30px * var(--s)); background: rgba(255, 255, 255, .25); border-radius: 99px; overflow: hidden; }
+.resume-line i { display: block; height: 100%; background: var(--brand); border-radius: 99px; }
 
 .sect-title { font-size: var(--t-h3); font-weight: 700; margin: calc(34px * var(--s)) 0 calc(16px * var(--s)); display: flex; align-items: center; gap: calc(14px * var(--s)); }
 .sect-title .note { font-size: var(--t-meta); color: var(--ink2); font-weight: 400; }

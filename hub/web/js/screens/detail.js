@@ -112,7 +112,7 @@ export function screen(ctx, identity) {
       icon('play', { solid: true }),
       el('span', { text: prog && prog.positionMs > 5000 ? 'Resume' : (item.live ? 'Watch live' : 'Play') }));
     if (prog && prog.positionMs > 5000 && Number(item.durationMs) > 0) {
-      playBtn.appendChild(el('span', { class: 'tagq', style: 'margin-left:12px', text: `${timeLeft(prog.positionMs, item.durationMs)} left` }));
+      playBtn.appendChild(el('span', { class: 'tagq', style: 'margin-left:12px', text: timeLeft(prog.positionMs, item.durationMs) }));
     }
     focus.focusable(playBtn);
 
@@ -134,6 +134,13 @@ export function screen(ctx, identity) {
     focus.focusable(infoBtn);
 
     dh.appendChild(el('div', { class: 'detail-actions' }, playBtn, listBtn, infoBtn));
+
+    // Netflix shows where you stopped right under the buttons: a thin track with the watched part filled
+    // in brand red. The Play button already says "Resume · N left"; this is the wordless version of it.
+    if (prog && prog.positionMs > 5000 && Number(item.durationMs) > 0) {
+      const pct = Math.max(2, Math.min(100, (prog.positionMs / Number(item.durationMs)) * 100));
+      dh.appendChild(el('div', { class: 'resume-line' }, el('i', { style: `width:${pct}%` })));
+    }
 
     /* ------------------------------------------------------------------ seasons */
     /* The bar names the seasons the record actually contains and the strip draws the episodes of one of
