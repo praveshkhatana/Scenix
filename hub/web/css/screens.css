@@ -98,7 +98,7 @@
    They sit on the same line as the queue below the words — `--hero-bottom` is that line, since the queue
    is the last thing in the text column — so the two never stack into one band of small marks. */
 .bb-dots {
-  position: absolute; right: var(--gutter); bottom: var(--hero-bottom); z-index: 4;
+  position: absolute; right: var(--gutter); bottom: calc(var(--hero-bottom) + 50px); z-index: 4;
   display: flex; align-items: center; gap: calc(9px * var(--s));
 }
 .bb-dot {
