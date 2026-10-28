@@ -104,13 +104,21 @@ export function screen(ctx) {
           const list = el('div', { class: `cards ${size}`, 'data-nav': 'h' });
           const render = cardFor(row);
           its.slice(0, 30).forEach((item, i) => list.appendChild(render(item, Object.assign({}, ctxFor(), { index: i, row }))));
-          sk.replaceWith(list);
+          // Replace whichever rail is standing in the shell: the skeleton on the first fill, or the empty
+          // `.cards` box the recycler left behind when the row was last unmounted.
+          const old = node.querySelector('.cards');
+          if (old) old.replaceWith(list); else node.appendChild(list);
+          node.__list = list;
           node.__mounted = true;
           return list;
         };
+        // From here the row is an ordinary card-bearing row: the recycler mounts it from __items and must
+        // not call the (already spent) filler again.
+        node.__ensure = null;
         lazyMount(node, { root, preload: '700px' });
       } catch (e) {
         filled = false;
+        node.__ensure = null;
         sk.classList.remove('skeleton');
         for (const kid of Array.from(sk.children)) sk.removeChild(kid);
         sk.appendChild(el('div', { class: 'row-err' },

@@ -436,8 +436,10 @@ ul { list-style: none; }
 }
 .row > h3 .explore { margin-left: auto; font-size: var(--t-explore); color: var(--ink2); font-weight: 400; }
 /* A row whose cards have not mounted yet still occupies the height it will have, so the page knows how
-   far down its own content goes before anything is focused in it. */
-.cards:empty { min-height: var(--card-h, 0); }
+   far down its own content goes before anything is focused in it — and so recycling a row's cards does
+   not move the row below it. `min-height` is border-box, so the rail's own vertical padding has to be
+   counted alongside the card: 40 px above + 76 px below. Keep this in step with `.cards` padding. */
+.cards:empty { min-height: calc(var(--card-h, 0px) + 116px * var(--s)); }
 .cards {
   display: flex; gap: var(--gap);
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;

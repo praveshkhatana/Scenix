@@ -41,7 +41,7 @@ export function getFocus() { return current; }
  */
 let moveCache = null;
 
-function beginMove() { moveCache = { pool: null, rects: new Map(), styles: new Map() }; }
+function beginMove() { moveCache = { pool: null, rects: new Map(), styles: new Map(), bands: new Map() }; }
 function endMove() { moveCache = null; }
 
 function rectOf(node) {
@@ -133,8 +133,10 @@ function scrollTo(node) {
 /* ---- group navigation: walking a row or a grid by index ---- */
 
 function groupOf(node) { return node.closest('[data-nav]'); }
-function groupMembers(group, node) {
-  const kids = Array.from(group.querySelectorAll(`[${ATTR}]`)).filter(visible);
+function groupMembers(group, node, pool) {
+  // Read the move's one candidate snapshot rather than running a second subtree query. The order is the
+  // page's own document order either way, and `visible` has already paid for every rect/style read.
+  const kids = (pool || candidates()).filter((n) => group.contains(n));
   return kids.includes(node) ? kids : null;
 }
 
@@ -172,18 +174,21 @@ function geometric(from, dir, pool) {
 const BAND_SEL = '.nav, .bb-btns, .billboard, .detail-hero, .mbox, .sheet, .firstrun, .keys';
 
 function bandOf(node) {
+  if (moveCache && moveCache.bands.has(node)) return moveCache.bands.get(node);
   let n = node;
+  let found = null;
   while (n && n.tagName && n.tagName !== 'BODY') {
-    if (n.hasAttribute && n.hasAttribute('data-nav')) return n;
-    if (n.matches && n.matches(BAND_SEL)) return n;
+    if (n.hasAttribute && n.hasAttribute('data-nav')) { found = n; break; }
+    if (n.matches && n.matches(BAND_SEL)) { found = n; break; }
     n = n.parentElement;
   }
-  return null;
+  if (moveCache) moveCache.bands.set(node, found);
+  return found;
 }
 
-function bands() {
+function bands(pool) {
   const map = new Map();
-  for (const c of candidates()) {
+  for (const c of (pool || candidates())) {
     const b = bandOf(c);
     if (!b) continue;
     let e = map.get(b);
@@ -197,10 +202,10 @@ function bands() {
   return out;
 }
 
-function bandStep(from, dir) {
+function bandStep(from, dir, pool) {
   const mine = bandOf(from);
   if (!mine) return null;
-  const list = bands();
+  const list = bands(pool);
   let idx = -1;
   for (let i = 0; i < list.length; i++) if (list[i].el === mine) { idx = i; break; }
   if (idx < 0) return null;
@@ -247,12 +252,16 @@ function moveWithin(dir) {
     if (first) setFocus(first);
     return !!first;
   }
+  // One candidate snapshot for the whole move. Group walking, band walking and the geometric fallback
+  // all read this same array: the DOM is not queried a second time, and two strategies cannot disagree
+  // about which cards are on the screen.
+  const pool = candidates();
   const group = groupOf(current);
   let next = null;
 
   if (group) {
     const kind = group.getAttribute('data-nav');
-    const members = groupMembers(group, current);
+    const members = groupMembers(group, current, pool);
     if (members && members.length > 1) {
       const i = members.indexOf(current);
       if (kind === 'h' && dir === 'right' && i < members.length - 1) next = members[i + 1];
@@ -267,7 +276,7 @@ function moveWithin(dir) {
   }
   if (!next) {
     if (dir === 'up' || dir === 'down') {
-      next = bandStep(current, dir);
+      next = bandStep(current, dir, pool);
       // A band's neighbour is the only honest answer for leaving it: pure geometry would happily walk
       // back into a card that is merely scrolled behind the fixed menu bar. But a band is often taller
       // than the screen - an avatar picker with three rails in it - and then the way on is still down,
@@ -276,9 +285,9 @@ function moveWithin(dir) {
       // and a grid still reaches its own next row and the rails beneath it.
       if (!next) {
         const band = bandOf(current);
-        next = geometric(current, dir, band ? candidates().filter((n) => band.contains(n)) : null);
+        next = geometric(current, dir, band ? pool.filter((n) => band.contains(n)) : pool);
       }
-    } else next = geometric(current, dir);
+    } else next = geometric(current, dir, pool);
   }
   if (!next) return false;
   setFocus(next);

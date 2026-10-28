@@ -13,7 +13,7 @@
 
 import { el, clear, posterImg, imageUrl } from '/ui/js/dom.js';
 import { icon } from '/ui/js/icons.js';
-import { focusable } from '/ui/js/focus.js';
+import { focusable, getFocus } from '/ui/js/focus.js';
 import { runtime, timeLeft, episodeLabel, langList, since } from '/ui/js/format.js';
 import { inMyList, isKids, session } from '/ui/js/state.js';
 import { token } from '/ui/js/theme.js';
@@ -209,6 +209,7 @@ function rail(row, ctx, opts = {}) {
       }, 'Explore all', icon('chevRight')));
   const list = el('div', { class: `cards ${size}`, 'data-nav': 'h' });
   const node = el('div', { class: 'row', dataset: { row: row.id, i: ctx.index } }, head, list);
+  node.__list = list;
   node.__mount = (items) => {
     const render = cardFor(row);
     const shown = (items || []).slice(0, MAX_CARDS);
@@ -216,6 +217,7 @@ function rail(row, ctx, opts = {}) {
       list.appendChild(render(shown[i], Object.assign({}, ctx, { index: i, row })));
     }
     list.appendChild(seeAllTile(row, ctx, size));
+    node.__list = list;
     node.__mounted = true;
     return list;
   };
@@ -249,6 +251,7 @@ registerRow('top10', (row, ctx) => {
       list.appendChild(c);
     });
     list.appendChild(seeAllTile(row, ctx, 'rank'));
+    node.__list = list;
     node.__mounted = true;
     return list;
   };
@@ -257,10 +260,15 @@ registerRow('top10', (row, ctx) => {
 });
 
 /**
- * Mount a shelf's cards lazily. Every row on `/app/v1/home` is in the document at once for D-pad
- * geometry, but only the rows the viewer has reached get their cards, and rows scrolled far past are
- * dropped again. On a panel that has really killed a WebView renderer, that is the difference between a
- * page that survives and one that reloads itself.
+ * Mount a shelf's cards lazily, and recycle the ones that are far away.
+ *
+ * Every row on `/app/v1/home` is in the document at once for D-pad geometry, and the screen keeps the row
+ * shell (heading, `.cards` box, its `data-nav` band and its height). Only the cards themselves are mounted
+ * near the viewport: when a row leaves a generous window its card DOM is dropped, and when it comes back
+ * `__mount` rebuilds it from `node.__items`. A recycled row is therefore still a place the page can lay out
+ * and still a height the scroller can travel over, but it no longer holds eighteen images, badges and
+ * quick-action buttons. On a panel that has really killed a WebView renderer, that is the difference
+ * between a page that survives and one that reloads itself.
  */
 /* Rows are mounted as the viewer gets near them. This deliberately does not use IntersectionObserver:
    shelves below the first screenful are clipped to zero area by the page's own scroll container, an
@@ -277,37 +285,140 @@ registerRow('top10', (row, ctx) => {
  * queue and left fourteen shelves with no cards in them. A lane keyed by the screen element is the
  * smallest way to make teardown local.
  */
-const lanes = new Map(); // root element -> { scroller, queued, frame, preloadPx, onScroll }
+const lanes = new Map(); // root element -> { scroller, rows, frame, preloadPx, onScroll }
+
+/* The window is measured in rows rather than pixels so it behaves the same on a poster shelf and on a
+   shorter landscape one. Two rows above and two below the visible ones is enough for every D-pad move
+   (the mount preload already covers the immediate neighbour) without keeping the whole fourteen-row
+   page of cards alive. */
+const RECYCLE_ROWS_ABOVE = 2;
+const RECYCLE_ROWS_BELOW = 2;
 
 function laneFor(root) {
   let lane = lanes.get(root);
   if (!lane) {
-    lane = { scroller: root, queued: [], frame: 0, preloadPx: 1200, onScroll: null };
+    lane = { scroller: root, rows: [], frame: 0, preloadPx: 1200, onScroll: null };
     lanes.set(root, lane);
   }
   return lane;
 }
 
+function rowHoldsFocus(node) {
+  const held = getFocus();
+  if (held && node.contains(held)) return true;
+  const active = document.activeElement;
+  return !!(active && node.contains(active));
+}
+
+/** Ask a shell with no cards yet to fill itself. The promise owner schedules the next pump when it lands. */
+function ensureRow(node, lane) {
+  if (!node.__ensure || node.__ensuring) return;
+  node.__ensuring = true;
+  let pending = null;
+  try { pending = node.__ensure(); }
+  catch (e) { node.__ensuring = false; return; }
+  const settled = () => {
+    node.__ensuring = false;
+    // Home's filler turns itself into a real __mount and calls lazyMount; a future filler may not. If it
+    // left items behind, one more pump is enough to mount them, and an empty shelf never loops.
+    if ((node.__items || []).length) schedule(lane);
+  };
+  if (pending && typeof pending.then === 'function') pending.then(settled, settled);
+  else settled();
+}
+
+/** Build a row's card DOM from the items it already carries. Never fetches and never changes the shell. */
+function mountRow(node) {
+  if (!node || node.__mounted) return false;
+  if (!(node.__items || []).length || typeof node.__mount !== 'function') return false;
+  if (node.__list) clear(node.__list);
+  const list = node.__mount(node.__items);
+  const old = node.__list;
+  if (list) {
+    // A row plugin is free to build a fresh list (home's late-filled shelves do). Put it where the old
+    // one stood instead of appending a second rail under the heading.
+    if (old && old !== list && old.isConnected) old.replaceWith(list);
+    node.__list = list;
+  } else if (!node.__list) {
+    node.__list = node.querySelector('.cards');
+  }
+  node.__mounted = true;
+  return true;
+}
+
+/**
+ * Drop a row's cards but leave the row and its `.cards` box in place. `.cards:empty` reserves the full
+ * card height plus the rail's vertical padding, so the page height, the scroll position and every row
+ * below stay put. A row holding the ring is never recycled: removing the element under the viewer's
+ * finger is how a remote ends up with nowhere to go.
+ */
+function unmountRow(node) {
+  if (!node || !node.__mounted || rowHoldsFocus(node)) return false;
+  const list = (node.__list && node.__list.isConnected) ? node.__list : node.querySelector('.cards');
+  if (list) clear(list);
+  node.__mounted = false;
+  return true;
+}
+
 function pump(lane) {
   lane.frame = 0;
-  if (!lane.scroller || !lane.queued.length) return;
-  const vb = lane.scroller.getBoundingClientRect();
-  const top = vb.top - lane.preloadPx;
-  const bottom = vb.bottom + lane.preloadPx;
-  const rest = [];
-  let mounted = 0;
-  for (const node of lane.queued) {
-    if (!node.isConnected || node.__mounted) continue;
-    const r = node.getBoundingClientRect();
-    if (r.bottom >= top && r.top <= bottom) {
-      if (node.__ensure) node.__ensure();
-      else node.__mount(node.__items);
-      mounted++;
-    } else rest.push(node);
+  if (!lane.scroller || !lane.rows.length) return;
+
+  // A shelf that answered empty removes itself from the page. Forget it rather than measuring it forever.
+  if (lane.rows.some((node) => !node.isConnected)) {
+    lane.rows = lane.rows.filter((node) => node.isConnected);
+    if (!lane.rows.length) return;
   }
-  lane.queued = rest;
-  // Mounting changes the page's height, which moves everything below it. Look again next frame.
-  if (mounted && lane.queued.length) schedule(lane);
+
+  const vb = lane.scroller.getBoundingClientRect();
+  const mountTop = vb.top - lane.preloadPx;
+  const mountBottom = vb.bottom + lane.preloadPx;
+  const rects = new Array(lane.rows.length);
+  let firstVisible = -1;
+  let lastVisible = -1;
+  let nearest = -1;
+  let nearestDist = Infinity;
+
+  for (let i = 0; i < lane.rows.length; i++) {
+    const r = lane.rows[i].getBoundingClientRect();
+    rects[i] = r;
+    if (r.bottom > vb.top && r.top < vb.bottom) {
+      if (firstVisible < 0) firstVisible = i;
+      lastVisible = i;
+    }
+    // When nothing overlaps the viewport (the billboard can fill it), keep the nearest row as the anchor
+    // so the window still has a centre instead of collapsing to the first shelf of the page.
+    const dist = r.top > vb.bottom ? r.top - vb.bottom : (r.bottom < vb.top ? vb.top - r.bottom : 0);
+    if (dist < nearestDist) { nearestDist = dist; nearest = i; }
+  }
+  if (nearest < 0) return;
+  if (firstVisible < 0) { firstVisible = nearest; lastVisible = nearest; }
+
+  const keepFrom = Math.max(0, firstVisible - RECYCLE_ROWS_ABOVE);
+  const keepTo = Math.min(lane.rows.length - 1, lastVisible + RECYCLE_ROWS_BELOW);
+
+  let changed = false;
+  for (let i = 0; i < lane.rows.length; i++) {
+    const node = lane.rows[i];
+    const r = rects[i];
+    const near = r.bottom >= mountTop && r.top <= mountBottom;
+    // Mount everything in the keep window, not only what is already near: the row above the ring has to
+    // exist before the viewer presses Up, and a row that is about to become visible should not be built
+    // on the same frame it arrives. The pixel preload still catches a row whose geometry reaches the
+    // viewport before its index enters the window.
+    const wanted = near || (i >= keepFrom && i <= keepTo);
+    if (wanted) {
+      if (!node.__mounted) {
+        if (mountRow(node)) changed = true;
+        else ensureRow(node, lane);
+      }
+    } else if (node.__mounted) {
+      if (unmountRow(node)) changed = true;
+    }
+  }
+  // A mount or unmount can move everything below it. Look again next frame; with the shell's height kept
+  // this usually settles in one pass, and an unmount never happens inside the mount window.
+  if (changed) schedule(lane);
 }
 
 function schedule(lane) { if (!lane.frame) lane.frame = requestAnimationFrame(() => pump(lane)); }
@@ -316,19 +427,23 @@ function detach(lane) {
   if (lane.frame) { cancelAnimationFrame(lane.frame); lane.frame = 0; }
   if (lane.scroller && lane.onScroll) lane.scroller.removeEventListener('scroll', lane.onScroll);
   lane.onScroll = null;
+  lane.rows.length = 0;
 }
 
 export function lazyMount(rowNode, { root = null, preload = '1200px' } = {}) {
   if (!rowNode || rowNode.__mounted) return;
   if (!rowNode.__ensure && !(rowNode.__items || []).length) return;
-  if (!root) { if (rowNode.__ensure) rowNode.__ensure(); else rowNode.__mount(rowNode.__items); return; }
+  if (!root) {
+    if (!mountRow(rowNode) && rowNode.__ensure) rowNode.__ensure();
+    return;
+  }
   const lane = laneFor(root);
   if (!lane.onScroll) {
     lane.onScroll = () => schedule(lane);
     lane.scroller.addEventListener('scroll', lane.onScroll, { passive: true });
   }
   lane.preloadPx = Math.max(0, parseFloat(preload) || 1200);
-  if (lane.queued.indexOf(rowNode) < 0) lane.queued.push(rowNode);
+  if (lane.rows.indexOf(rowNode) < 0) lane.rows.push(rowNode);
   schedule(lane);
 }
 
