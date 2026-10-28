@@ -244,11 +244,40 @@ export function screen(ctx, identity) {
   root.appendChild(bottom);
   skip.style.zIndex = '8';
 
+  /* --------------------------------------------------------------------- undo */
+  // The roll into the next episode is reversible for as long as this chip stands: Undo re-enters the
+  // episode that just ended, and the hub puts the playhead back where Continue Watching left it.
+  if (spec.undo && spec.undo.identity) {
+    const u = spec.undo;
+    let gone = false;
+    const kill = () => { if (gone) return; gone = true; undoChip.remove(); };
+    const undoBtn = el('button', { class: 'btn white', type: 'button', text: 'Undo', onclick: () => {
+      kill();
+      ctx.play({ identity: u.identity, type: u.type, title: u.title }, {
+        season: u.season, episode: u.episode,
+        subtitle: episodeLabel(u.season ?? 1, u.episode ?? 1),
+      });
+    } });
+    const undoChip = el('div', { class: 'ply-undo' },
+      el('span', { text: 'Started the next episode automatically' }), undoBtn);
+    root.appendChild(undoChip);
+    focus.focusable(undoBtn);
+    setTimeout(kill, 8000);
+  }
+
   /* ------------------------------------------------------------------- chrome */
 
   let hidden = false;
   let idle = null;
   let openKind = null;
+
+  // Netflix rolls straight into the next episode and gives a window to change your mind. The length of that
+  // roll is the theme's `autoplayCountdownMs`; zero means the card waits for a press like it used to.
+  const AUTO_MS = Math.max(0, Number(token('player', 'autoplayCountdownMs', 7000)) || 0);
+  let stayed = false;      // "Stay" on the card: this viewer finishes the episode on purpose
+  let autoAt = 0;          // media position at which the countdown hits zero
+  let autoPlayed = false;  // so the roll can only fire once per screen
+  let cdEl = null;
 
   function chromeVisible() { return !hidden; }
 
@@ -381,7 +410,7 @@ export function screen(ctx, identity) {
     edge.hidden = !want;
     if (!hidden) edge.classList.remove('hide');
   }
-  function playNext() {
+  function playNext(fromAuto) {
     const n = nextEpisode();
     if (!n) return;
     ctx.play(Object.assign({ identity: n.identity || spec.identity, title: n.title || spec.title }, n.type ? { type: n.type } : {}), {
@@ -390,6 +419,11 @@ export function screen(ctx, identity) {
       next: n.next || null,
       title: n.title || spec.title,
       subtitle: episodeLabel(n.season !== undefined ? n.season : spec.season + 1, n.episode !== undefined ? n.episode : (spec.episode || 0) + 1),
+      // The next screen carries one window to undo the roll — and only when the roll was ours, not a press.
+      ...(fromAuto && AUTO_MS > 0 ? { undo: {
+        identity: spec.identity, type: spec.type, title: spec.title,
+        season: spec.season, episode: spec.episode,
+      } } : {}),
     });
   }
   function drawNext() {
@@ -401,14 +435,30 @@ export function screen(ctx, identity) {
     if (nextUp.hidden) {
       nextUp.hidden = false;
       nextUp.textContent = '';
+      cdEl = null;
+      autoAt = st.positionMs + AUTO_MS;
+      autoPlayed = false;
       if (n.poster || n.backdrop) nextUp.appendChild(el('img', { src: n.backdrop || n.poster, alt: '' }));
       nextUp.appendChild(el('div', { class: 'nt', text: `Up next · ${episodeLabel(n.season ?? spec.season, n.episode ?? spec.episode)}` }));
       nextUp.appendChild(el('div', { class: 'nx', text: n.title || '' }));
+      if (AUTO_MS > 0 && !stayed) cdEl = el('div', { class: 'cd' });
       const go = el('button', { class: 'btn white', type: 'button', text: 'Play', onclick: () => playNext() });
-      const stay = el('button', { class: 'btn ghost', type: 'button', text: 'Stay', onclick: () => { nextUp.hidden = true; } });
-      nextUp.appendChild(el('div', { class: 'row2' }, go, stay));
+      const stay = el('button', { class: 'btn ghost', type: 'button', text: 'Stay',
+        onclick: () => { stayed = true; nextUp.hidden = true; } });
+      const row2 = el('div', { class: 'row2' }, go, stay);
+      if (cdEl) nextUp.appendChild(cdEl);
+      nextUp.appendChild(row2);
       focus.focusable(go);
       focus.focusable(stay);
+    }
+    // The countdown is the number Netflix puts on the card: seconds left before the roll, driven by the
+    // media position so pausing holds it and seeking moves it honestly.
+    if (cdEl) {
+      const left = Math.max(0, Math.ceil((autoAt - st.positionMs) / 1000));
+      cdEl.textContent = '';
+      cdEl.appendChild(el('span', { text: `Starting in ` }));
+      cdEl.appendChild(el('b', { text: `${left}s` }));
+      if (!stayed && !autoPlayed && st.positionMs >= autoAt) { autoPlayed = true; playNext(true); return; }
     }
     nextUp.classList.remove('hide');
   }
@@ -744,7 +794,12 @@ export function screen(ctx, identity) {
   }));
   offs.push(player.on('ended', () => {
     setPlayIcon();
-    if (nextEpisode()) { drawNext(); nextUp.classList.remove('hide'); return; }
+    // The countdown usually rolls before this fires; ended is the safety net for a stream that stops
+    // short of the last position event. A viewer who pressed "Stay" finishes here on purpose.
+    if (nextEpisode()) {
+      if (AUTO_MS > 0 && !stayed && !autoPlayed) { autoPlayed = true; playNext(true); return; }
+      drawNext(); nextUp.classList.remove('hide'); return;
+    }
     ctx.back();
   }));
 

@@ -680,6 +680,18 @@ body.native-live, html.native-live { background: transparent; }
 .nextup .nx { font-size: calc(19px * var(--s)); color: var(--ink2); }
 .nextup .row2 { display: flex; gap: calc(12px * var(--s)); margin-top: calc(16px * var(--s)); align-items: center; }
 .nextup img { width: 100%; height: calc(120px * var(--s)); object-fit: cover; border-radius: var(--r-badge); margin-bottom: calc(12px * var(--s)); }
+/* The autoplay countdown line, between the episode name and its buttons — tabular so the number does not
+   jitter as it ticks down. */
+.nextup .cd { margin-top: calc(12px * var(--s)); font-size: var(--t-meta); color: var(--ink2); }
+.nextup .cd b { color: #fff; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* The undo chip the auto-roll leaves on the next episode's picture, above the bar and clear of it. */
+.ply-undo {
+  position: absolute; left: calc(64px * var(--s)); bottom: calc(170px * var(--s)); z-index: 9;
+  display: flex; align-items: center; gap: calc(16px * var(--s));
+  background: rgba(0, 0, 0, .78); border: 1px solid var(--border); border-radius: var(--r-button);
+  padding: calc(12px * var(--s)) calc(20px * var(--s));
+}
+.ply-undo span { font-size: var(--t-meta); color: var(--ink1); }
 
 .ply-center { position: absolute; inset: 0; display: grid; place-content: center; gap: calc(18px * var(--s)); z-index: 6; text-align: center; }
 .ply-center .big { font-size: var(--t-h3); font-weight: 700; }

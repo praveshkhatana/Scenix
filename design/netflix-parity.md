@@ -31,7 +31,7 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 ## D. Player
 - [x] Read `player.controlsHideMs` from theme.json instead of the hardcoded 5000 ms (screens/player.js:42), and never hide chrome while the ring sits inside it (player.js:266-278 hides regardless of focus).
 - [x] Seek honors tokens: `seekBackMs=10000` / `seekForwardMs=30000` (today a fixed ±10 s), with hold-to-repeat stepping while the key is down.
-- [ ] Next-episode card gets the countdown number (uses the unused `autoplayCountdownMs` token) and autoplay-into-next with an Undo window for series.
+- [x] Next-episode card gets the countdown number (uses the unused `autoplayCountdownMs` token) and autoplay-into-next with an Undo window for series.
 - [ ] Seek bar scrub preview: time ghost under the ring while Left/Right seeks; thumbnails if the hub can serve them.
 - [ ] Audio menu gains an explicit default/off-equivalent row symmetric with Subtitles' "Off".
 
@@ -66,3 +66,4 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Dwell expand 250 ms + trailer 1 s + focusable tile actions + row scroll/dim (C1-C3) — commit f16585f
 - [x] Chrome hide reads `player.controlsHideMs` and the ring inside the chrome re-arms instead of being stranded (D1) — live timeline sampled: visible 13+ s while focused, faded ~6 s after blur
 - [x] Seek tokens + hold-repeat stepping (D2) — landed on main as commit 09a81d7 by another session; box verified there
+- [x] Next-episode countdown from `autoplayCountdownMs`, auto-roll into S1 E2 with a focusable Undo chip back to the finished episode (D3) — verified stubbed end-to-end: "Starting in 7s" → roll at token expiry → Undo returned to S1 E1 with the chip gone
