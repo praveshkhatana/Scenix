@@ -90,10 +90,12 @@ immediately before each run.
 | Cold walk with a fresh content fill | 815 | 612 (75.1 %) | 21 ms | 65 ms | 150 ms |
 | Warm 20-step walk after a short warm-up | 873 | 48 (5.5 %) | 10 ms | 14 ms | 17 ms |
 
-The steady state is now smooth on this panel; the remaining spikes are in the **first** pass, where
-images and row layouts are being created, not in the focus or recycle path. The shell also paints the
-WebView opaque on browse screens and switches it transparent only while the native surface is live,
-so a hidden PlayerView is not blended behind every shelf.
+The best warm pass reached **5.5% janky at p50 10 ms**, but that is not a stable result: repeated
+runs on the same build varied from roughly 30% to 80% while the panel was under memory pressure
+(~300 MB free and hundreds of MB of swap). The spikes are in scroll/raster and row mount, not in the
+focus handler, which profiles at under a millisecond. The shell paints the WebView opaque on browse
+screens and detaches the hidden PlayerView entirely, so there is no blended video layer behind the
+shelves.
 
 ## 6. The scroll path itself
 
@@ -112,5 +114,8 @@ small structural changes followed:
 - The remote duplicate window fell from 300 ms to 120 ms, so a deliberate fast D-pad press is not
   mistaken for a firmware echo.
 
-The cold first pass remains content/raster bound on this 2 GB panel; the steady state is the target
-and the warm measurement above is the one to compare after future changes.
+The cold first pass remains content/raster bound on this 2 GB panel, and even the warm result is not
+yet stable enough to call Netflix-level. The next step is structural, not another CSS tweak: either
+a native browsing surface for the shelves, or a lower-resolution WebView mode with a TV-specific
+layout. Neither is in this commit; shipping either as-is would trade picture quality or the single
+UI for a number.
