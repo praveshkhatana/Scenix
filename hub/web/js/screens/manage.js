@@ -113,7 +113,7 @@ export function screen(ctx) {
     const editor = profileEditor(ctx, p, { afterWrite: () => { repaint(); paintRows(); } });
 
     ctx.mountModal(box, () => {
-      const live = rows.querySelector(`.mrow[data-profile="${cssAttr(p.id)}"]`) || card;
+      const live = people.querySelector(`.mrow[data-profile="${cssAttr(p.id)}"]`) || card;
       if (live) focus.setFocus(live, { scroll: false });
     });
     paint();
@@ -258,7 +258,7 @@ export function screen(ctx) {
   }
 
   wrap.appendChild(head);
-  wrap.appendChild(rows);
+  wrap.appendChild(people);
   paintRows();
 
   /* A person added or removed on another screen — or on another TV — would otherwise stay invisible here until
@@ -266,8 +266,8 @@ export function screen(ctx) {
   loadHub().then(() => refreshProfiles()).then(() => paintRows());
 
   const remembered = session.profile && session.profile.id
-    ? rows.querySelector(`.mrow[data-profile="${cssAttr(session.profile.id)}"]`)
+    ? people.querySelector(`.mrow[data-profile="${cssAttr(session.profile.id)}"]`)
     : null;
-  wrap.__defaultFocus = () => remembered || rows.querySelector('.mrow');
+  wrap.__defaultFocus = () => remembered || people.querySelector('.mrow');
   return wrap;
 }
