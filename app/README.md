@@ -23,10 +23,14 @@ Nothing is installed or deployed from here.
   the same through `Scenix.openSetup()`.
   `--ez standalone true` chooses standalone directly, which is useful when testing both shapes without
   clearing data; `--es token …` sets the access token for a test launch.
-- **Native Home + Detail + Player** — `BrowseActivity` reads the same `/app/v1/home` rows and draws
-  the shelves in native vertical/horizontal RecyclerViews; `DetailActivity` draws the title record
-  (cast, advisories, episodes) from `/app/v1/meta`; `PlayerActivity` asks `/app/v1/play`, decodes the
-  answer with Media3 and draws the remote-first chrome itself. Play no longer hands off to the web
+- **Native profiles, Home, Detail and Player** — `ProfilesActivity` reads `/app/v1/profiles`, draws
+  the household with the hub's faces and sends a locked profile through the native `PinActivity`
+  keypad; the hub checks the PIN. `BrowseActivity` reads the same `/app/v1/home` rows and draws the
+  shelves in native vertical/horizontal RecyclerViews, with ranked numerals, Continue Watching
+  progress and episode stills. `DetailActivity` draws the title record (cast, advisories, episodes)
+  from `/app/v1/meta`. `PlayerActivity` asks `/app/v1/play`, decodes the answer with Media3 and draws
+  the remote-first chrome itself: flat icon transport, Audio/Subtitles/Speed/Quality sheets, CH
+  Up/Down zapping on live TV, and a next-episode roll with Undo. Play no longer hands off to the web
   player. See [../design/native-browse.md](../design/native-browse.md).
 - **The web product** — `WebShellActivity` loads `http://<backend>/` in a WebView for Search and
   Settings. Those are the same `hub/web/` files a browser gets.
@@ -39,7 +43,9 @@ Nothing is installed or deployed from here.
   It retries `503 warming` answers at the hub's `retryAfterMs`, fails over to the next ranked copy at
   the same position through `/app/v1/switch` (`exclude`, bounded), posts progress every ~10 s and on
   pause/exit, and rolls into the next episode with a countdown and Undo. Live channels have no seek
-  or speed; left/right zaps the hub's live row when it is available. The optional `HUB_TOKEN` is
+  or speed; the remote's CH Up/Down (and left/right at rest) zaps the hub's live row when it is
+  available. The transport is drawn as flat icons rather than labels, with a dot for an active audio
+  track, subtitles or a non-1x speed. The optional `HUB_TOKEN` is
   used for `/app/v1` calls and for hub-origin media URLs only.
   `WebShellActivity` still carries the native bridge (`play`, `pause`, `resume`, `seek`, `skip`,
   `stop`, `setSpeed`, `select`, `setQuality`, `setSubMarginBottom`, `openExternal`, `openSetup`,

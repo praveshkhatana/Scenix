@@ -231,7 +231,13 @@ class DetailActivity : Activity() {
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT))
             strip.addView(box)
         }
-        val h = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        val h = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            // The cast is decorative: names and faces, not buttons. A focusable scroll view would
+            // take the D-pad ring on a Down press and leave it nowhere visible.
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
         h.addView(strip)
         parent.addView(h, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }

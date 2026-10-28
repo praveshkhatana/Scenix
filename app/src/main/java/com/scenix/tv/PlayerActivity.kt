@@ -5,6 +5,9 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
@@ -130,14 +133,14 @@ class PlayerActivity : Activity() {
     private lateinit var metaView: TextView
     private lateinit var statusView: TextView
     private lateinit var liveBadge: TextView
-    private lateinit var backButton: TextView
-    private lateinit var playButton: TextView
-    private lateinit var rewindButton: TextView
-    private lateinit var forwardButton: TextView
-    private lateinit var audioButton: TextView
-    private lateinit var subButton: TextView
-    private lateinit var speedButton: TextView
-    private lateinit var qualityButton: TextView
+    private lateinit var backButton: GlyphView
+    private lateinit var playButton: GlyphView
+    private lateinit var rewindButton: GlyphView
+    private lateinit var forwardButton: GlyphView
+    private lateinit var audioButton: GlyphView
+    private lateinit var subButton: GlyphView
+    private lateinit var speedButton: GlyphView
+    private lateinit var qualityButton: GlyphView
     private lateinit var centerBox: LinearLayout
     private lateinit var centerSpinner: ProgressBar
     private lateinit var centerText: TextView
@@ -469,6 +472,7 @@ class PlayerActivity : Activity() {
         updateHeader()
         paintChips()
         hideNextCard()
+        setStatus("")
         updatePosition()
         updatePlayLabel()
         if (!controlsVisible() || currentFocus == null) showChrome(focus = true) else armHide()
@@ -810,7 +814,7 @@ class PlayerActivity : Activity() {
                 intArrayOf(theme.color("scrimInk", "#EB141414"), Color.TRANSPARENT),
             )
         }
-        backButton = chip("‹  Back", compact = true) { finishToDetail() }
+        backButton = icon(GLYPH_BACK, "Back") { finishToDetail() }
         topBar.addView(backButton, wrap())
 
         val words = LinearLayout(this).apply {
@@ -879,13 +883,13 @@ class PlayerActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        playButton = chip("Play") { togglePlay() }
-        rewindButton = chip("«  ${seekBackMs / 1000}s") { seekBy(-seekBackMs) }
-        forwardButton = chip("${seekForwardMs / 1000}s  »") { seekBy(seekForwardMs) }
-        audioButton = chip("Audio") { openMenu(MenuKind.AUDIO, audioButton) }
-        subButton = chip("Subtitles") { openMenu(MenuKind.SUBTITLES, subButton) }
-        speedButton = chip("Speed · 1×") { openMenu(MenuKind.SPEED, speedButton) }
-        qualityButton = chip("Quality") { openMenu(MenuKind.QUALITY, qualityButton) }
+        playButton = icon(GLYPH_PLAY, "Play") { togglePlay() }
+        rewindButton = icon(GLYPH_BACK10, "Back ${seekBackMs / 1000} seconds") { seekBy(-seekBackMs) }
+        forwardButton = icon(GLYPH_FORWARD30, "Forward ${seekForwardMs / 1000} seconds") { seekBy(seekForwardMs) }
+        audioButton = icon(GLYPH_AUDIO, "Audio") { openMenu(MenuKind.AUDIO, audioButton) }
+        subButton = icon(GLYPH_SUBS, "Subtitles") { openMenu(MenuKind.SUBTITLES, subButton) }
+        speedButton = icon(GLYPH_SPEED, "Speed") { openMenu(MenuKind.SPEED, speedButton) }
+        qualityButton = icon(GLYPH_QUALITY, "Quality") { openMenu(MenuKind.QUALITY, qualityButton) }
 
         buttonRow.addView(playButton, wrap())
         buttonRow.addView(rewindButton, wrap().withStart(theme.px(12f)))
@@ -922,10 +926,30 @@ class PlayerActivity : Activity() {
         centerBox.addView(centerSpinner, LinearLayout.LayoutParams(theme.px(56f), theme.px(56f)))
         centerText = Views.text(app, "sub", 24f, theme.ink, "", gravity = Gravity.CENTER, maxLines = 2)
         centerText.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), 0)
-        centerBox.addView(centerText)
+        // A wrap_content column measured before the first message took its width from the spinner
+        // (56 px) and clipped every status to one letter. Give the line a real column.
+        centerBox.addView(centerText, LinearLayout.LayoutParams(
+            theme.px(760f), ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
         overlay.addView(centerBox, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { gravity = Gravity.CENTER })
+    }
+
+    /**
+     * A flat icon button for the transport row. Icons are drawn (not font glyphs and not labels):
+     * on a television the row is read at three metres, and a 20 px word is harder to hit than a
+     * 24 px play/pause mark. The value a control currently holds lives in its menu and in its
+     * content description.
+     */
+    private fun icon(glyph: Int, desc: String, action: () -> Unit): GlyphView {
+        val v = GlyphView(this, glyph)
+        v.contentDescription = desc
+        v.background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.radius("button", 6f))
+        v.minimumWidth = theme.px(62f)
+        v.minimumHeight = theme.px(50f)
+        Focus.attach(v, v, app, theme.radius("button", 6f), scale = false, elevate = false, onClick = action)
+        return v
     }
 
     private fun chip(label: String, compact: Boolean = false, action: () -> Unit): TextView {
@@ -1012,7 +1036,11 @@ class PlayerActivity : Activity() {
             MenuKind.QUALITY -> qualityRows(rows)
         }
         if (rows.childCount > 8) {
-            val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
+            val scroll = ScrollView(this).apply {
+                isVerticalScrollBarEnabled = false
+                isFocusable = false
+                isFocusableInTouchMode = false
+            }
             scroll.addView(rows)
             box.addView(scroll, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, theme.px(560f)
@@ -1320,7 +1348,8 @@ class PlayerActivity : Activity() {
 
     private fun updatePlayLabel() {
         val p = player ?: return
-        playButton.text = when {
+        playButton.playing = p.isPlaying
+        playButton.contentDescription = when {
             p.playbackState == Player.STATE_ENDED -> "Replay"
             p.isPlaying -> "Pause"
             else -> "Play"
@@ -1345,13 +1374,15 @@ class PlayerActivity : Activity() {
     }
 
     private fun paintChips() {
-        audioButton.text = "Audio" + audioValue().let { if (it.isBlank()) "" else " · $it" }
-        subButton.text = "Subtitles · " + subValue()
-        speedButton.text = "Speed · " + formatSpeed(speed)
-        qualityButton.text = "Quality" + currentSourceLabel.let {
-            val q = qualityWord(it)
-            if (q.isBlank()) "" else " · $q"
-        }
+        audioButton.contentDescription = "Audio · " + audioValue()
+        subButton.contentDescription = "Subtitles · " + subValue()
+        speedButton.contentDescription = "Speed · " + formatSpeed(speed)
+        qualityButton.contentDescription = "Quality · " + currentSourceLabel.ifBlank { "Auto" }
+        // A tiny dot is the only "current value" a flat icon can carry without becoming a label:
+        // audio when a specific track is chosen, CC when subtitles are on, speed when it is not 1×.
+        audioButton.badge = selectedAudioId != null
+        subButton.badge = selectedSubId != null
+        speedButton.badge = kotlin.math.abs(speed - 1f) > 0.01f
         updatePlayLabel()
     }
 
@@ -1956,6 +1987,146 @@ class PlayerActivity : Activity() {
         else -> false
     }
 
+
+    // =========================================================================================
+    // flat transport icons
+    // =========================================================================================
+
+    private class GlyphView(context: android.content.Context, val glyph: Int) : View(context) {
+        private val app2 = (context.applicationContext as ScenixApp).ctx
+        private val theme2 get() = app2.theme
+        var playing = false
+            set(value) {
+                if (field != value) { field = value; invalidate() }
+            }
+        var badge = false
+            set(value) {
+                if (field != value) { field = value; invalidate() }
+            }
+
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.WHITE
+        }
+        private val solid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = Color.WHITE
+        }
+        private val letters = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+        }
+
+        // A plain View measures AT_MOST as "fill the parent"; without this a wrap_content icon
+        // button became the whole bottom bar. The glyph box is the suggested minimum.
+        override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+            setMeasuredDimension(
+                resolveSize(minimumWidth, widthSpec),
+                resolveSize(minimumHeight, heightSpec),
+            )
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val cx = width / 2f
+            val cy = height / 2f
+            val u = minOf(width, height).toFloat() / 36f
+            stroke.strokeWidth = theme2.px(2.3f) * (u.coerceAtMost(1.2f))
+            when (glyph) {
+                GLYPH_PLAY -> if (playing) {
+                    val w = 3.4f * u
+                    val h = 10.5f * u
+                    canvas.drawRoundRect(cx - 8 * u, cy - h, cx - 8 * u + w, cy + h, 1.2f * u, 1.2f * u, solid)
+                    canvas.drawRoundRect(cx + 4.6f * u, cy - h, cx + 4.6f * u + w, cy + h, 1.2f * u, 1.2f * u, solid)
+                } else {
+                    val path = Path()
+                    path.moveTo(cx - 6.5f * u, cy - 10.5f * u)
+                    path.lineTo(cx + 10 * u, cy)
+                    path.lineTo(cx - 6.5f * u, cy + 10.5f * u)
+                    path.close()
+                    canvas.drawPath(path, solid)
+                }
+                GLYPH_BACK10 -> seekIcon(canvas, cx, cy, u, 10, back = true)
+                GLYPH_FORWARD30 -> seekIcon(canvas, cx, cy, u, 30, back = false)
+                GLYPH_BACK -> {
+                    val path = Path()
+                    path.moveTo(cx + 3.5f * u, cy - 8 * u)
+                    path.lineTo(cx - 4 * u, cy)
+                    path.lineTo(cx + 3.5f * u, cy + 8 * u)
+                    canvas.drawPath(path, stroke)
+                }
+                GLYPH_AUDIO -> {
+                    val path = Path()
+                    path.moveTo(cx - 9 * u, cy - 4 * u)
+                    path.lineTo(cx - 4.5f * u, cy - 4 * u)
+                    path.lineTo(cx + 1.5f * u, cy - 9.5f * u)
+                    path.lineTo(cx + 1.5f * u, cy + 9.5f * u)
+                    path.lineTo(cx - 4.5f * u, cy + 4 * u)
+                    path.lineTo(cx - 9 * u, cy + 4 * u)
+                    path.close()
+                    canvas.drawPath(path, solid)
+                    canvas.drawArc(RectF(cx + 2 * u, cy - 5 * u, cx + 8.5f * u, cy + 5 * u), -55f, 110f, false, stroke)
+                    canvas.drawArc(RectF(cx + 2 * u, cy - 9 * u, cx + 13 * u, cy + 9 * u), -55f, 110f, false, stroke)
+                }
+                GLYPH_SUBS -> {
+                    canvas.drawRoundRect(
+                        RectF(cx - 13 * u, cy - 8.5f * u, cx + 13 * u, cy + 8.5f * u),
+                        3 * u, 3 * u, stroke,
+                    )
+                    letters.textSize = 9.6f * u
+                    canvas.drawText("CC", cx, cy + 3.4f * u, letters)
+                }
+                GLYPH_SPEED -> {
+                    val r = 9.5f * u
+                    canvas.drawArc(RectF(cx - r, cy - r, cx + r, cy + r), 150f, 240f, false, stroke)
+                    val a = Math.toRadians(305.0)
+                    canvas.drawLine(cx, cy, cx + (8.2 * u * Math.cos(a)).toFloat(), cy + (8.2 * u * Math.sin(a)).toFloat(), stroke)
+                    canvas.drawCircle(cx, cy, 1.7f * u, solid)
+                }
+                GLYPH_QUALITY -> {
+                    for (i in 0..2) {
+                        val y = cy - 7 * u + i * 7 * u
+                        canvas.drawLine(cx - 9 * u, y, cx + 9 * u, y, stroke)
+                        val kx = cx + floatArrayOf(-4.5f, 3f, -1f)[i] * u
+                        canvas.drawCircle(kx, y, 2.1f * u, solid)
+                    }
+                }
+            }
+            if (badge) {
+                canvas.drawCircle(width - 11 * theme2.scale, 11 * theme2.scale, 3.4f * theme2.scale, solid)
+            }
+        }
+
+        /** A circular arrow with the seconds inside it — the television convention for "jump". */
+        private fun seekIcon(canvas: Canvas, cx: Float, cy: Float, u: Float, seconds: Int, back: Boolean) {
+            val r = 10.5f * u
+            val rect = RectF(cx - r, cy - r, cx + r, cy + r)
+            val start = if (back) 240f else 300f
+            val sweep = if (back) -300f else 300f
+            canvas.drawArc(rect, start, sweep, false, stroke)
+            val end = Math.toRadians((start + sweep).toDouble())
+            val ex = cx + (r * Math.cos(end)).toFloat()
+            val ey = cy + (r * Math.sin(end)).toFloat()
+            // Tangent at the arc's end, in the direction the viewer reads as "back"/"forward".
+            val tx = if (back) Math.sin(end) else -Math.sin(end)
+            val ty = if (back) -Math.cos(end) else Math.cos(end)
+            val tip = Math.atan2(ty, tx)
+            for (delta in doubleArrayOf(2.7, -2.7)) {
+                val a = tip + delta
+                canvas.drawLine(
+                    ex, ey,
+                    ex + (4.6f * u * Math.cos(a)).toFloat(),
+                    ey + (4.6f * u * Math.sin(a)).toFloat(),
+                    stroke,
+                )
+            }
+            letters.textSize = 9.4f * u
+            canvas.drawText(seconds.toString(), cx, cy + 3.5f * u, letters)
+        }
+    }
+
     private inner class SeekLine(context: android.content.Context) : View(context) {
         var fraction = 0f
         var buffered = 0f
@@ -2079,6 +2250,14 @@ class PlayerActivity : Activity() {
         const val EXTRA_ADVISORIES = "advisories"
 
         private const val TAG = "ScenixPlayer"
+        private const val GLYPH_PLAY = 0
+        private const val GLYPH_BACK10 = 1
+        private const val GLYPH_FORWARD30 = 2
+        private const val GLYPH_AUDIO = 3
+        private const val GLYPH_SUBS = 4
+        private const val GLYPH_SPEED = 5
+        private const val GLYPH_QUALITY = 6
+        private const val GLYPH_BACK = 7
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
