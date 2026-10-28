@@ -67,10 +67,8 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         setIntent(intent)
         val route = deepRoute(intent) ?: return
         pendingRoute = route
-        if (screen.isNotEmpty() && screen != PairingScreen.id) {
-            openShell(route)
-        } else if (screen == PairingScreen.id) {
-            // The setup screen is where the viewer is; choosing a hub/standalone opens this route.
+        if (screen == PairingScreen.id) {
+            // Keep the setup screen up; choosing a hub/standalone opens this route.
             refresh()
         }
     }
