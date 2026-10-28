@@ -55,6 +55,28 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** Installed add-ons, with the same enable/remove/add calls the web settings uses. */
+    fun addons(done: (addons: JSONArray?, error: String?) -> Unit) {
+        request("/app/v1/addons", "", "GET", null, 12000) { root, _, error ->
+            done(root?.optJSONArray("addons"), error)
+        }
+    }
+
+    fun setAddon(id: String, on: Boolean, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addons/" + enc(id) + "/" + (if (on) "enable" else "disable"),
+            "", "POST", null, 12000) { root, _, error -> done(root, error) }
+    }
+
+    fun removeAddon(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addons/" + enc(id), "", "DELETE", null, 12000) { root, _, error -> done(root, error) }
+    }
+
+    fun addAddon(url: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addons", "", "POST", JSONObject().put("url", url), 15000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
     /** The hub's settings document plus the row metadata the Home editor needs. */
     fun settings(done: (root: JSONObject?, error: String?) -> Unit) {
         request("/app/v1/settings", "", "GET", null, 12000) { root, _, error -> done(root, error) }

@@ -35,8 +35,9 @@ Nothing is installed or deployed from here.
 - **Native Search + Settings** — `SearchActivity` is a remote A-Z keyboard over the hub's
   `/app/v1/search` index, with the same poster cards and focus ring as Home. `SettingsActivity`
   covers audio language, subtitle language, quality ceiling, a native Home-rows editor (hide/show
-  and reorder shelves), the profile gate, and one row into the web settings for addon/source-pack
-  URL forms. Search and Settings no longer load a WebView for the everyday screens.
+  and reorder shelves), the profile gate, native Source packs (IGC/audio donors), Add-ons
+  (enable/disable/remove/add), and Debrid (provider, switch, write-only token). There is no
+  "open the web settings" path from the TV; `TextEntryActivity` handles the few URL/token fields.
 - **The web product** — `WebShellActivity` still loads `http://<backend>/` for the full web settings,
   browser deep links and the web player. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
@@ -66,9 +67,10 @@ Nothing is installed or deployed from here.
 ## What the app is not
 
 The native product surfaces are Profiles/PIN, Home, Search, Detail, Settings and the player. The
-long tail of settings (addons, sources, categories, PINs, household rules) is still the hub's web
-page, reached by one native row; a browser deep link keeps the web player. There is no per-device
-"front end" switch.
+remaining web-only admin pages (Live TV groups, made categories, profile/hub-name management) are
+not reachable from the TV; the WebView is used only by browser deep links and the web player route. A
+Back press can never land on a web page from the native menus. There is no per-device "front end"
+switch.
 
 ## Contract
 

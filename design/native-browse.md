@@ -75,10 +75,13 @@ reload.
   goes to `/app/v1/search` after a 320 ms pause, results are drawn with the same card/focus language
   as Home, and OK opens native Detail. Back clears the query first, then leaves.
 - `SettingsActivity` — audio language, subtitle language, quality ceiling, the profile gate, a
-  native **Home rows** editor (show/hide and move shelves, writing the hub's `rows` settings), and
-  one "Everything else / Open the web settings" row for addons, source packs and household rules.
-  It reads and writes the same `/app/v1/prefs` and `/app/v1/settings` the web page does; choosing a
-  language moves it to the front of the existing list instead of replacing the fallbacks. Ranked rows draw their numeral over the poster;
+  native **Home rows** editor (show/hide and move shelves), native **Source packs** (IGC/audio
+  donors), **Add-ons** (enable/disable/remove/add), and **Debrid** (provider, switch, write-only
+  token). Choosing a language moves it to the front of the existing list instead of replacing the
+  fallbacks. There is no "open the web settings" row: the television never enters the WebView from
+  Settings.
+- `TextEntryActivity` is the one native text field (add-on manifest, source URL, debrid token) and
+  uses the platform IME with the whole screen, rather than a cramped dialog. Ranked rows draw their numeral over the poster;
   Continue Watching draws its position line; posters and landscape rows are sized from the card kind.
 - `DetailActivity` — native hero, metadata/advisories/overview, cast strip and episode list with
   stills. Long titles are capped at 1100 px and get a smaller size, and a record with no maturity or
@@ -130,8 +133,10 @@ reload.
 
 ## What this does not solve
 
-- The long tail of Settings (addons, sources, categories, PINs, household rules) is still the web
-  UI, reached by one native row. The TV-relevant preferences are native.
+- The remaining web-only admin pages are the Live TV playlist/group editor, the made-categories
+  builder, and household/profile/hub-name management. They are not reachable from the TV Settings;
+  the WebView is used only by browser deep links and the web player route, never from the native
+  menus, so it cannot appear behind a Back press.
 - Skip-intro now has a source: `core/introdb.js` asks IntroDB's keyless
   `GET /segments?imdb_id=&season=&episode=` for a series episode (cached, 1.2 s budget) and the play
   answer carries `introStartMs`/`introEndMs`. The native player shows its "Skip intro" chip exactly

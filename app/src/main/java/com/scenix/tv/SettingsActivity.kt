@@ -136,16 +136,14 @@ class SettingsActivity : Activity() {
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
         }
-        addRow("Everything else", "Open the web settings", "Addons, sources, household rules, PINs") {
-            startActivity(
-                Intent(this, WebShellActivity::class.java)
-                    .putExtra(
-                        WebShellActivity.EXTRA_URL,
-                        WebShellActivity.shellUrl(this, "?profile=${android.net.Uri.encode(profileId)}#/settings"),
-                    )
-                    .putExtra(WebShellActivity.EXTRA_FROM_BROWSE, true)
-                    .putExtra(WebShellActivity.EXTRA_PROFILE_HINT, profileId)
-            )
+        addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
+            startActivity(Intent(this, SourcePacksActivity::class.java))
+        }
+        addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL") {
+            startActivity(Intent(this, AddonsActivity::class.java))
+        }
+        addRow("Debrid", "Cached torrents", "Provider, token and the on/off switch") {
+            startActivity(Intent(this, DebridActivity::class.java))
         }
     }
 
