@@ -165,9 +165,23 @@ class AddonClient(context: Context) {
             }
         }
         if (!wait) { refresh(url); return null }
-        val body = fetch(url)
+        val body = fetchBounded(url)
         if (body != null) writeCache(url, body)
         return body ?: hit?.second
+    }
+
+    /**
+     * A manifest install may wait on a hostname the TV cannot resolve. `connectTimeout` covers a
+     * reachable host that is slow, not a DNS resolver that never answers, and a setup request must not
+     * hang the page behind it. Run the fetch on its own daemon thread and stop waiting after the same
+     * budget a home shelf would spend.
+     */
+    private fun fetchBounded(url: String): JSONObject? {
+        var result: JSONObject? = null
+        val t = Thread({ result = fetch(url) }, "scenix-addon-fetch").apply { isDaemon = true }
+        t.start()
+        t.join(ADDON_WAIT_MS)
+        return result
     }
 
     private fun refresh(url: String) {
@@ -217,5 +231,6 @@ class AddonClient(context: Context) {
         private const val TAG = "ScenixAddon"
         /** Freshness rule for the home path: an answer younger than this is used as-is. */
         const val TTL_MS = 6L * 60L * 60L * 1000L
+        private const val ADDON_WAIT_MS = 12_000L
     }
 }

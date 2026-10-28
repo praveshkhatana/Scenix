@@ -31,6 +31,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.scenix.tv.core.FixtureServer
 import com.scenix.tv.core.LocalServer
 import com.scenix.tv.plugins.player.Ceilings
 import java.util.concurrent.TimeUnit
@@ -523,6 +524,16 @@ class WebShellActivity : Activity() {
         @JavascriptInterface
         fun exit() = runOnUiThread { finish() }
 
+        /** A page can offer "change hub" without knowing how a TV pairs: reopen the front door. */
+        @JavascriptInterface
+        fun openSetup() = runOnUiThread {
+            startActivity(
+                Intent(this@WebShellActivity, MainActivity::class.java)
+                    .putExtra("setup", true)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            )
+        }
+
         @JavascriptInterface
         fun state(): String = onMainValue({
             val p = player ?: return@onMainValue "{}"
@@ -613,15 +624,28 @@ class WebShellActivity : Activity() {
          */
         fun shellUrl(context: Context, route: String): String {
             val app = context.applicationContext as ScenixApp
-            val root = if (!app.prefs.standalone()) hubRoot(context) else {
-                val port = runCatching { LocalServer.portFor(context.applicationContext) }.getOrDefault(0)
-                if (port <= 0) {
-                    android.util.Log.e("ScenixWeb", "no local contract server; falling back to the last hub address")
-                    hubRoot(context)
-                } else {
-                    // The same path a hub serves it from, so nothing in the bundle has to know which
-                    // mode it is in.
-                    "http://127.0.0.1:$port/ui/index.html"
+            // A pinned fixture is a development preview: serve the bundled page and the bundled
+            // answers over loopback, exactly as standalone serves its own data, so the same page code
+            // is what is being previewed.
+            val fixture = app.prefs.fixture()
+            val root = when {
+                !fixture.isNullOrBlank() -> {
+                    val port = runCatching {
+                        FixtureServer.portFor(context.applicationContext, fixture)
+                    }.getOrDefault(0)
+                    if (port > 0) "http://127.0.0.1:$port/ui/index.html" else hubRoot(context)
+                }
+                !app.prefs.standalone() -> hubRoot(context)
+                else -> {
+                    val port = runCatching { LocalServer.portFor(context.applicationContext) }.getOrDefault(0)
+                    if (port <= 0) {
+                        android.util.Log.e("ScenixWeb", "no local contract server; falling back to the last hub address")
+                        hubRoot(context)
+                    } else {
+                        // The same path a hub serves it from, so nothing in the bundle has to know which
+                        // mode it is in.
+                        "http://127.0.0.1:$port/ui/index.html"
+                    }
                 }
             }
             return root + route

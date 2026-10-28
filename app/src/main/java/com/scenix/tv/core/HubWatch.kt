@@ -7,13 +7,9 @@ import android.util.Log
 import com.scenix.tv.R
 
 /**
- * Keeps [AppContext.hub] pointed at something that answers.
- *
  * The rule the app follows: the hub is the source of truth, but a TV with no data on screen is a TV
- * nobody watches. So one probe of `GET /healthz` decides which [HubClient] the whole app uses — the
- * real HTTP client, or the bundled fixtures — and it keeps trying in the background so the catalogue
- * comes back by itself when the hub does. Screens never poll this; they just notice
- * [AppContext.offline] the next time they render.
+ * nobody watches. So one probe of `GET /healthz` decides whether the page is reachable, and it keeps
+ * trying in the background so the catalogue comes back by itself when the hub does.
  *
  * A hub is a plain Node process the owner can move to any machine — a box in the house, a laptop, a
  * hosted address — so there is rarely one permanent address to write into the TV. Each pass walks
@@ -25,16 +21,13 @@ import com.scenix.tv.R
  * ([HubDiscovery]) per pass, and if nothing answers, [unpaired] is set so the app can ask the viewer
  * what to do instead of probing an empty network forever.
  *
- * Two states stay out of this file's way completely: a pinned fixture (adb `--es fixture …`, or
- * Settings) and standalone mode, where this app IS the backend and there is nothing to reach.
+ * Two states stay out of this file's way completely: a pinned fixture (adb `--es fixture …`) and
+ * standalone mode, where this app IS the backend and there is nothing to reach.
  */
 class HubWatch(context: Context, private val ctx: AppContext) {
 
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-
-    /** A client used only for probing, so the swap of `ctx.hub` never affects the probe. */
-    private val probe = HttpHub(app, ctx.prefs)
 
     // Both switches are read when a pass runs, not when this object is built: Settings and the pairing
     // screen change them mid-session, and a watcher frozen at the mode the TV booted in keeps
@@ -51,13 +44,6 @@ class HubWatch(context: Context, private val ctx: AppContext) {
     @Volatile var unpaired = false
         private set
 
-    /** The hub address actually serving this TV right now, for Settings to show. */
-    @Volatile var activeHub: String? = null
-        private set
-
-    /** Called on the UI thread when the app flips between live hub and fixtures. */
-    var onChange: ((Boolean) -> Unit)? = null
-
     /** First probe, then the caller decides what to show; retries continue on their own. */
     fun start(onReady: ((Boolean) -> Unit)? = null) {
         running = true
@@ -69,8 +55,7 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         if (standalone) {
             Log.i(TAG, "standalone mode: this TV is the backend, no hub probing")
             online = true
-            ctx.offline = false
-            onReady?.invoke(true)
+                onReady?.invoke(true)
             return
         }
         check(onReady)
@@ -90,8 +75,6 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         main.removeCallbacksAndMessages(null)
         unpaired = false
         running = true
-        // Force the next pass to re-point ctx.hub even if reachable/unreachable has not moved: a new
-        // address is a change of source, and the screens should hear about it.
         online = false
         start(onReady)
     }
@@ -105,9 +88,7 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         // to reach in that mode, so the watcher stands down instead of probing a network this TV left.
         if (standalone) {
             online = true
-            ctx.offline = false
-            ctx.hub = LocalHub.get(app)
-            done?.invoke(true)
+                done?.invoke(true)
             return
         }
         val list = ctx.prefs.hubUrlCandidates(app.getString(R.string.hub_urls))
@@ -120,10 +101,7 @@ class HubWatch(context: Context, private val ctx: AppContext) {
             val ms = app.resources.getInteger(R.integer.ssdp_search_ms)
             HubDiscovery.scan(app, target, ms) { found ->
                 if (found.isNotEmpty()) {
-                    val known = ctx.prefs.discoveredHubs().associateBy { it.url }
-                    val merged = ArrayList(known.values)
-                    for (f in found) if (!known.containsKey(f.url)) merged.add(f)
-                    ctx.prefs.setDiscoveredHubs(merged)
+                    ctx.prefs.setDiscoveredHubs(found)
                     Log.i(TAG, "found ${found.size} hub(s) on the LAN, probing them")
                     check(done)
                 } else {
@@ -145,45 +123,39 @@ class HubWatch(context: Context, private val ctx: AppContext) {
             return
         }
         val url = list[i]
-        // HttpHub re-reads the address on every request, so pointing the probe at this candidate is
-        // just a preference write — and Settings then shows the hub the TV really settled on.
+        // The probe re-reads this candidate directly; remembering it is what makes the next boot try
+        // the hub that actually answered first.
         if (url != ctx.prefs.hubUrl("")) ctx.prefs.setHubUrl(url)
-        probe.health { ok, _ ->
-            if (ok == true) {
+        Thread({
+            val ok = HubProbe.healthy(url)
+            if (ok) {
                 ctx.prefs.setHubLastWorking(url)
-                activeHub = url
                 Log.i(TAG, "hub answering at $url")
                 main.post {
-                    val changed = apply(true)
+                    apply(true)
                     done?.invoke(true)
-                    if (changed) onChange?.invoke(true)
                     if (running) schedule()
                 }
             } else {
                 Log.i(TAG, "no answer from $url (${tried + 1}/${list.size})")
                 tryAt(list, (i + 1) % list.size, tried + 1, done)
             }
-        }
+        }, "scenix-probe").apply { isDaemon = true }.start()
     }
 
     private fun settle(ok: Boolean, done: ((Boolean) -> Unit)?) {
         main.post {
-            if (!ok) activeHub = null
-            val changed = apply(ok)
+            apply(ok)
             done?.invoke(ok)
-            if (changed) onChange?.invoke(ok)
             if (running) schedule()
         }
     }
 
-    /** Returns true when the app's data source actually changed. */
-    private fun apply(ok: Boolean): Boolean {
-        if (pinned || ok == online) return false
+    /** Remember a change of reachability so the next scheduled pass uses the right interval. */
+    private fun apply(ok: Boolean) {
+        if (pinned || ok == online) return
         online = ok
-        ctx.offline = !ok
-        ctx.hub = if (ok) HttpHub(app, ctx.prefs) else FixtureHub(app, defaultFixture())
-        Log.i(TAG, if (ok) "hub reachable again" else "hub unreachable, using $DEFAULT_FIXTURE")
-        return true
+        Log.i(TAG, if (ok) "hub reachable again" else "hub unreachable")
     }
 
     /**
@@ -205,10 +177,5 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         private const val ONLINE_MS = 30_000L
         private const val RETRY_MS = 10_000L
         private const val SEARCH_MS = 60_000L
-
-        /** The bundled catalogue used when the hub is down. */
-        const val DEFAULT_FIXTURE = "fixtures/home.json"
-
-        fun defaultFixture(): String = DEFAULT_FIXTURE
     }
 }

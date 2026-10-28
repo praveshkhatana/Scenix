@@ -10,6 +10,8 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 
 /** One hub this TV can talk to, and the name the owner gave it. The name is what a person reads. */
 data class HubAddress(val url: String, val name: String) {
@@ -114,7 +116,20 @@ object HubDiscovery {
             socket?.close()
             try { lock?.release() } catch (t: Throwable) { /* already released */ }
         }
-        return out.values.toList()
+        // An SSDP reply only says "something is here". Routers and NAS boxes answer the same search
+        // with their own LOCATION, and one of those in the hub list is a dead end. Ask each candidate
+        // for `/healthz` in parallel: a real hub names itself, and setup never shows a machine that
+        // cannot serve a shelf.
+        val candidates = out.values.toList()
+        if (candidates.isEmpty()) return candidates
+        val pool = Executors.newFixedThreadPool(minOf(4, candidates.size))
+        return try {
+            pool.invokeAll(candidates.map { hub ->
+                Callable { if (HubProbe.healthy(hub.url, timeoutMs = 1200)) hub else null }
+            }).mapNotNull { it.get() }
+        } finally {
+            pool.shutdownNow()
+        }
     }
 
     private fun request(target: String): String = buildString {

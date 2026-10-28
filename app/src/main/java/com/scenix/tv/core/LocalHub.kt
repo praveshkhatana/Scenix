@@ -1,22 +1,18 @@
 package com.scenix.tv.core
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import com.scenix.tv.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
 import kotlin.math.roundToInt
 
 /**
  * Standalone mode: this app hosts the `/app/v1` contract itself (design/deployment-modes.md
- * Rule 2). `HttpHub` and `LocalHub` are two implementations of one [HubClient], so no screen, card,
- * rule or player in this app knows which one it is talking to. The only thing the UI branches on is
- * what a backend says it can do — the `capabilities` list in its manifest.
+ * Rule 2). It answers the same JSON a hub answers, over loopback, so the page cannot tell which
+ * machine it is talking to. The only thing the UI branches on is what a backend says it can do —
+ * the `capabilities` list in its manifest.
  *
  * Where the content comes from: addons, over plain HTTP, in the community manifest protocol
  * (`manifest`, `catalog`, `meta`, `stream`, `subtitles`). Which addons, and how each is configured,
@@ -33,13 +29,9 @@ import kotlin.math.roundToInt
  * costs a shorter shelf rather than a hung TV; only a detail page and a Play press wait for an
  * answer.
  */
-class LocalHub private constructor(context: Context) : HubClient {
+class LocalHub private constructor(context: Context) {
 
     private val appContext = context.applicationContext
-    private val main = Handler(Looper.getMainLooper())
-    private val pool = Executors.newFixedThreadPool(POOL_THREADS, ThreadFactory { r ->
-        Thread(r, "scenix-local").apply { isDaemon = true }
-    })
     private val addons = AddonClient(appContext)
 
     /** Everything this app owns for itself: settings, profiles, what it has seen, where people stopped. */
@@ -49,8 +41,6 @@ class LocalHub private constructor(context: Context) : HubClient {
     private val libraryFile = File(data, "library.json")
     private val progressFile = File(data, "progress.json")
     private val prefStore = File(data, "profile-prefs.json")
-
-    override val label: String get() = "this TV (standalone)"
 
     // ---- the owner's settings -----------------------------------------------------------------
 
@@ -150,8 +140,8 @@ class LocalHub private constructor(context: Context) : HubClient {
     }
 
     // ---- the contract in JSON -----------------------------------------------------------------
-    // [LocalServer] answers these paths directly and the [HubClient] methods at the bottom wrap the
-    // same calls, so the standalone page cannot drift from the contract a hub serves.
+    // [LocalServer] answers these paths directly, so the standalone page cannot drift from the
+    // contract a hub serves.
 
     fun manifestJson(): JSONObject {
         val manifests = addonManifests()
@@ -162,7 +152,7 @@ class LocalHub private constructor(context: Context) : HubClient {
         val caps = JSONObject()
             .put("gateway", false)     // no engine fetches a torrent here: a source is a URL or nothing
             .put("live", false)        // no channel list to tune
-            .put("localFiles", true)   // the files this backend names are opened by this TV, not relayed
+            .put("localFiles", false)  // no device file browser: sources come from addons
             .put("remux", false)       // a file plays as it is, or not at all
             .put("tracks", false)      // languages are not read out of containers, only from addons
             .put("announce", false)    // a TV does not announce itself as a backend
@@ -550,9 +540,23 @@ class LocalHub private constructor(context: Context) : HubClient {
      * path is cache-first, so this is what makes a freshly added addon fill the home screen instead of
      * waiting for the next visit to answer.
      */
-    fun refreshAddons(cb: HubCb<Int>) = reply({
-        addonSpecs().count { addons.manifest(it, wait = true, ttlMs = ttlMs()) != null }
-    }, cb)
+    /**
+     * Re-read every installed manifest and warm its catalogs. The home path is cache-only, so
+     * installing an addon and immediately opening Home must not show an empty screen until the next
+     * background pass: the first catalog fetch is kicked off here, and the next Home reload has it.
+     */
+    fun refreshAddons(): Int {
+        var ok = 0
+        for (spec in addonSpecs()) {
+            val am = addons.manifest(spec, wait = true, ttlMs = ttlMs()) ?: continue
+            ok++
+            for (c in am.catalogs.take(MAX_CATALOGS_PER_ADDON)) {
+                val type = communityType(s(c, "type", "movie")) ?: continue
+                addons.catalog(am, type, s(c, "id", ""), "default", wait = false, ttlMs = ttlMs())
+            }
+        }
+        return ok
+    }
 
     // ---- rows ---------------------------------------------------------------------------------
 
@@ -1306,108 +1310,10 @@ class LocalHub private constructor(context: Context) : HubClient {
         )
     }
 
-    // ---- the HubClient surface: the same shapes, delivered on the main thread ----------------------
-
-    private fun <T> reply(work: () -> T, cb: HubCb<T>) {
-        try {
-            pool.execute {
-                var v: T? = null
-                var err: String? = null
-                try {
-                    v = work()
-                } catch (t: Throwable) {
-                    err = t.message ?: t.javaClass.simpleName
-                    Log.w(TAG, "local hub call failed", t)
-                }
-                val value = v
-                main.post { cb.onResult(value, err) }
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "local hub queue rejected", t)
-            main.post { cb.onResult(null, "busy") }
-        }
-    }
-
-    override fun manifest(cb: HubCb<Manifest>) = reply({ Manifest.from(manifestJson()) }, cb)
-
-    override fun profiles(cb: HubCb<List<Profile>>) =
-        reply({ Profile.list(profilesJson().optJSONArray("profiles")) }, cb)
-
-    override fun home(profileId: String?, cb: HubCb<List<Row>>) =
-        reply({ Row.list(homeJson(profileId).optJSONArray("rows")) }, cb)
-
-    override fun row(rowId: String, profileId: String?, cb: HubCb<Row?>) =
-        reply({ rowJson(rowId, profileId)?.let { Row.from(it) } }, cb)
-
-    override fun search(q: String, profileId: String?, cb: HubCb<List<Row>>) =
-        reply({ Row.list(searchJson(q, profileId).optJSONArray("rows")) }, cb)
-
-    override fun meta(identity: String, type: String?, cb: HubCb<Item?>) =
-        reply({ metaJson(identity, type)?.let { Item.from(it) } }, cb)
-
-    override fun play(
-        identity: String, provider: String?, profileId: String?, type: String?, season: Int, episode: Int, cb: HubCb<PlayTarget?>,
-    ) = reply(
-        {
-            PlayTarget.from(
-                playJson(
-                    JSONObject()
-                        .put("identity", identity)
-                        .put("type", type ?: JSONObject.NULL)
-                        .put("profile", profileId ?: JSONObject.NULL)
-                        .put("source", provider ?: JSONObject.NULL)
-                        .put("season", season)
-                        .put("episode", episode),
-                ),
-            )
-        },
-        cb,
-    )
-
-    override fun progress(identity: String, positionMs: Long, profileId: String?, episode: Episode?) {
-        val body = JSONObject()
-            .put("identity", identity)
-            .put("positionMs", positionMs)
-            .put("profile", profileId ?: "default")
-        if (episode != null) {
-            body.put("episode", JSONObject()
-                .put("season", episode.season).put("episode", episode.episode).put("title", episode.title))
-        }
-        try {
-            pool.execute {
-                try {
-                    progressJson(body)
-                } catch (t: Throwable) {
-                    Log.w(TAG, "local progress write failed", t)
-                }
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "local progress queue rejected", t)
-        }
-    }
-
-    /** This backend is always there: standalone has no network peer to lose. */
-    override fun health(cb: HubCb<Boolean>) { cb.onResult(true, null) }
-
-    override fun addons(cb: HubCb<List<Addon>>) = reply({ Addon.list(addonsJson()) }, cb)
-
-    override fun subs(identity: String, langs: List<String>, profileId: String?, cb: HubCb<List<Sub>>) =
-        reply({ Sub.list(subsJson(identity, langs, knownType(identity))) }, cb)
-
-    override fun prefs(profileId: String?, cb: HubCb<HubPrefs?>) =
-        reply({ HubPrefs.from(prefsJson(profileId).optJSONObject("prefs") ?: JSONObject()) }, cb)
-
-    override fun setPrefs(values: HubPrefs, profileId: String?, cb: HubCb<HubPrefs?>) =
-        reply({ HubPrefs.from(setPrefsJson(values.toJson(profileId ?: ""), profileId).optJSONObject("prefs") ?: JSONObject()) }, cb)
-
-    /** No trailer search here — and the manifest does not advertise one, so the UI never asks. */
-    override fun trailer(identity: String, cb: HubCb<String?>) { cb.onResult(null, null) }
-
     private fun manifestsHaveSubs(): Boolean = addonManifests().any { it.has("subtitles") }
 
     companion object {
         private const val TAG = "ScenixLocal"
-        private const val POOL_THREADS = 3
         private const val ROW_MAX = 30
         private const val MAX_CATALOGS_PER_ADDON = 6
         private const val LIBRARY_MAX = 800

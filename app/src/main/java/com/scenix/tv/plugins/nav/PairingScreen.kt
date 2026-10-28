@@ -14,8 +14,6 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.HubAddress
 import com.scenix.tv.core.HubDiscovery
-import com.scenix.tv.core.HttpHub
-import com.scenix.tv.core.LocalHub
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.core.Views
@@ -40,6 +38,9 @@ object PairingScreen {
     /** One line of feedback on the field: what was wrong with the address just typed. */
     private var addressError: String? = null
 
+    /** Clear the field error when the screen is entered again, not when it repaints around it. */
+    fun reset() { addressError = null }
+
     fun render(host: ScreenHost) {
         val ctx = host.app
         val theme = ctx.theme
@@ -57,21 +58,21 @@ object PairingScreen {
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val col = LinearLayout(ctx.app)
         col.orientation = LinearLayout.VERTICAL
-        col.setPadding(theme.gutter, theme.px(48f), theme.gutter, theme.px(72f))
+        col.setPadding(theme.gutter, theme.px(28f), theme.gutter, theme.px(56f))
         scroll.addView(col)
 
         col.addView(
-            Views.text(ctx, "h2", 52f, theme.ink, "Set up this TV", bold = true),
+            Views.text(ctx, "h2", 44f, theme.ink, "Set up this TV", bold = true),
             lp(0),
         )
         col.addView(
             Views.text(
-                ctx, "sub", 24f, theme.ink2,
+                ctx, "sub", 22f, theme.ink2,
                 "Scenix streams from a hub: a small server on a machine you already own. " +
                     "A TV with no hub can still run on its own, pulling its own content from addons.",
                 maxLines = 3,
             ),
-            lp(theme.px(12f)),
+            lp(theme.px(8f)),
         )
 
         // ---- hubs announcing themselves -------------------------------------------------------
@@ -121,8 +122,6 @@ object PairingScreen {
         // Same rule as the launch switch: naming a hub means "show me the real library", so the
         // bundled-sample pin cannot survive it.
         ctx.prefs.setFixture("")
-        ctx.hub = HttpHub(ctx.app, ctx.prefs)
-        ctx.offline = false
         ctx.watch?.rechoose()
         host.openShell()
     }
@@ -132,8 +131,6 @@ object PairingScreen {
         val ctx = host.app
         ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
         ctx.prefs.setFixture("")
-        ctx.hub = LocalHub.get(ctx.app)
-        ctx.offline = false
         ctx.watch?.rechoose()
         host.openShell()
     }
@@ -166,15 +163,15 @@ object PairingScreen {
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(theme.px(24f), theme.px(20f), theme.px(24f), theme.px(20f))
+        row.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         row.isFocusable = true
         row.isClickable = true
 
         col2(
             ctx, row,
-            Views.text(ctx, "li", 25f, theme.ink, hub.display(), bold = true, maxLines = 1),
-            Views.text(ctx, "liMeta", 20f, theme.ink2, hub.url, maxLines = 1),
+            Views.text(ctx, "li", 23f, theme.ink, hub.display(), bold = true, maxLines = 1),
+            Views.text(ctx, "liMeta", 19f, theme.ink2, hub.url, maxLines = 1),
         )
         val go = Views.text(ctx, "li", 21f, theme.brand, "Use this hub", bold = true)
         val glp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -184,8 +181,11 @@ object PairingScreen {
         row.setOnClickListener { chooseHub(host, hub.url, hub.name) }
         row.setOnFocusChangeListener { v, has ->
             v.setBackgroundColor(if (has) theme.color("surfHover", "#2F2F2F") else theme.surface)
+            v.foreground = if (has) {
+                Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
+            } else null
         }
-        col.addView(row, lp(theme.px(10f)))
+        col.addView(row, lp(theme.px(8f)))
     }
 
     /** The typed-address case: a hub on another network, or one that has not been told to announce. */
@@ -193,7 +193,7 @@ object PairingScreen {
         val theme = ctx.theme
         val box = LinearLayout(ctx.app)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(theme.px(24f), theme.px(20f), theme.px(24f), theme.px(20f))
+        box.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
         box.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         col.addView(box, lp(theme.px(10f)))
 
@@ -207,7 +207,7 @@ object PairingScreen {
         field.setText(ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url)))
         field.setTextColor(theme.ink)
         field.setHintTextColor(theme.ink3)
-        field.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 24f))
+        field.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 22f))
         field.background = Views.rounded(theme.surface2, theme.radius("field", 6f), theme.px(1f), theme.line)
         field.setPadding(theme.px(16f), theme.px(12f), theme.px(16f), theme.px(12f))
         val inputType = android.text.InputType.TYPE_CLASS_TEXT or
@@ -231,8 +231,8 @@ object PairingScreen {
         val slp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         slp.topMargin = theme.px(14f)
 
-        val save = Views.text(ctx, "button", 22f, theme.ink, "Connect", bold = true, gravity = Gravity.CENTER)
-        save.setPadding(theme.px(24f), theme.px(14f), theme.px(24f), theme.px(14f))
+        val save = Views.text(ctx, "button", 21f, theme.ink, "Connect", bold = true, gravity = Gravity.CENTER)
+        save.setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
         save.background = Views.rounded(theme.brand, theme.radius("button", 6f))
         save.isFocusable = true
         save.setOnClickListener {
@@ -260,16 +260,16 @@ object PairingScreen {
     // ---- row builders, the same shapes Settings uses ------------------------------------------
 
     private fun section(ctx: AppContext, col: LinearLayout, label: String) {
-        col.addView(Views.text(ctx, "rowTitle", 26f, ctx.theme.ink, label, bold = true), lp(ctx.theme.px(38f)))
+        col.addView(Views.text(ctx, "rowTitle", 24f, ctx.theme.ink, label, bold = true), lp(ctx.theme.px(22f)))
     }
 
     private fun infoRow(ctx: AppContext, col: LinearLayout, value: String) {
         val theme = ctx.theme
         val row = LinearLayout(ctx.app)
-        row.setPadding(theme.px(24f), theme.px(16f), theme.px(24f), theme.px(16f))
+        row.setPadding(theme.px(20f), theme.px(12f), theme.px(20f), theme.px(12f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         row.addView(Views.text(ctx, "li", 22f, theme.ink2, value, maxLines = 3))
-        col.addView(row, lp(theme.px(10f)))
+        col.addView(row, lp(theme.px(8f)))
     }
 
     private fun actionRow(
@@ -284,13 +284,13 @@ object PairingScreen {
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(theme.px(24f), theme.px(20f), theme.px(24f), theme.px(20f))
+        row.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         row.isFocusable = true
         row.isClickable = true
 
         row.addView(
-            Views.text(ctx, "li", 25f, theme.ink, label, bold = true),
+            Views.text(ctx, "li", 23f, theme.ink, label, bold = true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
         if (value.isNotBlank()) {
@@ -307,8 +307,11 @@ object PairingScreen {
         row.setOnClickListener { onClick() }
         row.setOnFocusChangeListener { v, has ->
             v.setBackgroundColor(if (has) theme.color("surfHover", "#2F2F2F") else theme.surface)
+            v.foreground = if (has) {
+                Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
+            } else null
         }
-        col.addView(row, lp(theme.px(10f)))
+        col.addView(row, lp(theme.px(8f)))
     }
 
     /** Two lines stacked inside a horizontal row: the name, and the address under it. */

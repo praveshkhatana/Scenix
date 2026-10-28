@@ -167,14 +167,17 @@ There is no second implementation of Home, Detail, Search or the player to keep 
 Kotlin, `minSdk 26`, Views (no Compose — 2 GB / 32-bit TV), Media3 ExoPlayer, no analytics.
 
 ```
-core/               HubClient · Models · Prefs · HubDiscovery · HubWatch · Format · Views
+core/               HubProbe · HubDiscovery · HubWatch · Models · Prefs · Format · Views
+                    LocalHub · LocalServer · FixtureServer · LoopbackServer · AddonClient
 plugins/nav/        PairingScreen — first-run hub discovery, manual address, or standalone
 WebShellActivity    the product: WebView page + Media3 surface + window.Scenix bridge
 ```
 
 The app holds **no content knowledge and no product screens**. It answers three questions: which
 backend, how to paint a video the page asks for, and where a `tv://` link goes. `PairingScreen` is a
-plain setup object; the screen/card/rule plugin registries went with the native front end.
+plain setup object; the screen/card/rule plugin registries and the in-process `HubClient` went with
+the native front end. Standalone and fixture preview are HTTP servers on loopback, not clients the
+page can tell apart from a hub.
 
 ## 5. What "change anything later" costs in practice
 

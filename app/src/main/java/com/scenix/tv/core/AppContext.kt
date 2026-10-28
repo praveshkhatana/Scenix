@@ -13,17 +13,11 @@ class AppContext(
     val theme: Theme,
     val prefs: Prefs,
 ) {
-    /** Replaced by MainActivity when `--es fixture …` asks for the offline asset client. */
-    var hub: HubClient = HttpHub(app, prefs)
-
     /**
      * The watcher that decides whether this TV has a hub to open. Installed once by MainActivity;
      * the pairing screen reaches through it when the viewer picks a backend.
      */
     var watch: HubWatch? = null
-
-    /** True while HubWatch has not found a reachable hub. */
-    var offline: Boolean = false
 }
 
 /**

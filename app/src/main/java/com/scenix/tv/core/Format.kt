@@ -31,10 +31,4 @@ object Format {
         val v = bytes / 1024.0.pow(idx.toDouble())
         return String.format(Locale.US, if (v >= 100) "%.0f %s" else "%.1f %s", v, units[idx])
     }
-
-    fun bitrate(bps: Int): String = when {
-        bps <= 0 -> ""
-        bps >= 1_000_000 -> String.format(Locale.US, "%.1f Mbps", bps / 1_000_000.0)
-        else -> String.format(Locale.US, "%d kbps", bps / 1000)
-    }
 }

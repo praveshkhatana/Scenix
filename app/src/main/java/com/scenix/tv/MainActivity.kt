@@ -10,15 +10,15 @@ import androidx.appcompat.app.AppCompatActivity
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.HubWatch
+import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.ScreenHost
-import com.scenix.tv.core.clientFor
 import com.scenix.tv.plugins.nav.PairingScreen
 
 /**
  * The launcher. There is one product — the hub's web UI in [WebShellActivity] over this device's
  * native player — so this activity does only the work that must happen before the page exists:
  *
- *  1. read the launch switches (`--es hub_url …`, `--es fixture …`) and build the client;
+ *  1. apply the launch switches (`--es hub_url …`, `--es fixture …`, `--ez setup/standalone`);
  *  2. run [HubWatch] once to find a hub (or notice that this TV is standalone);
  *  3. if nothing is paired and nothing answers, show the native setup screen
  *     ([PairingScreen]) so a fresh TV can find or type a hub, or choose standalone;
@@ -38,6 +38,9 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     private var rendering = false
     private var pendingRoute: String? = null
 
+    /** `--ez setup true` or `tv://setup`: show the front door even when a backend is already paired. */
+    private var forceSetup = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ctx = (application as ScenixApp).ctx
@@ -49,6 +52,17 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         setContentView(root)
 
         pendingRoute = deepRoute(intent)
+        forceSetup = wantsSetup(intent)
+
+        // A forced setup is a repair, not a probe: the viewer asked to see the front door, so do not
+        // race a LAN search that could open the shell underneath it.
+        if (forceSetup) {
+            // A repair pass must not trust yesterday's list: it may contain a router that answered
+            // SSDP once, or a hub that has since moved. The address field still carries the saved one.
+            ctx.prefs.setDiscoveredHubs(emptyList())
+            showPairing()
+            return
+        }
 
         // One probe decides whether there is a page to open. The pairing screen handles the "no
         // hub yet" answer; every other path is the web shell.
@@ -82,11 +96,16 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         openShell(pendingRoute)
     }
 
-    /** `--es hub_url …` / `--es fixture …`: development switches, read before the client is built. */
+    /**
+     * `--es hub_url …`, `--es fixture …`, `--ez standalone true` and `--ez setup true`: development
+     * and recovery switches, read before the first probe. They write the same preferences the setup
+     * screen writes, so the next launch behaves like any other.
+     */
     private fun applyLaunchSwitches() {
         val i = intent ?: return
         i.getStringExtra("hub_url")?.takeIf { it.isNotBlank() }?.let {
             ctx.prefs.setHubUrl(it.trim())
+            ctx.prefs.setBackendChoice(Prefs.BACKEND_HUB)
             // Naming a hub means "show me the real library"; a pinned offline fixture must not
             // survive it.
             ctx.prefs.setFixture("")
@@ -96,19 +115,34 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             ctx.prefs.setFixture(it)
             Log.i(TAG, "fixture override: $it")
         }
-        ctx.hub = clientFor(ctx.prefs, this)
+        if (i.getBooleanExtra("standalone", false)) {
+            ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
+            ctx.prefs.setFixture("")
+            Log.i(TAG, "standalone override")
+        }
+    }
+
+    /** `tv://setup` and `--ez setup true` both mean "show me the hub/standalone front door". */
+    private fun wantsSetup(i: Intent?): Boolean {
+        if (i == null) return false
+        if (i.getBooleanExtra("setup", false)) return true
+        val uri = i.data ?: return false
+        return uri.scheme.equals("tv", true) &&
+            (uri.host.equals("setup", true) || uri.pathSegments.firstOrNull().equals("setup", true))
     }
 
     /** `tv://detail/<identity>` / `tv://play/<identity>` → the page route to load. */
     private fun deepRoute(i: Intent?): String? {
         val uri = i?.data ?: return null
         if (!uri.scheme.equals("tv", true)) return null
-        val identity = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        val first = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        if (uri.host.equals("setup", true) || first.equals("setup", true)) return null
         val kind = if ((uri.host ?: "detail").equals("play", true)) "play" else "detail"
-        return "#/$kind/${Uri.encode(identity)}"
+        return "#/$kind/${Uri.encode(first)}"
     }
 
     private fun showPairing() {
+        PairingScreen.reset()
         screen = PairingScreen.id
         rendering = true
         PairingScreen.render(this)
@@ -152,6 +186,12 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (screen == PairingScreen.id) {
+            // Setup opened from a working shell is a repair visit: Back cancels it and returns to the
+            // shell already underneath, instead of opening a second one.
+            if (forceSetup && (ctx.prefs.standalone() || ctx.prefs.backendChoice().isNotBlank())) {
+                finish()
+                return
+            }
             finish()
             return
         }

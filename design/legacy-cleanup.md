@@ -27,6 +27,9 @@ duplicated the same product and has been removed.
   last `ScreenPlugin` registry too: with one setup screen there is nothing left to look up.
 - App-side profile state: the profile id, the local PIN hash, hidden rows, local My List,
   not-interested and autoplay preferences in `Prefs` (the hub owns all of that now).
+- The in-process `HubClient` / `HttpHub` / `FixtureHub` / `Backend` path. The page speaks HTTP, so the
+  app no longer keeps a second model-level client that no screen read. Health checks are now the
+  small `HubProbe`; fixtures are served by `FixtureServer` over the same HTTP path as standalone.
 - Theme, view and formatter helpers that only the deleted screens called.
 - The per-device "front end" preference (`interface_mode`, `shellWanted`, `SHELL`/`NATIVE`) and
   the Settings switch that changed it.
@@ -38,12 +41,14 @@ duplicated the same product and has been removed.
 - **Pairing/setup:** `plugins/nav/PairingScreen`, a plain object called by `MainActivity`. A fresh TV
   uses it to find an announcing hub, type an address, or choose standalone. Picking either writes the
   preference and calls `ScreenHost.openShell()`.
-- **Launcher:** `MainActivity` builds the app context, applies `hub_url`/`fixture` launch switches,
-  runs a single `HubWatch` pass and either shows `PairingScreen` (nothing paired, nothing answers)
-  or opens the shell and finishes.
+- **Launcher:** `MainActivity` builds the app context, applies `hub_url`/`fixture`/`setup`/`standalone`
+  launch switches, runs a single `HubWatch` pass and either shows `PairingScreen` (nothing paired,
+  nothing answers) or opens the shell and finishes.
 - **Standalone:** `LocalHub` (the `/app/v1` backend, addons included), `LocalServer` (loopback HTTP
-  and the bundled `assets/web` page), `AddonClient`, `Prefs`, `Backend`.
-- **Hub client:** `HubClient`, `HttpHub`, `FixtureHub`, `HubDiscovery`, `HubWatch`, `Models`.
+  and the bundled `assets/web` page), `AddonClient`, `Prefs`.
+- **Hub discovery:** `HubProbe` (a real `/healthz` identity check), `HubDiscovery`, `HubWatch`,
+  `Prefs`, `Models`.
+- **Bundled preview:** `FixtureServer` + `LoopbackServer` + `assets/fixtures`, read-only.
 - **Player bridge:** `WebShellActivity`, `Ceilings`, and the media3 stack under the transparent
   WebView. The shell exposes the native player to the page through `window.Scenix`; the page draws
   the interface and controls.
@@ -52,7 +57,7 @@ duplicated the same product and has been removed.
 ## Deep links
 
 `tv://detail/<identity>` and `tv://play/<identity>` become the page routes
-`#/detail/<encoded identity>` and `#/play/<encoded identity>`. `MainActivity` hands the absolute page
-address to `WebShellActivity` through its `url` extra, using
+`#/detail/<encoded identity>` and `#/play/<encoded identity>`; `tv://setup` reopens setup.
+`MainActivity` hands the absolute page address to `WebShellActivity` through its `url` extra, using
 `WebShellActivity.shellUrl(context, route)` so hub and standalone mode resolve the same page root.
 A link that arrives before setup is kept and opened once the viewer chooses a hub or standalone.

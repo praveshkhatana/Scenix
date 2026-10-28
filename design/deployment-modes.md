@@ -45,8 +45,9 @@ playback bridge. Two implementations satisfy it:
               (browser, TV shell, phone — all the same)
 ```
 
-`HttpHub` (remote) and `LocalHub` (in-app) are two implementations of one interface. The UI does not
-branch on which one it is talking to; it branches only on **capabilities** the backend advertises in
+Both shapes answer the same HTTP contract. A remote hub answers it from `hub/index.js`; standalone
+answers it from `LocalHub` through `LocalServer` on loopback. The page does not branch on which one it
+is talking to; it branches only on **capabilities** the backend advertises in
 `GET /app/v1/manifest` — for example a hub offers the torrent gateway and live TV; standalone offers
 direct sources. Anything the backend cannot do is absent from the UI, not broken in it.
 
@@ -66,10 +67,15 @@ Both shapes have run on the same panel in the same build, with only an owner set
 them. In hub mode the shell loaded the paired hub's address and played through the gateway. In
 standalone the app started its own contract host on a loopback port chosen at boot, served the
 identical page out of its own assets, and answered `GET /app/v1/manifest` with the richer flags turned
-off — `gateway:false, live:false, remux:false, tracks:false` beside `localFiles:true, search:true,
+off — `gateway:false, live:false, localFiles:false, remux:false, tracks:false` beside `search:true,
 settingsAdmin:true, profileEdit:true, addonAdmin:true` — with one profile created on first run. That
 state drew no audio-track or subtitle control, which is the capability rule doing its job rather than a
 diminished screen.
+
+The same page also has a **fixture preview**: `--es fixture fixtures/home.json` starts
+`FixtureServer`, which serves the bundled page and catalogue on loopback. It exists to exercise the
+interface without a hub and is read-only; its capabilities say so, so settings and profile writes are
+absent rather than silently discarded.
 
 ## Rule 3 — configuration follows the backend
 
@@ -107,8 +113,8 @@ With nothing paired and no choice recorded, the app probes the LAN once. A hub t
 without a question, because a stranger's first run should not require a decision the network can make.
 If nothing answers, setup asks which of these three to use instead of browsing an empty library or
 spinning forever; the answer is remembered on the device. Pairing is a first-run step, not a setting
-inside the product; to point a paired device at a different backend, clear the app's data so setup
-runs again.
+inside the product; `tv://setup` reopens it, and clearing the app's data is the fallback for a device
+whose backend cannot be reached at all.
 
 ## Naming
 

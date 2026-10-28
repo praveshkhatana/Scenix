@@ -94,7 +94,8 @@ Settings and the hub will try it before the engine; nothing breaks if you never 
 hub it already remembers, then asks the LAN; one that answers is opened without a question. If none
 does, setup lists the hubs it heard, accepts a typed address, and offers standalone mode. That is the
 whole native interface: once a backend is chosen the app opens the hub's page and stays there.
-`tv://detail/…` and `tv://play/…` links open the same page at that route.
+`tv://detail/…` and `tv://play/…` links open the same page at that route; `tv://setup` brings the
+front door back on a TV that already has a backend.
 
 ## Layout
 
