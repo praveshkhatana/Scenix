@@ -346,13 +346,65 @@ class LocalHub private constructor(context: Context) {
                 .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
     }
 
-    fun prefsJson(profileId: String?): JSONObject =
-        JSONObject().put("profile", profileId ?: "default").put("prefs", readProfilePrefs(profileId ?: "default"))
+    fun prefsJson(profileId: String?): JSONObject {
+        val who = profileId ?: "default"
+        return JSONObject().put("profile", who).put("prefs", wirePrefs(who))
+    }
 
     fun setPrefsJson(values: JSONObject, profileId: String?): JSONObject = synchronized(lock) {
         val who = profileId ?: "default"
         writeProfilePrefs(who, values)
-        JSONObject().put("profile", who).put("prefs", values)
+        JSONObject().put("profile", who).put("prefs", wirePrefs(who))
+    }
+
+    /**
+     * The shape a hub's `/app/v1/prefs` answers with, not the raw sparse file: quality steps a
+     * settings screen can draw, the size/bitrate ceilings those steps imply, and the adult switch.
+     * A page that gets only what the viewer typed cannot draw a single control, which is exactly what
+     * happened before this existed.
+     */
+    private fun wirePrefs(profileId: String): JSONObject {
+        val profile = profileList().firstOrNull { s(it, "id", "") == profileId }
+        val out = effectivePrefs(profile ?: JSONObject())
+        val kids = profile?.let { s(it, "kind", "").equals("kids", true) } == true
+        val asked = s(out, "qualityCap", "").trim()
+        val cap = when (asked.lowercase()) {
+            "auto", "any", "highest", "off" -> "auto"
+            "4k", "2160p", "uhd" -> "4k"
+            "1080p", "1080", "fullhd", "fhd" -> "1080p"
+            "720p", "720", "hd" -> "720p"
+            "480p", "480", "sd" -> "480p"
+            else -> if (kids) "720p" else "1080p"
+        }
+        val level = when (cap) {
+            "480p" -> 2 to 2
+            "720p" -> 3 to 4
+            "1080p" -> 4 to 8
+            "4k" -> 5 to 25
+            else -> 99 to 25
+        }
+        val size = when {
+            out.has("maxSizeGB") && out.optDouble("maxSizeGB", 0.0) > 0 -> out.optDouble("maxSizeGB")
+            else -> level.second.toDouble()
+        }
+        val bitrate = when {
+            out.has("maxBitrateMbps") && out.optDouble("maxBitrateMbps", 0.0) > 0 -> out.optDouble("maxBitrateMbps")
+            level.first == 2 -> 4.0
+            level.first == 3 -> 8.0
+            else -> 0.0
+        }
+        out.put("qualityCap", cap)
+        out.put("qualityCapAsked", if (asked.isBlank()) JSONObject.NULL else asked)
+        out.put("quality", if (s(out, "quality", "") == "lowest") "lowest" else "highest")
+        out.put("preferAdaptive", out.optBoolean("preferAdaptive", true))
+        out.put("maxSizeGB", size)
+        out.put("maxBitrateMbps", if (bitrate > 0) bitrate else JSONObject.NULL)
+        out.put("maxSizeBytes", Math.round(size * 1e9))
+        out.put("maxFileSizeBytes", Math.round(size * 1e9))
+        out.put("maxBitrate", Math.round(bitrate * 1e6))
+        out.put("xxxEnabled", out.optBoolean("xxxEnabled", false))
+        out.put("qualityLevels", JSONArray(listOf("auto", "4k", "1080p", "720p", "480p")))
+        return out
     }
 
     /**
