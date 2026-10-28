@@ -24,6 +24,7 @@ const API = 'https://api.themoviedb.org/3';
 const MISS_TTL_MS = 7 * 86400000;
 const OK_TTL_MS = 30 * 86400000;
 const MAX_CAST = 12;
+const DEBUG = process.env.CAST_DEBUG === '1' || process.env.CAST_DEBUG === 'true';
 
 let state = null;
 let writes = 0;
@@ -49,15 +50,26 @@ function imdbOf(item) {
   const m = /^imdb:(tt\d+)/.exec(String((item && item.identity) || ''));
   return m ? m[1] : null;
 }
-async function getJson(url, timeoutMs) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  if (timer.unref) timer.unref();
-  try {
-    const res = await fetch(url, { signal: ac.signal, headers: { accept: 'application/json' } });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (e) { return null; } finally { clearTimeout(timer); }
+/**
+ * One GET with the built-in http(s) client. The hub's Node build answers `fetch failed` for TMDB while
+ * `https.get` on the same URL works, so this module does not depend on fetch's TLS/proxy behaviour.
+ */
+function getJson(url, timeoutMs) {
+  return new Promise((resolve) => {
+    let parsed;
+    try { parsed = new URL(url); } catch (e) { resolve(null); return; }
+    const mod = parsed.protocol === 'http:' ? require('http') : require('https');
+    const req = mod.get(parsed, { headers: { accept: 'application/json', 'user-agent': 'ScenixHub/1.0' } }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) { res.resume(); resolve(null); return; }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (e) { resolve(null); }
+      });
+    });
+    req.setTimeout(Math.max(200, timeoutMs), () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
 }
 const clean = (v) => String(v == null ? '' : v).trim();
 function normalise(list) {
@@ -91,27 +103,39 @@ async function enrich(item, budgetMs = 1400) {
 
   const imdb = imdbOf(item);
   if (!imdb) return null;
+  if (DEBUG) console.log('CAST start', identity, item.type, imdb);
   const work = (async () => {
     let tmdbId = held && held.tmdbId;
     if (!tmdbId) {
       const found = await getJson(`${API}/find/${imdb}?external_source=imdb_id&api_key=${encodeURIComponent(key)}`, budgetMs);
-      const list = (found && (found.movie_results || found.tv_results)) || [];
+      if (DEBUG) console.log('CAST find', !!found, found && Object.keys(found));
+      const list = (found && ((found.movie_results && found.movie_results.length) ? found.movie_results : found.tv_results)) || [];
       tmdbId = list[0] && list[0].id;
     }
     if (!tmdbId) return null;
     const kind = item.type === 'series' ? 'tv' : 'movie';
-    const credits = await getJson(`${API}/${kind}/${tmdbId}/credits?api_key=${encodeURIComponent(key)}`, budgetMs);
-    return normalise(credits && credits.cast);
+    const credits = await getJson(`${API}/${kind}/${tmdbId}/credits?api_key=${encodeURIComponent(key)}&language=en-US`, budgetMs);
+    if (DEBUG) console.log('CAST credits', tmdbId, kind, !!credits, credits && (credits.cast || []).length);
+    // A network failure is not "this title has no cast". Only a real answer may become a cached miss,
+    // otherwise one bad minute would hide a face for a week.
+    if (!credits) return null;
+    return normalise(credits.cast);
   })();
+  // Cache the answer even when it arrives after the detail page stopped waiting; the next open is free.
+  work.then((cast) => {
+    if (DEBUG) console.log('CAST work result', Array.isArray(cast) ? cast.length : cast);
+    if (!Array.isArray(cast)) return;
+    db[identity] = { at: now, tmdbId: db[identity] && db[identity].tmdbId, cast };
+    write();
+  }).catch(() => {});
 
   const timed = await Promise.race([
     work.catch(() => null),
     new Promise((resolve) => { const t = setTimeout(() => resolve(undefined), Math.max(200, budgetMs)); if (t.unref) t.unref(); }),
   ]);
   if (timed === undefined) return held && held.cast ? held.cast : null;
-  const cast = Array.isArray(timed) ? timed : [];
-  db[identity] = { at: now, tmdbId: db[identity] && db[identity].tmdbId, cast };
-  write();
+  const cast = Array.isArray(timed) ? timed : null;
+  if (!cast) return null;
   return cast.length ? cast : null;
 }
 

@@ -37,20 +37,26 @@ export function screen(ctx, identity) {
   const body = el('div', { class: 'detail-body' });
   // The record modal hands focus back to this button, so it has to outlive the paint that made it.
   let playBtn = null;
+  // A detail page that opens from a card already has the tile in `metaCache`; one opened by a deep link
+  // does not. Both must show something branded while the hub answers, not a bare "Loading…".
+  const loading = el('div', { class: 'detail-loading' },
+    el('div', { class: 'dl-mark', text: 'Scenix' }),
+    el('div', { class: 'dl-bar' }, el('i')),
+    el('div', { class: 'dl-text', text: 'Reading this title…' }));
   root.appendChild(hero);
   root.appendChild(body);
-  if (!item) paintLoading();
+  if (!item) { root.appendChild(loading); ctx.__detailLoading = loading; }
 
   /* ------------------------------------------------------------------ skeleton */
 
   function paintLoading() {
-    hero.appendChild(el('div', { class: 'scrim' }));
-    body.appendChild(el('h1', { text: 'Loading…' }));
+    if (!loading.isConnected) root.appendChild(loading);
   }
 
   /* -------------------------------------------------------------------- paint */
 
   function paint() {
+    loading.remove();
     hero.textContent = '';
     body.textContent = '';
     const bg = el('img', { class: 'bg', src: imageUrl(item.backdrop || item.poster || ''), alt: '', decoding: 'async' });
@@ -197,87 +203,55 @@ export function screen(ctx, identity) {
     }
 
     /* --------------------------------------------------------------------- cast */
-    /* Names, exactly as the hub flattened them. It sends no photographs and no roles, so there is no
-       portrait to fetch and no credit line to make up under the name. */
+    /* Names and, when the hub's optional TMDB enrichment found them, faces and roles. A missing portrait
+       stays a person's initials rather than a generic silhouette. */
     const cast = Array.isArray(item.cast) ? item.cast : [];
     const grid = el('div', { class: 'cast' });
     for (const c of cast.slice(0, 18)) {
       const name = typeof c === 'string' ? c : ((c && (c.name || c.person)) || '');
       if (!name) continue;
-      grid.appendChild(el('div', { class: 'who' },
-        el('div', { class: 'face', text: initials(name) }),
-        el('div', { class: 'nm', text: name })));
+      const face = el('div', { class: 'face' });
+      if (c && c.profile) face.appendChild(el('img', { src: c.profile, alt: name, loading: 'lazy', decoding: 'async' }));
+      else face.textContent = initials(name);
+      grid.appendChild(el('div', { class: 'who' }, face,
+        el('div', { class: 'nm', text: name }),
+        (c && c.character) ? el('div', { class: 'role', text: c.character }) : null));
     }
     if (grid.childNodes.length) {
       main.appendChild(el('h2', { class: 'sect-title' }, el('span', { text: 'Cast' })));
       main.appendChild(grid);
     }
-
-    /* ------------------------------------------------------------------- rating */
-    /* A rating this household gives, not one the hub claims: there is no ratings endpoint on this hub, so
-       the value is stored on the box the way My list is (js/state.js) and is labelled as the viewer's own. */
-    const RK = `scenix.ratings.${(session.profile && session.profile.id) || 'default'}`;
-    const myRating = () => {
-      try {
-        const v = Number(JSON.parse(localStorage.getItem(RK) || '{}')[item.identity]);
-        return v > 0 && v <= 5 ? v : 0;
-      } catch (e) { return 0; }
-    };
-    const saveRating = (v) => {
-      let m = {};
-      try { m = JSON.parse(localStorage.getItem(RK) || '{}') || {}; } catch (e) { m = {}; }
-      if (v > 0) m[item.identity] = v; else delete m[item.identity];
-      try { localStorage.setItem(RK, JSON.stringify(m)); } catch (e) { /* nowhere to keep it on this box */ }
-    };
-    const stars = el('div', { class: 'rate-stars' });
-    const rateNote = el('span', { class: 'rate-note' });
-    const drawStars = () => {
-      const v = myRating();
-      clear(stars);
-      for (let i = 1; i <= 5; i++) {
-        const b = el('button', { class: `star-btn${i <= v ? ' on' : ''}`, type: 'button',
-          'aria-label': `${i} star${i === 1 ? '' : 's'}`,
-          onclick: () => { saveRating(i); drawStars(); } },
-        icon('star', { solid: i <= v }));
-        focus.focusable(b);
-        stars.appendChild(b);
-      }
-      rateNote.textContent = v ? `You rated this ${v} of 5` : 'Not rated by you';
-    };
-    drawStars();
-    main.appendChild(el('h2', { class: 'sect-title' }, el('span', { text: 'Create a rating' })));
-    main.appendChild(el('div', { class: 'rate-box' }, stars, rateNote));
-
-    /* ------------------------------------------------------------- the copies */
-    if (sources.length) {
-      main.appendChild(el('h2', { class: 'sect-title' }, el('span', { text: 'Where to watch' }),
-        el('span', { class: 'note', text: 'Ranked by the hub for this profile' })));
-      const list = el('div', { class: 'srcs' });
-      for (const s of sources) list.appendChild(srcRow(s));
-      main.appendChild(list);
-    } else {
-      main.appendChild(el('h2', { class: 'sect-title' }, el('span', { text: 'Where to watch' }),
-        el('span', { class: 'note', text: 'No addon returned a copy for this title yet' })));
+    // What the certificate suggests, in the same words the player shows. It is not a scene guide and the
+    // line says where it came from.
+    if (Array.isArray(item.advisories) && item.advisories.length) {
+      main.appendChild(el('div', { class: 'advisory-line' },
+        el('b', { text: 'Content notes' }),
+        el('span', { text: 'Based on the certificate: ' + item.advisories.join(' · ') })));
     }
 
-    /* --------------------------------------------------- why the hub surfaced it */
-    const why = (sources[0] && Array.isArray(sources[0].why)) ? sources[0].why : (Array.isArray(item.why) ? item.why : []);
-    if (why.length) {
-      side.appendChild(el('h2', { class: 'sect-title' }, el('span', { text: 'Why this is here' })));
-      side.appendChild(el('div', { class: 'why' }, ...why.map((w) => el('i', { text: `— ${w}` }))));
-    }
-    const facts = [];
-    if (Number(item.minAge)) facts.push(`For ${item.minAge} and up`);
-    if (item.releasedAt) facts.push(`Released ${new Date(item.releasedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`);
-    if (item.addedAt) facts.push(`On this hub ${since(item.addedAt)}`);
-    if (sources.length) facts.push(`${sources.length} ${sources.length === 1 ? 'copy' : 'copies'} found by your addons`);
-    if (item.inCinemas) facts.push('Still in cinemas');
-    if (facts.length) side.appendChild(el('p', { class: 'facts', text: facts.join('  ·  ') }));
-    if (item.match) {
-      side.appendChild(el('p', { class: 'facts', text: `Matched at ${item.match}${item.score !== undefined ? ` of ${item.score}` : ''} by ${item.provider || 'an addon'}.` }));
-    }
-    if (prog && prog.positionMs > 5000) {
-      side.appendChild(el('p', { class: 'facts', text: `Left off at ${clock(prog.positionMs)}.` }));
+    /* ------------------------------------------------------------------ details */
+    /* The copy list lives in the player now: one Play button, and the Source sheet lists every ranked
+       copy with its reason. A second picker on the detail page was duplication, and the "why" column
+       was hub reasoning the viewer does not need before pressing Play. */
+    const facts = el('div', { class: 'detail-facts' });
+    const fact = (label, value, cls) => {
+      if (value === undefined || value === null || value === '') return;
+      facts.appendChild(el('div', { class: 'df' },
+        el('span', { class: 'dk', text: label }),
+        el('span', { class: 'dv' + (cls ? ' ' + cls : ''), text: String(value) })));
+    };
+    fact('Rating', maturityLabel(item) || 'Not rated', maturityLabel(item) ? '' : 'muted');
+    if (Number(item.minAge)) fact('Age', `${item.minAge}+`);
+    if (Array.isArray(item.advisories) && item.advisories.length) fact('Content', item.advisories.join(' · '));
+    if (Array.isArray(item.genres) && item.genres.length) fact('Genres', item.genres.join(', '));
+    if (item.releasedAt) fact('Released', new Date(item.releasedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }));
+    if (item.addedAt) fact('On this hub', since(item.addedAt));
+    if (Array.isArray(item.languages) && item.languages.length) fact('Audio', langList(item.languages));
+    if (Array.isArray(item.subtitleLanguages) && item.subtitleLanguages.length) fact('Subtitles', langList(item.subtitleLanguages));
+    if (prog && prog.positionMs > 5000) fact('Left off', clock(prog.positionMs));
+    if (facts.childNodes.length) {
+      side.appendChild(el('h2', { class: 'sect-title' }, el('span', { text: 'Details' })));
+      side.appendChild(facts);
     }
 
     related();

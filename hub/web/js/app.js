@@ -87,6 +87,8 @@ const ctx = {
       identity: item.identity, type: item.type, title: item.title,
       subtitle: (item.live && item.live.now) || item.tagline || '',
       logo: item.logo || '', poster: item.poster || '', backdrop: item.backdrop || '',
+      maturity: item.maturity || '', minAge: item.minAge || 0,
+      advisories: Array.isArray(item.advisories) ? item.advisories : [],
     }, opts || {});
     navigate('play', item.identity);
   },

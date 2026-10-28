@@ -61,9 +61,14 @@ export function screen(ctx, identity) {
 
   const title = el('div', { class: 'pt', text: spec.title || '' });
   const subtitle = el('div', { class: 'ps', text: spec.subtitle || '' });
+  const cert = String(spec.maturity || '');
+  const advisories = Array.isArray(spec.advisories) ? spec.advisories : [];
+  const content = el('div', { class: 'pcontent' },
+    el('span', { class: 'pccert', text: cert || 'Not rated' }),
+    advisories.length ? el('span', { class: 'pcadv', text: advisories.join(' · ') }) : null);
   const status = el('div', { class: 'ply-status' });
   const hud = el('div', { class: 'ply-hud ply-fade' },
-    el('div', {}, title, subtitle),
+    el('div', {}, title, subtitle, content),
     el('div', { class: 'right' }, status));
   const top = el('div', { class: 'ply-top ply-fade' });
 

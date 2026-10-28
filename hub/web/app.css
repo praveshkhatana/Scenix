@@ -1444,3 +1444,34 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .genre-card.foc .genre-art { background:
   radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.8), rgba(229,9,20,0) 60%),
   linear-gradient(150deg, #3a3a3a, #121212); }
+
+/* Detail loading: the same promise as the player's preloader, at the page scale. */
+.detail-loading {
+  position: absolute; inset: 0; z-index: 6; display: grid; place-content: center;
+  justify-items: center; gap: calc(18px * var(--s)); background: #141414;
+}
+.detail-loading .dl-mark { font-size: calc(64px * var(--s)); font-weight: 900; letter-spacing: -.03em; color: var(--brand); }
+.detail-loading .dl-bar { width: calc(360px * var(--s)); height: calc(4px * var(--s)); border-radius: 999px; background: rgba(255,255,255,.2); overflow: hidden; }
+.detail-loading .dl-bar i { display: block; width: 30%; height: 100%; background: var(--brand); border-radius: inherit; animation: dlFill 1200ms ease-in-out infinite; }
+@keyframes dlFill { 0% { transform: translateX(-120%); } 100% { transform: translateX(360%); } }
+.detail-loading .dl-text { font-size: calc(18px * var(--s)); color: var(--ink2); }
+
+/* Cast portraits now that the hub can find them. */
+.cast .face img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.cast .role { font-size: calc(15px * var(--s)); color: var(--ink3); line-height: 1.2; max-width: calc(160px * var(--s)); }
+
+/* Facts column on the detail page. */
+.detail-facts { display: grid; gap: calc(14px * var(--s)); }
+.detail-facts .df { display: grid; grid-template-columns: calc(120px * var(--s)) minmax(0, 1fr); gap: calc(16px * var(--s)); align-items: baseline; }
+.detail-facts .dk { color: var(--ink3); font-size: var(--t-meta); }
+.detail-facts .dv { color: var(--ink1); font-size: var(--t-li-meta); }
+.detail-facts .dv.muted { color: var(--ink3); }
+.advisory-line { margin-top: calc(18px * var(--s)); padding: calc(14px * var(--s)) calc(18px * var(--s)); border-left: calc(3px * var(--s)) solid var(--warn); background: rgba(242,195,58,.08); border-radius: var(--r-chip); display: grid; gap: calc(4px * var(--s)); }
+.advisory-line b { color: var(--warn); font-size: var(--t-meta); text-transform: uppercase; letter-spacing: .08em; }
+.advisory-line span { color: var(--ink1); font-size: var(--t-li-meta); }
+
+/* What kind of content this is, under the title in the player's HUD. The certificate is the fact; the
+   content notes are the hub's reading of it, and both are labelled so neither pretends to be a scene guide. */
+.pcontent { display: flex; align-items: center; gap: calc(10px * var(--s)); margin-top: calc(5px * var(--s)); flex-wrap: wrap; }
+.pccert { font-size: calc(15px * var(--s)); font-weight: 700; color: var(--ink1); border: 1px solid var(--border); border-radius: var(--r-badge); padding: calc(2px * var(--s)) calc(7px * var(--s)); }
+.pcadv { font-size: calc(15px * var(--s)); color: var(--warn); }
