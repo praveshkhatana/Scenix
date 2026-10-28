@@ -77,6 +77,14 @@ const ctx = {
   navigate,
   back,
   route: () => routeStack[routeStack.length - 1] || { name: 'home' },
+  /** Put the ring back where it stood the last time this screen was left. Screens whose content
+   *  arrives after mount call this once the rows exist; returns whether anything was restored. */
+  restoreRing() {
+    const t = findReturn(mounted, ctx.route());
+    if (!t) return false;
+    focus.focusDefault(t);
+    return true;
+  },
   toast,
   px,
   token,
@@ -231,6 +239,9 @@ async function mount(route, _pushed) {
   }
   if (token !== renderToken || !node) return;         // a newer route already won
 
+  // Write down where the viewer stood on the outgoing screen before it goes away under us.
+  captureReturn();
+
   const s = stage();
   if (mounted && mounted.__dispose) { try { mounted.__dispose(); } catch (e) { /* teardown is best-effort */ } }
   const prev = mounted;
@@ -271,6 +282,7 @@ async function mount(route, _pushed) {
     try { target = node.__defaultFocus(); } catch (e) { /* a screen can be wrong about its own focus */ }
   }
   focus.focusDefault(target);
+  mountedRoute = route;
 }
 
 /* The ring goes back where the viewer left it, not at the top of the page every time. */
@@ -280,7 +292,48 @@ function focusTargetFor(route) {
     const id = state.focusMemoryFor('home');
     if (id) return stage().querySelector(`.card[data-identity="${cssEscape(id)}"]`);
   }
-  return null;
+  // Every other screen gets the same courtesy through return memory: the row or card that held the
+  // ring when we left it. The scroll comes free — the focus engine brings the ring's row into view.
+  return findReturn(mounted, route);
+}
+
+let mountedRoute = null;
+const returnKey = (route) => route.name + (route.arg ? ':' + route.arg : '');
+
+/**
+ * Record where the viewer was standing on the screen they are leaving. A card is remembered by its
+ * identity, a settings-style row by its `ctl` tag, anything else by its place among that screen's
+ * focus stops. A screen may add what only it knows — search remembers the word that was typed — and
+ * a screen whose content arrives late (the channel list) calls ctx.restoreRing() once it exists.
+ */
+function captureReturn() {
+  if (!mounted || !mountedRoute) return;
+  const f = document.activeElement;
+  const rec = {};
+  if (f && f !== document.body && mounted.contains(f)) {
+    const card = f.closest ? f.closest('[data-identity]') : null;
+    if (card) rec.identity = card.getAttribute('data-identity');
+    else if (f.dataset && f.dataset.ctl) rec.ctl = f.dataset.ctl;
+    else {
+      const all = [...mounted.querySelectorAll('[data-f]')];
+      const i = all.indexOf(f);
+      if (i >= 0) rec.nth = i;
+    }
+  }
+  if (typeof mounted.__captureReturn === 'function') {
+    try { Object.assign(rec, mounted.__captureReturn() || {}); } catch (e) { /* a screen can be wrong about itself */ }
+  }
+  if (Object.keys(rec).length) state.rememberReturn(returnKey(mountedRoute), rec);
+}
+
+function findReturn(root, route) {
+  const mem = state.returnMemoryFor(returnKey(route));
+  if (!mem || !root) return null;
+  let t = null;
+  if (mem.identity != null) t = root.querySelector(`[data-identity="${cssEscape(mem.identity)}"]`);
+  if (!t && mem.ctl != null) t = root.querySelector(`[data-ctl="${cssEscape(mem.ctl)}"]`);
+  if (!t && Number.isInteger(mem.nth)) t = root.querySelectorAll('[data-f]')[mem.nth] || null;
+  return t;
 }
 
 /* ----------------------------------------------------------------- chrome */

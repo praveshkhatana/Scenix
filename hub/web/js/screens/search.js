@@ -16,6 +16,7 @@
 import { el, clear } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
+import { returnMemoryFor } from '/ui/js/state.js';
 import { cardFor } from '/ui/js/plugins.js';
 import { setTypingTarget, pushHandler, popHandler } from '/ui/js/input.js';
 import { entryField } from '/ui/js/keyboard.js';
@@ -219,10 +220,19 @@ export function screen(ctx, arg) {
   }
 
   paintSuggestions();
+  const mem = returnMemoryFor(rowId ? `search:${arg}` : 'search');
   if (rowId) loadShelf();
+  else if (mem && mem.q) {
+    // Coming back to search means coming back to the word: it is retyped, the hub is asked again, and
+    // when the answers land the ring returns to the card it stood on. Leaving with an empty field (the
+    // two-BACK exit) remembers nothing of the sort, so the next visit starts at the pad.
+    entry.set(mem.q);
+    runSearch().then(() => ctx.restoreRing());
+  }
   else if (typeof arg === 'string' && arg && !arg.startsWith('row:')) { entry.set(arg); runSearch(); }
   else runSearch();
 
+  root.__captureReturn = () => ({ q: String(entry.value || '') });
   root.__defaultFocus = () => (tv ? entry.firstKey() : (entry.input || grid.querySelector('.card') || entry.firstKey()));
   root.__dispose = () => {
     if (tv) { setTypingTarget(null); if (backLane) popHandler(backLane); }

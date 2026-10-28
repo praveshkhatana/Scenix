@@ -63,7 +63,8 @@ export function screen(ctx) {
     const node = el('button', {
       class: 'mrow', type: 'button',
       'aria-label': `${p.name} — ${profileNote(p, active && session.profile.id)}`,
-      dataset: { profile: String(p.id) },
+      // `ctl` is the handle return memory reads: back here lands on this person's row, not a counted place.
+      dataset: { profile: String(p.id), ctl: `person:${String(p.id)}` },
       style: `--i: ${i}`,
     }, face,
     el('div', { class: 'mbody' },
@@ -262,12 +263,21 @@ export function screen(ctx) {
   paintRows();
 
   /* A person added or removed on another screen — or on another TV — would otherwise stay invisible here until
-     the next visit, because the session list is fetched once at boot. */
-  loadHub().then(() => refreshProfiles()).then(() => paintRows());
+     the next visit, because the session list is fetched once at boot. The repaint replaces every row though:
+     whatever held the ring — including the one the shell just put back from return memory — has to be handed to
+     the row that took its place, or a returning viewer finds a page with no ring at all. */
+  loadHub().then(() => refreshProfiles()).then(() => {
+    const held = people.querySelector('.mrow.foc');
+    const pid = held && held.dataset.profile;
+    paintRows();
+    if (pid) {
+      const again = people.querySelector(`.mrow[data-profile="${cssAttr(pid)}"]`);
+      if (again) focus.setFocus(again, { scroll: false });
+    }
+  });
 
-  const remembered = session.profile && session.profile.id
+  wrap.__defaultFocus = () => (session.profile && session.profile.id
     ? people.querySelector(`.mrow[data-profile="${cssAttr(session.profile.id)}"]`)
-    : null;
-  wrap.__defaultFocus = () => remembered || people.querySelector('.mrow');
+    : null) || people.querySelector('.mrow');
   return wrap;
 }

@@ -88,6 +88,7 @@ export function screen(ctx) {
     const browseRow = rows.pickRow(bar, 'Browse', 'the whole playlist, or one group at a time',
       ['', ...groups], activeGroup, (g) => (g === '' ? 'All groups' : g),
       (g) => { activeGroup = g; paintList(); focus.focusDefault(browseRow); });
+    browseRow.dataset.ctl = 'browse';
     if (groups.length) {
       const shownGroups = groups.filter((g) => !groupsHidden.has(g));
       const switchRow = rows.multiRow(bar, 'Group switches', 'take a whole group out of the zapping order at once',
@@ -98,6 +99,7 @@ export function screen(ctx) {
           paintList();
           focus.focusDefault(switchRow);
         });
+      switchRow.dataset.ctl = 'gswitches';
     }
   }
 
@@ -147,6 +149,7 @@ export function screen(ctx) {
           ];
         },
       });
+      b.dataset.ctl = `ch:${c.identity}`;   // a name for return memory: back here lands on this row
       if (c.logo) {
         const logo = el('span', { class: 'chlogo' },
           el('img', { src: c.logo, alt: '', loading: 'lazy', decoding: 'async' }));
@@ -184,7 +187,11 @@ export function screen(ctx) {
       }
       syncEnabled();
       paint();
-      focus.focusDefault(bar.querySelector('.li') || list.querySelector('.li'));
+      // The playlist arrives late, so the ring's way home can only be taken after it does: back to the
+      // channel row that held it last time, or — on a first visit — to the first control.
+      if (root.isConnected && !ctx.restoreRing()) {
+        focus.focusDefault(bar.querySelector('.li') || list.querySelector('.li'));
+      }
     } catch (e) {
       head.appendChild(el('p', { class: 'note', text: 'The hub did not answer. Try again from Settings.' }));
     }

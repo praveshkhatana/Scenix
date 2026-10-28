@@ -21,6 +21,7 @@ export const session = {
   homeKey: null,
   search: '',            // last query, so returning to search keeps your typing
   focusMemory: new Map(), // screen key -> the identity to put the ring back on
+  returnMemory: new Map(), // route key -> where the ring stood when that screen was left
   myList: new Set(),
 };
 
@@ -104,6 +105,16 @@ export function rememberFocus(screenKey, identity) {
   if (screenKey && identity) session.focusMemory.set(screenKey, identity);
 }
 export function focusMemoryFor(screenKey) { return session.focusMemory.get(screenKey) || null; }
+
+/**
+ * Where a viewer stood when they left a screen, kept for the way back. The control is named by
+ * whatever stable handle it carries — a card's identity, a settings-style row's `ctl` tag, or failing
+ * both its ordinal place among the screen's focus stops — plus anything the screen itself adds:
+ * search remembers the word that was typed. Scroll needs no separate record: the focus engine
+ * scrolls whatever holds the ring into view.
+ */
+export function rememberReturn(key, rec) { if (key && rec) session.returnMemory.set(key, rec); }
+export function returnMemoryFor(key) { return session.returnMemory.get(key) || null; }
 
 /* ---- native shell capabilities, feature-detected and never assumed ---- */
 
