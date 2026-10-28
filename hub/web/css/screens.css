@@ -165,17 +165,15 @@
 /* Chips inside the body would otherwise be padded to the gutter twice over. */
 .detail-body .chips { padding: 0; margin: 0 0 calc(8px * var(--s)); }
 
-/* Seasons as a numbered bar, the way the sheets draw it: the heading names the season, the bar is a row of
-   numbers you can sweep, and the last one is the whole series. The number alone is enough because the
-   heading above it says what the numbers are. */
-.seasons { gap: calc(10px * var(--s)); margin: calc(6px * var(--s)) 0 calc(20px * var(--s)); flex-wrap: nowrap;
-  overflow-x: auto; scrollbar-width: none; }
-.seasons::-webkit-scrollbar { display: none; }
-.seasons .chip {
-  flex: none; min-width: calc(74px * var(--s)); justify-content: center;
-  font-size: var(--t-mat); font-weight: 700; font-variant-numeric: tabular-nums;
-}
-.seasons .chip.all { min-width: calc(190px * var(--s)); letter-spacing: .04em; }
+/* The season choice is one row in the voice of a settings value — name at the left, the chosen season
+   bright at the right, a chevron promising that OK opens something. The ring fills the row like it does
+   in the settings list, because on a TV screen the highlight IS the selection. */
+.detail .seasonpick { margin: calc(6px * var(--s)) 0 calc(20px * var(--s)); }
+.detail .seasonpick .lname { font-size: calc(24px * var(--s)); font-weight: 700; color: var(--ink); }
+.detail .seasonpick .lv { color: #fff; font-weight: 700; font-size: calc(22px * var(--s));
+  font-variant-numeric: tabular-nums; }
+.detail .seasonpick.foc { background: var(--surface3); border-color: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 0 0 calc(3px * var(--s)) var(--focus-ring); }
 
 /* Episode tiles: the still is the tile, the number is printed on it, and the words the hub gave (title,
    length) go underneath. A season with no still keeps its slot and shows the number as the picture —

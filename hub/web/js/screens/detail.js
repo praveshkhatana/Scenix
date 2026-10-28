@@ -143,8 +143,7 @@ export function screen(ctx, identity) {
     }
 
     /* ------------------------------------------------------------------ seasons */
-    /* The bar names the seasons the record actually contains and the strip draws the episodes of one of
-       them. Whoever is still watching lands on the season they left; everyone else on the newest. */
+    /* Whoever is still watching lands on the season they left; everyone else on the newest. */
     const eps = Array.isArray(item.episodes) ? item.episodes : [];
     if (eps.length) {
       const seasons = [...new Set(eps.map((e) => (e.season === undefined ? 1 : e.season)))].sort((a, b) => a - b);
@@ -152,7 +151,6 @@ export function screen(ctx, identity) {
       let season = seasons[seasons.length - 1];
       if (prog && prog.episode && seasons.indexOf(prog.episode.season) >= 0) season = prog.episode.season;
       const head = el('h2', { class: 'sect-title' });
-      const tabs = el('div', { class: 'seasons' });
       const wrap = el('div', { class: 'episodes v' });
       // On the first paint the screen's own default focus (the Play button, up in the hero) decides where
       // the ring lands; claiming it for the strip as well would scroll the page under the title.
@@ -165,27 +163,81 @@ export function screen(ctx, identity) {
         wrap.textContent = '';
         if (!item.live) wrap.appendChild(trailerTile());
         shown.forEach((e, i) => wrap.appendChild(epRow(e, i)));
-        for (const k of tabs.children) k.classList.toggle('on', (k.dataset.season === '' ? null : Number(k.dataset.season)) === season);
         if (follow) focus.focusDefault(wrap.querySelector('.epv'));
       };
-      for (const s of seasons) {
-        // The bar is numbers, because the heading above it already says what they are.
-        const b = el('button', { class: `chip${s === season ? ' on' : ''}`, type: 'button',
-          'data-season': String(s), 'aria-label': seasonLabel(s), text: String(s),
-          onclick: () => { season = s; paintEpisodes(true); } });
-        focus.focusable(b);
-        tabs.appendChild(b);
-      }
-      if (seasons.length > 1) {
-        const all = el('button', { class: 'chip all', type: 'button', 'data-season': '', text: 'All seasons',
-          onclick: () => { season = null; paintEpisodes(true); } });
-        focus.focusable(all);
-        tabs.appendChild(all);
-      }
       body.appendChild(head);
-      if (seasons.length > 1) body.appendChild(tabs);
+      if (seasons.length > 1) body.appendChild(seasonPick());
       body.appendChild(wrap);
       paintEpisodes();
+
+      /* A row, not a chip bar — the same shape every other choice on this app has. The row names the
+         season and how many episodes it holds; OK opens the dial the remote actually turns, exactly like
+         a settings value: the season huge in the middle, Up/Down moving through them, OK refilling the
+         list, Back leaving it untouched. Walking past the wrong season costs nothing. */
+      function seasonPick() {
+        // "All seasons" rides at the top of the dial, past the newest — one value out of a fixed list.
+        const values = [...seasons, null];
+        const show = (v) => (v === null
+          ? `All seasons · ${eps.length} episodes`
+          : `${seasonLabel(v)} · ${count(v)} episode${count(v) === 1 ? '' : 's'}`);
+        const lv = el('span', { class: 'lv', text: show(season) });
+        const b = el('button', { class: 'li act seasonpick', type: 'button', 'data-nav': 'h',
+          'aria-label': `Season: ${show(season)}`, onclick: open },
+        el('div', { class: 'ltext' },
+          el('span', { class: 'lname', text: 'Season' }),
+          el('span', { class: 'note', text: `${seasons.length} seasons on this hub` })),
+        lv, el('span', { class: 'chev' }, icon('chevRight')));
+        focus.focusable(b);
+        let i = values.indexOf(season);
+        if (i < 0) i = values.length - 2; // default to the newest real season
+        function open() {
+          const box = el('div', { class: 'mbox wheel' },
+            el('h2', { text: 'Season' }),
+            el('div', { class: 'wdial' },
+              (() => { const u = el('button', { class: 'warrow', type: 'button', 'aria-label': 'Newer' }, icon('chevUp')); focus.focusable(u); u.onclick = () => move(1); return u; })(),
+              (() => { const v = el('button', { class: 'wval', type: 'button' }); focus.focusable(v); v.onclick = () => commit(); return v; })(),
+              (() => { const d = el('button', { class: 'warrow', type: 'button', 'aria-label': 'Older' }, icon('chevDown')); focus.focusable(d); d.onclick = () => move(-1); return d; })()),
+            el('p', { class: 'whint', text: 'Up and Down change it · OK chooses · Back cancels' }));
+          const wval = box.querySelector('.wval');
+          const paintVal = () => {
+            wval.textContent = show(values[i]);
+            wval.setAttribute('aria-label', `Season: ${show(values[i])}`);
+            // The number re-pops on every step, so turning the dial has a tick you can see.
+            wval.classList.remove('pop');
+            void wval.offsetWidth;
+            wval.classList.add('pop');
+          };
+          const move = (d) => {
+            const j = Math.min(values.length - 1, Math.max(0, i + d));
+            if (j === i) return;
+            i = j;
+            paintVal();
+          };
+          const commit = () => {
+            ctx.closeModals();
+            season = values[i];
+            lv.textContent = show(season);
+            b.setAttribute('aria-label', `Season: ${show(season)}`);
+            lv.classList.remove('bump');
+            void lv.offsetWidth;
+            lv.classList.add('bump');
+            paintEpisodes(true);
+          };
+          // The dial claims the D-pad while it is up: Up/Down move wherever the ring happens to be in
+          // the box, OK means "choose", and Escape falls through to the modal's own cancel.
+          const lane = (e, key) => {
+            if (key === 'ArrowUp') { move(1); return true; }
+            if (key === 'ArrowDown') { move(-1); return true; }
+            if (key === 'Enter' || key === 'NumpadEnter' || key === ' ') { commit(); return true; }
+            return false;
+          };
+          paintVal();
+          ctx.mountModal(box, () => popHandler(lane));
+          pushHandler(lane);
+          focus.focusDefault(wval);
+        }
+        return b;
+      }
     }
 
     /* --------------------------------------------------------------- the columns */
