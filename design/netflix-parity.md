@@ -62,3 +62,4 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Modal entrance + toast exit motion (A3, A4) — commit dfdf3a6
 - [x] Route cross-fade on screen transitions (A5) — commit 7d72003
 - [x] Shelf centering for the walking tile (A2, centering half; easing deliberately kept instant per panel perf work) — commit 7568ba6
+- [x] Billboard token crossfade + copy fade + dwell fallback fix (B1, B2) — commit 5a71bbb
