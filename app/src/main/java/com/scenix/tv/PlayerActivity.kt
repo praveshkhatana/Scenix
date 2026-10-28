@@ -119,6 +119,10 @@ class PlayerActivity : Activity() {
     private var mixDisabled = false
     /** The last `audioMix` the hub negotiated, kept so the Audio menu can switch back to it. */
     private var mixHint: JSONObject? = null
+    /** The hub can mark an episode's intro window; zero means no window, so no button is invented. */
+    private var introStartMs = 0L
+    private var introEndMs = 0L
+    private var skipChip: TextView? = null
 
     // ---- media ----------------------------------------------------------------------------
     private var player: ExoPlayer? = null
@@ -375,6 +379,9 @@ class PlayerActivity : Activity() {
         sameCopyRetried = false
         mixDisabled = false
         mixHint = null
+        introStartMs = 0L
+        introEndMs = 0L
+        skipChip?.visibility = View.GONE
         selectedAudioId = null
         selectedSubId = null
         audioChosen = false
@@ -441,6 +448,9 @@ class PlayerActivity : Activity() {
         nextEpisode = reply.optJSONObject("nextEpisode")
         alternatives = reply.optJSONArray("alternatives") ?: JSONArray()
         audioTracks = reply.optJSONArray("audioTracks") ?: JSONArray()
+        introStartMs = reply.optLong("introStartMs", 0L)
+        introEndMs = reply.optLong("introEndMs", 0L)
+        if (introEndMs <= 0L) skipChip?.visibility = View.GONE
         val mix = reply.optJSONObject("audioMix")
         if (mix != null) {
             mixHint = mix
@@ -834,6 +844,18 @@ class PlayerActivity : Activity() {
         buildCenter()
 
         overlay.visibility = View.INVISIBLE
+        // The intro prompt is the one control that lives outside the chrome: it must stay visible while
+        // the film is playing with the transport hidden.
+        val skip = chip("Skip intro", compact = true) { skipIntro() }
+        skip.visibility = View.GONE
+        root.addView(skip, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = theme.gutter
+            bottomMargin = theme.px(122f)
+        })
+        skipChip = skip
     }
 
     private fun buildTopBar() {
@@ -1909,6 +1931,9 @@ class PlayerActivity : Activity() {
         sameCopyRetried = false
         mixDisabled = false
         mixHint = null
+        introStartMs = 0L
+        introEndMs = 0L
+        skipChip?.visibility = View.GONE
         selectedAudioId = null
         selectedSubId = null
         audioChosen = false
@@ -1950,6 +1975,7 @@ class PlayerActivity : Activity() {
     private fun tick() {
         if (isFinishing || isDestroyed) return
         updatePosition()
+        updateSkip()
         val p = player ?: return
         if (p.isPlaying && !live) {
             val now = SystemClock.elapsedRealtime()
@@ -1957,6 +1983,50 @@ class PlayerActivity : Activity() {
                 nextProgressAt = now + progressPostMs
                 saveProgress(force = false)
             }
+        }
+    }
+
+    /**
+     * The intro prompt follows the same rule as the web player: it exists only inside the window the
+     * hub marked (`introStartMs`/`introEndMs`), defaulting to the last 90 s before the marked end. With
+     * no window it stays gone rather than guessing.
+     */
+    private fun updateSkip() {
+        val chip = skipChip ?: return
+        val p = player ?: return
+        if (introEndMs <= 0L || !p.isPlaying) {
+            if (chip.visibility == View.VISIBLE) hideSkip()
+            return
+        }
+        val pos = p.currentPosition
+        val start = if (introStartMs > 0L) introStartMs else (introEndMs - 90_000L).coerceAtLeast(0L)
+        val inside = pos >= start && pos < introEndMs
+        if (inside && chip.visibility != View.VISIBLE) {
+            chip.visibility = View.VISIBLE
+            // With the transport hidden the prompt is the only actionable thing on screen; give it the
+            // ring so one OK press skips instead of pausing.
+            if (!controlsVisible() && currentFocus == null) {
+                chip.post { if (chip.isShown && currentFocus == null) chip.requestFocus() }
+            }
+        } else if (!inside && chip.visibility == View.VISIBLE) {
+            hideSkip()
+        }
+    }
+
+    private fun skipIntro() {
+        if (introEndMs <= 0L) return
+        player?.seekTo(introEndMs)
+        hideSkip()
+        updatePosition()
+    }
+
+    private fun hideSkip() {
+        val chip = skipChip ?: return
+        val had = chip.hasFocus()
+        chip.visibility = View.GONE
+        if (had) {
+            if (controlsVisible()) playButton.post { if (!playButton.hasFocus()) playButton.requestFocus() }
+            else currentFocus?.clearFocus()
         }
     }
 
@@ -2023,6 +2093,11 @@ class PlayerActivity : Activity() {
             val seeking = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
             val ok = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER ||
                 code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_SPACE
+            // An intro prompt with the ring on it owns OK; this is a skip, not a pause.
+            if (ok && skipChip?.visibility == View.VISIBLE && skipChip?.isFocused == true) {
+                skipIntro()
+                return true
+            }
             showChrome(focus = !seeking)
             if (seeking) focusSoon(if (live) playButton else seekLine)
             // On a television, OK while the picture is clean means "pause", not "show me the chrome

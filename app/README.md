@@ -48,7 +48,8 @@ Nothing is installed or deployed from here.
   the same position through `/app/v1/switch` (`exclude`, bounded), posts progress every ~10 s and on
   pause/exit, and rolls into the next episode with a countdown and Undo. Live channels have no seek
   or speed; the remote's CH Up/Down (and left/right at rest) zaps the hub's live row when it is
-  available. The transport is drawn as flat icons rather than labels, with a dot for an active audio
+  available. A play answer that marks an intro (`introEndMs`) shows a native "Skip intro" chip; the
+  hub does not publish intro windows yet, so it stays hidden rather than guessing. The transport is drawn as flat icons rather than labels, with a dot for an active audio
   track, subtitles or a non-1x speed. The optional `HUB_TOKEN` is
   used for `/app/v1` calls and for hub-origin media URLs only.
   `WebShellActivity` still carries the native bridge (`play`, `pause`, `resume`, `seek`, `skip`,

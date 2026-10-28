@@ -131,8 +131,10 @@ reload.
 
 - The long tail of Settings (addons, sources, categories, PINs, household rules) is still the web
   UI, reached by one native row. The TV-relevant preferences are native.
-- Skip-intro needs `introEndMs` from the hub; today the play answer carries no intro window, so no
-  button is invented. The web player has the same data condition.
+- Skip-intro needs `introEndMs` from the hub. The native player now honours the same window the web
+  player does (`introStartMs`, or the last 90 s before `introEndMs`), shows a "Skip intro" chip
+  outside the fading chrome and lets one OK press skip — but the hub has no intro source today, so the
+  chip is dormant rather than guessed.
 - Native Search matches the hub's index; a search for a title the hub does not know returns nothing,
   as on the web.
 - Trailer previews on dwelling cards remain a web-only behaviour; native cards show stills.
