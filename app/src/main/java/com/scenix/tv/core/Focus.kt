@@ -31,17 +31,24 @@ object Focus {
     ) {
         val theme = ctx.theme
         val ring = Views.ring(theme.focusRingColor, ringRadiusPx, theme.focusRingPx)
+        val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
         val base = ringOn?.background
+        // Foreground is the right layer for a container whose children reach its edges (a poster
+        // card): it paints over them. It is the wrong layer for a TextView on this Android 11 panel,
+        // whose foreground never reached the screen, so those views get a background LayerDrawable
+        // instead. Both are the same white ring to the viewer.
+        val onForeground = ringOn is ViewGroup
+        if (onForeground) ringOn?.foreground = plain
 
         focusable.isFocusable = true
         focusable.isFocusableInTouchMode = false
 
-        // The ring is a background layer, not a foreground drawable: on this Android 11 panel a
-        // TextView's foreground never reached the screen, which left every native button looking
-        // unfocused even though it held focus. A LayerDrawable over the existing background renders
-        // everywhere (chips, cards, tiles) and keeps the button's own fill and radius underneath.
         fun paintRing(focused: Boolean) {
             val target = ringOn ?: return
+            if (onForeground) {
+                target.foreground = if (focused) ring else plain
+                return
+            }
             target.background = when {
                 !focused -> base
                 base == null -> ring

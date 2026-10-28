@@ -886,19 +886,28 @@ class PlayerActivity : Activity() {
         playButton = icon(GLYPH_PLAY, "Play") { togglePlay() }
         rewindButton = icon(GLYPH_BACK10, "Back ${seekBackMs / 1000} seconds") { seekBy(-seekBackMs) }
         forwardButton = icon(GLYPH_FORWARD30, "Forward ${seekForwardMs / 1000} seconds") { seekBy(seekForwardMs) }
-        audioButton = icon(GLYPH_AUDIO, "Audio") { openMenu(MenuKind.AUDIO, audioButton) }
-        subButton = icon(GLYPH_SUBS, "Subtitles") { openMenu(MenuKind.SUBTITLES, subButton) }
-        speedButton = icon(GLYPH_SPEED, "Speed") { openMenu(MenuKind.SPEED, speedButton) }
-        qualityButton = icon(GLYPH_QUALITY, "Quality") { openMenu(MenuKind.QUALITY, qualityButton) }
+        audioButton = icon(GLYPH_AUDIO, "Audio", flat = true) { openMenu(MenuKind.AUDIO, audioButton) }
+        subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
+        speedButton = icon(GLYPH_SPEED, "Speed", flat = true) { openMenu(MenuKind.SPEED, speedButton) }
+        qualityButton = icon(GLYPH_QUALITY, "Quality", flat = true) { openMenu(MenuKind.QUALITY, qualityButton) }
 
-        buttonRow.addView(playButton, wrap())
-        buttonRow.addView(rewindButton, wrap().withStart(theme.px(12f)))
-        buttonRow.addView(forwardButton, wrap().withStart(theme.px(12f)))
+        buttonRow.addView(playButton, wrap().withStart(theme.px(12f)))
+        buttonRow.addView(rewindButton, wrap().withStart(theme.px(10f)))
+        buttonRow.addView(forwardButton, wrap().withStart(theme.px(10f)))
         buttonRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        buttonRow.addView(audioButton, wrap())
-        buttonRow.addView(subButton, wrap().withStart(theme.px(12f)))
-        buttonRow.addView(speedButton, wrap().withStart(theme.px(12f)))
-        buttonRow.addView(qualityButton, wrap().withStart(theme.px(12f)))
+        // One translucent capsule for the settings icons, as on the reference remote UI: the four
+        // affordances read as one group, and each still takes the ring on its own.
+        val options = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.px(26f))
+            setPadding(theme.px(6f), theme.px(4f), theme.px(6f), theme.px(4f))
+        }
+        options.addView(audioButton, wrap())
+        options.addView(subButton, wrap().withStart(theme.px(4f)))
+        options.addView(speedButton, wrap().withStart(theme.px(4f)))
+        options.addView(qualityButton, wrap().withStart(theme.px(4f)))
+        buttonRow.addView(options, wrap())
 
         bottomBar.addView(buttonRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -942,13 +951,19 @@ class PlayerActivity : Activity() {
      * 24 px play/pause mark. The value a control currently holds lives in its menu and in its
      * content description.
      */
-    private fun icon(glyph: Int, desc: String, action: () -> Unit): GlyphView {
+    private fun icon(glyph: Int, desc: String, flat: Boolean = false, action: () -> Unit): GlyphView {
         val v = GlyphView(this, glyph)
         v.contentDescription = desc
-        v.background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.radius("button", 6f))
-        v.minimumWidth = theme.px(62f)
-        v.minimumHeight = theme.px(50f)
-        Focus.attach(v, v, app, theme.radius("button", 6f), scale = false, elevate = false, onClick = action)
+        if (!flat) {
+            // Standalone transport buttons are soft pills; the menu group shares one wider pill.
+            v.background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.px(23f))
+        }
+        v.minimumWidth = theme.px(if (flat) 50f else 56f)
+        v.minimumHeight = theme.px(46f)
+        Focus.attach(
+            v, v, app, theme.px(if (flat) 20f else 23f),
+            scale = false, elevate = false, onClick = action,
+        )
         return v
     }
 
@@ -2054,7 +2069,7 @@ class PlayerActivity : Activity() {
         override fun onDraw(canvas: Canvas) {
             val cx = width / 2f
             val cy = height / 2f
-            val u = minOf(width, height).toFloat() / 36f
+            val u = minOf(width, height).toFloat() / 34f
             stroke.strokeWidth = theme2.px(2.3f) * (u.coerceAtMost(1.2f))
             when (glyph) {
                 GLYPH_PLAY -> if (playing) {
@@ -2080,40 +2095,50 @@ class PlayerActivity : Activity() {
                     canvas.drawPath(path, stroke)
                 }
                 GLYPH_AUDIO -> {
-                    val path = Path()
-                    path.moveTo(cx - 9 * u, cy - 4 * u)
-                    path.lineTo(cx - 4.5f * u, cy - 4 * u)
-                    path.lineTo(cx + 1.5f * u, cy - 9.5f * u)
-                    path.lineTo(cx + 1.5f * u, cy + 9.5f * u)
-                    path.lineTo(cx - 4.5f * u, cy + 4 * u)
-                    path.lineTo(cx - 9 * u, cy + 4 * u)
-                    path.close()
-                    canvas.drawPath(path, solid)
-                    canvas.drawArc(RectF(cx + 2 * u, cy - 5 * u, cx + 8.5f * u, cy + 5 * u), -55f, 110f, false, stroke)
-                    canvas.drawArc(RectF(cx + 2 * u, cy - 9 * u, cx + 13 * u, cy + 9 * u), -55f, 110f, false, stroke)
+                    // A waveform, not a speaker: the control picks a language track, and the bars read
+                    // as "sound" at a glance without implying a volume slider.
+                    val heights = floatArrayOf(5f, 10f, 16f, 21f, 15f, 9f, 4f)
+                    for (i in heights.indices) {
+                        val x = cx + (i - 3) * 3.6f * u
+                        val h = heights[i] * u
+                        canvas.drawLine(x, cy - h / 2f, x, cy + h / 2f, stroke)
+                    }
                 }
                 GLYPH_SUBS -> {
-                    canvas.drawRoundRect(
-                        RectF(cx - 13 * u, cy - 8.5f * u, cx + 13 * u, cy + 8.5f * u),
-                        3 * u, 3 * u, stroke,
-                    )
-                    letters.textSize = 9.6f * u
-                    canvas.drawText("CC", cx, cy + 3.4f * u, letters)
+                    // A speech bubble with two cue lines and a tail, matching the reference's subtitle
+                    // affordance; "CC" in a box read as a broadcast caption service.
+                    val r = RectF(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 6 * u)
+                    canvas.drawRoundRect(r, 3.2f * u, 3.2f * u, stroke)
+                    canvas.drawLine(cx - 7 * u, cy - 3.4f * u, cx + 7 * u, cy - 3.4f * u, stroke)
+                    canvas.drawLine(cx - 7 * u, cy + 1.4f * u, cx + 2 * u, cy + 1.4f * u, stroke)
+                    val tail = Path()
+                    tail.moveTo(cx - 5 * u, cy + 6 * u)
+                    tail.lineTo(cx - 7.5f * u, cy + 12 * u)
+                    tail.lineTo(cx - 1 * u, cy + 6 * u)
+                    canvas.drawPath(tail, stroke)
                 }
                 GLYPH_SPEED -> {
-                    val r = 9.5f * u
-                    canvas.drawArc(RectF(cx - r, cy - r, cx + r, cy + r), 150f, 240f, false, stroke)
-                    val a = Math.toRadians(305.0)
-                    canvas.drawLine(cx, cy, cx + (8.2 * u * Math.cos(a)).toFloat(), cy + (8.2 * u * Math.sin(a)).toFloat(), stroke)
-                    canvas.drawCircle(cx, cy, 1.7f * u, solid)
+                    // A dial with ticks and a needle: the same speedometer language as the reference.
+                    val r = 10 * u
+                    canvas.drawCircle(cx, cy, r, stroke)
+                    for (deg in intArrayOf(210, 240, 270, 300, 330)) {
+                        val a = Math.toRadians(deg.toDouble())
+                        canvas.drawCircle(
+                            cx + (r - 2.8f * u) * Math.cos(a).toFloat(),
+                            cy + (r - 2.8f * u) * Math.sin(a).toFloat(),
+                            0.9f * u, solid,
+                        )
+                    }
+                    val a = Math.toRadians(300.0)
+                    canvas.drawLine(cx, cy, cx + (6.8 * u * Math.cos(a)).toFloat(), cy + (6.8 * u * Math.sin(a)).toFloat(), stroke)
+                    canvas.drawCircle(cx, cy, 1.5f * u, solid)
                 }
                 GLYPH_QUALITY -> {
-                    for (i in 0..2) {
-                        val y = cy - 7 * u + i * 7 * u
-                        canvas.drawLine(cx - 9 * u, y, cx + 9 * u, y, stroke)
-                        val kx = cx + floatArrayOf(-4.5f, 3f, -1f)[i] * u
-                        canvas.drawCircle(kx, y, 2.1f * u, solid)
-                    }
+                    // A display: the quality/source sheet is about what the panel is receiving.
+                    val r = RectF(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 5 * u)
+                    canvas.drawRoundRect(r, 2.4f * u, 2.4f * u, stroke)
+                    canvas.drawLine(cx, cy + 5 * u, cx, cy + 9.5f * u, stroke)
+                    canvas.drawLine(cx - 5 * u, cy + 9.5f * u, cx + 5 * u, cy + 9.5f * u, stroke)
                 }
             }
             if (badge) {
