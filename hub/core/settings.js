@@ -96,6 +96,14 @@ const DEFAULTS = {
     starvedGraceSec: 20,     // a cushion this deep absorbs a slow window without calling it starvation
     starvedHoldMs: 900000,   // how long a copy that starved a viewer stays out of favour
   },
+
+  // Optional debrid/direct resolver (core/debrid.js). Off, with no provider and no token, because a
+  // paid account is the owner's decision and must never be required for this hub to work. When it is
+  // configured, a magnet or a file-hoster link can become an ordinary HTTP stream before the torrent
+  // gateway is asked. `token` is a private API token: it is written here, read by core/debrid.js, and
+  // never returned by GET /app/v1/settings. An empty token in a PUT means "keep the stored one"; null
+  // explicitly removes it.
+  debrid: { enabled: false, provider: '', token: '' },
 };
 
 let cached = null; // the last parsed+merged object, or null when the file has not been read yet
@@ -222,6 +230,20 @@ function normalizeCategories(raw) {
   return parsed.map((entry, index) => Object.assign(entry, { order: index }));
 }
 
+/**
+ * The optional debrid settings, in the one shape core/debrid.js reads. `provider` is a slug because it
+ * names a file in core/debrid/; the token is kept verbatim (trimmed) because providers do not all use
+ * the same alphabet, and a token that is shortened or lowercased is a token that does not work.
+ */
+function normalizeDebrid(d) {
+  const src = d && typeof d === 'object' ? d : {};
+  return {
+    enabled: src.enabled === true,
+    provider: String(src.provider || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32),
+    token: String(src.token == null ? '' : src.token).trim().slice(0, 512),
+  };
+}
+
 function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
@@ -251,6 +273,7 @@ function normalize(s) {
         ? DEFAULTS.avatar.wikiApi : (s.avatar || {}).wikiApi).trim().slice(0, 300),
     },
     playback: normalizePlayback(s.playback),
+    debrid: normalizeDebrid(s.debrid),
   };
   // Anything the owner put in the file that this build does not know about is kept, so an older hub
   // reading a newer file does not quietly delete a setting a newer hub wrote.
@@ -276,6 +299,17 @@ function seedFromEnv(s) {
   }
   const ra = process.env.READ_AHEAD_MB;
   if (ra !== undefined && s.playback.readAheadMB === DEFAULTS.playback.readAheadMB) s.playback.readAheadMB = Number(ra);
+  // A debrid account is optional, so these only fill a blank install: an owner who turned it off in the
+  // UI must not have it switched back on by an environment variable left in a compose file.
+  if (process.env.DEBRID_ENABLED === '1' && s.debrid.enabled === DEFAULTS.debrid.enabled) {
+    s.debrid.enabled = true;
+  }
+  if (process.env.DEBRID_PROVIDER && !s.debrid.provider) {
+    s.debrid.provider = normalizeDebrid({ provider: process.env.DEBRID_PROVIDER }).provider;
+  }
+  if (process.env.DEBRID_TOKEN && !s.debrid.token) {
+    s.debrid.token = String(process.env.DEBRID_TOKEN).trim().slice(0, 512);
+  }
   return s;
 }
 
@@ -325,15 +359,70 @@ function playback() {
   return Object.assign({}, read().playback);
 }
 
+/**
+ * A deep copy of the settings-shaped JSON. Used only to answer a browser: the live object is cached and
+ * shared, and a screen must never be able to mutate the hub's copy of its own configuration.
+ */
+function clone(v) {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(clone);
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = clone(x);
+  return out;
+}
+
+/**
+ * The settings a browser may see. A debrid token is write-only: the answer says whether one is stored,
+ * never what it is. This is the only shape GET /app/v1/settings and the PUT reply are allowed to send.
+ */
+function redacted(which) {
+  const out = clone(which === undefined ? read() : which);
+  if (out && out.debrid && typeof out.debrid === 'object') {
+    const token = String(out.debrid.token || '');
+    out.debrid.tokenSet = !!token;
+    delete out.debrid.token;
+  }
+  return out;
+}
+
+/**
+ * A PUT from the settings screen carries the whole debrid object it last read, and that object cannot
+ * contain the token. An empty token therefore means "keep the one already stored", not "erase it"; an
+ * explicit null is the way to remove it.
+ */
+function scrubSecretPatch(patch) {
+  const p = clone(patch);
+  if (!p || typeof p !== 'object' || !p.debrid || typeof p.debrid !== 'object') return p;
+  const d = p.debrid;
+  if (Object.prototype.hasOwnProperty.call(d, 'token')) {
+    if (d.token === null) d.token = '';
+    else if (typeof d.token === 'string') {
+      const token = d.token.trim();
+      if (token) d.token = token; else delete d.token;
+    } else {
+      // A number, object or array is not a token. Treat it like a field the screen did not have, so a
+      // malformed PUT cannot replace a working credential with "[object Object]".
+      delete d.token;
+    }
+  }
+  // `tokenSet` is an answer from redacted(), never a value the file stores.
+  delete d.tokenSet;
+  return p;
+}
+
 /** Merge a patch into the file and return what it became. Nested objects merge key by key. */
 function set(patch) {
   const current = read();
-  const next = normalize(merge(current, patch && typeof patch === 'object' ? patch : {}));
+  const scrubbed = scrubSecretPatch(patch && typeof patch === 'object' ? patch : {});
+  const next = normalize(merge(current, scrubbed));
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const tmp = FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    // This file can hold a paid account's API token. Create it readable by its owner only; rename
+    // replaces the old inode, so an older 0644 settings.json does not keep its mode.
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, FILE);
+    try { fs.chmodSync(FILE, 0o600); } catch (e) { /* a filesystem without chmod; write still succeeded */ }
   } catch (e) {
     console.log(new Date().toISOString(), 'SETTINGS write failed:', FILE, e.message);
   }
@@ -357,4 +446,4 @@ function status() {
   };
 }
 
-module.exports = { get, set, languages, playback, status, DEFAULTS, FILE };
+module.exports = { get, set, languages, playback, status, redacted, DEFAULTS, FILE };

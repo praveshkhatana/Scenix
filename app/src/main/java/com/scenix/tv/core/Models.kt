@@ -429,10 +429,11 @@ data class Manifest(
 /**
  * `POST /app/v1/play` -> `{ url, headers, kind, mode, why }`.
  *
- * `mode` says how the hub is serving it: `direct` (the origin), `proxy` (the hub streaming it
- * through) or `gateway` (the hub resolved something awkward — a torrent, a signed link — into an
- * ordinary seekable HTTP stream). `gateway` and `proxy` are played exactly the same way; only
- * `magnet:` URLs are not Media3's business.
+ * `mode` says how the hub is serving it: `direct` (the origin, or an optional debrid resolver's ordinary
+ * HTTP URL), `proxy` (the hub streaming it through) or `gateway` (the hub resolved something awkward — a
+ * torrent, a signed link — into an ordinary seekable HTTP stream). `gateway` and `proxy` are played
+ * exactly the same way; only `magnet:` URLs are not Media3's business. A `direct` answer may still name a
+ * `kind` that differs from the ranked row (a torrent resolved to HTTP).
  */
 data class PlayTarget(
     val url: String = "",

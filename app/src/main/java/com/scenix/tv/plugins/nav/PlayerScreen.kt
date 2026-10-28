@@ -391,9 +391,16 @@ object PlayerScreen : ScreenPlugin {
                 }
 
                 // `mode:"gateway"` is an ordinary seekable HTTP stream the hub fetched for us, so it
-                // is handed to the http plugin whatever the source's own kind is. proxy/direct keep
-                // their kind (only who fetches changes), and an unknown kind falls back to http.
-                val kind = if (play.mode.equals("gateway", true)) "http" else src.kind
+                // is handed to the http plugin whatever the source's own kind is. A `direct` answer may
+                // also name a different transport than the ranked row did — a debrid resolver turns a
+                // `torrent`/`hoster` source into ordinary HTTP while keeping mode `direct` — so the
+                // hub's `kind` wins for those two source kinds.
+                val kind = when {
+                    play.mode.equals("gateway", true) -> "http"
+                    (src.kind == "torrent" || src.kind == "hoster")
+                        && (play.kind == "http" || play.kind == "hls" || play.kind == "dash") -> play.kind
+                    else -> src.kind
+                }
                 val p = app.registries.playerFor(kind)
                 if (p == null) {
                     setStatus("${Format.provider(src)} \u2014 no player plugin on this TV")

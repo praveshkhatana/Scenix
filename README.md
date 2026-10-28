@@ -3,8 +3,9 @@
 A self-hosted streaming system: one content hub, one interface, every screen.
 
 Scenix puts the catalogue, the sources and the policy on a machine you own, and draws the same
-interface on the television, in a browser and on a phone. Nothing is rented, nothing is licensed per
-device, and no vendor decides what your family may watch.
+interface on the television, in a browser and on a phone. Nothing has to be rented, nothing is licensed
+per device, and no vendor decides what your family may watch. If you already pay for a debrid account,
+the hub can optionally use it as a faster source; it is off until you turn it on.
 
 ```
         addons (installed by you)
@@ -59,6 +60,16 @@ The playback bridge is the same idea: the TV app draws its interface in a WebVie
 natively underneath it, so a 1080p HEVC torrent with E-AC3 audio and ASS subtitles plays exactly as it
 sits on disk. Browsers get a remuxed copy instead; the file is never transcoded.
 
+## Optional debrid
+
+A debrid account is not required, and there is no paid tier of Scenix. If you already have one, Settings →
+**Debrid / direct** lets the hub use it: a magnet or a file-hoster link is exchanged at the provider for
+an ordinary HTTP URL, so playback does not wait on a torrent swarm. It is off by default, accepts one
+provider token (Real-Debrid today), and falls back to the gateway unchanged when the provider is down,
+slow or refuses the link. The token is stored only on the hub, never returned to a browser, and never put
+in a log. See [design/debrid.md](design/debrid.md) for the provider contract, security notes and what
+still needs a live account to verify.
+
 ## Running it
 
 **Hub** — Node with built-ins only, no `npm install`:
@@ -69,7 +80,8 @@ cd hub && node index.js            # http://<this machine>:8788
 
 Open that address to run the Hub UI: add addons, choose languages, reorder Home, set the maturity
 ceiling, create profiles. Point an HTTP torrent engine at it (port 8090) and torrents become seekable
-streams; `ffmpeg` on the machine enables the browser path.
+streams; `ffmpeg` on the machine enables the browser path. If you have a debrid account, configure it in
+Settings and the hub will try it before the engine; nothing breaks if you never do.
 
 **TV app** — Android 8+ / Android TV, `./gradlew assembleDebug` in `app/`. On first run it lists the
 hubs it finds on the network, or you type an address, or you skip both and use standalone mode.
@@ -87,6 +99,6 @@ design/         our architecture and the interface's measured numbers
 
 ## Licence
 
-MIT for everything in this repository. The hub talks to third-party addon services and, for torrent
-delivery, to a separate engine process over HTTP — it links against none of them, so no external
-licence reaches our code.
+MIT for everything in this repository. The hub talks to third-party addon services, and, if the owner
+enables it, to a debrid provider they already pay for. For torrent delivery it talks to a separate engine
+process over HTTP. It links against none of them, so no external licence reaches our code.

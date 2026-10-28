@@ -37,6 +37,7 @@ export function screen(ctx) {
   let rowList = null;      // /app/v1/settings → rows, when this backend has any to offer
   let liveInfo = null;     // /app/v1/settings → live {channels, groups}, the channel manager's data
   let catalogOptions = null; // /app/v1/settings → catalogOptions, the material for owner-made categories
+  let debridInfo = null;   // /app/v1/settings → debrid status: provider list, tokenSet, never the token
   let busy = false;
 
   root.appendChild(el('div', { class: 'page-head' },
@@ -180,12 +181,30 @@ export function screen(ctx) {
     busy = true;
     const next = Object.assign({}, setting, patch);
     let ok = true;
-    try { await api.saveSettings({ settings: next }); }
+    let saved = null;
+    try { saved = await api.saveSettings({ settings: next }); }
     catch (e) {
       // Older builds accept the object flat rather than wrapped in `settings`.
-      try { await api.saveSettings(next); } catch (e2) { ok = false; }
+      try { saved = await api.saveSettings(next); } catch (e2) { ok = false; }
     }
-    if (ok) { setting = next; ctx.toast('Saved on the hub'); } else ctx.toast('The hub would not take that change');
+    if (ok) {
+      setting = next;
+      // The PUT reply carries the resolver's fresh status (provider, tokenSet, note). Using it keeps the
+      // explanation under the switch from saying "no token stored" after a token was just saved.
+      if (saved && saved.debrid) debridInfo = saved.debrid;
+      // A token is write-only. Once it has been stored, do not keep the secret in this page's cached
+      // settings object: the next toggle would otherwise resend it, and the hub would answer with it in
+      // every PUT if the page treated the reply as truth. Keep only "set" or "not set".
+      const d = setting.debrid;
+      if (d && typeof d === 'object' && Object.prototype.hasOwnProperty.call(d, 'token')) {
+        const sent = d.token;
+        const tokenSet = sent === null ? false
+          : (typeof sent === 'string' && sent.trim() ? true : !!d.tokenSet);
+        setting.debrid = Object.assign({}, d, { tokenSet, token: '' });
+        if (debridInfo) debridInfo.tokenSet = tokenSet;
+      }
+      ctx.toast('Saved on the hub');
+    } else ctx.toast('The hub would not take that change');
     busy = false;
   }
 
@@ -366,6 +385,107 @@ export function screen(ctx) {
           (v) => writeSettings({ playback: Object.assign({}, pb, { starvedWindows: v }) }),
           (v) => (v === 1 ? 'One slow stretch' : `${v} slow stretches`));
         right.appendChild(g2);
+      }
+      // Optional, off by default. This belongs on the hub's page rather than a profile's: it is one
+      // account for the whole house. A token is typed through the same keyboard/remote dialog as every
+      // other address in this interface, and is never drawn back: the row says set or not set.
+      if (setting.debrid) {
+        const d = setting.debrid;
+        const info = debridInfo || {};
+        const list = Array.isArray(info.providers) && info.providers.length
+          ? info.providers
+          : [{ id: 'real-debrid', label: 'Real-Debrid' }];
+        const only = list.length === 1 ? list[0] : null;
+        const tokenSet = d.tokenSet === true || info.tokenSet === true;
+        const gD = group('Debrid / direct',
+          'Optional. With your own debrid account, the hub asks the service to turn a magnet or a file-host link into an ordinary HTTP stream, so it starts without a torrent engine. Off by default; with no token nothing changes.');
+        let providerValue = null;
+        const chooseProvider = (id) => {
+          if (providerValue) providerValue.textContent = (list.find((p) => p.id === id) || {}).label || id;
+        };
+        toggle(gD, 'Use a debrid account',
+          d.enabled
+            ? 'On: the hub tries your provider before the torrent gateway and falls through if it cannot answer.'
+            : 'Off: torrents use the gateway and host links play as they are.',
+          !!d.enabled,
+          canHub ? async (v) => {
+            // Enabling an account with no provider chosen cannot work. With one adapter available, choose
+            // it here so the switch is not a control that silently does nothing.
+            const provider = d.provider || (only ? only.id : '');
+            if (v && provider) chooseProvider(provider);
+            await writeSettings({ debrid: Object.assign({}, d, { enabled: v, provider }) });
+          } : () => {});
+        if (only) {
+          const l = line('Provider', 'This build has one debrid adapter installed.');
+          providerValue = value(d.provider ? only.label : 'not chosen');
+          l.appendChild(providerValue);
+          if (!d.provider && canHub) {
+            const use = el('button', {
+              class: 'btn line', type: 'button', text: 'Use ' + only.label,
+              onclick: async () => {
+                chooseProvider(only.id);
+                await writeSettings({ debrid: Object.assign({}, d, { provider: only.id }) });
+                paint();
+              },
+            });
+            focus.focusable(use);
+            l.appendChild(use);
+          }
+          gD.appendChild(l);
+        } else {
+          gD.appendChild(el('p', { class: 'note', text: 'Provider' }));
+          radioSet(gD, list.map((p) => p.id), d.provider,
+            (id) => (list.find((p) => p.id === id) || {}).label || id,
+            canHub ? (id) => {
+              chooseProvider(id);
+              return writeSettings({ debrid: Object.assign({}, d, { provider: id }) });
+            } : null);
+        }
+        const tokenLine = line('Account token',
+          tokenSet
+            ? 'A token is stored on this hub. It is never shown again or sent to a browser.'
+            : 'No token stored. Paste the private API token from your provider account.');
+        if (canHub) {
+          const btn = el('button', {
+            class: 'btn line', type: 'button', text: tokenSet ? 'Change token' : 'Set token',
+            onclick: async () => {
+              const provider = list.find((p) => p.id === d.provider) || only;
+              const token = await ctx.enterText({
+                title: 'Debrid token',
+                reason: 'The private API token from your ' + ((provider && provider.label) || 'debrid')
+                  + ' account. It is kept in this hub’s settings file and only sent to that provider.',
+                placeholder: 'Paste the token',
+                initial: '',
+                action: 'Save',
+                validate: (v) => (!v ? 'Paste the token first.'
+                  : v.length < 8 ? 'That looks too short to be an API token.' : null),
+              });
+              if (token === null) return;
+              await writeSettings({ debrid: Object.assign({}, d, { token }) });
+              paint();
+            },
+          });
+          focus.focusable(btn);
+          tokenLine.appendChild(btn);
+          if (tokenSet) {
+            const rm = el('button', {
+              class: 'btn ghost', type: 'button', text: 'Remove token',
+              onclick: async () => {
+                // null is the explicit erase; an empty token from this screen would mean "keep it".
+                await writeSettings({ debrid: Object.assign({}, d, { token: null }) });
+                paint();
+              },
+            });
+            focus.focusable(rm);
+            tokenLine.appendChild(rm);
+          }
+        }
+        gD.appendChild(tokenLine);
+        if (d.enabled && info.note) gD.appendChild(el('p', { class: 'note', text: info.note }));
+        if (info.last && info.last.ok === false && info.last.reason) {
+          gD.appendChild(el('p', { class: 'note', text: 'Last attempt: ' + info.last.reason }));
+        }
+        right.appendChild(gD);
       }
     }
 
@@ -648,6 +768,12 @@ export function screen(ctx) {
     row('Subtitles', caps.subtitles ? 'the hub finds them' : 'not offered by this hub', caps.subtitles ? 'ok' : 'no');
     row('Track switching', caps.tracks ? 'audio and subtitle tracks can change mid-playback' : 'one track per copy', caps.tracks ? 'ok' : 'mid');
     row('Live TV', caps.live ? 'channels are available' : 'no channel list loaded', caps.live ? 'ok' : 'no');
+    if (debridInfo) {
+      row('Debrid', debridInfo.ready
+        ? `${debridInfo.providerLabel || debridInfo.provider} ready`
+        : debridInfo.enabled ? 'enabled, not ready' : 'off',
+      debridInfo.ready ? 'ok' : debridInfo.enabled ? 'mid' : 'no');
+    }
     row('Editable from here', [canHub && 'hub', canPrefs && 'this profile', !!caps.profileEdit && 'profiles', !!caps.cacheAdmin && 'cache'].filter(Boolean).join(', ') || 'nothing — this hub is read-only from a browser', 'mid');
     api.health().then(() => row('Hub reachable', 'yes', 'ok')).catch(() => row('Hub reachable', 'no answer', 'no'));
     right.appendChild(d);
@@ -697,6 +823,7 @@ export function screen(ctx) {
     installed = Array.isArray(ad) ? ad : null === ad ? [] : ad;
     setting = s ? (s.settings || s) : null;
     liveInfo = (s && s.live) || null;
+    debridInfo = (s && s.debrid) || null;
     names = (s && s.languageNames) || {};
     prefs = p ? (p.prefs || p) : null;
     paint();

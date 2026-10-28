@@ -34,6 +34,9 @@ const store = require('./core/store').create(ROOT);
 const merge = require('./core/merge');
 const prefs = require('./core/prefs');
 const gateway = require('./core/gateway');
+// Optional: a paid resolver, off unless the owner configures a provider and a token. It is tried before
+// the gateway and is never a hard dependency of the play path.
+const debrid = require('./core/debrid');
 const addons = require('./core/addons');
 const trailers = require('./core/trailers');
 const ratings = require('./core/ratings');
@@ -169,8 +172,9 @@ function invalidateCaches() {
  */
 function capabilities() {
   const g = gateway.status();
+  const d = debrid.status();
   const live = registry.byId['live-tv'];
-  return {
+  const caps = {
     gateway: g.enabled === true, // torrents are served through an engine here, not handed to the client
     live: !!live && !!String((settings.get().live || {}).playlist || '').trim(),
     localFiles: !!registry.byId['local-files'],
@@ -191,6 +195,10 @@ function capabilities() {
     cacheAdmin: true, // the answers this backend cached can be thrown away on purpose,
     avatarFaces: true, // profile faces are offered and served by this backend
   };
+  // A flag only when the resolver can actually do something. Off, unconfigured or missing a token means
+  // the capability is absent, exactly like an uninstalled addon: the clients need no "debrid is off" state.
+  if (d.ready === true) caps.debrid = true;
+  return caps;
 }
 
 /** Does anything mounted here answer the subtitle resource? A capability is a route that exists, not a hope. */
@@ -892,6 +900,10 @@ async function healthBody() {
       // visible from outside rather than inferred from which copy it happened to choose.
       linkMbps: gatewayMbps ? Number(gatewayMbps.toFixed(2)) : null,
     }),
+    // Optional paid resolver. Off is a normal, expected state; when on, this says which provider is
+    // selected and whether a token is stored, never what it is. The check is not performed here so
+    // /healthz never waits on a third party.
+    debrid: debrid.status(),
     probe: probe.status(), // how many links this hub has actually measured, and what they answered
     // What the copies contain, and whether the tooling that says so is installed: an operator with a
     // missing ffprobe sees "binFound: false" here rather than wondering why every source says
@@ -1440,6 +1452,61 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   let lastResort = null; // a torrent the gateway could not serve: unplayable here, fine on an engine client
   let slowGateway = null; // a gateway link that resolved but has not proved it can carry this file
   let tooSlow = null; // a gateway link that produced bytes, just not fast enough for this file
+
+  /**
+   * The optional paid resolver, tried before the gateway. It only ever *adds* an answer: disabled, slow
+   * or refused and the caller falls through to the code below unchanged. The budget is deliberately
+   * smaller than a Play press, so a provider that is thinking cannot spend the time the gateway needs.
+   */
+  const tryDebrid = async (o, cand) => {
+    if (!debrid.ready()) return null;
+    const isTorrent = cand.kind === 'torrent' || /^magnet:/i.test(String(o.url || ''))
+      || /^[a-fA-F0-9]{40}$/.test(String(o.infoHash || ''));
+    const isHoster = cand.kind === 'hoster' || o.kind === 'hoster' || debrid.isHosterUrl(o.url);
+    if (!isTorrent && !isHoster) return null;
+    const left = deadline - Date.now();
+    if (left < 2000) return null;
+    const budgetMs = Math.max(700, Math.min(3200, left - 1200));
+    let r = null;
+    try {
+      r = await debrid.resolve(
+        { kind: isTorrent ? 'torrent' : 'hoster', url: o.url, magnet: o.url, infoHash: o.infoHash },
+        { want: ep ? { season: ep.season, episode: ep.episode } : null, budgetMs },
+      );
+    } catch (e) {
+      // debrid.resolve() itself never throws; this is belt-and-braces for a future adapter.
+      r = { url: null, reason: 'debrid failed' };
+    }
+    if (!r || !r.url) {
+      if (r && !r.skipped) {
+        tried.push(labelOf(cand) + ': debrid ' + (r.reason || 'no answer'));
+        log('DEBRID MISS', identity, labelOf(cand), r.reason || 'no answer');
+      }
+      return null;
+    }
+    const value = Object.assign({}, o);
+    value.mode = 'direct';
+    value.kind = r.kind === 'hls' ? 'hls' : 'http';
+    value.url = r.url;
+    value.provider = r.provider;
+    value.providerLabel = r.providerLabel || r.provider;
+    value.expiresAt = r.expiresAt || null;
+    value.debrid = {
+      provider: r.provider || null,
+      providerLabel: value.providerLabel || null,
+      kind: value.kind,
+      expiresAt: value.expiresAt,
+      fileName: r.fileName || null,
+      fileSize: r.fileSize || null,
+      cached: r.cached === true,
+    };
+    if (isTorrent) value.magnet = o.url;
+    value.headers = {};
+    extraWhy.push('debrid: served by ' + (value.providerLabel || 'your provider')
+      + ' as ordinary HTTP, no torrent engine involved');
+    return value;
+  };
+
   for (const cand of queue) {
     const addon = addonOf(cand);
     if (!addon || typeof addon.play !== 'function') continue;
@@ -1448,6 +1515,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
     if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
+
+    // Debrid first: a magnet or a hoster link becomes ordinary HTTP and skips the swarm entirely. If it
+    // says no, the torrent branch asks the gateway exactly as it did before this file existed.
+    const viaDebrid = await tryDebrid(o, cand);
+    if (viaDebrid) { out = viaDebrid; source = cand; break; }
 
     if (cand.kind !== 'torrent') {
       // A service-page link — a Prime Video / Hotstar / Jio detail URL — is not media. It used to be
@@ -1911,7 +1983,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   if (Number.isFinite(source.seeders)) out.seeders = source.seeders;
   // Every copy of this title states zero seeders: that is not a pick that went slightly wrong, it is a
   // title nobody is sharing, and the answer has to say so instead of handing out an unwatchable link.
-  if (candidates.length && candidates.every((s) => s.kind === 'torrent' && s.seeders === 0)) {
+  // A debrid answer is the exception: the provider already has the file, so a torrent with no peers can
+  // still be a perfectly good direct stream and must not be labelled down.
+  if (!out.debrid && candidates.length && candidates.every((s) => s.kind === 'torrent' && s.seeders === 0)) {
     tried.push('every copy of this title states 0 seeders: nobody is sharing any of them');
     extraWhy.push('nobody is seeding any copy of this title (0 seeders everywhere)');
     out.deadSwarm = true;
@@ -1959,8 +2033,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   out.type = kept.type || (out.kind === 'hls' ? 'channel' : 'movie');
   out.live = out.type === 'channel';
   out.title = kept.title || null;
-  out.status = source.status || null;
+  // A provider that returned a URL has already proved the copy exists somewhere reachable, so a source
+  // row that said "down" because nobody was seeding it stops being the answer the player sees.
+  out.status = out.debrid ? 'available' : (source.status || null);
   out.tagline = source.tagline || null;
+  // The one line a source sheet reads. A debrid answer is still ordinary HTTP, but it is worth saying
+  // whose server is sending it: this is the difference between "torrent, waiting for peers" and "ready".
+  if (out.debrid) {
+    const who = out.debrid.providerLabel || 'Debrid';
+    out.tagline = (out.tagline ? out.tagline + ' \u00b7 ' : '') + who;
+  }
   // What the picker rejected on the way here. When playback fails this is the difference between a
   // log line that explains the evening and one that says "no playable source".
   out.tried = tried;
@@ -2102,8 +2184,13 @@ const server = http.createServer(async (req, res) => {
     if (path === '/app/v1/settings' && req.method === 'GET') {
       const options = await catalogOptions();
       return send(res, 200, {
-        settings: settings.get(),
-        defaults: settings.DEFAULTS,
+        // A debrid token is write-only. This shape carries `tokenSet` instead; the settings screen can
+        // say "set" or "not set" and never receives the secret back over the network.
+        settings: settings.redacted(settings.get()),
+        defaults: settings.redacted(settings.DEFAULTS),
+        // The resolver's own view: which providers this build loaded, whether one is configured, and
+        // what it last did. It cannot contain the token.
+        debrid: debrid.status(),
         // The language names are returned so a settings screen can label the codes it is choosing
         // between without carrying its own translation table.
         // One entry per language: this map carries both ISO 639-2/T and the older bibliographic
@@ -2174,8 +2261,17 @@ const server = http.createServer(async (req, res) => {
         addons: effects.addonsResynced + ' remounted',
         rows: next.rows.hidden.length + ' hidden, ' + (next.rows.order.length ? 'owner order' : 'plugin order'),
         categories: next.categories.length + ' (' + next.categories.filter((c) => c.enabled !== false).length + ' on)',
+        // Provider and on/off only: the token itself must never appear in a log, including this one.
+        debrid: next.debrid.enabled
+          ? (next.debrid.provider || 'no provider') + ', token ' + (next.debrid.token ? 'set' : 'missing')
+          : 'off',
       }));
-      return send(res, 200, { ok: true, settings: next, effects });
+      return send(res, 200, {
+        ok: true,
+        settings: settings.redacted(next),
+        debrid: debrid.status(),
+        effects,
+      });
     }
 
     if (path === '/app/v1/profiles' && req.method !== 'POST') {
@@ -2431,7 +2527,7 @@ const server = http.createServer(async (req, res) => {
       // The cast list is the one place a detail page needs a face rather than a name. It is cached per
       // title forever, so this costs a round trip once; a slow network falls back to the addon's names.
       if (kept) {
-        const faces = await castApi.enrich(kept, Math.min(1400, budget));
+        const faces = await castApi.enrich(kept, Math.min(2200, budget));
         if (faces && faces.length) kept.cast = faces;
       }
       send(res, kept ? 200 : 403, kept || { identity, droppedByRule: true });
@@ -2775,6 +2871,10 @@ server.listen(PORT, '0.0.0.0', () => {
   log('rows:', registry.rows.map((r) => r.id + '/' + (r.scope || 'all') + '@' + r.order).join(', '));
   log('rules:', registry.rules.map((r) => r.id + '@' + r.order).join(', '));
   log('gateway:', gateway.status().mode, '-', gateway.status().note);
+  {
+    const d = debrid.status();
+    log('debrid:', d.enabled ? ((d.providerLabel || d.provider || 'no provider') + ' - ' + d.note) : d.note);
+  }
   {
     const ra = readahead.cfg();
     log('readahead:', ra.on
