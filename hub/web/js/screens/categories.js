@@ -15,8 +15,8 @@
 
 import { el, clear, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
-import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
+import { makeRows } from '/ui/js/rows.js';
 
 export function screen(ctx) {
   const root = el('div', { class: 'screen categories' });
@@ -38,18 +38,9 @@ export function screen(ctx) {
   let catalogId = null;  // that provider's catalogue
   let genre = '';        // '' means the whole catalogue
   let busy = false;
+  const rows = makeRows(ctx);
 
   /* ------------------------------------------------------------------ choices */
-
-  function chip(label, on, onclick, extra = null) {
-    const b = el('button', {
-      class: `chip${on ? ' on' : ''}`, type: 'button', 'aria-pressed': on ? 'true' : 'false',
-      text: label,
-    }, extra);
-    b.onclick = onclick;
-    focus.focusable(b);
-    return b;
-  }
 
   function providers() {
     const out = [];
@@ -133,14 +124,14 @@ export function screen(ctx) {
       enabled: true,
       order: categories.length,
     };
-    save(categories.concat([entry]), `${entry.title} added to Home`);
+    return save(categories.concat([entry]), `${entry.title} added to Home`);
   }
 
   function toggle(category) {
     const on = category.enabled !== false;
     const next = categories.map((c) => (c.id === category.id
       ? Object.assign({}, c, { enabled: !on }) : c));
-    save(next, `${category.title} ${on ? 'hidden from Home' : 'shown on Home'}`);
+    return save(next, `${category.title} ${on ? 'hidden from Home' : 'shown on Home'}`);
   }
 
   function move(category, delta) {
@@ -150,12 +141,12 @@ export function screen(ctx) {
     const next = categories.slice();
     next.splice(at, 1);
     next.splice(to, 0, category);
-    save(renumber(next), `${category.title} moved`);
+    return save(renumber(next), `${category.title} moved`);
   }
 
   function remove(category) {
     const next = categories.filter((c) => c.id !== category.id);
-    save(renumber(next), `${category.title} removed`);
+    return save(renumber(next), `${category.title} removed`);
   }
 
   async function rename(category) {
@@ -170,7 +161,7 @@ export function screen(ctx) {
     if (title === null) return;
     const next = categories.map((c) => (c.id === category.id
       ? Object.assign({}, c, { title: String(title).trim().slice(0, 60) }) : c));
-    save(next, 'Category renamed');
+    return save(next, 'Category renamed');
   }
 
   /* ------------------------------------------------------------------- paint */
@@ -186,58 +177,50 @@ export function screen(ctx) {
 
     syncChoice();
     const ids = providers();
-    builder.appendChild(el('div', { class: 'cat-step' },
-      el('span', { class: 'cat-label', text: 'Source' }),
-      el('div', { class: 'cat-chips', 'data-nav': 'h' },
-        ids.map((id) => chip(providerName(id), id === providerId, () => {
-          providerId = id;
-          catalogId = null;
-          genre = '';
-          paintBuilder();
-          focus.focusDefault(builder.querySelector('.chip'));
-        })))));
 
+    /* The add ladder is three dials stacked — source, catalogue, genre — one ring stop each, so it
+       reads like every other choice in the app: the line names what it is and what stands picked, OK
+       opens the wheel, OK again commits. Turning a source re-fills the catalogue under it and the ring
+       steps down to that next line instead of going dark. */
+    const stepTo = (i) => {
+      paintBuilder();
+      const r = builder.querySelectorAll('.li')[i];
+      if (r) focus.focusDefault(r);
+    };
+    rows.pickRow(builder, 'Source', 'whose catalogue this shelf will read',
+      ids, providerId, providerName, (id) => {
+        providerId = id;
+        catalogId = null;
+        genre = '';
+        stepTo(1);
+      });
     const mine = options.filter((o) => o.provider === providerId);
-    builder.appendChild(el('div', { class: 'cat-step' },
-      el('span', { class: 'cat-label', text: 'Catalogue' }),
-      el('div', { class: 'cat-chips', 'data-nav': 'h' },
-        mine.map((o) => chip(catalogLabel(o), o.catalog === catalogId, () => {
-          catalogId = o.catalog;
+    if (mine.length) {
+      rows.pickRow(builder, 'Catalogue', 'which list inside it',
+        mine.map((o) => o.catalog), catalogId,
+        (cat) => catalogLabel(mine.find((x) => x.catalog === cat)),
+        (cat) => {
+          catalogId = cat;
           genre = '';
-          paintBuilder();
-          focus.focusDefault(builder.querySelector('.chip'));
-        })))));
+          stepTo(2);
+        });
+    }
 
     const opt = selectedOption();
     const genres = (opt && opt.genres) || [];
-    if (genres.length) {
-      builder.appendChild(el('div', { class: 'cat-step' },
-        el('span', { class: 'cat-label', text: 'Genre' }),
-        el('div', { class: 'cat-chips', 'data-nav': 'h' },
-          chip('Any genre', !genre, () => {
-            genre = '';
-            paintBuilder();
-            focus.focusDefault(builder.querySelector('.chip'));
-          }),
-          genres.map((g) => chip(g, g === genre, () => {
-            genre = g;
-            paintBuilder();
-            focus.focusDefault(builder.querySelector('.chip'));
-          })))));
+    const genreRow = genres.length;
+    if (genreRow) {
+      rows.pickRow(builder, 'Genre', 'leave it on Any genre to take the whole catalogue',
+        ['', ...genres], genre, (g) => (g === '' ? 'Any genre' : g),
+        (g) => {
+          genre = g;
+          stepTo(3);
+        });
     }
 
     const parts = [providerName(providerId), opt ? catalogLabel(opt) : catalogId];
     if (genre) parts.push(genre);
-    const line = el('div', { class: 'cat-addline', 'data-nav': 'h' },
-      el('span', { class: 'cat-summary', text: parts.filter(Boolean).join(' · ') }),
-      (() => {
-        const b = el('button', { class: 'btn white', type: 'button', text: 'Add category' });
-        b.disabled = !opt;
-        focus.focusable(b);
-        b.onclick = add;
-        return b;
-      })());
-    builder.appendChild(line);
+    rows.openRow(builder, 'Add this category', parts.filter(Boolean).join(' · ') || 'pick a source first', add);
   }
 
   function paintList() {
@@ -249,63 +232,34 @@ export function screen(ctx) {
       }));
       return;
     }
-    categories.forEach((c, index) => {
+    categories.forEach((c) => {
       const opt = optionFor(c);
-      const on = c.enabled !== false;
       const bits = [opt ? opt.providerName : c.provider, opt ? catalogLabel(opt) : c.catalog];
       if (c.genre) bits.push(c.genre);
       if (!opt) bits.push('not published right now');
-      const row = el('div', { class: `cat-row${on ? '' : ' off'}`, 'data-nav': 'h' },
-        el('div', { class: 'cat-body' },
-          el('b', { text: c.title || c.genre || c.catalog }),
-          el('span', { text: bits.filter(Boolean).join(' · ') })));
-
-      const sw = el('button', {
-        class: `sw${on ? ' on' : ''}`, type: 'button', role: 'switch',
-        'aria-checked': on ? 'true' : 'false', 'aria-label': `${c.title || c.id} shown on Home`,
-        title: on ? 'Hide this shelf from Home' : 'Show this shelf on Home',
-      }, el('i'));
-      focus.focusable(sw);
-      sw.onclick = () => toggle(c);
-
-      const up = el('button', {
-        class: 'round', type: 'button', 'aria-label': `Move ${c.title || c.id} earlier`,
-      }, icon('chevUp'));
-      const down = el('button', {
-        class: 'round', type: 'button', 'aria-label': `Move ${c.title || c.id} later`,
-      }, icon('chevDown'));
-      focus.focusable(up);
-      focus.focusable(down);
-      up.disabled = index === 0;
-      down.disabled = index === categories.length - 1;
-      // A disabled arrow is decoration, not a stop: leaving it focusable gives the ring a button that
-      // cannot do anything, which on a remote is indistinguishable from a broken key.
-      if (up.disabled) up.removeAttribute('data-f');
-      if (down.disabled) down.removeAttribute('data-f');
-      up.onclick = () => move(c, -1);
-      down.onclick = () => move(c, 1);
-
-      const renameBtn = el('button', {
-        class: 'btn ghost', type: 'button', text: 'Rename',
-        'aria-label': `Rename ${c.title || c.id}`,
+      // One row, one ring stop; OK asks what to do with the shelf. The switch, the two arrows, Rename
+      // and Delete used to be five stops per row. Backing out of the sheet changes nothing.
+      rows.actionRow(list, c.title || c.genre || c.catalog, bits.filter(Boolean).join(' · '), {
+        valueText: c.enabled !== false ? 'On Home' : 'Hidden',
+        actions: () => {
+          const on = c.enabled !== false;
+          const at = categories.findIndex((x) => x.id === c.id);
+          const acts = [{ label: on ? 'Hide this shelf' : 'Show this shelf on Home', run: async () => { await toggle(c); ringTo(c); } }];
+          if (at > 0) acts.push({ label: 'Move earlier', run: async () => { await move(c, -1); ringTo(c); } });
+          if (at >= 0 && at < categories.length - 1) acts.push({ label: 'Move later', run: async () => { await move(c, 1); ringTo(c); } });
+          acts.push({ label: 'Rename', run: async () => { await rename(c); ringTo(c); } });
+          acts.push({ label: 'Delete', danger: true, run: () => { remove(c); } });
+          return acts;
+        },
       });
-      focus.focusable(renameBtn);
-      renameBtn.onclick = () => rename(c);
-
-      const del = el('button', {
-        class: 'round', type: 'button', 'aria-label': `Delete ${c.title || c.id}`,
-        title: 'Delete this category',
-      }, icon('trash'));
-      focus.focusable(del);
-      del.onclick = () => remove(c);
-
-      row.appendChild(sw);
-      row.appendChild(up);
-      row.appendChild(down);
-      row.appendChild(renameBtn);
-      row.appendChild(del);
-      list.appendChild(row);
     });
+  }
+
+  /** After a shelf's action redraws the list, find that shelf again and put the ring back on it. */
+  function ringTo(c) {
+    const i = categories.findIndex((x) => x.id === c.id);
+    const r = [...list.querySelectorAll('.li')][Math.max(0, i)];
+    if (r) focus.focusDefault(r);
   }
 
   function paint() {
@@ -328,7 +282,7 @@ export function screen(ctx) {
       categories = Array.isArray(setting.categories) ? setting.categories.map((c) => Object.assign({}, c)) : [];
       options = Array.isArray(s && s.catalogOptions) ? s.catalogOptions : [];
       paint();
-      focus.focusDefault(builder.querySelector('.chip') || list.querySelector('.sw'));
+      focus.focusDefault(builder.querySelector('.li') || list.querySelector('.li'));
     } catch (e) {
       head.appendChild(el('p', {
         class: 'note',
@@ -337,7 +291,7 @@ export function screen(ctx) {
     }
   })();
 
-  root.__defaultFocus = () => builder.querySelector('.chip') || list.querySelector('.sw');
+  root.__defaultFocus = () => builder.querySelector('.li') || list.querySelector('.li');
   root.__dispose = () => {};
   return root;
 }
