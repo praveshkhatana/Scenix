@@ -29,8 +29,8 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] When a tile expands, its row scrolls so the tile stays fully visible and neighbours dim slightly, like Netflix. — after the class lands, the shelf scrolls right enough that the grown tile's edge is inside the row; `.cards:has(.card.dwell)` dims the other tiles to .55 with a 160 ms opacity fade. Verified live: neighbour computed opacity 0.55 while one tile dwells.
 
 ## D. Player
-- [ ] Read `player.controlsHideMs` from theme.json instead of the hardcoded 5000 ms (screens/player.js:42), and never hide chrome while the ring sits inside it (player.js:266-278 hides regardless of focus).
-- [ ] Seek honors tokens: `seekBackMs=10000` / `seekForwardMs=30000` (today a fixed ±10 s), with hold-to-repeat stepping while the key is down.
+- [x] Read `player.controlsHideMs` from theme.json instead of the hardcoded 5000 ms (screens/player.js:42), and never hide chrome while the ring sits inside it (player.js:266-278 hides regardless of focus).
+- [x] Seek honors tokens: `seekBackMs=10000` / `seekForwardMs=30000` (today a fixed ±10 s), with hold-to-repeat stepping while the key is down.
 - [ ] Next-episode card gets the countdown number (uses the unused `autoplayCountdownMs` token) and autoplay-into-next with an Undo window for series.
 - [ ] Seek bar scrub preview: time ghost under the ring while Left/Right seeks; thumbnails if the hub can serve them.
 - [ ] Audio menu gains an explicit default/off-equivalent row symmetric with Subtitles' "Off".
@@ -64,3 +64,5 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Shelf centering for the walking tile (A2, centering half; easing deliberately kept instant per panel perf work) — commit 7568ba6
 - [x] Billboard token crossfade + copy fade + dwell fallback fix (B1, B2) — commit 5a71bbb
 - [x] Dwell expand 250 ms + trailer 1 s + focusable tile actions + row scroll/dim (C1-C3) — commit f16585f
+- [x] Chrome hide reads `player.controlsHideMs` and the ring inside the chrome re-arms instead of being stranded (D1) — live timeline sampled: visible 13+ s while focused, faded ~6 s after blur
+- [x] Seek tokens + hold-repeat stepping (D2) — landed on main as commit 09a81d7 by another session; box verified there
