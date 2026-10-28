@@ -43,7 +43,7 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 
 ## F. The remaining screens get the settings remote standard
 (whole-row list items with value + chevron; dial for numbers/single choice; checklist for multi; actions modal where several verbs exist; inline whole-row toggle for one switch.)
-- [ ] Channels screen: convert chip filters, corner switches and round steppers (channels.js:95-187) to rowShell/pickRow/actionRow.
+- [x] Channels screen: convert chip filters, corner switches and round steppers (channels.js:95-187) to rowShell/pickRow/actionRow.
 - [ ] Categories builder: convert the chip ladder and per-row sw/up/down/Rename/Delete (categories.js:178-309) to the same rows + actions modal.
 - [ ] Manage person sheet: replace old line()+text buttons and radioSet chips (manage.js:142-223) with actionRow/pickRow.
 - [ ] Add-profile: kind/age chips → pickRow dial, languages chipSet → multiRow checklist (add.js:119-171).
@@ -73,3 +73,4 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Episodes as a vertical list — number, still, name, runtime and the synopsis the hub actually sends (E2) — commit 736ac3a, live screenshot on a 7-episode series: 8 rows with synopses and stills
 - [x] Seasons as one settings-style row + wheel dial instead of numbered chips (E3) — commit 4def596, live probes on a 3-season stub: row shows "Season 3 · 4 episodes", Down turns to Season 2, OK refills the list and moves the ring, Back cancels untouched
 - [x] More-like-this honest empty state (E4): an empty pool says so under its heading instead of vanishing, and a thin pool still gets the row (commit 05ff3ba, live probes on stubbed shelves: 0 lookalikes → "This hub has not found anything similar yet.", 2 → a short row)
+- [x] Channels screen on the remote standard (F1): shared js/rows.js (pickRow/multiRow/actionRow from settings), Browse as a dial, group switches as one checklist, each channel one row whose OK asks Hide/Show/Move; the ring returns to its row after every commit (commit 8fa4f60, live probes on a stub playlist: dial filtered to News, checklist turned Sports off with "News" left in the value, hide verb flipped Alpha News to Hidden)
