@@ -26,14 +26,15 @@ import { api } from '/ui/js/api.js';
 import { paintAvatar } from '/ui/js/avatars.js';
 import { openAvatarPicker } from '/ui/js/avatarmodal.js';
 import { profileBadges, profileDefaults, profileEditor, profileNote, refreshProfiles } from '/ui/js/profileedit.js';
-import { line, radioSet, toggle, value } from '/ui/js/widgets.js';
+import { makeRows } from '/ui/js/rows.js';
 
 export function screen(ctx) {
   const wrap = el('div', { class: 'screen pmanage' });
+  const rows = makeRows(ctx);
   // The hub's vocabulary, asked for once and cached for as long as this screen is open. An empty hub answer
   // simply means fewer controls, never a wrong default invented here.
   let hub = { ageOptions: [] };
-  const rows = el('div', { class: 'prows' });
+  const people = el('div', { class: 'prows' });
 
   const head = el('div', { class: 'page-head' },
     el('h1', { text: 'Manage profiles' }),
@@ -80,8 +81,8 @@ export function screen(ctx) {
   }
 
   function paintRows() {
-    clear(rows);
-    session.profiles.forEach((p, i) => rows.appendChild(row(p, i)));
+    clear(people);
+    session.profiles.forEach((p, i) => people.appendChild(row(p, i)));
     const add = el('button', { class: 'mrow madd', type: 'button', 'aria-label': 'Add profile' },
       el('div', { class: 'a' }, icon('plus')),
       el('div', { class: 'mbody' },
@@ -90,7 +91,7 @@ export function screen(ctx) {
       el('span', { class: 'mgo' }, icon('plus')));
     add.onclick = () => ctx.navigate('add');
     focus.focusable(add);
-    rows.appendChild(add);
+    people.appendChild(add);
 
     /* Which of the hub's adult rules are actually armed, in the household's own words. The hub decides that on
        every request — a screen cannot know whether some other box has just set a number — so this sentence is a
