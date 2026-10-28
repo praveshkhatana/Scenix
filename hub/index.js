@@ -2122,8 +2122,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   let audioPlan = null;
   if (donor) {
     audioUrl = donor.target.url;
+    // Null means "we did not measure this donor's stream index": the remux then maps its first audio
+    // stream. Coercing that to 0 would map stream 0 of a video copy, which is the picture, not audio.
     audioOrd = audioOrdinal(donor.source, desiredLang);
-    if (audioOrd == null) audioOrd = 0;
     audioPlan = audioPlanFor(donor.source, desiredLang);
     const track = {
       id: 'a:1',

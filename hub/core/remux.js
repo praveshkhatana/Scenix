@@ -181,8 +181,13 @@ function baseArgs(p, plan, format) {
   }
   args.push('-map', '0:v');
   if (plan !== 'none') {
+    // The track ids the hub publishes are ffprobe's *global* stream indexes (`a:3` on a file whose
+    // third stream is audio), so a donor is mapped as `1:3`, not `1:a:3` — the latter means "the
+    // fourth audio stream" and matched no streams on a real Hindi donor, failing every mix. An
+    // unmeasured donor falls back to its first audio stream, never to stream 0 (which is the video
+    // on a video copy used as an audio donor).
     args.push('-map', p.audioUrl
-      ? '1:a:' + (p.audioOrd == null ? 0 : p.audioOrd)
+      ? (p.audioOrd == null ? '1:a:0' : '1:' + p.audioOrd)
       : (p.audioIdx != null ? '0:' + p.audioIdx : '0:a:0'));
   }
   if (p.subIdx != null) args.push('-map', '0:' + p.subIdx);
@@ -274,7 +279,10 @@ function serve(req, res, u, cors, tracksLookup) {
     rejected++;
     return sendJson(res, cors, 400, { error: 'remux audio donor needs an absolute http url in au' });
   }
-  const audioOrd = audioUrl ? (streamIndex(u.searchParams.get('ao'), 'a') || 0) : null;
+  // An absent `ao` is not index 0: it means the hub did not measure the donor, and 0 on a video copy
+  // is its picture. Keep it absent so baseArgs maps the donor's first *audio* stream.
+  const aoParam = u.searchParams.get('ao');
+  const audioOrd = audioUrl ? (aoParam == null ? null : (streamIndex(aoParam, 'a') ?? 0)) : null;
   const requestedPlan = String(u.searchParams.get('ap') || '').toLowerCase();
   const audioPlan = ['copy', 'aac', 'none'].includes(requestedPlan)
     ? requestedPlan
@@ -641,7 +649,7 @@ function hlsUrl(p) {
       startMs: p.startMs || 0,
       dir,
       audioUrl: p.audioUrl || '',
-      audioOrd: p.audioUrl ? (p.audioOrd == null ? 0 : p.audioOrd) : null,
+      audioOrd: p.audioUrl ? p.audioOrd : null,
       audioPlan: p.audioUrl ? (p.audioPlan || 'aac') : '',
       headers: p.headers || {},
       audioHeaders: p.audioHeaders || {},

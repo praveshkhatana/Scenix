@@ -612,7 +612,12 @@ class PlayerActivity : Activity() {
             return true
         }
         val groups = p.currentTracks.groups.filter { it.type == type }
-        val group = findGroup(groups, id) ?: return false
+        // The hub's ids are ffprobe's *global* stream indexes (`a:3` on a file whose third stream is
+        // audio), not positions and not what media3 numbers its groups. The answer's list is in stream
+        // order, so the row's place in it is the group to select. The old `a:3` -> group 3 lookup
+        // silently left a Hindi track unselected on a Telugu/Tamil/Hindi file.
+        val ordered = if (type == C.TRACK_TYPE_AUDIO) audioTracks else embeddedSubs
+        val group = findGroup(groups, id, ordered) ?: return false
         b.setTrackTypeDisabled(type, false)
             .clearOverridesOfType(type)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(0)))
@@ -638,7 +643,9 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun findGroup(groups: List<Tracks.Group>, id: String): Tracks.Group? {
+    private fun findGroup(groups: List<Tracks.Group>, id: String, ordered: JSONArray?): Tracks.Group? {
+        val position = positionOf(ordered, id)
+        if (position >= 0) groups.getOrNull(position)?.let { return it }
         if (id.startsWith("hub:")) {
             val index = id.removePrefix("hub:").toIntOrNull() ?: return null
             val sub = hubSubs.optJSONObject(index) ?: return null
@@ -1323,8 +1330,15 @@ class PlayerActivity : Activity() {
         ((id?.substringAfter(':')?.toIntOrNull() ?: 1) - 1).coerceAtLeast(0)
 
     private fun indexOfTrack(arr: JSONArray, id: String?): Int {
+        val pos = positionOf(arr, id)
+        return if (pos >= 0) pos else 0
+    }
+
+    /** -1 when the id is not in this list, so a positional miss can fall back to id matching. */
+    private fun positionOf(arr: JSONArray?, id: String?): Int {
+        if (arr == null || id == null) return -1
         for (i in 0 until arr.length()) if (str(arr.optJSONObject(i), "id") == id) return i
-        return 0
+        return -1
     }
 
     private fun subsIndex(id: String?): Int {
