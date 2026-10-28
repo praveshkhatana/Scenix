@@ -270,6 +270,15 @@ ul { list-style: none; }
   background: linear-gradient(135deg, #8b95a3, #2b3038);
 }
 .avatar-chip.kids { background: linear-gradient(135deg, var(--kids), var(--kids-deep)); }
+/* The chip carries the profile's real face, painted by the same painter the tiles use: `div.a` is the
+   face container everywhere, so it fills the chip and clips the art to the badge radius. */
+.avatar-chip .a {
+  position: relative; width: 100%; height: 100%; overflow: hidden;
+  display: grid; place-content: center; border-radius: inherit;
+}
+.avatar-chip .a .av-art, .avatar-chip .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.avatar-chip .a .av-photo { object-fit: cover; }
+.avatar-chip .a .ini { font-size: calc(15px * var(--s)); font-weight: 800; color: #fff; }
 
 /* ==========================================================================
    Focus — the same thing whether the eye arrives by remote or by mouse

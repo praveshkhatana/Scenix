@@ -20,6 +20,7 @@ import * as state from '/ui/js/state.js';
 import { icon } from '/ui/js/icons.js';
 import { entryField } from '/ui/js/keyboard.js';
 import { initials } from '/ui/js/format.js';
+import { paintAvatar } from '/ui/js/avatars.js';
 
 /* Screens are plugins too: the route table is the only place that knows a screen exists. */
 const SCREENS = {
@@ -428,8 +429,17 @@ function setNavActive(route) {
   const p = state.session.profile;
   const chip = nav.querySelector('.avatar-chip');
   if (chip && p) {
-    chip.textContent = '';
-    chip.appendChild(el('span', { class: 'ini', text: initials(p.name) }));
+    // The bar carries the actual face, not initials standing in for it: the switch animation lands a
+    // person's tile in this corner, and initials arriving where a face just flew in reads as the face
+    // vanishing. Same container shape as the profile tiles (`div.a` + `.ini` fallback), same painter.
+    if (chip.dataset.for !== String(p.id)) {
+      chip.dataset.for = String(p.id);
+      clear(chip);
+      const idx = (state.session.profiles || []).findIndex((x) => String(x.id) === String(p.id));
+      const face = el('div', { class: 'a' }, el('span', { class: 'ini', text: initials(p.name) }));
+      chip.appendChild(face);
+      paintAvatar(face, p, idx >= 0 ? idx : 0);
+    }
     chip.className = `avatar-chip${state.isKids(p) ? ' kids' : ''}`;
   }
 }
