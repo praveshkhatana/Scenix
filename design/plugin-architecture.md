@@ -1,12 +1,15 @@
 # Plugin architecture — "change anything without touching the rest"
 
-Two plugin hosts, one contract between them:
+Scenix has two plugin hosts and one thin shell:
 
-- **The hub** (`work/iptv/hub/`) is the host for **content**: providers, rows, rules.
-- **The app** (`work/sony-bravia-vu1/app/`) is the host for **presentation**: cards, screens, player behaviour, theme.
+- **The hub** (`hub/`) is the host for **content**: providers, rows, rules.
+- **The web interface** (`hub/web/`) is the host for **presentation**: screens, cards, rows and player
+  chrome. It runs in a browser and in the television's WebView from the same files.
+- **The Android app** (`app/`) is not a second front end. It finds a backend, hosts that page, and
+  provides a native Media3 surface underneath it.
 
-Nothing else is hardcoded. A new live source, a new row, a new card style, a new restriction — each is one new
-file plus one registry line; no existing file's logic changes.
+Nothing else is hardcoded. A new live source, a new row, a new card style, a new restriction or a new
+screen is one new file plus one registry line; no existing file's logic changes.
 
 ## 0. Product shape
 
@@ -16,9 +19,12 @@ file plus one registry line; no existing file's logic changes.
                               ▼
                      H U B  (host it anywhere)
                               │
+                  serves /app/v1 and the single web UI
+                              │
               ┌───────────────┼───────────────┐
               ▼               ▼               ▼
-          TV APP          WEB APP         MOBILE APP
+        TV SHELL          ANY BROWSER      PHONE BROWSER
+   (WebView + Media3)     (same page)      (same page)
 ```
 
 Two rules make that shape possible, and nothing may violate them:
@@ -26,10 +32,11 @@ Two rules make that shape possible, and nothing may violate them:
 1. **Content enters only through addons.** The hub has no hardcoded source. Cinemeta and Torrentio are
    *installed addons* (seeded in `data/addons.json`), exactly like community ones — added, configured,
    disabled and removed through `GET/POST/DELETE /app/v1/addons`, hot, without a restart.
-2. **Clients leave only through `/app/v1`.** The API is versioned, JSON, CORS-enabled and client-agnostic:
-   the same endpoints serve the TV app, a web player and a phone. No payload contains a client-specific
-   assumption, and no client-specific word (including the name of the ecosystem our addons came from)
-   appears in a response — an addon's own name is data, our product's naming is ours.
+2. **Clients leave only through `/app/v1`.** The API is versioned, JSON, CORS-enabled and
+   client-agnostic: the same endpoints serve the TV shell, a desktop browser and a phone. No payload
+   contains a client-specific assumption, and no client-specific word (including the name of the
+   ecosystem our addons came from) appears in a response — an addon's own name is data, our product's
+   naming is ours.
 
 ## 1. Item model (the only shared data shape)
 
@@ -54,21 +61,21 @@ Two rules make that shape possible, and nothing may violate them:
 }
 ```
 
-`identity` is the merge key (`imdb:tt…`, else `norm:<slug>-<year>`). The app never sees duplicates.
+`identity` is the merge key (`imdb:tt…`, else `norm:<slug>-<year>`). No screen ever sees duplicates.
 
-## 2. Hub plugin host (`work/iptv/hub/`)
+## 2. Hub plugin host (`hub/`)
 
 Auto-loaded by directory scan — **adding a file is the whole integration step**:
 
 ```
 hub/
-  index.js          http server + /app/v1 + addon-bridge compat routes   (never edited for new plugins)
-  core/registry.js  readdir providers|rows|rules, validate, sort     (never edited)
+  index.js          http server + /app/v1 + addon-protocol compat routes   (never edited for new plugins)
+  core/registry.js  readdir providers|rows|rules, validate, sort           (never edited)
   core/store.js     JSON persistence: addedAt, progress, profiles
   core/merge.js     dedupe by identity, rank sources
   providers/*.js    one file per content source
-  rows/*.js         one file per home row
-  rules/*.js        one file per filter/annotation (language, kids, cap)
+  rows/*.js         one file per home shelf
+  rules/*.js        one file per filter/annotation (language, kids, maturity, size, ranking)
 ```
 
 Contracts (CommonJS, plain objects — no framework):
@@ -97,55 +104,90 @@ module.exports = {
 }
 ```
 
-Rows to ship: `continue` (10), `top10` (20), `justadded` (30), `newreleases` (40), `live` (50),
-`kids.yt` (20/kids), `kids.school` (30/kids). Rules: `language-allowlist`, `kids-allowlist`, `size-cap`.
-Providers: `iptv-org`, `hub-yt` (the existing YouTube code, moved), `addon-bridge` (proxy to Cinemeta /
-size-capped Torrentio / WatchHub for titles, configured by a URL list).
+Shipped providers: `live-tv`, `local-files`, `kids-yt` (YouTube is a provider, not a special case).
+Shipped rows are one file each: `continue`, `hero`, `top10`, `justadded`, `newreleases`, `live`,
+`genres`, `installed`, `latenight`, the `kids_*` family and the `taste_*` shelves.
+Rules: `language_allowlist`, `kids_allowlist`, `maturity`, `size_cap`, `source_ranking`.
 
-HTTP surface (the community addon routes stay, so any addon-protocol client keeps working untouched):
+HTTP surface (the addon-protocol routes stay, so any addon-protocol client keeps working untouched):
 
 ```
-GET  /app/v1/manifest                 rows, cards, rules, providers, theme id
+GET  /app/v1/manifest                 rows, cards, rules, providers, theme id, capabilities
 GET  /app/v1/home?profile=<id>        { rows:[ { id, title, card, items[] } ] }
 GET  /app/v1/row/<rowId>?profile=<id> one row (scrolling)
 GET  /app/v1/search?q=&profile=       merged + deduped
-GET  /app/v1/meta/<identity>          item + all sources
-POST /app/v1/play                     { identity, provider } -> { url, headers, kind }
+GET  /app/v1/meta/<identity>          item + all sources + cast + certificate
+POST /app/v1/play                     { identity, profile, source? } -> ranked stream answer
+POST /app/v1/switch                   same body; ignores the measurement cache
 POST /app/v1/progress                 { identity, positionMs, profile }
-GET  /app/v1/profiles                 profiles + per-profile rules
-GET  /healthz                         per-provider counts
+GET  /app/v1/profiles                 profiles + per-profile prefs and rules
+GET  /app/v1/prefs?profile=<id>       per-profile playback and adult switches
+POST /app/v1/prefs                    writes those switches (profile in the body)
+GET  /app/v1/subs/<identity>          merged subtitles
+GET  /app/v1/trailer/<identity>       resolved trailer for previews
+GET  /app/v1/settings                 the owner's household settings
+GET  /healthz                         per-provider counts and failed plugins
 ```
 
-## 3. App plugin host (`work/sony-bravia-vu1/app/`)
+Capabilities in the manifest (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `search`, `subtitles`,
+`debrid` when a provider token is configured, …) are the **only** thing the interface may branch on.
+Anything a backend cannot do is absent from the UI, not broken in it.
 
-Kotlin, `minSdk 26`, Views + RecyclerView (no Compose — 2 GB / 32-bit TV), Media3 ExoPlayer, no analytics.
+## 3. Interface plugin host (`hub/web/`)
+
+The interface is ordinary ES modules served by the hub. Two registries make it extensible:
 
 ```
-core/    Plugin.kt (the interfaces) · Registry.kt (typed maps sorted by order)
-         HubClient.kt · Models.kt · Theme.kt (tokens from JSON)
-plugins/ rows/   RowPlugin(id, cardType, layout, fetch)
-         cards/  CardPlugin(cardType, viewHolderFactory)   poster | channel | continue | hero
-         rules/  RulePlugin(applyItem | applyRow)          client-side: hide-rows, dedupe guard
-         player/ PlayerPlugin(kind)                        hls | dash | http | torrent
-         nav/    ScreenPlugin(id, title, route)            Home | Live | Movies | Series | Kids | Search
-         theme/theme.json                                  Scenix-dark tokens
-PluginCatalog.kt  <- the ONE file naming built-ins; new plugin = new file + one line here
+hub/web/js/
+  app.js          boot, profile gate, route table, BACK stack     (edited only to add a screen)
+  plugins.js      CARDS and ROWS maps + the shared card skeleton  (edited only to add a renderer)
+  screens/*.js    home · detail · player · search · settings · profiles · channels ·
+                  categories · add · manage
+  player.js       the playback element (HTML5 on a browser, window.Scenix on TV)
+  video.js        the one decoder used for previews and the player
+  stall.js        the freeze/heal rule, shared by browser and TV
+  theme.js        tokens from the manifest / CSS custom properties
+  css/            app.css, screens.css, hero.css — measured 10-foot layout
 ```
 
-The app renders whatever `/app/v1/home` returns and holds **no content knowledge at all** — no channel
-lists, no genres, no source names. A new row or source shows up with no app change at all; only a brand-new
-*card visual* needs a rebuild.
+A screen is added to the lazy `ROUTES` map in `app.js`; a shelf or card is a `registerRow` /
+`registerCard` call in `plugins.js`. A new shelf shape therefore does not edit `home.js`, and a hub
+that starts sending an unknown `card` falls back to the poster rail instead of breaking the page.
 
-## 4. What "change anything later" costs in practice
+The same files reach every surface:
+
+- a browser loads `http://<hub>:8788/`;
+- the TV shell loads the same URL in a WebView;
+- standalone serves the bundled copy of the same tree on loopback.
+
+There is no second implementation of Home, Detail, Search or the player to keep in step.
+
+## 4. Android app (`app/`) — shell and setup only
+
+Kotlin, `minSdk 26`, Views (no Compose — 2 GB / 32-bit TV), Media3 ExoPlayer, no analytics.
+
+```
+core/               HubClient · Models · Prefs · HubDiscovery · HubWatch · Format · Views
+plugins/nav/        PairingScreen — first-run hub discovery, manual address, or standalone
+WebShellActivity    the product: WebView page + Media3 surface + window.Scenix bridge
+PluginCatalog.kt    names the one remaining screen
+```
+
+The app holds **no content knowledge and no product screens**. It answers three questions: which
+backend, how to paint a video the page asks for, and where a `tv://` link goes. `PluginCatalog` exists
+so setup is still a plugin, not so the native UI can grow back.
+
+## 5. What "change anything later" costs in practice
 
 | Change | Touch |
 |---|---|
-| New live source (another playlist URL) | `hub/providers/x.js` + restart hub. No app change. |
-| New "Punjabi Classics" row | `hub/rows/punjabiclassics.js`. No app change. |
-| New kids rule (e.g. nothing newer than 1995 for one profile) | `hub/rules/retro.js`. No app change. |
-| Card look (radius, badge, bigger posters) | `app/plugins/cards/` + `theme.json`. |
-| Focus animation / spacing / light theme | `theme.json` only. |
-| Swap the torrent provider | provider file + `size-cap` rule. |
-| New screen (Sports, Music) | `app/plugins/nav/` + a hub row. |
+| New live source (another playlist URL) | `hub/providers/x.js` or a settings change. No client change. |
+| New "Punjabi Classics" row | `hub/rows/punjabiclassics.js`. No client change. |
+| New kids rule (e.g. nothing newer than 1995 for one profile) | `hub/rules/retro.js`. No client change. |
+| Restyle the ranked shelf | one `registerRow` in `hub/web/js/plugins.js`. |
+| Card look (radius, badge, bigger posters) | `hub/web/css/` + the card renderer. |
+| Focus animation / spacing / palette | `hub/web/app.css` tokens, then rebuild the APK only if the bundled offline copy must match. |
+| New screen (Sports, Music) | `hub/web/js/screens/x.js` + one line in the `ROUTES` table + a hub row. |
+| Swap the torrent provider | provider/addon configuration + `size_cap`. |
 
 Nothing in that list edits an existing plugin's logic — that is the requirement.

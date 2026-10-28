@@ -1,8 +1,8 @@
 # Playback strategy — making free sources feel like Scenix
 
 Written after the owner asked: *"magnets can't play on a 2 GB TV without a torrent engine — why?
-how do the existing apps handle it? can a PlayerPlugin do it better? use players that already exist."*
-Plus their content preference and a reference web player (`a reference web player`).
+how do the existing apps handle it? can a player plugin do it better? use players that already exist."*
+Plus their content preference and a reference web player.
 
 ## 1. What a magnet actually is
 
@@ -47,7 +47,8 @@ Every `sources[]` entry is scored and **sorted best-first**, each with a `why[]`
 (`["Hindi audio", "720p adaptive ladder", "no size cap"]`). The order of enforcement:
 language allow-list → size cap → bitrate ceiling → audio-language preference → quality → size.
 Torrents are never removed, but rank below an HTTP source of comparable quality, because they
-have no ladder. One tap = one play; the "Play from" list is the ranked array, not a hunt.
+have no ladder. One tap = one play; the ranked array is the **Source** sheet in the player, not a
+second decision on the detail page.
 
 **Layer 1 — prefer sources that are already streams.** Community addons that return direct
 HTTP/HLS (WatchHub-style scrapers, our live playlists, curated YouTube) *are* adaptive and
@@ -56,46 +57,64 @@ HTTP/HLS (WatchHub-style scrapers, our live playlists, curated YouTube) *are* ad
 **Layer 2 — failover in the player (the multi-source failover pattern).**
 The reference player offers `Auto`, `Auto (Mirror 1)`…`Auto (Mirror 5)`: the same title from
 several sources, with automatic switching. We copy it with our word — **Source**:
-if a stall exceeds ~6 s or Media3 reports an unsupported/fatal format, switch to the
+if a stall exceeds ~6 s or the decoder reports an unsupported/fatal format, switch to the
 next-ranked source **at the same position**, toast `Switched to Source 2 — first one stalled`,
 keep going, and show the current source + its `why[]` in the overlay. Cap = list length.
-This is the single biggest smoothness win, and it costs no new dependency.
+This is the single biggest smoothness win, and it costs no new dependency. The web player owns this
+logic; on a television it runs inside the shell and the same decisions reach the native Media3
+surface through `window.Scenix`.
 
 **Layer 3 — torrents, when they are the only option.**
-`PlayerPlugin` registry, in order of preference:
+`/app/v1/play` returns a `mode`, and the web player/Media3 bridge opens it accordingly:
 
-1. `Media3HttpPlayer` — progressive HTTP + range seeking (default, `mode:"direct"`).
-2. `Media3HlsPlayer` / `Media3DashPlayer` — adaptive ladders (live TV, HTTP addons).
-3. `GatewayPlayer` — `mode:"gateway"`: the hub streams a torrent as seekable HTTP. To the client
-   this is just another HTTP source, so it works on TV **and** web **and** mobile. The hub ships
-   the seam now (`core/gateway.js`, `GATEWAY=off|http`) and the engine later, as an explicit,
-   optional, documented dependency — the hub stays dependency-free by default.
-4. `ExternalEnginePlayer` — hand the magnet to a companion torrent app via intent
-   (resolve an activity, never hardcode a package). Keeps GPL engines out of our process.
+1. `direct` — progressive HTTP + range seeking (the default).
+2. `hls` / `dash` — adaptive ladders (live TV, HTTP addons).
+3. `gateway` — the hub streams a torrent as seekable HTTP. To the client this is just another HTTP
+   source, so it works on TV **and** web **and** mobile. The hub ships the seam
+   (`core/gateway.js`, `GATEWAY=off|http`) and the engine later, as an explicit, optional,
+   documented dependency — the hub stays dependency-free by default.
+4. `external` — hand the URL to another app via intent when the device has one that can play it.
 
 `mode` is the only thing that changes when a gateway is enabled: `sources[]`, `POST /app/v1/play`
-and the UI stay identical. That is the contract.
+and the UI stay identical. That is the contract. A browser that cannot draw the codec gets a
+server-side re-wrap (`/app/v1/remux`, video copied, never transcoded); the television plays the file
+as it sits on disk.
 
 ## 4. Player surface (copied from the reference, made 10-foot)
 
-D-pad settings panel: **Source** (Auto + ranked list) · **Subtitles** (embedded + hub-served from
-`GET /app/v1/subs/<identity>?lang=hin,eng,pan`, side-loaded into Media3) · **Audio** (tracks,
-default = profile's language order) · **Speed** (0.75–1.5) · **Aspect** · **Autoplay next** ·
-quality ceiling readout (`2.4 Mbps · ≤720p · 30 s buffer`). Each row is one `SettingsRow` plugin.
+D-pad settings sheet, opened with **Down** or the gear: **Source** (Auto + ranked list) · **Subtitles**
+(embedded + hub-served from `GET /app/v1/subs/<identity>?lang=hin,eng,pan`, side-loaded into Media3) ·
+**Audio** (tracks, default = profile's language order) · **Speed** (0.75–1.5) · quality ceiling readout
+(`2.4 Mbps · ≤720p · 30 s buffer`). The current certificate and content notes sit in the HUD, and live
+TV replaces the transport's next/previous with channel stepping.
+
+### Card previews
+
+A focused tile expands after 250 ms and, after 1500 ms of rest, plays its trailer in place. The hub
+hands over the short raw trailer URL (not the redirecting watch page); the proxy follows the CDN
+redirect, and the element is created with `muted: false`, so the preview has sound and does not depend
+on the viewer pressing anything. Moving focus frees the decoder and restores the still.
 
 ## 5. Recovery — what happens when a copy stops moving
 
 A dead stream and a finished film arrive at the player identically: the connection closes. So the hub
 states the length of the copy it just handed over (`durationMs` on the play answer, measured from the
 file itself), and one client module decides what to do about it — `hub/web/js/stall.js`, used unchanged
-by the browser player and the TV's native shell, verified by `scripts/check-stall.mjs`.
+by the browser player and the TV shell (both run the same page), verified by `scripts/check-stall.mjs`.
 
 | token | value | meaning |
 | --- | --- | --- |
 | `STALL_MS` | 6000 | how long "no movement while something should be playing" counts as stuck |
+| `STARTUP_MS` | 30000 | the grace a cold copy gets before the stall rule applies at all |
 | `TRUNCATION_GRACE_MS` | 20000 | how close to the stated length an `ended` is allowed to land before it is believed |
 | `HEAL_COOLDOWN_MS` | 120000 | minimum gap between silent reloads of one copy |
 | `HEALS_PER_COPY` | 1 | how many times a copy gets rescued before the viewer is asked |
+
+The television panel is the reason the startup grace exists: a cold copy can spend 10–25 s fetching its
+first byte, and the player's own *Preparing this copy* screen is already the honest thing to show. A
+stall card over a film that has never started, which then outlives the wait, is worse than no card. The
+rule therefore only counts a playhead that has actually moved, and a moving picture clears the card
+without waiting for a keypress.
 
 Order of mercy: reload the same copy once, at the position it stopped, silently. If bytes return, say
 nothing — the viewer never learns there was a problem. If they do not, ask, in the viewer's language and
@@ -152,7 +171,10 @@ this box may hold in memory is the owner's call about their own hardware.
 
 ## 6. Explicitly not doing
 
-- No paid "debrid" service — the owner is not investing money, so the gateway runs on our own box.
-- No GPL engine linked into the MIT app — engine is either the hub (server-side) or a separate app.
+- No paid Scenix tier and no bundled subscription. An owner who already has a debrid account may
+  optionally let the hub exchange a magnet for ordinary HTTP through it; with no account the gateway
+  path is exactly as described above. See [debrid.md](debrid.md).
+- No GPL engine linked into the MIT app — the engine is either on the hub (server-side) or a separate
+  app.
 - No promise that a dead swarm plays smoothly. The UI says *why* a source was picked and shows the
   risk chip, so a stall is explained, not mysterious.

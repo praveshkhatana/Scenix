@@ -57,9 +57,10 @@ catalogue DB. The app is thin: pair, browse, play.
 
 ### Standalone mode
 One app, no server, nothing to install twice — the simple shape. The app runs the contract itself,
-talks to addons directly, keeps its own cache and DB on device. Trade-offs, stated honestly: no
-gateway, so a torrent must be handled on the device; no shared cache; heavier on a 2 GB panel. That
-is why the hub remains the recommended shape and standalone is the easy one, not the better one.
+talks to addons directly, and serves the same bundled interface on a loopback port. Trade-offs, stated
+honestly: no torrent gateway and no torrent engine on the device, so only direct HTTP/HLS and local
+sources play; no shared cache; heavier on a 2 GB panel. That is why the hub remains the recommended
+shape and standalone is the easy one, not the better one.
 
 Both shapes have run on the same panel in the same build, with only an owner setting changed between
 them. In hub mode the shell loaded the paired hub's address and played through the gateway. In
@@ -82,11 +83,15 @@ A user must never have to edit a file or set an environment variable to make Sce
 
 ### Which surface a device draws
 
-The same decision belongs to the device, so it is stored there: an Android TV picks its front end in
-the app's own **Settings → Interface** and defaults to the web UI, with the built-in screens kept as
-the alternative for a panel that prefers them or cannot host a page. `tv://` links still resolve
-against the built-in stack, because such a link names a screen of that stack. Nothing else changes
-between the two: same backend, same contract, same player underneath.
+There is one. The Android app is a **thin shell**: `WebShellActivity` hosts the hub's page and a Media3
+surface plays the video underneath it. The only native screens left are first-run setup — find a hub on
+the LAN, type an address, or choose standalone — and an offline/"hub not answering" state. There is no
+alternative native Home, Detail, Search or Player to keep in step, so a change to the interface is a
+change in `hub/web/` and it reaches television, browser and phone at once.
+
+`tv://detail/<identity>` and `tv://play/<identity>` deep links open the same page at `#/detail/…` or
+`#/play/…`; they no longer name a screen of a native stack. The old per-device **Settings → Interface**
+switch is gone with that stack.
 
 ## Rule 4 — pairing, not IP addresses
 
@@ -99,8 +104,9 @@ Nothing in a build names a machine. The client finds a hub by:
    the other candidates and says so on screen rather than spinning.
 
 With nothing paired and no choice recorded, the app asks once which of these three it should use
-instead of browsing an empty library or spinning on a network that has no hub in it; the answer is
-remembered, and either answer can be changed later from Settings.
+instead of browsing an empty library or spinning on a network that has no hub in it. The answer is
+remembered on the device. Pairing is a first-run step, not a setting inside the product; to point a
+paired device at a different backend, clear the app's data so setup runs again.
 
 ## Naming
 

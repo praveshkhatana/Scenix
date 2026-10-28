@@ -1,8 +1,9 @@
 # Interface tokens
 
 Every number here was measured against a 1920×1080 television driven by a D-pad, then implemented
-literally. `assets/theme.json` carries the same values for the native shell, and the web layer mirrors
-them as CSS custom properties. Change a number in one place and you have broken the design.
+literally. The web layer is the single front end and holds the canonical values as CSS custom
+properties in `hub/web/app.css`; `app/src/main/assets/theme.json` mirrors the few the native player and
+setup screen need. Change a number in one place and you have broken the design.
 
 ## Grid
 
@@ -37,7 +38,7 @@ them as CSS custom properties. Change a number in one place and you have broken 
 | Progress bar | 8 px tall, 4 px radius, track `rgba(255,255,255,.2)`, fill `#E50914` |
 | Buttons | 144 px circles (Play 176 px); focus background `rgba(229,9,20,.85)`, 4 px `#fff`, `scale(1.08)` |
 | Auto-hide | 6000 ms, three zones |
-| Skip Intro | 200 × 72, offered 5–90 s in |
+| Skip Intro | 200 × 72, shown only inside the intro window the hub states (`introStartMs`–`introEndMs`); no window, no button |
 | Next episode | 400 × 225 card, last 7 s |
 
 ## Profiles and ranking
@@ -47,7 +48,7 @@ them as CSS custom properties. Change a number in one place and you have broken 
 | Avatar | 280 px, gap 72 px, radius 62 px, border 3 px → 6 px on focus |
 | Switch animation | container `scale(.9)` 800 ms, avatar spring (damping 12, stiffness 100), 100 ms stagger |
 | PIN card | `#181818` panel, four 128 px boxes, `#232323` fields, `#2F2F2F` borders |
-| Top 10 numeral | 208 px, weight 900, fill `#000`, 8 px stroke `#7C7C7C`, overlapping the poster by 96 px |
+| Top 10 numeral | 185 px on a 420 px poster (44% of its height), overlaid on the left 52% of the art; the tile stays 280 × 420, and the title sits inside the art |
 | Info line | match `#46D369` → maturity → runtime → HD badge |
 | Play button | 320 × 72, white on `#E50914` |
 

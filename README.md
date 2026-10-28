@@ -15,10 +15,14 @@ the hub can optionally use it as a faster source; it is off until you turn it on
                  │            torrent gateway · live TV · local files
         ┌────────┴────────┐
         ▼                 ▼
-   TV / PHONE APP      WEB APP
-   (thin shell,        (same UI, served by the hub)
-    native player)
+   TV APP / PHONE      ANY BROWSER
+   (pairing + WebView,  (the same page the
+    native player)      hub serves)
 ```
+
+There is one interface, not two. The hub serves it; the TV app is a shell that hosts that page in a
+WebView and plays video in a native Media3 surface underneath. The native screens you see before the
+shell are setup only — find a hub or choose standalone.
 
 ## What it is not
 
@@ -36,8 +40,8 @@ it can draw.
 | | **Hub mode** (recommended) | **Standalone mode** (simplest) |
 |---|---|---|
 | What you run | the hub on any box on your network, plus the app | the app alone |
-| Configuration | the Hub UI, in any browser | inside the app |
-| Torrent playback | one gateway reader shared by the household | on the device |
+| Configuration | the Hub UI, in any browser | the same UI, hosted in the app |
+| Torrent playback | one gateway reader shared by the household | direct HTTP sources only; no torrent engine on the device |
 | Live TV, local files, shared cache | yes | no |
 
 Both speak the same `/app/v1` contract, so the interface is identical and the app only branches on
@@ -46,15 +50,18 @@ capabilities the backend advertises. See [design/deployment-modes.md](design/dep
 ## Nothing is hardcoded
 
 Languages, maturity ceiling, which shelves appear on Home and in what order, live-TV groups, addons,
-profiles and the hub's own address are settings the owner edits — never constants in a build, never
-environment variables you have to know about. A default you cannot reach through the UI is a bug.
+categories and profiles are settings the owner edits — never constants in a build, never a value you
+must edit a file to change. The hub's address is not a build-time constant either: each television
+pairs with it on first run. A default you cannot reach through the UI is a bug.
 
 ## Everything is a plugin
 
-Adding a content source, a shelf, a card style, a filter rule or a player behaviour means adding one
-file in one directory and registering it once. The hub scans `providers/`, `rows/` and `rules/`; the
-clients keep one registry each. The core router, the item model and the interface never learn the name
-of the thing you just added — they receive a shared item shape with a card hint and a merge key.
+Adding a content source, a shelf or a filter rule means adding one file under `hub/providers/`,
+`hub/rows/` or `hub/rules/` and registering it once. The hub's router, item model and merge step never
+learn the name of the thing you just added — they receive a shared item shape with a card hint and a
+merge key. On the interface side, a screen or card is a module under `hub/web/js/screens/` or a
+registered renderer in `hub/web/js/plugins.js`, so a new shelf style does not edit the screens that
+already exist.
 
 The playback bridge is the same idea: the TV app draws its interface in a WebView and decodes video
 natively underneath it, so a 1080p HEVC torrent with E-AC3 audio and ASS subtitles plays exactly as it
@@ -84,7 +91,9 @@ streams; `ffmpeg` on the machine enables the browser path. If you have a debrid 
 Settings and the hub will try it before the engine; nothing breaks if you never do.
 
 **TV app** — Android 8+ / Android TV, `./gradlew assembleDebug` in `app/`. On first run it lists the
-hubs it finds on the network, or you type an address, or you skip both and use standalone mode.
+hubs it finds on the network, or you type an address, or you choose standalone mode. That is the whole
+native interface: once a backend is chosen the app opens the hub's page and stays there. `tv://detail/…`
+and `tv://play/…` links open the same page at that route.
 
 ## Layout
 
