@@ -121,9 +121,15 @@ export function screen(ctx, arg) {
       grid.appendChild(node);
     }
     results.scrollTop = 0;
-    // The ring is on the pad while a person is typing; moving into the results is a deliberate step.
-    // If the pad is not on screen (a pointer device), the first result is the natural next stop.
-    if (!tv && items.length) focus.focusDefault(grid.querySelector('.card'));
+    // The ring is on the pad while a person is still choosing letters — but when the pause says the word
+    // is finished and the hub answers back, the ring steps into the results on its own: Down from there
+    // continues exactly where typing left off, which is how Netflix search carries you across. On a
+    // pointer device, where there is no pad to stand on, the first result has always been the default.
+    if (items.length && (autoStep || !tv) && root.isConnected) {
+      autoStep = false;
+      const first = grid.querySelector('.card');
+      if (first) focus.focusDefault(first);
+    }
   }
 
   async function runSearch() {
@@ -157,9 +163,12 @@ export function screen(ctx, arg) {
   }
 
   ready = true;
+  // The debounce ending is the signal that a person stopped typing: only such a run gets to move the
+  // ring into the results, so an initial load or an OK-press never yanks the ring out of their hands.
+  let autoStep = false;
   function schedule() {
     if (timers) clearTimeout(timers);
-    timers = setTimeout(() => { timers = null; runSearch(); }, DEBOUNCE_MS);
+    timers = setTimeout(() => { timers = null; autoStep = true; runSearch(); }, DEBOUNCE_MS);
   }
 
   /* Typed characters. The native field already receives them; the TV pad needs the shared buffer. */
