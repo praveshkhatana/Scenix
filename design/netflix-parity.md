@@ -15,8 +15,8 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 ## A. Motion language (the base everything else rides on)
 - [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms (today runtime says 4 px / 160 ms).
 - [ ] Eased scrolling in focus.js using the existing `--row-scroll-ms` token: rows center the focused tile with an eased scroll instead of instant `scrollTo` with a 24 px reveal (focus.js:124-146); vertical page scroll in bands eases too.
-- [ ] Modal entrance motion: scrim fade + box scale-in for every `.mbox` (app.css has none today except PIN shake).
-- [ ] Toast exit: fade/slide out before DOM removal (dom.js toast() yanks it; app.css only animates in).
+- [x] Modal entrance motion: scrim fade + box scale-in for every `.mbox` (app.css has none today except PIN shake). — `scrimIn` 160 ms on `.modal`, `mboxIn` 220 ms lift+scale on `.mbox`; the PIN box's shake rule still wins over it on the element that carries it. Verified live: computed `animationName` = `scrimIn|mboxIn` with a dial open.
+- [x] Toast exit: fade/slide out before DOM removal (dom.js toast() yanks it; app.css only animates in). — `toast()` now adds `.out` (`toastOut` 240 ms fade-down) and removes after the animation window; a newer toast still replaces instantly.
 - [ ] Screen transitions: brief outgoing fade on route change (app.js mount() removes the old node instantly while the new fades 180 ms — make the pair cross-fade ≤220 ms, transform+opacity only).
 
 ## B. Billboard

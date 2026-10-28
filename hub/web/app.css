@@ -969,6 +969,16 @@ body.booted .pwrap .avatar .a {
 
 .modal { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, .82); display: grid; place-content: center; justify-items: center; }
 .mbox { width: var(--modal-w); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-button); padding: calc(44px * var(--s)) calc(48px * var(--s)); text-align: center; }
+/* A dialog arrives rather than popping: the scrim darkens while the box lifts into place, the same
+   entrance language the panes and sheets use — opacity and transform only. The PIN box's shake is a
+   reaction, not an entrance; it wins over this on the element that carries it. */
+.modal { animation: scrimIn 160ms ease-out both; }
+@keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+.mbox { animation: mboxIn 220ms cubic-bezier(.2, .9, .3, 1) both; }
+@keyframes mboxIn {
+  from { opacity: 0; transform: translateY(calc(22px * var(--s))) scale(.94); }
+  to { opacity: 1; transform: none; }
+}
 .mbox h2 { font-size: var(--t-h3); font-weight: 700; margin-bottom: calc(10px * var(--s)); }
 .mbox p { color: var(--ink2); font-size: calc(20px * var(--s)); margin-bottom: calc(26px * var(--s)); }
 .dots { display: flex; gap: calc(20px * var(--s)); justify-content: center; margin-bottom: calc(28px * var(--s)); }
@@ -1052,6 +1062,8 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   max-width: 86vw; animation: toastIn 200ms ease-out both;
 }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, calc(10px * var(--s))); } to { opacity: 1; transform: translate(-50%, 0); } }
+.toast.out { animation: toastOut 240ms ease-in both; }
+@keyframes toastOut { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, calc(10px * var(--s))); } }
 
 /* Per-row loading and failure: one shelf that cannot answer must not take the home page down, and it
    must not be mistaken for an empty shelf. The shimmer is the only infinite animation on the page —

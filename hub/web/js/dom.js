@@ -49,7 +49,12 @@ export function toast(msg, ms = 2600) {
   const t = el('div', { class: 'toast', text: String(msg) });
   l.appendChild(t);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.remove(), ms);
+  // It leaves the way it came — a short fade-down rather than a yank. The extra window is animation
+  // only; a newer toast still replaces it instantly.
+  toastTimer = setTimeout(() => {
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 260);
+  }, ms);
 }
 
 export function prefersReducedMotion() {
