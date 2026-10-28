@@ -66,14 +66,16 @@ export function screen(ctx, arg) {
   rail.appendChild(entry.field);
   if (tv) rail.appendChild(entry.kbd);
 
-  /* On a pointer device the empty state is the useful part: the last few things this person looked
-     for, and a hint that nothing leaves the house. On the TV the pad is the useful part. */
+  /* The last few things this person looked for belong in the empty state on both devices — the way
+     Netflix offers them before you type. On a pointer device they sit under the field; on a TV, where
+     the key pad already fills the left rail, they stand in the results pane until a query answers. */
   const suggestions = el('div', { class: 'search-suggest' });
-  if (!tv) rail.appendChild(suggestions);
 
   const empty = el('div', { class: 'search-empty' },
     el('div', { class: 'big', text: 'Find something to watch' }),
     el('p', { text: 'Type a title, an actor, a language or a mood. Search reads this hub only.' }));
+  if (!tv) rail.appendChild(suggestions);
+  else empty.appendChild(suggestions);
   results.appendChild(empty);
   const grid = el('div', { class: 'grid' });
   results.appendChild(grid);
