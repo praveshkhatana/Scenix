@@ -271,7 +271,7 @@ class PlayerActivity : Activity() {
         p.addListener(listener())
         p.addAnalyticsListener(object : AnalyticsListener {
             override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
-                Log.i(TAG, "first video frame on screen after ${renderTimeMs}ms")
+                Log.i(TAG, "first video frame on screen")
             }
 
             override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: androidx.media3.common.VideoSize) {
@@ -1120,11 +1120,22 @@ class PlayerActivity : Activity() {
             if (id.isBlank()) continue
             parent.addView(menuRow(trackWords(t), "in this copy", selectedSubId == id) { chooseSub(id) })
         }
+        // Six files in one language are six identical rows unless the list numbers them.
+        val totals = HashMap<String, Int>()
+        for (i in 0 until hubSubs.length()) {
+            val s = hubSubs.optJSONObject(i) ?: continue
+            val lang = str(s, "lang").ifBlank { str(s, "language") }
+            totals[lang] = (totals[lang] ?: 0) + 1
+        }
+        val seen = HashMap<String, Int>()
         for (i in 0 until hubSubs.length()) {
             val s = hubSubs.optJSONObject(i) ?: continue
             val id = "hub:$i"
             val lang = str(s, "lang").ifBlank { str(s, "language") }
-            val label = str(s, "label").ifBlank { str(s, "name") }.ifBlank { langName(lang) }
+            val nth = (seen[lang] ?: 0) + 1
+            seen[lang] = nth
+            val base = str(s, "label").ifBlank { str(s, "name") }.ifBlank { langName(lang) }
+            val label = if ((totals[lang] ?: 0) > 1) "$base $nth" else base
             parent.addView(menuRow(label, "subtitle file", selectedSubId == id) { chooseSub(id) })
         }
     }
@@ -1363,6 +1374,11 @@ class PlayerActivity : Activity() {
         if (s != null && s.season > 0 && s.episode > 0) {
             bits.add("S%02dE%02d".format(s.season, s.episode))
         }
+        if (live) {
+            val channel = liveChannels.firstOrNull { it.identity == s?.identity }
+            val number = channel?.live?.number ?: 0
+            if (number > 0) bits.add(0, "CH $number")
+        }
         val epTitle = answer?.optJSONObject("episode")?.let { str(it, "title") }.orEmpty()
         if (epTitle.isNotBlank()) bits.add(epTitle)
         val maturity = intent?.getStringExtra(EXTRA_MATURITY).orEmpty()
@@ -1573,9 +1589,13 @@ class PlayerActivity : Activity() {
     }
 
     private fun clearError() {
+        // If the retry was pressed, the focused button is about to be removed; hand the ring back to
+        // Play instead of letting the framework pick the top-bar Back arrow.
+        val hadFocus = errorCard?.hasFocus() == true || errorRetry?.isFocused == true
         clearErrorCard()
         errorShowing = false
         errorRetry = null
+        if (hadFocus && controlsVisible()) playButton.post { if (!playButton.hasFocus()) playButton.requestFocus() }
     }
 
     private fun clearErrorCard() {
@@ -1771,6 +1791,8 @@ class PlayerActivity : Activity() {
                 }
             }
             liveChannels = seen.values.toList()
+            // The number is only known once the live row arrives; the header may already be up.
+            if (live) updateHeader()
         }
     }
 
