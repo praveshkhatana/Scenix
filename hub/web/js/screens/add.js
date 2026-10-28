@@ -18,7 +18,7 @@
  * avoids.
  */
 
-import { el } from '/ui/js/dom.js';
+import { el, clear } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { initials } from '/ui/js/format.js';
@@ -29,10 +29,11 @@ import { entryField } from '/ui/js/keyboard.js';
 import { setTypingTarget } from '/ui/js/input.js';
 import { openAvatarPicker } from '/ui/js/avatarmodal.js';
 import { profileDefaults, languageChoices, refreshProfiles, whyRefused, withAdultProof } from '/ui/js/profileedit.js';
-import { chipSet, radioSet, toggle } from '/ui/js/widgets.js';
+import { makeRows } from '/ui/js/rows.js';
 
 export function screen(ctx) {
   const wrap = el('div', { class: 'screen padd' });
+  const rows = makeRows(ctx);
 
   /* The draft is a profile in the shape the hub uses, minus the id it has not been given yet. Everything on
      this screen — the tile, the pills, the create request — reads from this one object, so the preview cannot
@@ -89,13 +90,22 @@ export function screen(ctx) {
     onChange: (text) => { draft.name = String(text || '').trim(); paintTile(); },
   });
 
-  /* --------------------------------------------------------------------- choices */
+  /* --------------------------------------------------------------------- choices
 
-  const kindBox = el('div', { class: 'padd-fact' }, el('h3', { text: 'Who is this?' }));
-  const ageBox = el('div', { class: 'padd-fact padd-age' }, el('h3', { text: 'Age' }));
+     Every choice on this screen is one row in the voice the rest of the app uses — the row names the
+     question and the answer it stands on now, OK opens the dial or the checklist, and Back cancels
+     without touching the draft. The tile above still repaints with every commit, so the person being made
+     is visible while the wheel turns. */
+
+  const kindBox = el('div', { class: 'padd-fact' });
+  const ageBox = el('div', { class: 'padd-fact padd-age' });
   const pinBox = el('div', { class: 'padd-fact padd-pin' });
-  const langBox = el('div', { class: 'padd-langs' }, el('h3', { text: 'Languages this profile watches' }));
+  const langBox = el('div', { class: 'padd-langs' });
   const langNote = el('p', { class: 'note' });
+
+  let kindRow = null;
+  let ageRow = null;
+  let langRow = null;
 
   const NO_AGE = '';
 
@@ -107,8 +117,8 @@ export function screen(ctx) {
    * would be a question with no consequence.
    */
   function paintAge() {
-    ageBox.textContent = '';
-    ageBox.appendChild(el('h3', { text: 'Age' }));
+    clear(ageBox);
+    ageRow = null;
     const offer = draft.kind === 'kids' && ageOptions.length;
     ageBox.style.display = offer ? '' : 'none';
     if (!offer) {
@@ -116,43 +126,37 @@ export function screen(ctx) {
       return;
     }
     const current = draft.age === null || draft.age === undefined ? NO_AGE : draft.age;
-    radioSet(ageBox, [NO_AGE].concat(ageOptions), current, ageLabel, (o) => {
-      draft.age = o === NO_AGE ? null : Number(o);
-      paintAgeNote(ageBox);
-      paintTile();
-    }, () => ctx.toast('This hub is read-only from a browser'));
-    paintAgeNote(ageBox);
-  }
-
-  function paintAgeNote(parent) {
-    const text = (draft.age === null || draft.age === undefined)
-      ? 'No age on the profile: the hub keeps this shelf to what is certifiably for everyone.'
-      : `${draft.age} — the hub decides what this person may watch from that number.`;
-    parent.appendChild(el('p', { class: 'note', text }));
+    ageRow = rows.pickRow(ageBox, 'Age', 'The hub decides what this person may watch from that number.',
+      [NO_AGE].concat(ageOptions), current, ageLabel, (o) => {
+        draft.age = o === NO_AGE ? null : Number(o);
+        paintTile();
+        // The wheel closed over this row; put the ring back where the viewer was standing.
+        focus.focusDefault(ageRow);
+      });
   }
 
   function paintKind() {
-    kindBox.textContent = '';
-    kindBox.appendChild(el('h3', { text: 'Who is this?' }));
-    radioSet(kindBox, ['adult', 'kids'], draft.kind, (k) => (k === 'kids' ? 'Kids' : 'Adult'), (k) => {
-      draft.kind = k === 'kids' ? 'kids' : 'adult';
-      // An adult profile carries no age ceiling, so the number chosen for a kid does not follow the switch.
-      if (draft.kind !== 'kids') draft.age = null;
-      paintAge();
-      paintTile();
-    }, () => ctx.toast('This hub is read-only from a browser'));
-    kindBox.appendChild(el('p', {
-      class: 'note',
-      text: 'A Kids profile is held to the ratings the hub knows, and to the ages on its own certificates.',
-    }));
+    clear(kindBox);
+    kindRow = rows.pickRow(kindBox, 'Who is this?',
+      'A Kids profile is held to the ratings the hub knows, and to the ages on its own certificates.',
+      ['adult', 'kids'], draft.kind, (k) => (k === 'kids' ? 'Kids' : 'Adult'), (k) => {
+        draft.kind = k === 'kids' ? 'kids' : 'adult';
+        // An adult profile carries no age ceiling, so the number chosen for a kid does not follow the switch.
+        if (draft.kind !== 'kids') draft.age = null;
+        paintAge();
+        paintTile();
+        // The wheel closed over this row. When a Kids choice just raised the Age question, the ring steps to
+        // that new row; otherwise it goes back to the one the viewer committed on.
+        focus.focusDefault(ageRow || kindRow);
+      });
   }
 
   function paintPin() {
-    pinBox.textContent = '';
+    clear(pinBox);
     const note = () => (wantPin
       ? 'You will be asked for the number before the profile is made.'
       : 'Anyone who reaches this TV can open this profile.');
-    toggle(pinBox, 'Ask for a PIN', note(), wantPin, (on) => {
+    rows.toggle(pinBox, 'Ask for a PIN', note(), wantPin, (on) => {
       wantPin = on;
       const n = pinBox.querySelector('.note');
       if (n) n.textContent = note();
@@ -161,14 +165,17 @@ export function screen(ctx) {
   }
 
   function paintLanguages() {
-    langBox.textContent = '';
-    langBox.appendChild(el('h3', { text: 'Languages this profile watches' }));
+    clear(langBox);
+    langRow = null;
     const chosen = draft.languages.slice();
     const { codes, labelFor } = languageChoices(vocab, chosen);
-    chipSet(langBox, codes, chosen, labelFor, (list) => {
-      draft.languages = list.slice();
-      langNote.textContent = langHint();
-    });
+    langRow = rows.multiRow(langBox, 'Languages this profile watches',
+      'Walk the list and take languages in or out; nothing applies until Save.',
+      codes, chosen, labelFor, (list) => {
+        draft.languages = list.slice();
+        langNote.textContent = langHint();
+        focus.focusDefault(langRow);
+      });
     langBox.appendChild(langNote);
     langNote.textContent = langHint();
   }
