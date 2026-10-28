@@ -8,10 +8,21 @@ set -euo pipefail
 HOST="${HUB_HOST:?set HUB_HOST}"
 USER_="${HUB_USER:?set HUB_USER}"
 PORT="${HUB_PORT:-8788}"
+SCHEME="${HUB_SCHEME:-http}"
 GATEWAY="${GATEWAY:-http}"
 TORR_URL="${TORR_URL:-http://127.0.0.1:8090}"
 SRC="$(cd "$(dirname "$0")/../hub" && pwd)"
 DEST="tvhub"
+
+# TLS: pass the two remote paths through only when both are set, so a plain-HTTP install never gets
+# an empty TLS_CERT that the hub would refuse as a half-configuration. HUB_INSECURE=1 adds -k for a
+# self-signed certificate during setup.
+TLS_ENV=""
+if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then
+    TLS_ENV="TLS_CERT=$TLS_CERT TLS_KEY=$TLS_KEY"
+fi
+CURL="curl -s"
+[ "${HUB_INSECURE:-0}" = "1" ] && CURL="curl -sk"
 
 echo "== copying $SRC -> $USER_@$HOST:~/$DEST"
 # library.json / progress.json / addons.json survive a deploy: they are the server's memory, not code.
@@ -35,13 +46,13 @@ for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do
 done
 sleep 1
 setsid nohup env LOG_REQUESTS=1 PORT=$PORT GATEWAY=$GATEWAY TORR_URL=$TORR_URL \\
-    YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
+    $TLS_ENV YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
     node index.js > hub.log 2>&1 < /dev/null &
 sleep 4
-curl -s http://127.0.0.1:$PORT/healthz || tail -30 hub.log
+$CURL "$SCHEME://127.0.0.1:$PORT/healthz" || tail -30 hub.log
 EOF
 
 echo
 echo "== from off-box"
-curl -s "http://$HOST:$PORT/healthz" || true
+$CURL "$SCHEME://$HOST:$PORT/healthz" || true
 echo

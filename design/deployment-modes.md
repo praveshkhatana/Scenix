@@ -116,6 +116,21 @@ spinning forever; the answer is remembered on the device. Pairing is a first-run
 inside the product; `tv://setup` reopens it, and clearing the app's data is the fallback for a device
 whose backend cannot be reached at all.
 
+## TLS and trust
+
+The hub listens on HTTP so a fresh install works on a trusted LAN without a certificate. For anything
+else:
+
+- **Reverse proxy (recommended).** Terminate TLS in front of the hub and forward
+  `X-Forwarded-Proto: https` and `X-Forwarded-Host`. `core/origin.js` uses those for every absolute URL
+  the hub returns (gateway streams, remux, subtitles), so a browser does not block mixed content.
+- **Direct TLS.** Set `TLS_CERT` and `TLS_KEY` to a certificate and key the TV trusts. The hub serves
+  HTTPS on the same port, and LAN announcements carry `https://`. A self-signed certificate is rejected
+  by the TV unless its CA is installed; Scenix does not install one.
+- **Authentication is not built in.** Bind the hub to a trusted network (or put it behind an
+  authenticating proxy). The `/healthz` identity check is intentionally public so pairing can find a
+  hub; it exposes no library or account data.
+
 ## Naming
 
 The repository speaks with one voice: **Scenix**, hub, client, shelf/row, tile, source, stream,

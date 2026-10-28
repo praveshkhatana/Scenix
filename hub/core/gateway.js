@@ -507,15 +507,21 @@ function peekPrepared(source, want) {
  * when the engine is another machine we hand out that machine's address as configured. `TORR_PUBLIC_URL`
  * overrides both, for an engine behind a reverse proxy or a different port.
  */
-function clientBaseUrl(clientHost) {
+function clientBaseUrl(clientOrigin) {
   if (PUBLIC_ENGINE) return PUBLIC_ENGINE;
   const u = new URL(ENGINE);
   // Any 127/8 loopback form, not just the literal string: a hostname is the whole match, so the
   // alternation has to stay inside the group and the anchor has to sit outside it.
   const local = u.hostname === 'localhost' || u.hostname === '::1' || u.hostname === '[::1]'
     || u.hostname === '0.0.0.0' || /^127\.\d+\.\d+\.\d+$/.test(u.hostname);
-  if (clientHost && local) {
-    try { u.hostname = new URL('http://' + clientHost).hostname; } catch (e) { /* keep the configured host */ }
+  if (clientOrigin && local) {
+    try {
+      // Keep the scheme the client used as well as its host: a TLS proxy that terminated https must not
+      // have its stream URL rewritten back to http, or the browser blocks it as mixed content.
+      const c = new URL(clientOrigin);
+      u.hostname = c.hostname;
+      if (c.protocol === 'https:' || c.protocol === 'http:') u.protocol = c.protocol;
+    } catch (e) { /* keep the configured origin */ }
   }
   return (u.protocol + '//' + u.host).replace(/\/+$/, '');
 }
@@ -554,7 +560,7 @@ async function resolve(source, opts = {}) {
     return { url: null, reason: 'engine has not read this torrent (' + (info.error || 'no file list') + ')' };
   }
   return {
-    url: clientBaseUrl(opts.clientHost) + '/play/' + info.hash + '/' + info.fileId,
+    url: clientBaseUrl(opts.clientOrigin) + '/play/' + info.hash + '/' + info.fileId,
     hash: info.hash,
     fileId: info.fileId,
     fileName: info.fileName,

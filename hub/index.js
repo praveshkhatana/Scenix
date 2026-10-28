@@ -18,6 +18,7 @@
  */
 'use strict';
 
+const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
@@ -26,6 +27,22 @@ const { URL, URLSearchParams } = require('url');
 
 const ROOT = __dirname;
 const PORT = Number(process.env.PORT || 8788);
+const TLS_CERT = String(process.env.TLS_CERT || '').trim();
+const TLS_KEY = String(process.env.TLS_KEY || '').trim();
+let tlsOptions = null;
+if (TLS_CERT || TLS_KEY) {
+  if (!TLS_CERT || !TLS_KEY) {
+    console.error('TLS_CERT and TLS_KEY must be set together');
+    process.exit(1);
+  }
+  try {
+    tlsOptions = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
+  } catch (e) {
+    console.error('TLS certificate/key unreadable:', e.message);
+    process.exit(1);
+  }
+}
+const SCHEME = tlsOptions ? 'https' : 'http';
 const HUB_ID = process.env.HUB_ID || 'scenix-hub';
 const HUB_VERSION = process.env.HUB_VERSION || '0.1.0';
 
@@ -43,6 +60,7 @@ const ratings = require('./core/ratings');
 const castApi = require('./core/cast');
 const probe = require('./core/probe');
 const webui = require('./core/webui');
+const { origin } = require('./core/origin');
 // What a copy actually contains (core/media.js) and how to re-wrap it for a browser (core/remux.js).
 // Both are read-only against the engine's own stream URL and both report themselves in /healthz.
 const media = require('./core/media');
@@ -891,6 +909,8 @@ async function healthBody() {
     hub: HUB_ID,
     version: HUB_VERSION,
     port: PORT,
+    scheme: SCHEME,
+    tls: !!tlsOptions,
     addons: addonStats,
     rows,
     rules: registry.rules.map((r) => ({ id: r.id, order: r.order })),
@@ -1561,7 +1581,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       { ...cand, url: o.url, infoHash: o.infoHash },
       // The prepare budget is clamped to the time left, not left at its own default: the app puts a
       // 12 s read timeout on this call, and a hub that answers at 15 s might as well not have answered.
-      { clientHost: opts.clientHost,
+      { clientOrigin: opts.clientOrigin,
         // A cold torrent's metadata can take much longer than a Play press may. One press gets a short
         // look; the engine keeps the torrent, so the client's own retry finds it already resolved.
         budgetMs: Math.max(1200, Math.min(2500, deadline - Date.now() - 1200)),
@@ -1864,8 +1884,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // extra reader on one torrent — the player, a retry, the hub's own read-ahead — makes the engine's
     // single sequential reader jump backwards. One reader, the hub, is the difference between a film and
     // an error. The engine port also stops needing to be reachable from every device in the house.
-    if (out.mode === 'gateway' && opts.clientHost) {
-      out.url = 'http://' + opts.clientHost + out.proxiedUrl;
+    if (out.mode === 'gateway' && opts.clientOrigin) {
+      out.url = opts.clientOrigin + out.proxiedUrl;
       out.proxied = true;
     }
   }
@@ -1909,7 +1929,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const c = { ...t };
     // A browser is same-origin with the hub, so the relative path the cache stores is enough; a TV is
     // not, and a subtitle URL it can open has to name this hub.
-    if (c.url && opts.clientHost && !/^https?:/i.test(c.url)) c.url = 'http://' + opts.clientHost + c.url;
+    if (c.url && opts.clientOrigin && !/^https?:/i.test(c.url)) c.url = opts.clientOrigin + c.url;
     return c;
   });
   const wantAudio = remux.streamIndex(opts.audio, 'a');
@@ -1947,7 +1967,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       ? remux.mp4Url({ url: engine, audio: out.selectedAudio, sub: out.selectedSub })
       : remux.hlsUrl({ url: engine, audio: out.selectedAudio, sub: out.selectedSub, tracks });
     out.proxiedUrl = rel;
-    out.url = 'http://' + (opts.clientHost || '127.0.0.1:' + PORT) + rel;
+    out.url = (opts.clientOrigin || 'http://127.0.0.1:' + PORT) + rel;
     out.proxied = true;
     out.remuxed = true;
     out.remux = {
@@ -2083,7 +2103,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   return { status: 200, body: out };
 }
 
-const server = http.createServer(async (req, res) => {
+async function handle(req, res) {
   const raw = req.url || '/';
   // A bad URL is a bad request, not a broken hub. `decodeURIComponent` THROWS on a malformed escape (a
   // scanner asking for "/%%", a TV app that percent-encoded half an identity), and these two lines used to
@@ -2430,7 +2450,10 @@ const server = http.createServer(async (req, res) => {
       // upstream, it answers from addon cache and degrades to a shorter row. The owner's categories are
       // virtual rows built the same way and appended after the plugin rows, so a category from a slow
       // or removed addon becomes an empty row here and is dropped below like any other.
-      const rowsToBuild = registry.rows.filter((r) => rowVisible(r, profile))
+      // `home: false` marks a row as a section rather than a shelf: the Movies and Series rows answer
+      // the nav tab and /app/v1/row/<id>, but Home keeps its curated shape without two more strips of
+      // the entire library.
+      const rowsToBuild = registry.rows.filter((r) => rowVisible(r, profile) && r.home !== false)
         .concat(enabledCategoryRows().filter((r) => rowVisible(r, profile)));
       const built = await Promise.all(
         rowsToBuild.map(async (row) => ({
@@ -2812,7 +2835,7 @@ const server = http.createServer(async (req, res) => {
       const profile = store.profile(body.profile || body.profileId);
       const picked = await pickAndPlay(body.identity, profile,
         body.source || (body.provider ? { provider: body.provider } : null), body.type,
-        { exclude: body.exclude, reprobe: body.reprobe === true, clientHost: req.headers.host,
+        { exclude: body.exclude, reprobe: body.reprobe === true, clientOrigin: origin(req),
           season: body.season, episode: body.episode,
           container: body.container, audio: body.audio, sub: body.sub,
           // Where the viewer already is: the hub measures and pre-buffers the part of the file they are
@@ -2834,7 +2857,7 @@ const server = http.createServer(async (req, res) => {
       const profile = store.profile(body.profile || body.profileId);
       const picked = await pickAndPlay(body.identity, profile,
         body.source || (body.provider ? { provider: body.provider } : null), body.type,
-        { exclude: body.exclude, reprobe: body.reprobe !== false, clientHost: req.headers.host,
+        { exclude: body.exclude, reprobe: body.reprobe !== false, clientOrigin: origin(req),
           season: body.season, episode: body.episode,
           container: body.container, audio: body.audio, sub: body.sub,
           // Where the viewer already is, so the hub measures and pre-buffers the part of the file they are
@@ -2873,13 +2896,18 @@ const server = http.createServer(async (req, res) => {
     log('REQUEST FAIL', path, e.stack || e.message);
     return send(res, 500, { error: String(e.message || e) });
   }
-});
+}
+
+// A certificate pair turns the hub into an https server directly. A household that puts the hub behind
+// a TLS terminator instead still gets the right scheme from `core/origin.js`, because the proxy is the
+// machine the television actually talks to.
+const server = tlsOptions ? https.createServer(tlsOptions, handle) : http.createServer(handle);
 
 server.listen(PORT, '0.0.0.0', () => {
-  log(HUB_ID, HUB_VERSION, 'on http://0.0.0.0:' + PORT + '  (clients: /app/v1/home?profile=<id>)');
+  log(HUB_ID, HUB_VERSION, 'on ' + SCHEME + '://0.0.0.0:' + PORT + '  (clients: /app/v1/home?profile=<id>)');
   // ffmpeg reads a torrent through this hub's own proxy so the cushion sits in front of it too; it needs
   // to know the address to loop back to.
-  readahead.setSelfOrigin('http://127.0.0.1:' + PORT);
+  readahead.setSelfOrigin(SCHEME + '://127.0.0.1:' + PORT);
   log('addons:', registry.providers.map((p) => p.id + (p.native ? '' : '@' + p.priority)).join(', '));
   log('rows:', registry.rows.map((r) => r.id + '/' + (r.scope || 'all') + '@' + r.order).join(', '));
   log('rules:', registry.rules.map((r) => r.id + '@' + r.order).join(', '));
@@ -2912,7 +2940,7 @@ server.listen(PORT, '0.0.0.0', () => {
     : 'NO ffprobe (' + media.status().binNote + ') - audio languages stay "not stated"');
   // Pairing by typing an address with a remote is the worst interaction in the product, so the hub says
   // what it is called and where it lives on the LAN. Off with ANNOUNCE=0.
-  discovery.start(PORT);
+  discovery.start(PORT, SCHEME);
   log('remux:', remux.status().binFound
     ? (remux.status().binVersion || 'ffmpeg') + ' at ' + remux.status().bin + ' - fragmented MP4 and HLS, '
       + remux.status().max + ' concurrent, video always copied'

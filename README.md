@@ -90,6 +90,11 @@ ceiling, create profiles. Point an HTTP torrent engine at it (port 8090) and tor
 streams; `ffmpeg` on the machine enables the browser path. If you have a debrid account, configure it in
 Settings and the hub will try it before the engine; nothing breaks if you never do.
 
+The hub speaks HTTP by default. For HTTPS, either terminate TLS in a reverse proxy (it honours
+`X-Forwarded-Proto`/`X-Forwarded-Host` when building stream and subtitle URLs) or give it a certificate
+with `TLS_CERT`/`TLS_KEY`. The certificate must be trusted by the television; Scenix does not install a
+CA on the device.
+
 **TV app** — Android 8+ / Android TV, `./gradlew assembleDebug` in `app/`. On first run it tries a
 hub it already remembers, then asks the LAN; one that answers is opened without a question. If none
 does, setup lists the hubs it heard, accepts a typed address, and offers standalone mode. That is the

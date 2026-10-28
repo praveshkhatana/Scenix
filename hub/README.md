@@ -278,11 +278,12 @@ falls back to the gateway unchanged. See [debrid.md](../design/debrid.md).
 | Var | Default | What it does |
 |---|---|---|
 | `PORT` | 8788 | listen port |
+| `TLS_CERT` / `TLS_KEY` | unset | paths to a certificate and key; setting both serves HTTPS directly. A reverse proxy that terminates TLS needs neither: `X-Forwarded-Proto` and `X-Forwarded-Host` are honoured for the URLs the hub returns |
 | `LOG_REQUESTS` | off | `REQ <method> <url> -> <code>` per request |
 | `LANGS` | unset | **seeds** `settings.languages` on a hub that has none (the allow-list rule and the live playlists both read the setting, not this). An empty setting means the language rule is off |
 | `HUB_NAME` | `Scenix Hub` | **seeds** `settings.hubName`: the name a client shows when it lists the hubs it found |
 | `PLAYLIST_URL` | unset | **seeds** `settings.live.playlist`; with no playlist there is no live TV row |
-| `ANNOUNCE` | on | `0` stops the LAN responder, so pairing is by typed address only |
+| `ANNOUNCE` | on | `0` stops the LAN responder, so pairing is by typed address only. With TLS the announcement carries `https://` |
 | `ANNOUNCE_PORT` / `ANNOUNCE_INTERVAL_MS` | 1900 / 30000 | the UDP port the responder listens on and how often it says "I am here" |
 | `SETTINGS_FILE` | `data/settings.json` | where the owner's settings live |
 | `KIDS_BLOCK` | `Animax,MediBizTV,…` | kid-grouped channels that are still not for kids |
