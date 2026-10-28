@@ -43,6 +43,32 @@ if (TLS_CERT || TLS_KEY) {
   }
 }
 const SCHEME = tlsOptions ? 'https' : 'http';
+// Optional shared access token. Unset means the old trusted-LAN behaviour: no prompt, no header.
+// Set means every route except the identity-only /healthz needs HTTP Basic or `Bearer <token>`.
+const HUB_TOKEN = String(process.env.HUB_TOKEN || '').trim();
+
+function sameSecret(a, b) {
+  if (!a || !b) return false;
+  const x = Buffer.from(String(a));
+  const y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+/** True when this request may see the library. With no token configured, everyone may. */
+function authorized(req) {
+  if (!HUB_TOKEN) return true;
+  const raw = String((req.headers && req.headers.authorization) || '').trim();
+  if (/^Bearer\s+/i.test(raw)) return sameSecret(raw.replace(/^Bearer\s+/i, '').trim(), HUB_TOKEN);
+  if (/^Basic\s+/i.test(raw)) {
+    let decoded = '';
+    try { decoded = Buffer.from(raw.replace(/^Basic\s+/i, '').trim(), 'base64').toString('utf8'); } catch (e) { return false; }
+    const at = decoded.indexOf(':');
+    // The username is deliberately ignored: this is one household token, not a user directory. Browsers
+    // insist on a username field for Basic auth, so any name may be typed there.
+    return at >= 0 && sameSecret(decoded.slice(at + 1), HUB_TOKEN);
+  }
+  return false;
+}
 const HUB_ID = process.env.HUB_ID || 'scenix-hub';
 const HUB_VERSION = process.env.HUB_VERSION || '0.1.0';
 
@@ -2123,6 +2149,17 @@ async function handle(req, res) {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, corsHeaders());
       return res.end();
+    }
+
+    // A token is an access gate, not a second identity system. The public health answer is the one
+    // thing pairing needs before it has a token, and it carries no library, paths or counts.
+    if (!authorized(req)) {
+      if (path === '/healthz') {
+        return send(res, 200, { status: 'ok', hub: HUB_ID, version: HUB_VERSION });
+      }
+      return send(res, 401, { error: 'authentication required' }, 'application/json', {
+        'WWW-Authenticate': 'Basic realm="Scenix", charset="UTF-8"',
+      });
     }
 
     // ---- the front-end itself ----

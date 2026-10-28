@@ -21,6 +21,8 @@ TLS_ENV=""
 if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then
     TLS_ENV="TLS_CERT=$TLS_CERT TLS_KEY=$TLS_KEY"
 fi
+AUTH_ENV=""
+[ -n "${HUB_TOKEN:-}" ] && AUTH_ENV="HUB_TOKEN=$(printf %q "$HUB_TOKEN")"
 CURL="curl -s"
 [ "${HUB_INSECURE:-0}" = "1" ] && CURL="curl -sk"
 
@@ -46,7 +48,7 @@ for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do
 done
 sleep 1
 setsid nohup env LOG_REQUESTS=1 PORT=$PORT GATEWAY=$GATEWAY TORR_URL=$TORR_URL \\
-    $TLS_ENV YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
+    $TLS_ENV $AUTH_ENV YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
     node index.js > hub.log 2>&1 < /dev/null &
 sleep 4
 $CURL "$SCHEME://127.0.0.1:$PORT/healthz" || tail -30 hub.log

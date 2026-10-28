@@ -18,7 +18,7 @@ import com.scenix.tv.plugins.nav.PairingScreen
  * The launcher. There is one product — the hub's web UI in [WebShellActivity] over this device's
  * native player — so this activity does only the work that must happen before the page exists:
  *
- *  1. apply the launch switches (`--es hub_url …`, `--es fixture …`, `--ez setup/standalone`);
+ *  1. apply the launch switches (`--es hub_url …`, `--es fixture …`, `--es token …`, `--ez setup/standalone`);
  *  2. run [HubWatch] once to find a hub (or notice that this TV is standalone);
  *  3. if nothing is paired and nothing answers, show the native setup screen
  *     ([PairingScreen]) so a fresh TV can find or type a hub, or choose standalone;
@@ -119,6 +119,7 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             ctx.prefs.setFixture(it)
             Log.i(TAG, "fixture override: $it")
         }
+        i.getStringExtra("token")?.let { ctx.prefs.setHubToken(it) }
         if (i.getBooleanExtra("standalone", false)) {
             ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
             ctx.prefs.setFixture("")

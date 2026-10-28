@@ -14,10 +14,12 @@ Nothing is installed or deployed from here.
 
 - **Setup** — `MainActivity` probes for a hub. One that answers is opened at once; if none does,
   `PairingScreen` lists the hubs heard on the LAN, accepts a typed address, or starts the bundled
-  standalone host. This is the only native screen in the product. `tv://setup` (or
-  `--ez setup true` on an adb launch) reopens it on a TV that already has a backend; the page can do
-  the same through `Scenix.openSetup()`. `--ez standalone true` chooses standalone directly, which is
-  useful when testing both shapes without clearing data.
+  standalone host. An optional **access token** field is stored for a hub that sets `HUB_TOKEN`; the
+  WebView supplies it through the normal Basic-auth challenge, so the page never sees it. This is the
+  only native screen in the product. `tv://setup` (or `--ez setup true` on an adb launch) reopens it on
+  a TV that already has a backend; the page can do the same through `Scenix.openSetup()`.
+  `--ez standalone true` chooses standalone directly, which is useful when testing both shapes without
+  clearing data; `--es token …` sets the access token for a test launch.
 - **The product** — `WebShellActivity` loads `http://<backend>/` in a WebView. Every screen you use
   (home, detail, search, settings, player chrome) is the same `hub/web/` code a browser gets.
 - **Playback** — a native Media3 `ExoPlayer` sits behind the WebView. The page calls the

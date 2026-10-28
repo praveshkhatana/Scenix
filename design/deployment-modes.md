@@ -127,9 +127,13 @@ else:
 - **Direct TLS.** Set `TLS_CERT` and `TLS_KEY` to a certificate and key the TV trusts. The hub serves
   HTTPS on the same port, and LAN announcements carry `https://`. A self-signed certificate is rejected
   by the TV unless its CA is installed; Scenix does not install one.
-- **Authentication is not built in.** Bind the hub to a trusted network (or put it behind an
-  authenticating proxy). The `/healthz` identity check is intentionally public so pairing can find a
-  hub; it exposes no library or account data.
+- **Optional shared access token.** Set `HUB_TOKEN` and every route except `/healthz` asks for HTTP
+  Basic (any username, token as the password) or `Bearer <token>`. The TV stores the token in setup and
+  supplies it through the WebView auth handler; a browser gets the normal auth prompt. Without it the
+  hub keeps the trusted-LAN behaviour. There are no user accounts or per-profile sessions; for real
+  multi-user access control put an authenticating proxy in front.
+- `/healthz` stays public for pairing and returns only the product name and version when the caller is
+  not authorized; the full status report needs the token.
 
 ## Naming
 

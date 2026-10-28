@@ -95,6 +95,10 @@ The hub speaks HTTP by default. For HTTPS, either terminate TLS in a reverse pro
 with `TLS_CERT`/`TLS_KEY`. The certificate must be trusted by the television; Scenix does not install a
 CA on the device.
 
+Set `HUB_TOKEN` to require a shared access token on the hub API and UI. A browser asks for HTTP Basic
+(any username, token as the password); the TV stores the token in setup and supplies it to the WebView
+automatically. `/healthz` stays public for pairing and exposes only the product name and version.
+
 **TV app** — Android 8+ / Android TV, `./gradlew assembleDebug` in `app/`. On first run it tries a
 hub it already remembers, then asks the LAN; one that answers is opened without a question. If none
 does, setup lists the hubs it heard, accepts a typed address, and offers standalone mode. That is the

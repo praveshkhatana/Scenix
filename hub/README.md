@@ -279,6 +279,7 @@ falls back to the gateway unchanged. See [debrid.md](../design/debrid.md).
 |---|---|---|
 | `PORT` | 8788 | listen port |
 | `TLS_CERT` / `TLS_KEY` | unset | paths to a certificate and key; setting both serves HTTPS directly. A reverse proxy that terminates TLS needs neither: `X-Forwarded-Proto` and `X-Forwarded-Host` are honoured for the URLs the hub returns |
+| `HUB_TOKEN` | unset | optional shared access token. When set, every route except the identity-only `/healthz` needs HTTP Basic (any username, token as password) or `Bearer <token>`. The TV stores it in setup and supplies it through the WebView auth handler |
 | `LOG_REQUESTS` | off | `REQ <method> <url> -> <code>` per request |
 | `LANGS` | unset | **seeds** `settings.languages` on a hub that has none (the allow-list rule and the live playlists both read the setting, not this). An empty setting means the language rule is off |
 | `HUB_NAME` | `Scenix Hub` | **seeds** `settings.hubName`: the name a client shows when it lists the hubs it found |

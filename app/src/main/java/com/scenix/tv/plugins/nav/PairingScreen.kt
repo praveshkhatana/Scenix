@@ -225,6 +225,35 @@ object PairingScreen {
             override fun afterTextChanged(s: Editable?) { current = s?.toString() ?: "" }
         })
 
+        // Optional. A hub with HUB_TOKEN set answers Basic auth; the TV supplies the household token
+        // through the WebView's auth handler, so the page never sees it. Blank means the old open-LAN
+        // behaviour, and the field stays out of the way.
+        box.addView(
+            Views.text(ctx, "li", 20f, theme.ink2, "Access token (only if your hub asks)"),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(12f)
+            },
+        )
+        val token = EditText(ctx.app)
+        token.hint = "optional"
+        token.setText(ctx.prefs.hubToken())
+        token.setTextColor(theme.ink)
+        token.setHintTextColor(theme.ink3)
+        token.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 21f))
+        token.background = Views.rounded(theme.surface2, theme.radius("field", 6f), theme.px(1f), theme.line)
+        token.setPadding(theme.px(16f), theme.px(10f), theme.px(16f), theme.px(10f))
+        token.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or
+            android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        token.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) { ctx.prefs.setHubToken(s?.toString() ?: "") }
+        })
+        val tlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        tlp.topMargin = theme.px(8f)
+        box.addView(token, tlp)
+
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL

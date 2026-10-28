@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.ConsoleMessage
+import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -109,6 +110,21 @@ class WebShellActivity : Activity() {
             override fun onReceivedError(view: WebView, code: Int, desc: String, url: String) {
                 // A dead hub must say so in the page, not as Android's default error screen.
                 emit("scenix:shell", mapOf("device" to deviceName(), "unreachable" to url, "why" to desc))
+            }
+
+            /**
+             * A hub with HUB_TOKEN set answers HTTP Basic. The TV supplies the household token from
+             * setup, so the page never carries it and a subresource auth challenge is answered the same
+             * way as the first document. A blank token keeps the open-LAN path exactly as it was.
+             */
+            override fun onReceivedHttpAuthRequest(
+                view: WebView,
+                handler: HttpAuthHandler,
+                host: String,
+                realm: String,
+            ) {
+                val token = app.prefs.hubToken()
+                if (token.isNotBlank()) handler.proceed("scenix", token) else handler.cancel()
             }
         }
         web.webChromeClient = object : WebChromeClient() {

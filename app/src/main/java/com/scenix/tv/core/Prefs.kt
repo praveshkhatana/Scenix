@@ -49,6 +49,10 @@ class Prefs(context: Context) {
     fun setHubLastWorking(url: String) = sp.edit().putString(KEY_HUB_LAST, url.trim()).apply()
     fun hubLastWorking(): String? = sp.getString(KEY_HUB_LAST, null)?.takeIf { it.isNotBlank() }
 
+    /** Optional shared access token for a hub that sets HUB_TOKEN. Blank means "no token configured". */
+    fun hubToken(): String = sp.getString(KEY_TOKEN, "") ?: ""
+    fun setHubToken(token: String) = sp.edit().putString(KEY_TOKEN, token.trim()).apply()
+
     // ---- which backend this TV talks to ------------------------------------------------------
     //
     // A build names no machine, so a stranger's first run has three ways in — a hub announcing
@@ -103,6 +107,7 @@ class Prefs(context: Context) {
         private const val KEY_HUB_LAST = "hub_url_last_working"
         private const val KEY_BACKEND = "backend_choice"
         private const val KEY_DISCOVERED = "discovered_hubs"
+        private const val KEY_TOKEN = "hub_token"
         const val BACKEND_HUB = "hub"
         const val BACKEND_STANDALONE = "standalone"
         private const val KEY_FIXTURE = "fixture"
