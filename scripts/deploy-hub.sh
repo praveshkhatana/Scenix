@@ -39,6 +39,13 @@ rsync -a --delete \
 echo "== restarting"
 ssh "$USER_@$HOST" bash -s <<EOF
 cd ~/$DEST
+# The audio-donor remux needs ffmpeg/ffprobe. They are not packaged with the hub and may not be on the
+# login PATH; when the hub's own bin/ has them, pass the absolute paths so a deploy cannot silently turn
+# the feature off again.
+FF_ENV=""
+if [ -x "$HOME/$DEST/bin/ffmpeg" ]; then
+  FF_ENV="FFMPEG_BIN=$HOME/$DEST/bin/ffmpeg FFPROBE_BIN=$HOME/$DEST/bin/ffprobe"
+fi
 # Kill only OUR hub: the process whose working directory is ~/$DEST. This box runs other services and a
 # bare 'pkill -f node' would take them down too.
 for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do

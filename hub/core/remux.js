@@ -676,7 +676,12 @@ function hlsServe(req, res, u, cors, jobId, file) {
   let waited = 0;
   const poll = setInterval(() => {
     waited += 200;
-    if (fs.existsSync(full)) {
+    // ffmpeg creates init.mp4 (and the first playlist) empty and fills it a moment later. Treating
+    // existence as readiness answered the very first HLS request with a 200 and zero bytes, which is
+    // indistinguishable from a broken stream to a player. Wait for the first byte instead.
+    let size = 0;
+    try { size = fs.existsSync(full) ? fs.statSync(full).size : 0; } catch (e) { size = 0; }
+    if (size > 0) {
       clearInterval(poll);
       const type = /\.m3u8$/.test(safe) ? 'application/vnd.apple.mpegurl'
         : /\.mp4$|\.m4s$/.test(safe) ? 'video/iso.segment' : 'video/mp2t';

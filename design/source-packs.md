@@ -71,3 +71,38 @@ With a generated 320x240 MP4 whose only audio is a 440 Hz tone, and an audio-pac
 and the tone in the output measured 880 Hz — the donor's, not the picture's — with and without a 4 s
 `start=`. The HLS path produced a playlist whose segments carry the same mix. The `framextv` addon
 resolved a real episode of a live series to its upstream `.m3u8` at play time.
+
+## Verified again (2026-10-29) and what the TV does with it
+
+The hub on the television's LAN now has `ffmpeg`/`ffprobe` 7.0.2 static at `~/tvhub/bin/`, passed to
+the process as `FFMPEG_BIN`/`FFPROBE_BIN` by `scripts/deploy-hub.sh`; before that the binary was
+missing and `/healthz` said `remux.binFound: false`, so the feature was off even though the code was
+deployed.
+
+- **Negotiation, offline**: a 320x240 H.264 picture whose only track is 440 Hz *eng*, plus an
+  audio-pack row pointing at an 880 Hz *hin* M4A. The pinned-IGC `/play` answered
+  `selectedAudio: "a:1"`, one `audioTracks` row (`language: hin`, `kind: audio-mix`), `audioMix` with
+  `language/source/provider/addon/plan/confirmed/claimed`, and a remux URL with `au=`, `ao=`, `ap=`,
+  `u=`, `v=mp4`, `a=a:1`. `why` carried "audio: mixed Hindi from … while keeping the picture copy";
+  `picked` stayed the IGC picture.
+- **Bytes, offline**: the remux URL probed as one H.264 320x240 video (copied) plus one AAC track;
+  decoding it and measuring the dominant tone printed **880**, not 440 — with and without `start=4000`.
+- **HLS**: the playlist uses `init.mp4` + `.m4s`; `init.mp4` + `seg00000.m4s` probed as H.264 + AAC
+  and the tone was 880. The first HLS request used to answer a 200 with **zero bytes** because
+  `hlsServe` treated "the file exists" as "it has been written"; it now waits for a non-empty file.
+- **Negative checks**: `audioMix: {enabled:false}` and `audioMix: {language:"eng"}` (the picture already
+  claims English) return the direct URL with no `au`. `force:true` only mixes when a donor for that
+  language exists (a Hindi-only pack cannot force an English mix) — expected, not a bug.
+- **Real title**: `imdb:tt27369017` ("Hope", Korean) on the household hub negotiated
+  `audioMix.language: hin` from a 480p torrent copy while keeping the 1080p direct picture, with
+  `claimed: true` and `confirmed: false`. The current upstream picture/torrent copies failed at play
+  time ("YouTube: a service page, not a stream", engine served nothing), so the mixed bytes could not
+  be watched end to end for that title; the negotiation is the same one the offline test proved.
+
+### The native television
+
+`PlayerActivity` reads the same answer: the mixed track is selected (`a:1`), the top bar adds
+"Hindi audio", and the Audio sheet names the row by language with "mixed from <donor>" as its note,
+plus an **Original audio** row that re-requests `/play` with `audioMix:false` at the current playhead.
+A viewer who turned the mix off gets the language row back to turn it on again. The web player already
+prints the mix note from `player.audioMix`.
