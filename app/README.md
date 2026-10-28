@@ -15,13 +15,17 @@ Nothing is installed or deployed from here.
 - **Setup** — `MainActivity` probes for a hub. One that answers is opened at once; if none does,
   `PairingScreen` lists the hubs heard on the LAN, accepts a typed address, or starts the bundled
   standalone host. An optional **access token** field is stored for a hub that sets `HUB_TOKEN`; the
-  WebView supplies it through the normal Basic-auth challenge, so the page never sees it. This is the
-  only native screen in the product. `tv://setup` (or `--ez setup true` on an adb launch) reopens it on
+  WebView supplies it through the normal Basic-auth challenge, so the page never sees it. Setup is
+  native; Home/browse is native; the rest of the product is the web UI. `tv://setup` (or `--ez setup true` on an adb launch) reopens it on
   a TV that already has a backend; the page can do the same through `Scenix.openSetup()`.
   `--ez standalone true` chooses standalone directly, which is useful when testing both shapes without
   clearing data; `--es token …` sets the access token for a test launch.
-- **The product** — `WebShellActivity` loads `http://<backend>/` in a WebView. Every screen you use
-  (home, detail, search, settings, player chrome) is the same `hub/web/` code a browser gets.
+- **Native Home** — `BrowseActivity` reads the same `/app/v1/home` rows and draws the shelves in native
+  vertical/horizontal RecyclerViews with a native focus ring and bounded image cache. A tile opens the
+  web Detail route; the web Home action returns to the native activity. See
+  [../design/native-browse.md](../design/native-browse.md).
+- **The web product** — `WebShellActivity` loads `http://<backend>/` in a WebView for Detail, Player,
+  Search and Settings. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
   sequentially into `cache/torrents`, picks the requested file or episode, and serves it through the
   loopback HTTP server with Range support. The player sees an ordinary file. A copy larger than the
@@ -36,9 +40,10 @@ Nothing is installed or deployed from here.
 
 ## What the app is not
 
-There is no native Home, Detail, Search, Live, Movies, Series, Settings or Player stack, and no
-per-device "front end" switch. Those were a second product and have been removed. `PairingScreen` is
-a plain setup object; there is no native screen registry left to grow back.
+There is no native Detail, Search, Live, Settings or Player stack. Home/browse is the one native
+product surface, because scroll smoothness cannot be bought back from a WebView on this panel. A tile
+still opens web Detail, and the player is the same Media3 bridge. There is no per-device "front end"
+switch.
 
 ## Contract
 

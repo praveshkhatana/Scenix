@@ -24,6 +24,7 @@ object Focus {
         ctx: AppContext,
         ringRadiusPx: Int = 0,
         scale: Boolean = true,
+        elevate: Boolean = true,
         onClick: (() -> Unit)? = null,
     ) {
         val theme = ctx.theme
@@ -68,8 +69,12 @@ object Focus {
                 v.animate().scaleX(target).scaleY(target).setDuration(ms)
                     .setInterpolator(AccelerateDecelerateInterpolator()).start()
             }
-            v.animate().translationZ(elev).setDuration(ms)
-                .setInterpolator(AccelerateDecelerateInterpolator()).start()
+            // A translated Z animates a shadow pass every frame. On the 2 GB panel the cards get the
+            // ring and scale, not an elevation animation; setup keeps it because it has one button.
+            if (elevate) {
+                v.animate().translationZ(elev).setDuration(ms)
+                    .setInterpolator(AccelerateDecelerateInterpolator()).start()
+            }
         }
     }
 

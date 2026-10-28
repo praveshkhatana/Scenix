@@ -49,6 +49,8 @@ duplicated the same product and has been removed.
 - **Hub discovery:** `HubProbe` (a real `/healthz` identity check), `HubDiscovery`, `HubWatch`,
   `Prefs`, `Models`.
 - **Bundled preview:** `FixtureServer` + `LoopbackServer` + `assets/fixtures`, read-only.
+- **Native browse, deliberately returned:** `BrowseActivity` + `BrowseApi` + `BrowseImages` draw Home
+  only. The old native Detail/Search/Settings/Player stack remains deleted; web owns those screens.
 - **Standalone torrents:** `TorrentEngine` (libtorrent4j) and its cache under the app's private storage.
 - **Player bridge:** `WebShellActivity`, `Ceilings`, and the media3 stack under the transparent
   WebView. The shell exposes the native player to the page through `window.Scenix`; the page draws

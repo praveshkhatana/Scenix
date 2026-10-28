@@ -1,12 +1,13 @@
 # Plugin architecture — "change anything without touching the rest"
 
-Scenix has two plugin hosts and one thin shell:
+Scenix has two plugin hosts and a hybrid shell:
 
 - **The hub** (`hub/`) is the host for **content**: providers, rows, rules.
 - **The web interface** (`hub/web/`) is the host for **presentation**: screens, cards, rows and player
   chrome. It runs in a browser and in the television's WebView from the same files.
-- **The Android app** (`app/`) is not a second front end. It finds a backend, hosts that page, and
-  provides a native Media3 surface underneath it.
+- **The Android app** (`app/`) is a hybrid front end: native Home/browse shelves (`BrowseActivity`),
+  native setup, and the web page for Detail, Player, Search and Settings. It provides the native
+  Media3 surface underneath the web player.
 
 Nothing else is hardcoded. A new live source, a new row, a new card style, a new restriction or a new
 screen is one new file plus one registry line; no existing file's logic changes.
@@ -19,12 +20,13 @@ screen is one new file plus one registry line; no existing file's logic changes.
                               ▼
                      H U B  (host it anywhere)
                               │
-                  serves /app/v1 and the single web UI
+                  serves /app/v1 and the web UI
                               │
               ┌───────────────┼───────────────┐
               ▼               ▼               ▼
-        TV SHELL          ANY BROWSER      PHONE BROWSER
-   (WebView + Media3)     (same page)      (same page)
+        TV APP             ANY BROWSER      PHONE BROWSER
+ native Home/browse      (web page)       (web page)
+ + WebView detail/player
 ```
 
 Two rules make that shape possible, and nothing may violate them:
@@ -171,14 +173,15 @@ core/               HubProbe · HubDiscovery · HubWatch · Models · Prefs · F
                     LocalHub · LocalServer · FixtureServer · LoopbackServer · AddonClient
                     TorrentEngine
 plugins/nav/        PairingScreen — first-run hub discovery, manual address, or standalone
-WebShellActivity    the product: WebView page + Media3 surface + window.Scenix bridge
+BrowseActivity      native Home: RecyclerView shelves, focus, bounded image cache
+BrowseApi           the one native reader for /app/v1/home
+WebShellActivity    web Detail/Player/Search/Settings + Media3 surface + window.Scenix bridge
 ```
 
-The app holds **no content knowledge and no product screens**. It answers three questions: which
-backend, how to paint a video the page asks for, and where a `tv://` link goes. `PairingScreen` is a
-plain setup object; the screen/card/rule plugin registries and the in-process `HubClient` went with
-the native front end. Standalone and fixture preview are HTTP servers on loopback, not clients the
-page can tell apart from a hub.
+The app holds **no content knowledge**: both Home and the web page read the same `/app/v1` rows. It
+answers four questions: which backend, how to paint a shelf, how to paint a video the page asks for,
+and where a `tv://` link goes. The old duplicate Detail/Search/Settings/Player stack did not return;
+only the performance-critical browse surface is native.
 
 ## 5. What "change anything later" costs in practice
 

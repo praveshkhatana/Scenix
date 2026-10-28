@@ -1,9 +1,10 @@
 # Scenix
 
-A self-hosted streaming system: one content hub, one interface, every screen.
+A self-hosted streaming system: one content hub, the same catalogue, every screen.
 
-Scenix puts the catalogue, the sources and the policy on a machine you own, and draws the same
-interface on the television, in a browser and on a phone. Nothing has to be rented, nothing is licensed
+Scenix puts the catalogue, the sources and the policy on a machine you own. Browsers and phones
+draw the web interface; the television draws its shelves natively and uses the same web interface for
+title details, playback and settings. Nothing has to be rented, nothing is licensed
 per device, and no vendor decides what your family may watch. If you already pay for a debrid account,
 the hub can optionally use it as a faster source; it is off until you turn it on.
 
@@ -15,14 +16,15 @@ the hub can optionally use it as a faster source; it is off until you turn it on
                  │            torrent gateway · live TV · local files
         ┌────────┴────────┐
         ▼                 ▼
-   TV APP / PHONE      ANY BROWSER
-   (pairing + WebView,  (the same page the
-    native player)      hub serves)
+   TV APP                    ANY BROWSER / PHONE
+   native Home/browse        (the web interface
+   + WebView detail/player    the hub serves)
 ```
 
-There is one interface, not two. The hub serves it; the TV app is a shell that hosts that page in a
-WebView and plays video in a native Media3 surface underneath. The one native screen you see before
-the shell is setup — find a hub or choose standalone.
+One contract, two presentation surfaces. The catalogue, ranking, profiles and policy stay on the hub;
+the TV shelves are native RecyclerViews for native scroll/focus, while Detail, Player and Settings are
+the same web code a browser gets. Setup and the profile gate remain native/web handoffs as described in
+[design/native-browse.md](design/native-browse.md).
 
 ## What it is not
 

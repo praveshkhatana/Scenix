@@ -554,6 +554,24 @@ class WebShellActivity : Activity() {
         fun exit() = runOnUiThread { finish() }
 
         /** A page can offer "change hub" without knowing how a TV pairs: reopen the front door. */
+        /**
+         * The web profile gate has just produced a profile and mounted Home. Native browse takes it
+         * from here; a page opened *from* native Browse simply returns to the activity underneath.
+         */
+        @JavascriptInterface
+        fun openNativeBrowse(profileId: String) = runOnUiThread {
+            if (profileId.isBlank()) return@runOnUiThread
+            if (intent?.getBooleanExtra(EXTRA_FROM_BROWSE, false) == true) {
+                finish()
+                return@runOnUiThread
+            }
+            startActivity(
+                Intent(this@WebShellActivity, BrowseActivity::class.java)
+                    .putExtra(BrowseActivity.EXTRA_PROFILE, profileId)
+            )
+            finish()
+        }
+
         @JavascriptInterface
         fun openSetup() = runOnUiThread {
             startActivity(
@@ -641,6 +659,15 @@ class WebShellActivity : Activity() {
     companion object {
         /** `url` extra: an absolute page address, including a `#/route` when a deep link named one. */
         const val EXTRA_URL = "url"
+
+        /** Marks a page opened from native Browse, so its Home action returns instead of opening a second Browse. */
+        const val EXTRA_FROM_BROWSE = "from_browse"
+
+        /** The contract origin behind the page, for the native browse reader. */
+        fun apiBase(context: Context): String {
+            val page = shellUrl(context, "")
+            return page.replace(Regex("/ui/index\\.html$"), "").trimEnd('/')
+        }
 
         /**
          * The page root this TV should load, plus an optional page route (`#/detail/<id>`,

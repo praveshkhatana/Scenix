@@ -91,15 +91,18 @@ A user must never have to edit a file or set an environment variable to make Sce
 
 ### Which surface a device draws
 
-There is one. The Android app is a **thin shell**: `WebShellActivity` hosts the hub's page and a Media3
-surface plays the video underneath it. The only native screen left is first-run setup — find a hub on
-the LAN, type an address, or choose standalone — and an offline/"hub not answering" state. There is no
-alternative native Home, Detail, Search or Player to keep in step, so a change to the interface is a
-change in `hub/web/` and it reaches television, browser and phone at once.
+Two surfaces, one contract. The television draws **Home/browse** natively (`BrowseActivity` over
+RecyclerViews) because that is the scroll/focus surface where a WebView cannot reach native smoothness.
+Detail, Player, Search and Settings are `WebShellActivity` loading the hub's page, with a Media3
+surface for video. Browsers and phones use the web page for everything. The native browse surface reads
+the same `/app/v1/home` rows and opens web Detail; it is not a second catalogue or a second player.
 
-`tv://detail/<identity>` and `tv://play/<identity>` deep links open the same page at `#/detail/…` or
-`#/play/…`; they no longer name a screen of a native stack. The old per-device **Settings → Interface**
-switch is gone with that stack.
+Setup and the profile gate remain the handoff: setup finds the backend, the web profile gate produces a
+profile, and `Scenix.openNativeBrowse(profile)` opens native Home. Web Home returns to it.
+
+`tv://detail/<identity>` and `tv://play/<identity>` deep links open the web page at `#/detail/…` or
+`#/play/…`. The old per-device **Settings → Interface** switch and the old native Detail/Search/Player
+stack remain gone.
 
 ## Rule 4 — pairing, not IP addresses
 
