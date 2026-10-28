@@ -128,11 +128,14 @@ function scrollTo(node) {
      vertically, and a card already inside both is left alone. */
   const row = node.closest ? node.closest('.cards') : null;
   if (row && row.scrollWidth > row.clientWidth + 1) {
+    // Netflix centers the walking position: a shelf moves so the focused tile sits in the middle of
+    // what is visible, not merely "revealed" at an edge. One direct assignment, still instant — the
+    // panel's perf work keeps every D-pad step free of an animated scroll pass.
     const view = row.getBoundingClientRect();
     const card = node.getBoundingClientRect();
-    const pad = 24;
-    if (card.left < view.left + pad) row.scrollLeft -= (view.left + pad - card.left);
-    else if (card.right > view.right - pad) row.scrollLeft += (card.right - (view.right - pad));
+    const max = row.scrollWidth - row.clientWidth;
+    const target = row.scrollLeft + (card.left + card.width / 2 - (view.left + view.width / 2));
+    row.scrollLeft = Math.min(max, Math.max(0, target));
   }
   const screen = node.closest ? node.closest('.screen') : null;
   if (screen && screen.scrollHeight > screen.clientHeight + 1) {

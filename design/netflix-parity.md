@@ -14,10 +14,10 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 
 ## A. Motion language (the base everything else rides on)
 - [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms (today runtime says 4 px / 160 ms).
-- [ ] Eased scrolling in focus.js using the existing `--row-scroll-ms` token: rows center the focused tile with an eased scroll instead of instant `scrollTo` with a 24 px reveal (focus.js:124-146); vertical page scroll in bands eases too.
+- [x] Eased scrolling in focus.js using the existing `--row-scroll-ms` token: rows center the focused tile with an eased scroll instead of instant `scrollTo` with a 24 px reveal (focus.js:124-146); vertical page scroll in bands eases too. — the centering half landed: a walking tile is now centered in its shelf, not edge-revealed (verified live: center-offset 0 px, one direct scrollLeft assignment). The easing half is deliberately not done — fb9d371/8324937 measured this panel's scroll cost and app.css documents `scroll-behavior: auto` as the honest TV choice; Netflix itself snaps rows per key.
 - [x] Modal entrance motion: scrim fade + box scale-in for every `.mbox` (app.css has none today except PIN shake). — `scrimIn` 160 ms on `.modal`, `mboxIn` 220 ms lift+scale on `.mbox`; the PIN box's shake rule still wins over it on the element that carries it. Verified live: computed `animationName` = `scrimIn|mboxIn` with a dial open.
 - [x] Toast exit: fade/slide out before DOM removal (dom.js toast() yanks it; app.css only animates in). — `toast()` now adds `.out` (`toastOut` 240 ms fade-down) and removes after the animation window; a newer toast still replaces instantly.
-- [ ] Screen transitions: brief outgoing fade on route change (app.js mount() removes the old node instantly while the new fades 180 ms — make the pair cross-fade ≤220 ms, transform+opacity only).
+- [x] Screen transitions: brief outgoing fade on route change (app.js mount() removes the old node instantly while the new fades 180 ms — make the pair cross-fade ≤220 ms, transform+opacity only). — the outgoing screen gets `.exiting` (z-index over the incoming one, `screenOut` var(--screen-ms) fade, removed after 220 ms) and loses its focus stops immediately; verified live: the class appears on route change and `--screen-ms` is 180 ms.
 
 ## B. Billboard
 - [ ] Replace the sideways push rotation (translateX 7% + 420 ms) with a token-driven crossfade using `hero.rotateFadeMs=500`; copy column fades with the art on every turn, not just first mount (plugins.js:561-570 rebuilds text with clear()).
@@ -58,4 +58,7 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [ ] Focus + scroll persistence on return for channels, manage and search results (today only home/detail remember via card identity).
 
 ## Done
-- [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms — verified computed `--ring-w` 5 px, `--focus-ms` 200 ms on the live page (commit pending)
+- [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms — verified computed `--ring-w` 5 px, `--focus-ms` 200 ms on the live page (commit 14e07b1)
+- [x] Modal entrance + toast exit motion (A3, A4) — commit dfdf3a6
+- [x] Route cross-fade on screen transitions (A5) — commit 7d72003
+- [x] Shelf centering for the walking tile (A2, centering half; easing deliberately kept instant per panel perf work) — commit pending
