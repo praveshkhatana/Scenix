@@ -334,10 +334,12 @@ data class Addon(
         fun from(o: JSONObject): Addon = Addon(
             id = s(o, "id", ""),
             name = s(o, "name", s(o, "id", "")),
-            origin = s(o, "origin", s(o, "type", "")),
-            kinds = strList(o.optJSONArray("kinds") ?: o.optJSONArray("types")),
-            count = o.optInt("count", o.optInt("items", 0)),
-            lastError = s(o, "lastError", s(o, "error", "")),
+            // A backend reports an addon the same way whether it is a hub's or this TV's: `native` says who
+            // installed it, `resources` says what it can answer for, `items` counts what it contributed.
+            origin = s(o, "origin", if (o.optBoolean("native", false)) "native" else "user"),
+            kinds = strList(o.optJSONArray("resources") ?: o.optJSONArray("kinds") ?: o.optJSONArray("types")),
+            count = o.optInt("items", o.optInt("count", 0)),
+            lastError = s(o, "error", s(o, "lastError", "")),
             enabled = o.optBoolean("enabled", true),
         )
 

@@ -53,7 +53,7 @@ object Format {
      * and a table here would be one more thing a build got wrong for everyone else. An unknown code is
      * shown as it arrived.
      */
-    private fun langName(code: String): String {
+    fun langName(code: String): String {
         val c = code.trim()
         if (c.isEmpty()) return ""
         val named = runCatching { Locale.forLanguageTag(c).getDisplayLanguage(Locale.ENGLISH) }.getOrNull()

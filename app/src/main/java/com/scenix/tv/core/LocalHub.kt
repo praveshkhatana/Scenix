@@ -108,6 +108,47 @@ class LocalHub private constructor(context: Context) : HubClient {
 
     private fun ttlMs(): Long = settings().optLong("cacheTtlHours", 6L).coerceIn(1L, 24L) * 3600_000L
 
+    /** Where this TV keeps its settings, named the way a hub names the file its addons live in. */
+    fun settingsPath(): String = settingsFile.absolutePath
+
+    /**
+     * The envelope a hub answers `GET /app/v1/settings` with: what is stored, what an untouched file would
+     * mean, the words the language codes in it stand for, and where the values live on this box. A screen
+     * needs the defaults beside the settings to tell an owner's choice from a build's silence.
+     */
+    fun settingsEnvelope(): JSONObject = JSONObject()
+        .put("settings", settings())
+        .put("defaults", defaultSettings())
+        .put("languageNames", languageNames())
+        .put("file", settingsPath())
+
+    /** What a settings file that says nothing means: no addon, no language and no channel preselected. */
+    private fun defaultSettings(): JSONObject = JSONObject()
+        .put("addons", JSONArray())
+        .put("audioLanguages", JSONArray())
+        .put("subtitleLanguages", JSONArray())
+        .put("adult", false)
+        .put("cacheTtlHours", 6)
+
+    /**
+     * Words for the codes this backend actually holds. There is no table of every language baked in here —
+     * which tongues a household listens in is not a fact about this app — so a screen labels exactly the
+     * choices in front of it.
+     */
+    private fun languageNames(): JSONObject {
+        val codes = LinkedHashSet<String>()
+        val owned = settings()
+        for (k in arrayOf("audioLanguages", "subtitleLanguages")) {
+            owned.optJSONArray(k)?.let { a -> for (i in 0 until a.length()) codes.add(a.optString(i)) }
+        }
+        for (p in profileList()) {
+            p.optJSONArray("languages")?.let { a -> for (i in 0 until a.length()) codes.add(a.optString(i)) }
+        }
+        val out = JSONObject()
+        for (c in codes.filter { it.isNotBlank() }) out.put(c, Format.langName(c))
+        return out
+    }
+
     // ---- the contract in JSON -----------------------------------------------------------------
     // [LocalServer] answers these paths directly and the [HubClient] methods at the bottom wrap the
     // same calls, so the native screens and the WebView front end of standalone mode cannot drift.
@@ -154,20 +195,45 @@ class LocalHub private constructor(context: Context) : HubClient {
 
     fun profilesJson(): JSONObject {
         ensureProfiles()
-        val stored = readJson(prefStore)
         val out = JSONArray()
         for (p in profileList()) {
-            val id = s(p, "id", "")
             out.put(
-                JSONObject()
-                    .put("id", id)
-                    .put("name", s(p, "name", ""))
-                    .put("isKids", p.optBoolean("isKids", false))
-                    .put("hasPin", p.optBoolean("hasPin", false))
-                    .put("prefs", stored.optJSONObject(id) ?: JSONObject()),
+                wireProfile(p)
+                    .put("prefs", readProfilePrefs(s(p, "id", "")))
+                    // The shelves this backend declares — its addons' catalogs — not the ones that happened
+                    // to return something on one pass. A hub says the same thing about its own row list.
+                    .put("rows", JSONArray(declaredRows(addonManifests()).map { it.id })),
             )
         }
         return JSONObject().put("profiles", out)
+    }
+
+    /**
+     * A profile as it leaves this app, with the same fields a hub sends. The code itself never travels:
+     * `pinSet` says one exists and `locked` says one will actually be asked for, because a flag with no code
+     * behind it is a wall that checks nothing and a code with no flag is a gate that never opens. This
+     * backend holds the secret, so it is the one that knows which of the two is true.
+     */
+    private fun wireProfile(p: JSONObject): JSONObject {
+        val out = JSONObject()
+        for (k in p.keys()) if (k != "pin") out.put(k, p.opt(k))
+        val pinSet = s(p, "pin", "").isNotEmpty()
+        return out
+            .put("pinSet", pinSet)
+            .put("locked", pinSet && p.optBoolean("pinRequired", false))
+            .put("effectivePrefs", effectivePrefs(p))
+    }
+
+    /** What this profile really ranks with: what the viewer wrote, with the household's defaults filling the gaps. */
+    private fun effectivePrefs(p: JSONObject): JSONObject {
+        val mine = readProfilePrefs(s(p, "id", ""))
+        val out = JSONObject()
+        for (k in mine.keys()) out.put(k, mine.opt(k))
+        val owned = settings()
+        for (k in arrayOf("audioLanguages", "subtitleLanguages")) {
+            if ((out.optJSONArray(k)?.length() ?: 0) == 0) out.put(k, owned.optJSONArray(k) ?: JSONArray())
+        }
+        return out
     }
 
     fun homeJson(profileId: String?): JSONObject =
@@ -194,9 +260,9 @@ class LocalHub private constructor(context: Context) : HubClient {
             // answers at once: titles that have been on a shelf or played before.
             found.addAll(libraryItems().filter { it.title.contains(term, true) })
         }
-        val kids = isKidsProfile(profileId)
+        val ceiling = kidsCeiling(profileId)
         val items = dedupe(found)
-            .filterNot { kids && impliedAge(it.maturity) > KIDS_MAX_AGE }
+            .filterNot { ceiling >= 0 && impliedAge(it.maturity) > ceiling }
             .sortedByDescending { it.match }
         val rows = JSONArray()
         if (items.isNotEmpty()) {
@@ -209,9 +275,18 @@ class LocalHub private constructor(context: Context) : HubClient {
         return JSONObject().put("rows", rows)
     }
 
-    private fun isKidsProfile(profileId: String?): Boolean =
-        profileList().firstOrNull { s(it, "id", "") == (profileId ?: "default") }
-            ?.optBoolean("isKids", false) ?: false
+    /**
+     * The age a child's shelf stops at, or -1 for a profile that is not a child's. A hub records an explicit
+     * `age` beside `kind`; when this TV holds none it falls back to the ceiling it has always used, so a
+     * profile created before that field existed keeps behaving as it did.
+     */
+    private fun kidsCeiling(profileId: String?): Int {
+        val p = profileList().firstOrNull { s(it, "id", "") == (profileId ?: "default") } ?: return -1
+        val kids = s(p, "kind", "").equals("kids", true) || p.optBoolean("isKids", false)
+        if (!kids) return -1
+        val age = p.optInt("age", -1)
+        return if (age in 2..18) age else KIDS_MAX_AGE
+    }
 
     /**
      * The age a maturity label implies, or -1 when it says nothing. A blank label is unknown and stays
@@ -286,66 +361,99 @@ class LocalHub private constructor(context: Context) : HubClient {
 
     fun setPrefsJson(values: JSONObject, profileId: String?): JSONObject = synchronized(lock) {
         val who = profileId ?: "default"
-        val root = readJson(prefStore)
-        root.put(who, values)
-        writeJson(prefStore, root)
+        writeProfilePrefs(who, values)
         JSONObject().put("profile", who).put("prefs", values)
     }
 
     /**
-     * The addons this TV is pulling from, in the shape the Settings screen already renders for a hub's
-     * list. `lastError` says what is not working in the owner's own words: the manifest is not fetched
-     * yet, or it did not answer.
+     * The addons this TV has been told about, reported the way a hub reports its own: what each one is,
+     * whether it is switched on, which resources its manifest declares. `error` says what is not working in
+     * the owner's own words: the manifest is not fetched yet, or it did not answer. A TV keeps no per-addon
+     * tally of what it streamed, so it does not invent one.
      */
     fun addonsJson(): JSONArray {
         val out = JSONArray()
-        for (spec in addonSpecs(includeDisabled = true)) {
-            val am = addons.manifest(spec, wait = false, ttlMs = ttlMs())
-            out.put(
-                JSONObject()
-                    .put("id", spec.id)
-                    .put("name", spec.name)
-                    .put("origin", "user")
-                    .put("url", spec.manifestUrl)
-                    .put("enabled", spec.enabled)
-                    .put("kinds", JSONArray(kindsOf(am)))
-                    .put("count", am?.catalogs?.size ?: 0)
-                    .put("lastError", if (am == null) "manifest not fetched yet" else ""),
-            )
-        }
+        for (spec in addonSpecs(includeDisabled = true)) out.put(addonStats(spec))
         return out
     }
 
-    private fun kindsOf(am: AddonManifest?): List<String> = when {
-        am == null -> emptyList()
-        else -> listOfNotNull(
-            "title".takeIf { am.has("catalog") },
-            "stream".takeIf { am.has("stream") },
-            "subtitle".takeIf { am.has("subtitles") },
-        )
+    private fun addonStats(spec: AddonSpec): JSONObject {
+        val am = addons.manifest(spec, wait = false, ttlMs = ttlMs())
+        val kind = when {
+            am == null -> "video"
+            am.catalogs.any { communityType(s(it, "type", "")) == "tv" } -> "channel"
+            am.catalogs.any { communityType(s(it, "type", "")) != null } -> "title"
+            else -> "video"
+        }
+        return JSONObject()
+            .put("id", spec.id)
+            .put("name", spec.name)
+            .put("url", spec.manifestUrl)
+            .put("native", false)   // nothing on a TV was shipped by a build: the owner typed every URL
+            .put("enabled", spec.enabled)
+            .put("kind", kind)
+            .put("resources", JSONArray(resourceNames(am)))
+            .put("catalogs", am?.catalogs?.size ?: 0)
+            .put("error", if (am == null) "manifest not fetched yet" else JSONObject.NULL)
     }
+
+    private fun resourceNames(am: AddonManifest?): List<String> = am?.resources?.keys?.sorted() ?: emptyList()
+
+    /** One addon's report, found by the id or the URL a caller used. */
+    private fun addonStatsFor(which: String): JSONObject? =
+        addonSpecs(includeDisabled = true).firstOrNull {
+            it.id == which || it.manifestUrl.trim() == which.trim() || slug(it.manifestUrl) == which
+        }?.let { addonStats(it) }
 
     // ---- the owner's addons -------------------------------------------------------------------
     // Same verbs as the hub's own addon routes, answered here from the settings file: an installed
     // addon is a URL the owner typed, and nothing about it is decided by a build.
 
-    /** Take an addon by URL. The manifest is read when the shelves are next built, not here. */
-    fun addAddon(url: String, name: String = ""): JSONArray = synchronized(lock) {
+    /**
+     * Take an addon by URL, checked the way a hub checks one. An address that is not http(s) is refused; an
+     * address already installed is not installed twice; the manifest is read before the owner is told it
+     * worked, because a TV that accepted a dead URL would show an empty shelf and never say why. The address
+     * is stored the way a hub stores it, with the manifest file named, so the same URL means the same addon on
+     * either backend.
+     */
+    fun addAddon(url: String, name: String = ""): JSONObject = synchronized(lock) {
+        val address = manifestAddress(url)
+            ?: return JSONObject().put("error", "url must be http(s)")
         val arr = settings().optJSONArray("addons") ?: JSONArray()
-        val entry = JSONObject().put("url", url.trim())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (sameAddress(s(o, "manifest", s(o, "url", "")), address)) {
+                return JSONObject().put("error", "already installed").put("id", slug(address))
+            }
+        }
+        val spec = AddonSpec(slug(address), name.trim(), address, true)
+        if (addons.manifest(spec, wait = true, ttlMs = 0) == null) {
+            return JSONObject().put("error", "manifest not reachable").put("url", address)
+        }
+        val entry = JSONObject().put("url", address)
         if (name.isNotBlank()) entry.put("name", name.trim())
         arr.put(entry)
         setSettings(JSONObject().put("addons", arr))
-        addonsJson()
+        JSONObject().put("addon", addonStats(spec))
     }
+
+    /** An addon address the way a hub reads one: http(s) only, and a directory gets its manifest file. */
+    private fun manifestAddress(url: String): String? {
+        val t = url.trim()
+        if (!Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(t)) return null
+        val trimmed = t.trimEnd('/')
+        return if (trimmed.endsWith("/manifest.json", true)) trimmed else "$trimmed/manifest.json"
+    }
+
+    private fun sameAddress(a: String, b: String): Boolean =
+        a.trim().trimEnd('/').lowercase() == b.trim().trimEnd('/').lowercase()
 
     /** Switch one addon on or off, matched by id or by the URL it was given. */
-    fun setAddonEnabled(which: String, enabled: Boolean): JSONArray? = editAddon(which) {
-        it.put("enabled", enabled)
-    }
+    fun setAddonEnabled(which: String, enabled: Boolean): JSONObject? =
+        if (editAddon(which) { it.put("enabled", enabled) }) addonStatsFor(which) else null
 
-    /** Forget an addon entirely. Its cached responses stay until the cache is cleared. */
-    fun removeAddon(which: String): JSONArray? {
+    /** Forget an addon entirely, and say which went. Its cached answers stay until the cache is cleared. */
+    fun removeAddon(which: String): String? {
         val kept = JSONArray()
         val arr = settings().optJSONArray("addons") ?: JSONArray()
         var removed = false
@@ -355,11 +463,11 @@ class LocalHub private constructor(context: Context) : HubClient {
         }
         if (!removed) return null
         setSettings(JSONObject().put("addons", kept))
-        return addonsJson()
+        return which
     }
 
-    private fun editAddon(which: String, patch: (JSONObject) -> Unit): JSONArray? = synchronized(lock) {
-        val arr = settings().optJSONArray("addons") ?: return@synchronized null
+    private fun editAddon(which: String, patch: (JSONObject) -> Unit): Boolean = synchronized(lock) {
+        val arr = settings().optJSONArray("addons") ?: return false
         var hit = false
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -368,14 +476,24 @@ class LocalHub private constructor(context: Context) : HubClient {
                 hit = true
             }
         }
-        if (!hit) return null
+        if (!hit) return false
         setSettings(JSONObject().put("addons", arr))
-        addonsJson()
+        return true
     }
 
     private fun matchesAddon(o: JSONObject, which: String): Boolean {
         val url = s(o, "manifest", s(o, "url", "")).trim()
         return s(o, "id", "") == which || url == which.trim() || slug(url) == which
+    }
+
+    /**
+     * The languages a profile listens in — what a hub falls back to when a subtitle request names none, and
+     * so what this backend falls back to as well.
+     */
+    fun subtitleLanguages(profileId: String?): List<String> {
+        val who = profileId ?: "default"
+        val p = profileList().firstOrNull { s(it, "id", "") == who } ?: return emptyList()
+        return effectivePrefs(p).optStringList("audioLanguages")
     }
 
     /**
@@ -524,14 +642,14 @@ class LocalHub private constructor(context: Context) : HubClient {
         //
         // A kids profile also sees only what its maturity label allows. The page this backend serves runs
         // no rules of its own, so the ceiling is applied here, where the shelves are built.
-        val kids = isKidsProfile(profileId)
+        val ceiling = kidsCeiling(profileId)
         val seen = LinkedHashSet<String>()
         val merged = ArrayList<LocalRow>()
         for (r in out) {
             val items = ArrayList<Item>()
             for (it in r.items) {
                 if (r.id.startsWith("addon:") && !seen.add(it.identity)) continue
-                if (kids && impliedAge(it.maturity) > KIDS_MAX_AGE) continue
+                if (ceiling >= 0 && impliedAge(it.maturity) > ceiling) continue
                 items.add(it)
             }
             if (items.isNotEmpty()) merged.add(r.copy(items = items))
@@ -799,40 +917,236 @@ class LocalHub private constructor(context: Context) : HubClient {
             writeJson(
                 profilesFile,
                 JSONObject().put("profiles", JSONArray().put(
-                    JSONObject().put("id", "viewer").put("name", "Viewer").put("isKids", false).put("hasPin", false),
+                    JSONObject().put("id", "viewer").put("name", "Viewer")
+                        .put("kind", "adult").put("pinRequired", false),
                 )),
             )
         }
     }
 
-    fun addProfile(name: String, isKids: Boolean): JSONObject = synchronized(lock) {
+    /**
+     * Create a profile from the same fields a hub accepts: a name, whether this is a child, an age ceiling,
+     * languages, a face. A name already taken is refused rather than numbered, so nobody ends up with
+     * "Viewer" and "Viewer-2" without having chosen that.
+     */
+    fun addProfile(spec: JSONObject): JSONObject = synchronized(lock) {
         ensureProfiles()
+        val name = s(spec, "name", "").trim()
+        if (name.isBlank()) return@synchronized JSONObject().put("error", "a profile needs a name")
         val existing = profileList()
-        val base = slug(name.ifBlank { "viewer" })
-        var n = 1
-        var id = base
-        while (existing.any { s(it, "id", "") == id }) id = "$base-${++n}"
+        val id = s(spec, "id", "").trim().ifBlank { profileId(name) }
+        if (existing.any { s(it, "id", "") == id }) {
+            return@synchronized JSONObject().put("error", "that profile already exists").put("id", id)
+        }
         val p = JSONObject()
             .put("id", id)
-            .put("name", name.ifBlank { "Viewer ${existing.size + 1}" })
-            .put("isKids", isKids)
-            .put("hasPin", false)
+            .put("name", name)
+            .put("kind", if (s(spec, "kind", "").equals("kids", true)) "kids" else "adult")
+            .put("pinRequired", spec.optBoolean("pinRequired", false))
+        if (!spec.optDouble("age", Double.NaN).isNaN()) p.put("age", spec.optInt("age"))
+        spec.optJSONArray("languages")?.takeIf { it.length() > 0 }?.let { p.put("languages", it) }
+        s(spec, "avatar", "").trim().takeIf { it.isNotEmpty() }?.let { p.put("avatar", it.take(400)) }
         val arr = JSONArray()
         existing.forEach { arr.put(it) }
         arr.put(p)
         writeJson(profilesFile, JSONObject().put("profiles", arr))
-        p
+        JSONObject().put("profile", wireProfile(p))
     }
 
-    fun removeProfile(id: String): Boolean {
-        synchronized(lock) {
-            val existing = profileList()
-            val keep = existing.filter { s(it, "id", "") != id }
-            if (keep.size == existing.size || keep.isEmpty()) return false
-            writeJson(profilesFile, JSONObject().put("profiles", JSONArray(keep)))
-            return true
+    /**
+     * Change one profile, under the same whitelist a hub accepts and its rule about a face: a face travels as
+     * a path this backend serves, so a TV never needs an image host to draw its start screen. A code and the
+     * wish to be asked for one stay one decision, because the half-state is what leaves a viewer standing
+     * behind a wall nothing can open.
+     */
+    fun patchProfile(id: String, patch: JSONObject): JSONObject = synchronized(lock) {
+        val existing = profileList()
+        val at = existing.indexOfFirst { s(it, "id", "") == id }
+        if (at < 0) return@synchronized JSONObject().put("error", "no such profile").put("id", id)
+        val next = JSONObject()
+        for (k in existing[at].keys()) next.put(k, existing[at].opt(k))
+        var changed = false
+        for (k in arrayOf("name", "kind", "age", "languages", "rules", "prefs", "pin", "pinRequired", "avatar")) {
+            if (!patch.has(k)) continue
+            when (k) {
+                "avatar" -> {
+                    val face = s(patch, "avatar", "").trim().take(400)
+                    if (face.isNotEmpty() && !face.startsWith("/") &&
+                        !face.startsWith("http://") && !face.startsWith("https://")) {
+                        return@synchronized JSONObject().put(
+                            "error", "avatar must be a path this backend serves or an http(s) URL",
+                        )
+                    }
+                    if (face.isEmpty()) next.remove(k) else next.put(k, face)
+                }
+                "pin" -> {
+                    val code = s(patch, "pin", "").trim().take(12)
+                    if (code.isEmpty()) next.remove("pin") else next.put("pin", code)
+                    next.put("pinRequired", code.isNotEmpty())
+                }
+                "prefs" -> patch.optJSONObject("prefs")?.let { writeProfilePrefs(id, it) }
+                else -> next.put(k, patch.opt(k))
+            }
+            changed = true
+        }
+        if (patch.optBoolean("pinRequired", false) && !patch.has("pin") && s(next, "pin", "").isEmpty()) {
+            return@synchronized JSONObject().put("error", "set a PIN before asking for one")
+        }
+        if (!changed) return@synchronized JSONObject().put("error", "nothing to change")
+        val arr = JSONArray()
+        existing.forEachIndexed { i, p -> if (i != at) arr.put(p) }
+        arr.put(next)
+        writeJson(profilesFile, JSONObject().put("profiles", arr))
+        JSONObject().put("profile", wireProfile(next))
+    }
+
+    /** Forget a profile. The last one stays: a TV with no person on it has no home screen to show. */
+    fun removeProfile(id: String): JSONObject = synchronized(lock) {
+        val existing = profileList()
+        if (existing.size <= 1) return@synchronized JSONObject().put("error", "the last profile cannot be removed")
+        val keep = existing.filter { s(it, "id", "") != id }
+        if (keep.size == existing.size) return@synchronized JSONObject().put("error", "no such profile").put("id", id)
+        writeJson(profilesFile, JSONObject().put("profiles", JSONArray(keep)))
+        JSONObject().put("removed", id)
+    }
+
+    /**
+     * Ask that a profile be opened. Here the code is this app's own secret, so it is compared here; against a
+     * hub the client sends the code and asks, and never learns what the hub was holding either way.
+     */
+    fun unlockProfile(id: String, pin: String): JSONObject = synchronized(lock) {
+        val held = profileList().firstOrNull { s(it, "id", "") == id }
+            ?: return@synchronized JSONObject().put("error", "no such profile").put("id", id)
+        val code = s(held, "pin", "")
+        when {
+            code.isEmpty() -> JSONObject().put("ok", true).put("unlocked", id).put("noPin", true)
+            pin == code -> JSONObject().put("ok", true).put("unlocked", id)
+            else -> JSONObject().put("error", "wrong PIN").put("unlocked", JSONObject.NULL)
         }
     }
+
+    /** A profile id, with a fallback so a name made entirely of punctuation still gets one. */
+    private fun profileId(name: String): String = slugOf(name).ifBlank { "p" }
+
+    /**
+     * The way a hub turns words into an identifier. A profile id and the slug a cached face is stored under
+     * are derived the same way there, so they are derived the same way here: lowercased, with anything that is
+     * not a letter or a digit becoming a dash.
+     */
+    private fun slugOf(text: String): String =
+        text.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+
+    private fun writeProfilePrefs(who: String, values: JSONObject) {
+        val root = readJson(prefStore)
+        root.put(who, values)
+        writeJson(prefStore, root)
+    }
+
+    // ---- faces -----------------------------------------------------------------------------------
+    // The character list, and whatever pictures had already been cached where the app was built, come in from
+    // the hub's own directory (build.gradle). A TV asks its own backend for a face and never learns a
+    // third-party hostname. A build that carries no pictures says so with `avatarFaces: false` rather than
+    // offering a rail of nothing.
+
+    /** One cached face: the bytes, and the content type recorded beside them when they were cached. */
+    class Face(val bytes: ByteArray, val type: String)
+
+    private var faceIndex: Set<String>? = null
+
+    private fun faceSlugs(): Set<String> {
+        var cached = faceIndex
+        if (cached == null) {
+            val listed = runCatching { appContext.assets.list(FACE_DIR) }.getOrNull() ?: emptyArray()
+            cached = listed.filter { it.endsWith(".img") }.map { it.removeSuffix(".img") }.toSet()
+            faceIndex = cached
+        }
+        return cached
+    }
+
+    private fun hasFaces(): Boolean = faceSlugs().isNotEmpty()
+
+    /** What the source called this picture: what it is, and how tall it is, so a card crops it knowingly. */
+    private fun faceMeta(slug: String): JSONObject? = runCatching {
+        JSONObject(readAsset("$FACE_DIR/$slug.json"))
+    }.getOrNull()
+
+    /**
+     * The faces this build carries, in the shape a hub's list has. The bundled file names the characters a
+     * household may choose; only the ones with a picture beside them are offered, which is what a hub answers
+     * when it has cached nothing yet. `limit` bounds the candidates, as it does there, and `seed` is the same
+     * reshuffle, so "another set" needs no memory on either side.
+     */
+    fun charactersJson(limit: Int?, seed: String = ""): JSONObject {
+        val wanted = runCatching {
+            JSONObject(readAsset("characters/characters.json")).optJSONArray("characters")
+        }.getOrNull() ?: JSONArray()
+        val n = (limit ?: 40).coerceIn(1, 200)
+        val carried = faceSlugs()
+        val out = ArrayList<JSONObject>()
+        for (i in 0 until minOf(wanted.length(), n)) {
+            val entry = wanted.optJSONObject(i) ?: continue
+            val page = s(entry, "page", s(entry, "name", ""))
+            val slug = slugOf(page)
+            if (slug.isEmpty() || slug !in carried) continue
+            val meta = faceMeta(slug)
+            val w = meta?.optInt("width", 0) ?: 0
+            val h = meta?.optInt("height", 0) ?: 0
+            out.add(
+                JSONObject()
+                    .put("id", slug)
+                    .put("name", s(entry, "name", ""))
+                    .put("label", s(entry, "name", ""))
+                    .put("image", "/app/v1/avatars/character/$slug")
+                    .put("source", meta?.let { s(it, "attribution", "") } ?: "")
+                    .put("page", meta?.let { s(it, "page", "") }.orEmpty().ifBlank { page })
+                    .put("licence", meta?.opt("licence") ?: JSONObject.NULL)
+                    .put("licenceUrl", meta?.opt("licenceUrl") ?: JSONObject.NULL)
+                    .put("description", meta?.let { s(it, "description", "") } ?: "")
+                    .put("from", meta?.let { s(it, "source", "") }.orEmpty().ifBlank { "wikipedia" })
+                    .put("publisher", JSONObject.NULL)
+                    .put("fullName", JSONObject.NULL)
+                    .put("alignment", JSONObject.NULL)
+                    .put("powerScore", JSONObject.NULL)
+                    .put("width", w)
+                    .put("height", h)
+                    .put("portrait", h >= w),
+            )
+        }
+        return JSONObject().put("characters", JSONArray(orderBySeed(out, seed)))
+    }
+
+    /** One cached face by slug, with an honest content type. */
+    fun characterImage(id: String): Face? {
+        if (!FACE_SLUG.matches(id)) return null
+        val bytes = runCatching { appContext.assets.open("$FACE_DIR/$id.img").use { it.readBytes() } }.getOrNull()
+            ?: return null
+        return Face(bytes, faceMeta(id)?.optString("type")?.takeIf { it.isNotBlank() } ?: "image/jpeg")
+    }
+
+    /** The shuffle the hub uses, so a picker's "another set" is a reshuffle rather than a new question. */
+    private fun orderBySeed(items: List<JSONObject>, seed: String): List<JSONObject> {
+        if (seed.isEmpty()) return items
+        fun key(t: String): Long {
+            // The hub's own 32-bit FNV-1a. JavaScript wraps this arithmetic at 32 bits (`Math.imul`, then
+            // `>>> 0`), so every step here is masked to 32 bits as well; otherwise the two backends would
+            // shuffle the same picker into a different order and a household would see different faces on
+            // whichever machine it happened to open.
+            var x = 2166136261L
+            for (ch in t) {
+                x = (x xor ch.code.toLong()) and 0xFFFFFFFFL
+                x = (x * 16777619L) and 0xFFFFFFFFL
+            }
+            return x
+        }
+        return items.sortedWith { a, b ->
+            val ka = key(s(a, "id", "") + "|" + seed)
+            val kb = key(s(b, "id", "") + "|" + seed)
+            if (ka != kb) ka.compareTo(kb) else s(a, "id", "").compareTo(s(b, "id", ""))
+        }
+    }
+
+    private fun readAsset(path: String): String =
+        appContext.assets.open(path).reader().use { it.readText() }
 
     private fun readProfilePrefs(who: String): JSONObject = readJson(prefStore).optJSONObject(who) ?: JSONObject()
 
@@ -992,108 +1306,6 @@ class LocalHub private constructor(context: Context) : HubClient {
         )
     }
 
-    // ---- character faces ------------------------------------------------------------------------
-    //
-    // The build step carries the hub's character list and every picture that hub had already fetched into
-    // this APK, so a standalone TV draws its start screen out of its own storage: a face is a file on the
-    // device, not a request to somebody else's website. A build given no faces says so through the
-    // `avatarFaces` capability, and the client draws its own initials instead - a capability that lies is
-    // worse than one that is off.
-
-    /** The hub's own slug rule, kept identical so one path resolves on either backend. */
-    private fun slugOf(value: String): String =
-        value.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
-
-    private fun assetText(name: String): String =
-        appContext.assets.open(name).use { it.readBytes().toString(Charsets.UTF_8) }
-
-    /** Empty string for "the source did not say", which is what the hub sends on the wire. */
-    private fun orNull(from: JSONObject, name: String): Any {
-        val v = s(from, name, "")
-        return if (v.isEmpty()) JSONObject.NULL else v
-    }
-
-    private var faceCache: List<JSONObject>? = null
-
-    /**
-     * The faces this build carries, in the order the shipped list gives them, described exactly as the hub
-     * describes them. An entry with no picture beside it is not offered: a picker full of broken images is
-     * a worse screen than a shorter one.
-     */
-    private fun faceRecords(): List<JSONObject> {
-        faceCache?.let { return it }
-        val out = ArrayList<JSONObject>()
-        try {
-            val listed = JSONObject(assetText("characters/characters.json")).optJSONArray("characters") ?: JSONArray()
-            for (i in 0 until listed.length()) {
-                val entry = listed.optJSONObject(i) ?: continue
-                val page = s(entry, "page", "").ifEmpty { s(entry, "name", "") }
-                val slug = slugOf(page)
-                if (slug.isEmpty()) continue
-                val meta = try {
-                    JSONObject(assetText("characters/faces/$slug.json"))
-                } catch (e: Throwable) {
-                    continue // no cached picture for this character in this build
-                }
-                out.add(
-                    JSONObject()
-                        .put("id", slug)
-                        .put("name", s(entry, "name", page))
-                        .put("label", s(entry, "name", page))
-                        .put("image", "/app/v1/avatars/character/$slug")
-                        .put("source", s(meta, "attribution", ""))
-                        .put("page", s(meta, "page", ""))
-                        .put("licence", orNull(meta, "licence"))
-                        .put("licenceUrl", orNull(meta, "licenceUrl"))
-                        .put("description", s(meta, "description", ""))
-                        .put("from", s(meta, "source", "wikipedia"))
-                        .put("publisher", orNull(meta, "publisher"))
-                        .put("fullName", orNull(meta, "fullName"))
-                        .put("alignment", orNull(meta, "alignment"))
-                        .put("powerScore", orNull(meta, "powerScore"))
-                        .put("width", meta.optInt("width", 0))
-                        .put("height", meta.optInt("height", 0))
-                        // A standing poster and a wide banner need different crops, and a card cannot know
-                        // which it holds without being told.
-                        .put("portrait", meta.optInt("height", 0) >= meta.optInt("width", 0)),
-                )
-            }
-        } catch (e: Throwable) {
-            // No list in this build at all. hasFaces() reports false and the client draws its own faces.
-        }
-        faceCache = out
-        return out
-    }
-
-    fun hasFaces(): Boolean = faceRecords().isNotEmpty()
-
-    /** The picker's answer, in the hub's envelope: `{ characters: [...] }`. */
-    fun charactersJson(limit: String?, pick: String?): JSONObject {
-        val wanted = (limit?.toIntOrNull() ?: 40).coerceIn(1, 200)
-        val all = faceRecords()
-        val ordered = if (pick.isNullOrEmpty()) all else all.sortedBy { stableHash(s(it, "id") + "|" + pick) }
-        return JSONObject().put("characters", JSONArray(ordered.take(wanted)))
-    }
-
-    /** A face as bytes plus what kind of picture they are, so the answer carries an honest content-type. */
-    fun faceImage(requested: String): Pair<ByteArray, String>? {
-        val slug = slugOf(requested)
-        if (slug.isEmpty()) return null
-        return try {
-            val type = try { s(JSONObject(assetText("characters/faces/$slug.json")), "type", "image/jpeg") } catch (e: Throwable) { "image/jpeg" }
-            appContext.assets.open("characters/faces/$slug.img").use { Pair(it.readBytes(), type.ifEmpty { "image/jpeg" }) }
-        } catch (e: Throwable) {
-            null
-        }
-    }
-
-    /** Deterministic shuffle for "show me another set", so a backend has to remember nothing. */
-    private fun stableHash(text: String): Long {
-        var h = 2166136261L
-        for (c in text) h = (h xor c.code.toLong()) * 16777619L
-        return h and 0xffffffffL
-    }
-
     // ---- the HubClient surface: the same shapes, delivered on the main thread ----------------------
 
     private fun <T> reply(work: () -> T, cb: HubCb<T>) {
@@ -1199,6 +1411,10 @@ class LocalHub private constructor(context: Context) : HubClient {
         private const val ROW_MAX = 30
         private const val MAX_CATALOGS_PER_ADDON = 6
         private const val LIBRARY_MAX = 800
+        // Where the faces this build happens to carry live inside the APK, and the shape of the slug each is
+        // named by. Both come from how a hub stores them, so the same path answers on either backend.
+        private const val FACE_DIR = "characters/faces"
+        private val FACE_SLUG = Regex("[a-z0-9-]+")
         // The age a kids profile is held to, the same default the app's own kids rule uses. A page served
         // by this backend runs no rules of its own, so this is the one that protects a kids shelf.
         private const val KIDS_MAX_AGE = 7

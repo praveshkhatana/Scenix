@@ -199,9 +199,11 @@ class AddonClient(context: Context) {
         null
     }
 
-    /** Drop every cached answer — what "clear cache" in Settings does. */
-    fun clearCache() {
-        try { dir.listFiles()?.forEach { it.delete() } } catch (t: Throwable) { Log.w(TAG, "cache clear failed", t) }
+    /** Drop every cached answer — what "clear cache" in Settings does — and say how many went. */
+    fun clearCache(): Int {
+        var cleared = 0
+        try { dir.listFiles()?.forEach { if (it.delete()) cleared++ } } catch (t: Throwable) { Log.w(TAG, "cache clear failed", t) }
+        return cleared
     }
 
     private fun sha1(s: String): String = try {

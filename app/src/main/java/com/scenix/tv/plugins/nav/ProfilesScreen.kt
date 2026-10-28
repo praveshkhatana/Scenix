@@ -21,6 +21,7 @@ import com.scenix.tv.core.Profile
 import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.core.ScreenPlugin
 import com.scenix.tv.core.Views
+import org.json.JSONObject
 
 /**
  * "Who's watching?" — the entry screen, and the only gate the app itself owns.
@@ -212,10 +213,10 @@ object ProfilesScreen : ScreenPlugin {
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.END
-        for (choice in listOf("Adult" to false, "Child" to true)) {
+        for (choice in listOf("Adult" to "adult", "Child" to "kids")) {
             val b = Views.text(ctx, "button", 22f, theme.ink, choice.first, bold = true, gravity = Gravity.CENTER)
             b.setPadding(theme.px(26f), theme.px(14f), theme.px(26f), theme.px(14f))
-            b.background = Views.rounded(if (choice.second) theme.kids else theme.brand, theme.radius("button", 6f))
+            b.background = Views.rounded(if (choice.second == "kids") theme.kids else theme.brand, theme.radius("button", 6f))
             b.isFocusable = true
             b.setOnClickListener {
                 val name = field.text.toString().trim()
@@ -223,7 +224,17 @@ object ProfilesScreen : ScreenPlugin {
                     field.requestFocus()
                     return@setOnClickListener
                 }
-                local.addProfile(name, choice.second)
+                // The same body a hub creates a profile from: a name and which shelf it watches. A PIN is
+                // not set here, because a hub takes a code only on the edit that follows.
+                val created = local.addProfile(JSONObject().put("name", name).put("kind", choice.second))
+                if (created.has("error")) {
+                    // Say why in the backend's own words rather than closing the panel on a name that did
+                    // not land — a second "Asha" is the common case, and a silent panel looks like a freeze.
+                    hint.setTextColor(theme.ink3)
+                    hint.text = created.optString("error", "that name could not be used")
+                    field.requestFocus()
+                    return@setOnClickListener
+                }
                 closeAdd(root)
                 host.show("profiles")
             }
