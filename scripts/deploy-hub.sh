@@ -33,6 +33,7 @@ rsync -a --delete \
   --exclude 'media/' \
   --exclude 'profiles.json' \
   --exclude 'node_modules/' \
+  --exclude 'bin/' \
   --exclude '*.log' \
   "$SRC/" "$USER_@$HOST:~/$DEST/"
 
@@ -43,8 +44,8 @@ cd ~/$DEST
 # login PATH; when the hub's own bin/ has them, pass the absolute paths so a deploy cannot silently turn
 # the feature off again.
 FF_ENV=""
-if [ -x "$HOME/$DEST/bin/ffmpeg" ]; then
-  FF_ENV="FFMPEG_BIN=$HOME/$DEST/bin/ffmpeg FFPROBE_BIN=$HOME/$DEST/bin/ffprobe"
+if [ -x "\$HOME/$DEST/bin/ffmpeg" ]; then
+  FF_ENV="FFMPEG_BIN=\$HOME/$DEST/bin/ffmpeg FFPROBE_BIN=\$HOME/$DEST/bin/ffprobe"
 fi
 # Kill only OUR hub: the process whose working directory is ~/$DEST. This box runs other services and a
 # bare 'pkill -f node' would take them down too.
@@ -55,7 +56,7 @@ for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do
 done
 sleep 1
 setsid nohup env LOG_REQUESTS=1 PORT=$PORT GATEWAY=$GATEWAY TORR_URL=$TORR_URL \\
-    $TLS_ENV $AUTH_ENV YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
+    $TLS_ENV $AUTH_ENV \$FF_ENV YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
     node index.js > hub.log 2>&1 < /dev/null &
 sleep 4
 $CURL "$SCHEME://127.0.0.1:$PORT/healthz" || tail -30 hub.log
