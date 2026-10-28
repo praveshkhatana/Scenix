@@ -199,6 +199,9 @@ export function screen(ctx) {
       home = await api.home(profile);
       home.__profile = profile;
       session.home = home;
+      // The bar's section tabs follow the shelves: the Live TV tab waits until this hub answers with a
+      // live wall that has channels in it.
+      ctx.syncNav();
     }
     if (dead) return;
 

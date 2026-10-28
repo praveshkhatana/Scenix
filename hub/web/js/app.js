@@ -27,6 +27,7 @@ const SCREENS = {
   detail:   () => import('/ui/js/screens/detail.js'),
   play:     () => import('/ui/js/screens/player.js'),
   search:   () => import('/ui/js/screens/search.js'),
+  list:     () => import('/ui/js/screens/list.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
   channels: () => import('/ui/js/screens/channels.js'),
@@ -71,6 +72,8 @@ let modals = [];             // { node, onClose } stacked in #layer
 const ctx = {
   get profile() { return state.session.profile; },
   manifest() { return state.session.manifest; },
+  /** Tell the bar that what the hub can fill has changed (Home just loaded its shelves). */
+  syncNav() { syncSectionTabs(); },
   navigate,
   back,
   route: () => routeStack[routeStack.length - 1] || { name: 'home' },
@@ -233,7 +236,8 @@ async function mount(route, _pushed) {
 
   const chromeless = route.name === 'play' || GATE_SCREENS.indexOf(route.name) >= 0;
   nav.style.display = chromeless ? 'none' : 'flex';
-  setNavActive(route.name);
+  setNavActive(route);
+  syncSectionTabs();
   document.body.classList.toggle('watching', route.name === 'play');
 
   // The menu bar lives beside the screen in #stage. Scoping the ring to the screen alone made the
@@ -261,13 +265,18 @@ function focusTargetFor(route) {
 /* ----------------------------------------------------------------- chrome */
 
 function buildNav() {
-  const item = (name, label, target, arg) => el('button', {
-    class: 'nav-item', type: 'button', dataset: { route: target },
+  // `tab` is what lights up when a route is on screen: three of these items all route to `search`, and
+  // the bar has to know which of them the viewer is standing on.
+  const item = (tab, label, target, arg) => el('button', {
+    class: 'nav-item', type: 'button', dataset: { tab, route: target, arg: arg == null ? '' : arg },
     onclick: () => navigate(target, arg),
   }, label);
   // The profile sits immediately after the wordmark, the way a household expects to reach it: one
   // Right from the brand, not a walk past every menu item and a geometry jump into the hero. The whole
   // bar is one horizontal group, so Left/Right never leave it for a card below.
+  // The sections between Home and Search are the three kinds of thing this app plays — films, shows,
+  // the live wall — plus the list the viewer saved. They route to the shelf the hub builds for each
+  // (rows/movies.js, rows/series.js, rows/live.js); syncSectionTabs pulls any tab the hub cannot fill.
   nav = el('div', { class: 'nav', 'data-nav': 'h' },
     el('button', { class: 'brand', type: 'button', 'aria-label': 'Scenix home', onclick: () => navigate('home') },
       el('span', { class: 'brand-mark' })),
@@ -277,6 +286,10 @@ function buildNav() {
         onclick: () => navigate('profiles'),
       }, el('span', { class: 'ini' })),
       item('home', 'Home', 'home'),
+      item('movies', 'Movies', 'search', 'row:movies'),
+      item('series', 'Series', 'search', 'row:series'),
+      item('live', 'Live TV', 'search', 'row:live'),
+      item('list', 'My list', 'list'),
       item('search', 'Search', 'search'),
       item('settings', 'Settings', 'settings')));
   for (const n of nav.querySelectorAll('.nav-item, .brand, .avatar-chip')) focus.focusable(n);
@@ -294,13 +307,46 @@ const brokenScreens = new Set();
 
 function hideNavItem(name) {
   if (!nav || name === 'home' || name === 'profiles') return;
-  const b = nav.querySelector(`.nav-item[data-route="${name}"]`);
+  const b = nav.querySelector(`.nav-item[data-tab="${name}"]`);
   if (b) b.remove();
 }
 
-function setNavActive(name) {
+/**
+ * The section tabs follow what the hub can actually fill. Movies and Series exist because their row
+ * plugins are registered (the manifest is the truth about that); Live TV waits until the hub answers
+ * Home with a live wall that has channels in it — until Home has been loaded we cannot know, so the
+ * tab stays out of the way rather than opening an empty shelf. A tab the hub cannot fill is a dead key
+ * with a label on it, and the remote would spend a press on it every session.
+ */
+function syncSectionTabs() {
   if (!nav) return;
-  for (const n of nav.querySelectorAll('.nav-item')) n.classList.toggle('on', n.dataset.route === name);
+  const rows = (state.session.manifest && state.session.manifest.rows) || [];
+  const hasRow = (id) => rows.some((r) => r.id === id);
+  const home = state.session.home;
+  const liveFilled = home && Array.isArray(home.rows)
+    && home.rows.some((r) => r.id === 'live' && (r.items || []).length);
+  const on = { movies: hasRow('movies'), series: hasRow('series'), live: !!liveFilled };
+  for (const [tab, show] of Object.entries(on)) {
+    const b = nav.querySelector(`.nav-item[data-tab="${tab}"]`);
+    if (b) b.hidden = !show;
+  }
+}
+
+/* The lit tab is the one the viewer came from, not merely a bar item that shares a route: three of
+   them open `search`, and the one under the ring has to stay lit while its shelf is on screen. */
+function navTabFor(route) {
+  const arg = typeof route.arg === 'string' ? route.arg : '';
+  if (route.name === 'search' && arg.startsWith('row:')) {
+    const id = arg.slice(4);
+    if (['movies', 'series', 'live'].includes(id)) return id;
+  }
+  return route.name;
+}
+
+function setNavActive(route) {
+  if (!nav) return;
+  const tab = navTabFor(route);
+  for (const n of nav.querySelectorAll('.nav-item')) n.classList.toggle('on', n.dataset.tab === tab);
   const p = state.session.profile;
   const chip = nav.querySelector('.avatar-chip');
   if (chip && p) {
@@ -539,7 +585,7 @@ function setProfile(p) {
   state.setProfile(p);
   document.body.classList.toggle('kids', state.isKids(p));
   state.loadMyList();
-  setNavActive(ctx.route().name);
+  setNavActive(ctx.route());
 }
 
 /**
@@ -722,6 +768,7 @@ async function boot() {
   try {
     const m = await api.manifest();
     state.session.manifest = m;
+    syncSectionTabs();
     const p = await api.profiles();
     state.setProfiles(p.profiles);
     state.loadMyList();

@@ -319,6 +319,77 @@
    transparent over a moving film is unreadable in a different way. */
 .nextup { right: calc(80px * var(--s)); bottom: calc(370px * var(--s)); }
 
+/* The chrome's entrance and exit: app.css fades 260 ms and shifts everything down by 10 px; the player
+   shifts each part along the edge it lives on instead — the top row lifts out of the top, the bar sinks
+   into the bottom, the edge tab slides out of frame. The viewer's eye follows where the control came
+   from, which is the difference between a panel appearing and a panel being *placed*. Transform and
+   opacity only: the bar never moves the picture, and a TV compositor that can't blur can always slide. */
+.ply-top.ply-fade.hide { transform: translateY(calc(-18px * var(--s))); }
+.ply-hud.ply-fade.hide { transform: translateY(calc(-12px * var(--s))); }
+.ply-bottom.ply-fade.hide { transform: translateY(calc(18px * var(--s))); }
+.ply-edge.ply-fade.hide { transform: translateX(calc(24px * var(--s))); }
+.nextup.ply-fade.hide { transform: translateY(calc(18px * var(--s))); }
+.skip.gone { transform: translateY(calc(10px * var(--s))); }
+.skip { transition: opacity 200ms ease, transform 200ms ease; }
+
+/* The settings sheet opens upward from the bar and closes back into it, on the same 200-260 ms motion
+   budget as the chrome. js/screens/player.js un-hides it first and adds `open` a frame later, so the
+   browser has a laid-out start state to animate from; on close it keeps its layout until the slide-out
+   has finished and only then goes back to `hidden`. */
+.ply-bottom .panel {
+  transform: translateY(calc(16px * var(--s))); opacity: 0;
+  transition: transform 220ms cubic-bezier(0.25, 0.1, 0.25, 1), opacity 220ms ease;
+}
+.ply-bottom .panel.open { transform: none; opacity: 1; }
+
+/* The sheet is read by walking it with a remote, so every row must show its current value and answer
+   the ring. app.css gives `.prow` no focus treatment at all — without this the ring on the player's
+   sheet is invisible, which is the difference between "reachable" and "usable". */
+.ply-bottom .panel .prow {
+  position: relative;
+  transition: background-color var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out;
+}
+.ply-bottom .panel .prow.foc {
+  background: rgba(255, 255, 255, .16);
+  box-shadow: 0 0 0 var(--ring-w) var(--focus-ring);
+  background-clip: padding-box;
+}
+/* The row that answers what is playing now: the fill app.css gave it, plus a brand edge so the current
+   choice is findable by colour from across the room, not only by reading. */
+.ply-bottom .panel .prow.on::before {
+  content: ''; position: absolute; left: calc(-10px * var(--s)); top: 20%; bottom: 20%;
+  width: calc(5px * var(--s)); border-radius: 999px; background: var(--brand);
+}
+.ply-bottom .panel .prow.on { background: rgba(255, 255, 255, .14); }
+.ply-bottom .panel .prow.on.foc { background: rgba(255, 255, 255, .2); }
+.ply-bottom .panel .prow .val.tick { display: flex; color: var(--brand); }
+.ply-bottom .panel .prow .val.tick .ico { width: calc(26px * var(--s)); height: calc(26px * var(--s)); }
+/* A sheet row that opens a submenu says so with a chevron — on a remote, "this row presses into
+   something" is information, and it is the only hint a row gives about what OK will do. */
+.ply-bottom .panel .prow .chev { flex: none; display: flex; color: var(--ink3); }
+.ply-bottom .panel .prow .chev .ico { width: calc(24px * var(--s)); height: calc(24px * var(--s)); }
+.ply-bottom .panel .prow.foc .chev { color: var(--ink); }
+
+/* The channel badge a zap leaves behind: number, name, gone in two and a half seconds. It sits below the
+   top row so it never covers the way out, and it slides in from the left the way a tuner's dial would. */
+.ply-zap {
+  position: absolute; left: calc(80px * var(--s)); top: calc(160px * var(--s)); z-index: 9;
+  display: flex; align-items: center; gap: calc(18px * var(--s));
+  padding: calc(14px * var(--s)) calc(26px * var(--s));
+  background: rgba(0, 0, 0, .82); border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: var(--r-badge);
+  opacity: 0; transform: translateX(calc(-16px * var(--s)));
+  transition: opacity 240ms ease, transform 240ms ease;
+  pointer-events: none;
+}
+.ply-zap.in { opacity: 1; transform: none; }
+.ply-zap .num {
+  font-size: calc(34px * var(--s)); font-weight: 800; color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+.ply-zap .nm { font-size: calc(24px * var(--s)); font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(760px * var(--s)); }
+
 /* ==========================================================================
    The gate screens — adding someone (#/add) and looking after the people who
    are already here (#/manage).
@@ -556,3 +627,162 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 .cat-empty { color: var(--ink3); font-size: var(--t-sub); }
 .cat-foot { display: flex; align-items: center; gap: calc(18px * var(--s)); margin-top: calc(22px * var(--s)); }
 .cat-foot .note { color: var(--ink3); font-size: var(--t-meta); }
+
+/* ==========================================================================
+   Settings — a rail of sections on the left, one section at a time on the right
+
+   The remote cannot afford a long scrolling page: reaching the one group it came
+   for should be a walk down a short list, not a walk past every control above it.
+   So the screen fills the canvas exactly — the menu bar allowance holds the head,
+   the two panes share what is left, and only the right pane scrolls. The rail is
+   the thing that never moves: it is the map of the page, and a map that scrolls
+   away is no map. Everything here is scoped under `.screen.settings` because the
+   row, chip and switch shapes belong to the shared language in app.css; these
+   rules only re-cut them for full-width settings rows.
+   ========================================================================== */
+.screen.settings { display: flex; flex-direction: column; overflow: hidden; }
+.settings-shell { display: grid; grid-template-columns: calc(430px * var(--s)) minmax(0, 1fr); gap: calc(34px * var(--s)); flex: 1 1 auto; min-height: 0; }
+.settings-rail {
+  min-width: 0; overflow-y: auto; scrollbar-width: none;
+  display: flex; flex-direction: column; gap: calc(8px * var(--s));
+  padding: 0 calc(20px * var(--s)) calc(40px * var(--s)) var(--gutter);
+}
+.settings-rail::-webkit-scrollbar { display: none; }
+.settings-pane {
+  min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+  padding: 0 var(--gutter) calc(60px * var(--s)) calc(10px * var(--s));
+}
+.settings-pane::-webkit-scrollbar { display: none; }
+
+/* One item per section. The selected item carries the brand bar — a vertical
+   stripe, not a filled pill: the pane already says where you are, and the rail
+   only has to say which name that pane answers to. */
+.sitem {
+  position: relative; display: flex; align-items: center; gap: calc(18px * var(--s));
+  width: 100%; padding: calc(18px * var(--s)) calc(24px * var(--s));
+  background: none; border: 0; border-radius: var(--r-button); cursor: pointer;
+  color: var(--ink2); font: inherit; font-size: var(--t-li); font-weight: 600; text-align: left;
+  transition: background var(--focus-ms) ease-out, color var(--focus-ms) ease-out;
+}
+.sitem .ico { flex: none; width: calc(30px * var(--s)); height: calc(30px * var(--s)); color: var(--ink3); }
+.sitem.on { background: var(--surface2); color: var(--ink); }
+.sitem.on .ico { color: var(--brand); }
+.sitem.on::before {
+  content: ''; position: absolute; left: calc(-16px * var(--s)); top: 22%; bottom: 22%;
+  width: calc(6px * var(--s)); border-radius: 999px; background: var(--brand);
+}
+.sitem.foc { background: var(--surface3); color: #fff; box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+
+/* Switching sections is the page's one transition, and it is the one the eye has
+   to read as "this pane replaced that one": transform and opacity only. */
+.settings-section { animation: settingsPaneIn 220ms ease-out both; }
+@keyframes settingsPaneIn {
+  from { opacity: 0; transform: translateX(calc(26px * var(--s))); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Netflix rows: each setting is one full-width line, label and explanation on the
+   left, the value or the switch at the right edge, a hairline between. The shared
+   `.li` box (a card on the detail page and in sheets) is not what a long settings
+   list wants — the separation is the line, not the panel. */
+.settings-pane .li {
+  background: none; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  padding: calc(20px * var(--s)) calc(12px * var(--s));
+}
+.settings-pane .li .note { max-width: calc(680px * var(--s)); }
+/* A row's action belongs at the right edge, where its value and its switch already
+   sit. The shared `.li` leaves buttons in reading order, which is fine inside a
+   wrapping sheet but breaks the label-left / control-right line a settings row is. */
+.settings-pane .li > .btn { margin-left: auto; }
+.settings-pane .sgroup { margin-bottom: calc(44px * var(--s)); }
+.settings-pane .sgroup > h3 { font-size: var(--t-h3); }
+.settings-pane .sgroup > p.note { color: var(--ink2); font-size: var(--t-sub); margin-bottom: calc(16px * var(--s)); max-width: calc(840px * var(--s)); }
+.settings-pane .chips { padding: 0; margin: calc(6px * var(--s)) 0 calc(22px * var(--s)); }
+.settings-pane .row-err { padding: calc(10px * var(--s)) calc(12px * var(--s)) calc(20px * var(--s)); }
+.settings-pane .diag { margin: calc(10px * var(--s)) calc(12px * var(--s)) 0; }
+
+/* The row IS the control: a whole-width list item that takes the ring, shows its
+   current value at the right edge, and opens something on OK. As a <button> it
+   inherits the UA font and centred text, so it is reset to the row's own voice.
+   The chevron is the only decoration — it says "OK opens something" without
+   saying what, which is exactly the promise a couch remote can keep. */
+.li.act {
+  font: inherit; color: inherit; cursor: pointer; text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.li.act .ltext { min-width: 0; }
+.li.act .lname { display: block; }
+.li.act .chev { flex: none; width: calc(26px * var(--s)); height: calc(26px * var(--s)); color: var(--ink3); }
+.li.act.foc .chev { color: var(--ink); }
+.li.act.danger { color: #ff8a8a; }
+
+/* ------------------------------------------------------------ settings modals
+   Three dialogs, one per kind of decision. The dial is the number/choice picker:
+   the value huge in the middle so it reads from three metres, an arrow above and
+   below that the remote's Up/Down drive without the ring ever moving. The
+   checklist is many choices at once with one Save. The action list is "more than
+   one thing could be done to this row", destructive choice last and in red. */
+.mbox.wheel, .mbox.check, .mbox.actions { width: calc(760px * var(--s)); }
+.mbox.check { width: calc(900px * var(--s)); }
+.mbox.wheel h2, .mbox.check h2, .mbox.actions h2 { margin-bottom: calc(6px * var(--s)); }
+.mbox .wnote { color: var(--ink2); font-size: calc(19px * var(--s)); margin-bottom: 0; }
+
+.wdial {
+  display: flex; align-items: center; justify-content: center; gap: calc(48px * var(--s));
+  margin: calc(26px * var(--s)) 0 calc(14px * var(--s));
+}
+.wval {
+  min-width: calc(360px * var(--s)); padding: calc(14px * var(--s)) calc(20px * var(--s));
+  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-button);
+  color: var(--ink); font: inherit; font-size: calc(58px * var(--s)); font-weight: 800;
+  cursor: pointer; line-height: 1.15;
+}
+.wval.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.warrow {
+  width: calc(110px * var(--s)); height: calc(110px * var(--s)); flex: none;
+  border-radius: 50%; background: var(--surface2); border: 1px solid var(--border);
+  color: var(--ink); cursor: pointer; display: grid; place-content: center;
+  transition: background var(--focus-ms) ease-out;
+}
+.warrow .ico { width: calc(44px * var(--s)); height: calc(44px * var(--s)); }
+.warrow.foc { background: var(--surface3); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.whint { color: var(--ink3); font-size: calc(18px * var(--s)); margin: calc(12px * var(--s)) 0 0; }
+
+/* The checklist rows are the settings rows again — hairline lines, switch at the
+   right — inside the box rather than the pane. */
+.wlist { display: flex; flex-direction: column; max-height: calc(560px * var(--s)); overflow-y: auto; margin: calc(16px * var(--s)) 0 calc(8px * var(--s)); }
+.wlist .li, .alist .li {
+  background: none; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  padding: calc(18px * var(--s)) calc(10px * var(--s));
+}
+.wlist .li.foc, .alist .li.foc { background: var(--surface3); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.wlist::-webkit-scrollbar { width: 0; }
+
+/* The action list: one verb per full-width row. */
+.alist { display: flex; flex-direction: column; margin: calc(18px * var(--s)) 0 calc(6px * var(--s)); }
+.mbox.actions .mfoot, .mbox.check .mfoot { margin-top: calc(18px * var(--s)); }
+
+/* The rail is the way out of the pane, so at laptop widths the two panes stay two
+   panes rather than collapsing into the long page the rail replaced. */
+@media (max-width: 1100px) {
+  .settings-shell { grid-template-columns: calc(300px * var(--s)) minmax(0, 1fr); }
+}
+
+/* ==========================================================================
+   My list (js/screens/list.js)
+
+   The grid itself is the shared `.grid` the search results use; what this screen
+   adds is the state the list starts in — a saved-for-nothing page that says how
+   a title gets here rather than sitting empty.
+   ========================================================================== */
+.list-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: calc(14px * var(--s));
+  padding: calc(110px * var(--s)) var(--gutter) calc(60px * var(--s));
+}
+.list-empty .big { font-size: var(--t-h3); font-weight: 800; }
+.list-empty p { color: var(--ink2); font-size: var(--t-sub); max-width: calc(560px * var(--s)); }
+.list-empty .btn { margin-top: calc(18px * var(--s)); }
+.list-empty[hidden] { display: none; }

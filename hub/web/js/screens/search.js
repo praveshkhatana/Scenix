@@ -181,6 +181,12 @@ export function screen(ctx, arg) {
       const h = rail.querySelector('h1');
       if (h) h.textContent = row.title || 'Browsing';
       status.textContent = shelfLabel;
+      // A shelf that answers with nothing says so in its own words, not with the search screen's hint.
+      if (!items.length) {
+        empty.querySelector('.big').textContent = `No ${String(row.title || 'titles').toLowerCase()} here yet`;
+        empty.querySelector('p').textContent = 'The hub has nothing to put on this shelf right now. '
+          + 'Adding an addon or a playlist in Settings can change that.';
+      }
       paint();
     } catch (e) {
       status.textContent = 'That shelf could not be opened. Try searching instead.';

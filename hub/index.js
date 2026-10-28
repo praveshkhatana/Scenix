@@ -2817,6 +2817,12 @@ async function handle(req, res) {
       }
       const bytes = Number(src.maxFileSizeBytes || src.maxSizeBytes || 0);
       if (bytes > 0) out.maxSizeGB = Number((bytes / 1e9).toFixed(3));
+      // The web settings screen speaks GB directly rather than bytes, and its patch travels inside a copy
+      // of the last GET response — which carries the *previous* maxFileSizeBytes. Read the plain field
+      // after the derived ones so the change someone just made wins over the byte echo they didn't touch.
+      if (src.maxSizeGB !== undefined && src.maxSizeGB !== null && Number.isFinite(Number(src.maxSizeGB))) {
+        out.maxSizeGB = Math.max(0, Number(src.maxSizeGB));
+      }
       const rate = Number(src.maxBitrate || src.maxBitrateBps || 0);
       if (rate > 0) out.maxBitrateMbps = rate > 1000 ? Number((rate / 1e6).toFixed(2)) : rate;
       if (src.maxBitrateMbps) out.maxBitrateMbps = Number(src.maxBitrateMbps);

@@ -80,6 +80,10 @@ function resolve(profile) {
 
   const out = {
     ...PROFILE_DEFAULTS,
+    // Everything the profile itself spelled starts here. Without this spread a switch a settings screen
+    // saved (preferAdaptive, audioLanguages) was stored and then ignored on read — only the few fields
+    // copied explicitly below took effect. The env and level-derived fields come after, so they still win.
+    ...p,
     qualityCap,
     // What was literally asked for, so the app can show the bad spelling instead of a silent default.
     qualityCapAsked: String(p.qualityCap || '').trim() || null,
