@@ -24,9 +24,9 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Fix the dwell fallback bug: home.js:252 references an out-of-scope `item` — use the card's own item. — the dwell handler now passes the card's own `<img>` src to `startPreview` instead of throwing on `item.backdrop`.
 
 ## C. Tile dwell preview (Netflix's signature moment)
-- [ ] Retime to Netflix: retime the preview token so expansion happens after ~250 ms dwell and the trailer starts at ~1 s (theme.json preview.delayMs is 350 today; split into two timers as home.js:234 comment already promises).
-- [ ] Expanded tile shows focusable Play and My-List (+) actions inside it (today they are non-focusable reveal-on-hover spans, plugins.js:83-93) — pressing OK in the expanded state plays directly.
-- [ ] When a tile expands, its row scrolls so the tile stays fully visible and neighbours dim slightly, like Netflix.
+- [x] Retime to Netflix: retime the preview token so expansion happens after ~250 ms dwell and the trailer starts at ~1 s (theme.json preview.delayMs is 350 today; split into two timers as home.js:234 comment already promises). — `preview` now carries `expandMs: 250` + `delayMs: 1000`; home.js runs an expand timer that adds `.dwell` (width, actions, dim) and a separate trailer timer. Verified live: `.card.dwell` appears on the focused tile within the dwell window.
+- [x] Expanded tile shows focusable Play and My-List (+) actions inside it (today they are non-focusable reveal-on-hover spans, plugins.js:83-93) — pressing OK in the expanded state plays directly. — the dwelling card's `.exp` buttons get real focus stops (`data-f`) while it dwells and lose them when it collapses; the card's own click handler plays when the tile is expanded and opens otherwise. Verified live: 3 focusable stops inside a dwelling card.
+- [x] When a tile expands, its row scrolls so the tile stays fully visible and neighbours dim slightly, like Netflix. — after the class lands, the shelf scrolls right enough that the grown tile's edge is inside the row; `.cards:has(.card.dwell)` dims the other tiles to .55 with a 160 ms opacity fade. Verified live: neighbour computed opacity 0.55 while one tile dwells.
 
 ## D. Player
 - [ ] Read `player.controlsHideMs` from theme.json instead of the hardcoded 5000 ms (screens/player.js:42), and never hide chrome while the ring sits inside it (player.js:266-278 hides regardless of focus).
@@ -63,3 +63,4 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Route cross-fade on screen transitions (A5) — commit 7d72003
 - [x] Shelf centering for the walking tile (A2, centering half; easing deliberately kept instant per panel perf work) — commit 7568ba6
 - [x] Billboard token crossfade + copy fade + dwell fallback fix (B1, B2) — commit 5a71bbb
+- [x] Dwell expand 250 ms + trailer 1 s + focusable tile actions + row scroll/dim (C1-C3) — commit pending

@@ -148,7 +148,7 @@
   "rows": { "perRow": 5, "exploreThreshold": 6, "maxRows": 30 },
   "chips": { "max": 8 },
   "pin": { "length": 4, "keysPerRow": 3 },
-  "preview": { "enabled": 1, "delayMs": 350 },
+  "preview": { "enabled": 1, "expandMs": 250, "delayMs": 1000 },
   "hero": { "rotateMs": 6000, "rotateFadeMs": 500, "maxItems": 5, "playWidth": 320, "playHeight": 72 },
   "player": {
     "controlsHideMs": 6000,

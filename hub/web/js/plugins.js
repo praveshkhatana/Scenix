@@ -120,7 +120,11 @@ function card(item, ctx, { art: artSrc, ratio, rank, progress, extra } = {}) {
   node.setAttribute('aria-label', item.title || '');
   if (extra) node.appendChild(extra);
   node.appendChild(quickActions(item, ctx));
-  node.addEventListener('click', () => ctx.open(item));
+  // A tile that has dwelled — the Netflix-expanded state — answers OK with Play where it stands;
+  // a tile that only carries the ring still opens its page.
+  node.addEventListener('click', () => {
+    if (node.classList.contains('dwell')) ctx.play(item); else ctx.open(item);
+  });
   focusable(node);
   return node;
 }

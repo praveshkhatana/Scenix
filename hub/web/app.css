@@ -471,8 +471,9 @@ ul { list-style: none; }
 .card {
   position: relative; flex: none; width: var(--card-w);
   /* transform only. A box-shadow transition repaints the whole area around a card on every frame, and a
-     shelf is thirty of them; the ring simply arrives with the card. */
-  transition: transform var(--focus-ms) ease-out;
+     shelf is thirty of them; the ring simply arrives with the card. The opacity entry lets a dwelling
+     tile's neighbours fade rather than blink. */
+  transition: transform var(--focus-ms) ease-out, opacity 160ms ease-out;
   /* Layout and style containment: the card's own relayout is then kept inside the card instead of
      invalidating the shelf. Not paint containment - that would clip the focus ring. */
   contain: layout style;
@@ -1226,6 +1227,16 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
    motion the eye follows is the preview fading up over the poster, which costs nothing. */
 .cards .card.playing { width: calc(460px * var(--s)); }
 .cards .card.playing .art { height: var(--card-h); }
+
+/* Netflix's dwell: looking at a tile for `preview.expandMs` expands it before any trailer exists — the
+   expansion belongs to attention, not to playback. Its quick actions become real focus stops inside it
+   (home.js arms them), OK on the expanded tile plays directly, and everything else in the shelf dims so
+   the eye reads one object. Opacity fades are compositor-cheap; the width stays instant per the perf
+   note above. */
+.cards .card.dwell { width: calc(460px * var(--s)); }
+.cards .card.dwell .art { height: var(--card-h); }
+.cards .card.dwell .exp { opacity: 1; }
+.cards:has(.card.dwell) .card:not(.dwell):not(.foc) { opacity: .55; }
 
 /* The billboard turns by cross-fading, not by pushing sideways: the leaving art goes under the arriving
    one over the theme's `rotateFadeMs`, which is what Netflix's hero does and what a panel can composite

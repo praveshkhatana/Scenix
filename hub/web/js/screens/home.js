@@ -31,6 +31,7 @@ export function screen(ctx) {
   let rotate = null;
   let bb = null;
   let dwell = null;
+  let expand = null;
   let previewFor = null;
   let dead = false;
 
@@ -241,16 +242,50 @@ export function screen(ctx) {
     for (let i = 0; i < rest.length; i++) buildRow(rest[i], i);
   }
 
-  /* ---- dwell: 250 ms expands the card, 1500 ms starts its trailer ------- */
+  /* ---- dwell: 250 ms expands the card, 1000 ms starts its trailer ------- */
+
+  // The expansion is the Netflix signature moment and it belongs to attention, not to the trailer: a
+  // tile that has been looked at for `preview.expandMs` widens, its Play / My-List actions become real
+  // stops inside it, OK on the expanded tile plays directly, and the shelf dims everything else. The
+  // trailer then arrives at `preview.delayMs` if there is one. Both timers are per-focus; leaving the
+  // tile collapses it and strips its extra focus stops again.
+  let expandedCard = null;
+  function collapseExpanded() {
+    if (!expandedCard) return;
+    const c = expandedCard;
+    expandedCard = null;
+    c.classList.remove('dwell');
+    for (const b of c.querySelectorAll('.exp button')) { b.removeAttribute('data-f'); b.removeAttribute('tabindex'); }
+  }
 
   const onDwell = focus.onFocus((node) => {
     if (dwell) { clearTimeout(dwell); dwell = null; }
+    if (expand) { clearTimeout(expand); expand = null; }
+    const hostCard = node && node.closest ? node.closest('.card') : null;
+    if (expandedCard && expandedCard !== hostCard) collapseExpanded();
     if (previewFor && previewFor !== node) endPreview();
     if (!node || node === document.body) return;
-    const card = node.closest ? node.closest('.card') : null;
+    const card = hostCard;
     const inBillboard = node.closest && node.closest('.billboard');
-    const delay = token('preview', 'delayMs', 1500);
+    const delay = token('preview', 'delayMs', 1000);
+    const expandMs = token('preview', 'expandMs', 250);
     if (card) {
+      expand = setTimeout(() => {
+        if (dead || focus.getFocus() !== node) return;
+        expandedCard = card;
+        card.classList.add('dwell');
+        for (const b of card.querySelectorAll('.exp button')) focus.focusable(b);
+        // The tile grew to the right: make sure the shelf moved far enough that all of it is seen.
+        const row = card.closest('.cards');
+        if (row && row.scrollWidth > row.clientWidth + 1) {
+          const v = row.getBoundingClientRect();
+          const c = card.getBoundingClientRect();
+          if (c.right > v.right - 8) {
+            const max = row.scrollWidth - row.clientWidth;
+            row.scrollLeft = Math.min(max, row.scrollLeft + (c.right - v.right + 8));
+          }
+        }
+      }, expandMs);
       dwell = setTimeout(async () => {
         if (dead) return;
         const identity = card.dataset.identity;
@@ -277,6 +312,8 @@ export function screen(ctx) {
     dead = true;
     if (rotate) clearInterval(rotate);
     if (dwell) clearTimeout(dwell);
+    if (expand) clearTimeout(expand);
+    collapseExpanded();
     stopPreview();
     dropMountedRows(root);
     for (const d of disposers) { try { d(); } catch (e) { /* ignore */ } }
