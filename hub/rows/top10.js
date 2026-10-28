@@ -11,7 +11,10 @@
 module.exports = {
   id: 'top10',
   title: 'Top 10 in this house',
-  card: 'poster',
+  // `rank` is a card kind both clients understand: the web drawer numbers the tiles (js/plugins.js
+  // registerRow('top10')), and the native BrowseActivity adapter paints the numeral when row.card is
+  // 'rank'. The item order IS the rank — position is the signal, on every surface.
+  card: 'rank',
   order: 20,
   scope: 'all',
   max: 10, // the hub trims to this AFTER the rules, so 10 tiles survive a filtered candidate
