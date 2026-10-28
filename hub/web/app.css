@@ -505,7 +505,7 @@ ul { list-style: none; }
 .card.rank .art { margin-left: var(--rank-overlap); }
 .card.rank .num {
   position: absolute; left: 0; bottom: calc(-6px * var(--s)); width: var(--rank-w); height: var(--card-h);
-  display: flex; align-items: flex-end; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   font-size: calc(var(--card-h) * .495); font-weight: 900; line-height: .72;
   color: var(--bg); -webkit-text-stroke: calc(var(--cards-rank-stroke, 8px) * 1) var(--numeral-stroke);
   letter-spacing: -.04em;
@@ -1475,3 +1475,34 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .pcontent { display: flex; align-items: center; gap: calc(10px * var(--s)); margin-top: calc(5px * var(--s)); flex-wrap: wrap; }
 .pccert { font-size: calc(15px * var(--s)); font-weight: 700; color: var(--ink1); border: 1px solid var(--border); border-radius: var(--r-badge); padding: calc(2px * var(--s)) calc(7px * var(--s)); }
 .pcadv { font-size: calc(15px * var(--s)); color: var(--warn); }
+
+/* The detail page keeps its two columns on a television (the CSS viewport is ~960 px there even though
+   the panel is 1920). Only a genuine phone stacks it. */
+@media (max-width: 1100px) and (min-width: 761px) {
+  .detail-cols { grid-template-columns: minmax(0, 1fr) calc(460px * var(--s)); }
+}
+/* A portrait profile image inside a circle: clip the box, not only the image's own radius. */
+.cast .face { position: relative; overflow: hidden; }
+.cast .face img { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* Ranked tiles keep the ordinary poster's dimensions. The numeral overlays the left of the art instead
+   of widening the card; the title sits inside the art, so a still with no lettering still names itself. */
+.card.rank { width: var(--card-w); }
+.card.rank .art { margin-left: 0; }
+.card.rank .num {
+  width: 52%; height: 100%; bottom: 0; left: 0;
+  align-items: center; justify-content: flex-start; padding-left: calc(10px * var(--s));
+  background: linear-gradient(90deg, rgba(0,0,0,.88) 0%, rgba(0,0,0,.45) 55%, rgba(0,0,0,0) 100%);
+  z-index: 2; pointer-events: none;
+  font-size: calc(var(--card-h) * .44);
+}
+.card .ctitle {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+  padding: calc(36px * var(--s)) calc(14px * var(--s)) calc(12px * var(--s));
+  font-size: calc(19px * var(--s)); font-weight: 700; line-height: 1.15; color: #fff;
+  background: linear-gradient(0deg, rgba(0,0,0,.92) 0%, rgba(0,0,0,.55) 45%, rgba(0,0,0,0) 100%);
+  opacity: 0; transform: translateY(calc(5px * var(--s)));
+  transition: opacity var(--focus-ms) ease, transform var(--focus-ms) ease;
+  pointer-events: none;
+}
+.card.foc .ctitle, .card.rank .ctitle { opacity: 1; transform: none; }

@@ -62,7 +62,12 @@ export function screen(ctx) {
     if (!item || dead) return;
     const trailer = await getTrailer(item.identity, session.profile && session.profile.id);
     if (dead || slot.__items[slot.__index()] !== item) return;
-    if (trailer && startPreview(slot.__previewSlot, trailer, item.backdrop || item.poster)) previewFor = slot;
+    if (trailer) {
+      // `startPreview` is async: a bare truthiness check on its Promise marked the card as playing even
+      // when the target had no URL or the decoder refused it.
+      const ok = await startPreview(slot.__previewSlot, trailer, item.poster || item.backdrop);
+      if (!dead && ok) previewFor = slot;
+    }
   }
 
   /* ---- shelves ---------------------------------------------------------- */
@@ -240,7 +245,10 @@ export function screen(ctx) {
         if (dead || focus.getFocus() !== node) return;
         const art = card.querySelector('.art');
         // A card that is actually moving picture is given room to be one: wider, and at the trailer's ratio.
-        if (trailer && art && startPreview(art, trailer, card.querySelector('img')?.src || item.backdrop || item.poster)) { previewFor = node; card.classList.add('playing'); }
+        if (trailer && art) {
+          const ok = await startPreview(art, trailer, card.querySelector('img')?.src || item.backdrop || item.poster);
+          if (!dead && focus.getFocus() === node && ok) { previewFor = node; card.classList.add('playing'); }
+        }
       }, delay);
     } else if (inBillboard && bb) {
       dwell = setTimeout(() => { if (!dead) previewBillboard(bb); }, delay);

@@ -111,9 +111,11 @@ function card(item, ctx, { art: artSrc, ratio, rank, progress, extra } = {}) {
     a.appendChild(el('div', { class: 'prog' }, bar));
   }
   if (rank) a.appendChild(el('div', { class: 'num' }, el('span', { text: String(rank.rank) })));
+  // The poster is artwork, not a guarantee: many stills carry no lettering, and a Top 10 still is a
+  // frame from the film. The name sits on the art itself, hidden until the tile is focused (always on
+  // for a ranked tile), so a viewer can read what they are pointing at without a caption below the rail.
+  a.appendChild(el('div', { class: 'ctitle', text: item.title || '' }));
   node.appendChild(a);
-  // Nothing is printed under a shelf card: the picture is the label, and the name lives in the
-  // accessible label instead of on the page.
   node.setAttribute('aria-label', item.title || '');
   if (extra) node.appendChild(extra);
   node.appendChild(quickActions(item, ctx));
@@ -156,7 +158,7 @@ registerCard('genre', (item, ctx) => {
   node.style.setProperty('--i', String(ctx.index || 0));
   const a = el('div', { class: 'art genre-art' },
     el('span', { class: 'gname', text: item.title || '' }),
-    el('span', { class: 'gcount', text: `${item.count || 0} titles` }),
+    el('span', { class: 'gcount', text: `${item.count || item.match || 0} titles` }),
     el('span', { class: 'garrow' }, icon('chevRight')));
   node.appendChild(a);
   node.addEventListener('click', () => { if (ctx.search) ctx.search(item.title); });
@@ -465,6 +467,9 @@ export function lazyMount(rowNode, { root = null, preload = '1200px' } = {}) {
   lane.preloadPx = Math.max(0, parseFloat(preload) || 1200);
   if (lane.rows.indexOf(rowNode) < 0) lane.rows.push(rowNode);
   schedule(lane);
+  // A row can enter the window because a sibling mounted or an image changed the page height, not only
+  // because the viewer scrolled. One deferred look catches that without a permanent timer.
+  setTimeout(() => { if (lane.scroller) schedule(lane); }, 180);
 }
 
 /** Drop one screen's lane, or every lane when no screen is named. */

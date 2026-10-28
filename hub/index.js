@@ -968,6 +968,32 @@ async function healthBody() {
  * lets the keep-warm timer tell "someone is watching this torrent" from "nobody is, and the engine is
  * about to close it".
  */
+/**
+ * Follow a CDN's redirect while keeping the headers the addon asked for. Google Video answers a
+ * proxied trailer with a 302 to a signed host; handing that 302 back to a <video> element makes the
+ * browser request it without the User-Agent/Referer the link requires, and the trailer just fails.
+ * Torrent-engine URLs never redirect, so this only changes the ordinary-URL path.
+ */
+function upstreamGet(target, headers, timeoutMs, depth = 0) {
+  const mod = target.startsWith('https:') ? https : http;
+  return new Promise((resolve) => {
+    const r = mod.get(target, { headers, timeout: timeoutMs }, (got) => {
+      r.setTimeout(0);
+      const loc = got.headers && got.headers.location;
+      if (loc && got.statusCode >= 300 && got.statusCode < 400 && depth < 4) {
+        got.resume();
+        let next;
+        try { next = new URL(loc, target).toString(); } catch (e) { resolve(got); return; }
+        resolve(upstreamGet(next, headers, timeoutMs, depth + 1));
+        return;
+      }
+      resolve(got);
+    });
+    r.on('error', (e) => resolve({ error: e }));
+    r.on('timeout', () => { r.destroy(); resolve({ error: new Error('upstream timeout after ' + timeoutMs + 'ms') }); });
+  });
+}
+
 async function proxyStream(req, res, u) {
   const target = u.searchParams.get('u');
   if (!target || !/^https?:\/\//i.test(target)) return send(res, 400, { error: 'u must be an http(s) url' });
@@ -995,22 +1021,9 @@ async function proxyStream(req, res, u) {
     });
     if (served) return;
   }
-  const mod = target.startsWith('https:') ? https : http;
   const t0 = Date.now();
   const tag = 'hash=' + (hash ? hash.slice(0, 12) : '-') + ' file=' + (fileId == null ? '-' : fileId);
-  const upstream = await new Promise((resolve) => {
-    const r = mod.get(target, { headers, timeout: headersMs }, (got) => {
-      // The timeout is only about the ANSWER. See the comment on this function: the body runs as long
-      // as the swarm feeds it.
-      r.setTimeout(0);
-      resolve(got);
-    });
-    r.on('error', (e) => resolve({ error: e }));
-    r.on('timeout', () => {
-      r.destroy();
-      resolve({ error: new Error('upstream timeout after ' + headersMs + 'ms') });
-    });
-  });
+  const upstream = await upstreamGet(target, headers, headersMs);
   if (upstream.error) {
     // The one line that says whether the failure was the player's or the upstream's, and which phase of
     // the request it happened in.

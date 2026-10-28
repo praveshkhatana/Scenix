@@ -38,7 +38,7 @@ module.exports = {
         type: 'genre',
         title: name,
         year: null, poster: null, backdrop: null, logo: null,
-        match: null, maturity: null, durationMs: null, languages: null,
+        match: count, maturity: null, durationMs: null, languages: null,
         genres: [name], addedAt: null, releasedAt: null, inCinemas: false,
         live: null, progress: null, sources: [], count,
       }));

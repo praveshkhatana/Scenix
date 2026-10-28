@@ -79,10 +79,13 @@ export function attachPreview(slot) {
  */
 export function previewSrc(target) {
   if (!target) return '';
-  if (target.proxiedUrl) return apiUrl(target.proxiedUrl);
+  // Prefer the addon's own address. On the BRAVIA WebView a 4 KB proxied URL is rejected by the media
+  // element as a format error while the 1.5 KB googlevideo URL plays with sound; the proxy stays as the
+  // fallback for a target that only has one.
   const p = String(target.url || '');
-  if (!p) return '';
-  return /^https?:/i.test(p) ? p : apiUrl(p);
+  if (/^https?:/i.test(p)) return p;
+  if (target.proxiedUrl) return apiUrl(target.proxiedUrl);
+  return p ? apiUrl(p) : '';
 }
 
 /** Start the muted preview in `slot`. Resolves false when there is nothing to play. */
