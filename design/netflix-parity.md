@@ -37,7 +37,7 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 
 ## E. Detail page
 - [ ] Resume progress bar (Netflix red line) under the hero buttons showing watch position for partially watched titles.
-- [ ] Episodes become a vertical list with per-episode synopsis + still that expands on dwell (today a horizontal still strip, detail.js:281-302).
+- [x] Episodes become a vertical list with per-episode synopsis + still that expands on dwell (today a horizontal still strip, detail.js:281-302).
 - [ ] Season selector uses the settings dial pattern instead of numbered chips (detail.js:164-181).
 - [ ] More-like-this has an honest empty state when the pool is thin (detail.js:419-445 silently drops the row).
 

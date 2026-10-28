@@ -153,7 +153,7 @@ export function screen(ctx, identity) {
       if (prog && prog.episode && seasons.indexOf(prog.episode.season) >= 0) season = prog.episode.season;
       const head = el('h2', { class: 'sect-title' });
       const tabs = el('div', { class: 'seasons' });
-      const wrap = el('div', { class: 'episodes h', 'data-nav': 'h' });
+      const wrap = el('div', { class: 'episodes v' });
       // On the first paint the screen's own default focus (the Play button, up in the hero) decides where
       // the ring lands; claiming it for the strip as well would scroll the page under the title.
       // Switching a season is a deliberate move, so then the ring does follow the new strip.
@@ -166,7 +166,7 @@ export function screen(ctx, identity) {
         if (!item.live) wrap.appendChild(trailerTile());
         shown.forEach((e, i) => wrap.appendChild(epRow(e, i)));
         for (const k of tabs.children) k.classList.toggle('on', (k.dataset.season === '' ? null : Number(k.dataset.season)) === season);
-        if (follow) focus.focusDefault(wrap.querySelector('.ep'));
+        if (follow) focus.focusDefault(wrap.querySelector('.epv'));
       };
       for (const s of seasons) {
         // The bar is numbers, because the heading above it already says what they are.
@@ -280,10 +280,11 @@ export function screen(ctx, identity) {
   }
 
   /**
-   * One episode in the strip. The hub's own keys: `thumb` for the still, `title` for the name (the raw
-   * addon field is `name`, and a hub that has not been mapped yet still sends it), `synopsis` for the
-   * summary. It sends no length per episode, so the line under the title is the length only when a hub
-   * does have one.
+   * One episode in the list — vertical, like Netflix's, because the thing that decides whether you press
+   * play on an episode is its name and its synopsis, and a horizontal still-strip has no room for either.
+   * The hub's own keys: `thumb` for the still, `title` for the name (the raw addon field is `name`, and a
+   * hub that has not been mapped yet still sends it), `synopsis` for the summary. It sends no length per
+   * episode, so the line under the title is the length only when a hub does have one.
    */
   function epRow(e, i) {
     const seasonNo = e.season !== undefined ? e.season : 1;
@@ -291,32 +292,38 @@ export function screen(ctx, identity) {
     const label = episodeLabel(seasonNo, epNo);
     const title = e.title || e.name || '';
     const still = e.thumb || e.still || '';
+    const syn = e.synopsis || e.overview || '';
     const no = String(epNo).padStart(2, '0');
     const nxt = nextEpisode(e);
-    const row = el('button', { class: 'ep', type: 'button',
+    const row = el('button', { class: 'epv', type: 'button',
       onclick: () => ctx.play(item, {
         title: title || item.title, season: seasonNo, episode: epNo,
         next: nxt ? Object.assign({}, nxt, { identity: item.identity }) : null,
       }) },
-    // The number is printed on the still when there is one, and stands in as the picture when there is not.
-    still ? el('img', { src: still, alt: '', loading: 'lazy' }) : el('div', { class: 'nostill' }, el('span', { text: no })),
-    still ? el('span', { class: 'epn', text: no }) : null,
-    el('div', {},
-      el('div', { class: 'en', text: title || label }),
-      Number(e.durationMs) > 0 ? el('div', { class: 'eq', text: runtime(e.durationMs) }) : null));
+    // The number stands at the left like Netflix's; the still keeps its slot with the number as the
+    // picture when the metadata source has no artwork for this episode.
+    el('span', { class: 'epnum', text: no }),
+    el('div', { class: `epart${still ? '' : ' nostill'}` },
+      still ? el('img', { src: still, alt: '', loading: 'lazy' }) : el('span', { text: no })),
+    el('div', { class: 'eptxt' },
+      el('div', { class: 'en' },
+        el('span', { text: title || label }),
+        Number(e.durationMs) > 0 ? el('span', { class: 'eq', text: runtime(e.durationMs) }) : null),
+      syn ? el('div', { class: 'esy', text: syn }) : null));
     focus.focusable(row);
     return row;
   }
 
-  /** The trailer is an episode of one, filed at the front of the strip. */
+  /** The trailer is an episode of one, filed at the front of the list. */
   function trailerTile() {
     const still = item.backdrop || item.poster;
-    const b = el('button', { class: 'ep trailer', type: 'button', 'aria-label': 'Play trailer',
+    const b = el('button', { class: 'epv trailer', type: 'button', 'aria-label': 'Play trailer',
       onclick: () => playTrailer() },
-    el('div', { class: 'trailer-art' },
+    el('span', { class: 'epnum', text: '' }),
+    el('div', { class: 'epart' },
       still ? el('img', { src: imageUrl(still), alt: '', loading: 'lazy' }) : null,
       el('span', { class: 'trailer-play' }, icon('play', { solid: true }))),
-    el('div', {}, el('div', { class: 'en', text: 'Trailer' })));
+    el('div', { class: 'eptxt' }, el('div', { class: 'en', text: 'Trailer' })));
     focus.focusable(b);
     return b;
   }
