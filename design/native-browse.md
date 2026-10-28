@@ -41,6 +41,8 @@ only way to approach native Apple-TV/Netflix smoothness with this hardware.
 
 - `BrowseActivity` — top bar (Search/Settings), a vertical RecyclerView whose first item is the hero
   and whose remaining items are shelves.
+- `DetailActivity` — native hero, metadata/advisories/overview, cast strip and episode list. Play
+  hands off to the shared web player; a series episode passes `season`/`episode` in the route query.
 - Each shelf is a horizontal RecyclerView; cards are `FrameLayout`s with an ImageView, a title scrim
   and the existing `Focus` ring/scale. Focus is native, not a WebView focus engine.
 - `BrowseImages` uses a 48 MB LRU cache, four workers, `RGB_565`, one HTTP download per image (bounds
@@ -49,7 +51,11 @@ only way to approach native Apple-TV/Netflix smoothness with this hardware.
 
 ## What this does not solve
 
-- Detail, Player, Search and Settings still pay the WebView cost. This is Stage 1: the browse surface
-  is native. Native Detail is Stage 2 if the panel still needs it.
-- A profile switch from web Settings returns to the native activity with the profile it was built
-  from. A native profile chooser/refresh is a follow-up.
+- Player, Search and Settings still pay the WebView cost. Home and Detail are native; Playback is the
+  shared Media3-backed web player. A fully native player/chrome is a later stage.
+- Native Detail opens the web player with the profile the web gate unlocked. A 6-hour local trust mark
+  (`Prefs.profileUnlocked`) lets the new WebShell skip the PIN prompt on the same device; a browser has
+  no bridge and still asks. A profile switch from web Settings returns to the native activity with the
+  profile it was built from; a native profile chooser is a follow-up.
+- The player route can carry `#/play/<id>?season=1&episode=4` from native episode rows. The web router
+  splits the query before the identity and fills `pendingPlay`.

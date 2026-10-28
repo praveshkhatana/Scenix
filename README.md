@@ -17,13 +17,12 @@ the hub can optionally use it as a faster source; it is off until you turn it on
         ┌────────┴────────┐
         ▼                 ▼
    TV APP                    ANY BROWSER / PHONE
-   native Home/browse        (the web interface
-   + WebView detail/player    the hub serves)
+   native Home + Detail      (the web interface
+   + web player/settings      the hub serves)
 ```
 
 One contract, two presentation surfaces. The catalogue, ranking, profiles and policy stay on the hub;
-the TV shelves are native RecyclerViews for native scroll/focus, while Detail, Player and Settings are
-the same web code a browser gets. Setup and the profile gate remain native/web handoffs as described in
+the TV shelves and title page are native; the Player and Settings are the same web code a browser gets. Setup and the profile gate remain native/web handoffs as described in
 [design/native-browse.md](design/native-browse.md).
 
 ## What it is not

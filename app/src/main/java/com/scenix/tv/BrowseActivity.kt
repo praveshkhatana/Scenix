@@ -146,7 +146,11 @@ class BrowseActivity : Activity() {
     }
 
     private fun openDetail(item: Item) {
-        openWeb("#/detail/${Uri.encode(item.identity)}")
+        startActivity(
+            Intent(this, DetailActivity::class.java)
+                .putExtra(DetailActivity.EXTRA_PROFILE, profileId)
+                .putExtra(DetailActivity.EXTRA_IDENTITY, item.identity)
+        )
     }
 
     private inner class BrowseAdapter(

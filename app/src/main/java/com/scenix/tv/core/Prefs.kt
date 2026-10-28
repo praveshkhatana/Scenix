@@ -53,6 +53,22 @@ class Prefs(context: Context) {
     fun hubToken(): String = sp.getString(KEY_TOKEN, "") ?: ""
     fun setHubToken(token: String) = sp.edit().putString(KEY_TOKEN, token.trim()).apply()
 
+    /**
+     * A profile the web gate has unlocked in this app session. Native Detail needs it to open the
+     * shared player without asking for the same PIN on every Play press. It is a local, expiring
+     * trust mark, not a replacement for the hub's PIN check: a browser never sees it.
+     */
+    fun markProfileUnlocked(id: String) = sp.edit()
+        .putString(KEY_PROFILE_UNLOCKED, id)
+        .putLong(KEY_PROFILE_UNLOCKED_AT, System.currentTimeMillis())
+        .apply()
+
+    fun profileUnlocked(id: String): Boolean {
+        val held = sp.getString(KEY_PROFILE_UNLOCKED, "") ?: ""
+        val at = sp.getLong(KEY_PROFILE_UNLOCKED_AT, 0L)
+        return id.isNotBlank() && held == id && System.currentTimeMillis() - at < PROFILE_SESSION_MS
+    }
+
     // ---- which backend this TV talks to ------------------------------------------------------
     //
     // A build names no machine, so a stranger's first run has three ways in — a hub announcing
@@ -108,6 +124,9 @@ class Prefs(context: Context) {
         private const val KEY_BACKEND = "backend_choice"
         private const val KEY_DISCOVERED = "discovered_hubs"
         private const val KEY_TOKEN = "hub_token"
+        private const val KEY_PROFILE_UNLOCKED = "profile_unlocked"
+        private const val KEY_PROFILE_UNLOCKED_AT = "profile_unlocked_at"
+        private const val PROFILE_SESSION_MS = 6L * 60 * 60 * 1000
         const val BACKEND_HUB = "hub"
         const val BACKEND_STANDALONE = "standalone"
         private const val KEY_FIXTURE = "fixture"

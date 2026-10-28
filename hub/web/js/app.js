@@ -140,10 +140,15 @@ function cssEscape(s) {
 
 function parseHash() {
   const raw = String(location.hash || '').replace(/^#\/?/, '');
-  const bits = raw.split('/');
+  // A native Detail page hands Play an episode window as `#/play/<id>?season=1&episode=4`.
+  // The query belongs to the route, not to the identity, so it is split before the path.
+  const q = raw.indexOf('?');
+  const path = q >= 0 ? raw.slice(0, q) : raw;
+  const query = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : '');
+  const bits = path.split('/');
   const name = bits[0] || 'home';
   const arg = bits.length > 1 ? decodeURIComponent(bits.slice(1).join('/')) : null;
-  return SCREENS[name] ? { name, arg } : { name: 'home', arg: null };
+  return SCREENS[name] ? { name, arg, query } : { name: 'home', arg: null, query };
 }
 
 function hashFor(route) {
@@ -192,6 +197,15 @@ window.addEventListener('hashchange', () => {
 });
 
 async function mount(route, _pushed) {
+  if (route.name === 'play' && route.query) {
+    const season = Number(route.query.get('season')) || 0;
+    const episode = Number(route.query.get('episode')) || 0;
+    if (season > 0 && episode > 0) {
+      state.session.pendingPlay = Object.assign({}, state.session.pendingPlay || {}, {
+        identity: route.arg, type: 'series', season, episode,
+      });
+    }
+  }
   const token = ++renderToken;
   closeModals();
   focus.resetScopes();
@@ -590,6 +604,13 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
 
 function setProfile(p) {
   state.setProfile(p);
+  // Native Detail opens the shared player in a new WebShell. This local trust mark lets that page
+  // skip the same PIN prompt within the session; a browser has no bridge and always asks.
+  try {
+    if (p && window.Scenix && typeof window.Scenix.markProfileUnlocked === 'function') {
+      window.Scenix.markProfileUnlocked(String(p.id));
+    }
+  } catch (e) { /* older shell */ }
   document.body.classList.toggle('kids', state.isKids(p));
   state.loadMyList();
   setNavActive(ctx.route());
@@ -796,7 +817,16 @@ async function boot() {
 
   await hideBoot();
 
-  if (wanted && !state.session.profile) await unlock(state.profileById(wanted));
+  if (wanted && !state.session.profile) {
+    const p = state.profileById(wanted);
+    let trusted = false;
+    try {
+      trusted = !!(p && window.Scenix && typeof window.Scenix.profileUnlocked === 'function'
+        && window.Scenix.profileUnlocked(String(p.id)));
+    } catch (e) { /* an older shell asks for the PIN */ }
+    if (trusted) setProfile(p);
+    else await unlock(p);
+  }
   if (!gated && !state.session.profile) {
     // A deep link (a shared detail page, a resume) picks the last profile the household used.
     await unlock(state.profileById(state.lastProfileId()) || state.session.profiles[0]);

@@ -20,12 +20,12 @@ Nothing is installed or deployed from here.
   a TV that already has a backend; the page can do the same through `Scenix.openSetup()`.
   `--ez standalone true` chooses standalone directly, which is useful when testing both shapes without
   clearing data; `--es token …` sets the access token for a test launch.
-- **Native Home** — `BrowseActivity` reads the same `/app/v1/home` rows and draws the shelves in native
-  vertical/horizontal RecyclerViews with a native focus ring and bounded image cache. A tile opens the
-  web Detail route; the web Home action returns to the native activity. See
-  [../design/native-browse.md](../design/native-browse.md).
-- **The web product** — `WebShellActivity` loads `http://<backend>/` in a WebView for Detail, Player,
-  Search and Settings. Those are the same `hub/web/` files a browser gets.
+- **Native Home + Detail** — `BrowseActivity` reads the same `/app/v1/home` rows and draws the shelves
+  in native vertical/horizontal RecyclerViews; `DetailActivity` draws the title record (cast,
+  advisories, episodes) from `/app/v1/meta`. A tile opens native Detail; Play hands off to the shared
+  web player. See [../design/native-browse.md](../design/native-browse.md).
+- **The web product** — `WebShellActivity` loads `http://<backend>/` in a WebView for Player, Search
+  and Settings. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
   sequentially into `cache/torrents`, picks the requested file or episode, and serves it through the
   loopback HTTP server with Range support. The player sees an ordinary file. A copy larger than the
@@ -40,8 +40,8 @@ Nothing is installed or deployed from here.
 
 ## What the app is not
 
-There is no native Detail, Search, Live, Settings or Player stack. Home/browse is the one native
-product surface, because scroll smoothness cannot be bought back from a WebView on this panel. A tile
+There is no native Search, Live, Settings or Player stack. Home and Detail are the native product
+surfaces, because scroll smoothness cannot be bought back from a WebView on this panel. A tile
 still opens web Detail, and the player is the same Media3 bridge. There is no per-device "front end"
 switch.
 

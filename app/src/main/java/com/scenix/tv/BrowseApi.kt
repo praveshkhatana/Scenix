@@ -34,12 +34,26 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     private val pool = Executors.newSingleThreadExecutor { r -> Thread(r, "scenix-browse").apply { isDaemon = true } }
 
     fun load(profileId: String, done: (rows: List<BrowseRow>?, error: String?) -> Unit) {
+        fetch("/app/v1/home", "profile=${URLEncoder.encode(profileId, "UTF-8")}") { root, error ->
+            done(root?.let { parse(it) }, error)
+        }
+    }
+
+    /** One title, exactly the record the web detail page reads: cast, advisories, episodes included. */
+    fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
+        val path = "/app/v1/meta/${URLEncoder.encode(identity, "UTF-8").replace("+", "%20")}"
+        fetch(path, "profile=${URLEncoder.encode(profileId, "UTF-8")}") { root, error ->
+            done(root?.optJSONObject("item") ?: root, error)
+        }
+    }
+
+    private fun fetch(path: String, query: String, done: (JSONObject?, String?) -> Unit) {
         pool.execute {
-            var rows: List<BrowseRow>? = null
+            var root: JSONObject? = null
             var error: String? = null
             try {
                 val base = WebShellActivity.apiBase(context)
-                val url = "$base/app/v1/home?profile=${URLEncoder.encode(profileId, "UTF-8")}"
+                val url = "$base$path" + (if (query.isBlank()) "" else "?$query")
                 val conn = URL(url).openConnection() as HttpURLConnection
                 try {
                     conn.connectTimeout = 10000
@@ -55,16 +69,16 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                         error = "The hub answered ${conn.responseCode}"
                     } else {
                         val body = conn.inputStream.bufferedReader().use { it.readText() }
-                        rows = parse(JSONObject(body))
+                        root = JSONObject(body)
                     }
                 } finally {
                     conn.disconnect()
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "browse load failed", t)
+                Log.w(TAG, "native request $path failed", t)
                 error = t.message ?: "The hub is not answering"
             }
-            main.post { done(rows, error) }
+            main.post { done(root, error) }
         }
     }
 

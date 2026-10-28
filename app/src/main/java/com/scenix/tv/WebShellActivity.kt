@@ -561,6 +561,7 @@ class WebShellActivity : Activity() {
         @JavascriptInterface
         fun openNativeBrowse(profileId: String) = runOnUiThread {
             if (profileId.isBlank()) return@runOnUiThread
+            app.prefs.markProfileUnlocked(profileId)
             if (intent?.getBooleanExtra(EXTRA_FROM_BROWSE, false) == true) {
                 finish()
                 return@runOnUiThread
@@ -571,6 +572,15 @@ class WebShellActivity : Activity() {
             )
             finish()
         }
+
+        /** Called by the web profile gate after a successful profile choice/PIN. */
+        @JavascriptInterface
+        fun markProfileUnlocked(profileId: String) {
+            if (profileId.isNotBlank()) app.prefs.markProfileUnlocked(profileId)
+        }
+
+        @JavascriptInterface
+        fun profileUnlocked(profileId: String): Boolean = app.prefs.profileUnlocked(profileId)
 
         @JavascriptInterface
         fun openSetup() = runOnUiThread {

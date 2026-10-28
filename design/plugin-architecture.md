@@ -6,7 +6,7 @@ Scenix has two plugin hosts and a hybrid shell:
 - **The web interface** (`hub/web/`) is the host for **presentation**: screens, cards, rows and player
   chrome. It runs in a browser and in the television's WebView from the same files.
 - **The Android app** (`app/`) is a hybrid front end: native Home/browse shelves (`BrowseActivity`),
-  native setup, and the web page for Detail, Player, Search and Settings. It provides the native
+  native setup, native Detail, and the web page for Player, Search and Settings. It provides the native
   Media3 surface underneath the web player.
 
 Nothing else is hardcoded. A new live source, a new row, a new card style, a new restriction or a new
@@ -174,8 +174,9 @@ core/               HubProbe · HubDiscovery · HubWatch · Models · Prefs · F
                     TorrentEngine
 plugins/nav/        PairingScreen — first-run hub discovery, manual address, or standalone
 BrowseActivity      native Home: RecyclerView shelves, focus, bounded image cache
-BrowseApi           the one native reader for /app/v1/home
-WebShellActivity    web Detail/Player/Search/Settings + Media3 surface + window.Scenix bridge
+DetailActivity      native title page: cast, advisories, episodes
+BrowseApi           the one native reader for /app/v1/home and /app/v1/meta
+WebShellActivity    web Player/Search/Settings + Media3 surface + window.Scenix bridge
 ```
 
 The app holds **no content knowledge**: both Home and the web page read the same `/app/v1` rows. It
