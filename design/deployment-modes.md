@@ -84,7 +84,7 @@ A user must never have to edit a file or set an environment variable to make Sce
 ### Which surface a device draws
 
 There is one. The Android app is a **thin shell**: `WebShellActivity` hosts the hub's page and a Media3
-surface plays the video underneath it. The only native screens left are first-run setup — find a hub on
+surface plays the video underneath it. The only native screen left is first-run setup — find a hub on
 the LAN, type an address, or choose standalone — and an offline/"hub not answering" state. There is no
 alternative native Home, Detail, Search or Player to keep in step, so a change to the interface is a
 change in `hub/web/` and it reaches television, browser and phone at once.

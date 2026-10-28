@@ -21,8 +21,8 @@ the hub can optionally use it as a faster source; it is off until you turn it on
 ```
 
 There is one interface, not two. The hub serves it; the TV app is a shell that hosts that page in a
-WebView and plays video in a native Media3 surface underneath. The native screens you see before the
-shell are setup only — find a hub or choose standalone.
+WebView and plays video in a native Media3 surface underneath. The one native screen you see before
+the shell is setup — find a hub or choose standalone.
 
 ## What it is not
 

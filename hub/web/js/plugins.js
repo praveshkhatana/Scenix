@@ -1,11 +1,12 @@
 /**
  * js/plugins.js — the presentation registry. One file, two maps.
  *
- * This is the web mirror of the launcher's `plugins/PluginCatalog.kt`: the hub sends a row that names a
- * presentation (`card: "poster" | "continue" | "channel" | "hero"`) and this file decides what that looks
- * like. A screen never asks "is this the Top 10 row?" — it asks the registry for a renderer and calls it.
- * A new shelf shape is one `registerRow` call, not an edit to a screen, and the hub can start sending a
- * card type we have never seen without breaking the page (the fallback is the poster rail).
+ * The hub sends a row that names a presentation (`card: "poster" | "continue" | "channel" | "hero"`)
+ * and this file decides what that looks like. It is the presentation registry for every surface,
+ * because every surface loads this page. A screen never asks "is this the Top 10 row?" — it asks the
+ * registry for a renderer and calls it. A new shelf shape is one `registerRow` call, not an edit to a
+ * screen, and the hub can start sending a card type we have never seen without breaking the page (the
+ * fallback is the poster rail).
  *
  * Lookup order is deliberately row-id first, card-type second: a registered row plugin may restyle one
  * particular shelf (the rank numerals) while every other `poster` row keeps the default.

@@ -1,6 +1,6 @@
 'use strict';
 /*
- * providers/hub-yt.js — curated Kids YouTube, moved from work/iptv/iptv-india-addon.js.
+ * Curated Kids YouTube, moved from the predecessor addon file.
  *
  * An allow-list of *channels*, never a search: the kids row is built from these channels' own recent
  * uploads, so nothing outside the list can reach a child. Videos are resolved to a playable URL at

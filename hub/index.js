@@ -2116,7 +2116,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await healthBody());
     }
 
-    // ---- legacy addon-compat (byte-compatible with work/iptv/iptv-india-addon.js) ----
+    // ---- legacy addon-compat (byte-compatible with the predecessor addon) ----
     if (path === '/manifest.json') {
       await Promise.all(compatProviders().map((p) => ensureCompat(p)));
       return send(res, 200, addonManifest());
