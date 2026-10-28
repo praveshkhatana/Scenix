@@ -727,7 +727,24 @@ const HOME_ROW_MAX = Number(process.env.HOME_ROW_MAX || 18);
 function generalItems(rowId, items) {
   if (!Array.isArray(items)) return items;
   if (rowId === ADULT_ROW_ID) return items;
-  return items.filter((it) => Number(it && it.tier) !== 3);
+  const allowed = items.filter((it) => Number(it && it.tier) !== 3);
+  // The same film can reach one row from two providers under two identities — the aggregator's nature.
+  // Identities differ, so deduping by identity misses it and a shelf shows the identical poster twice
+  // a few tiles apart. Title plus year is what a viewer actually recognises as "the same thing"; keep
+  // the first arrival, which is already ordered by the row's ranking.
+  const seenYears = new Map();   // lower-cased title -> years already on this row (null = an undated arrival)
+  return allowed.filter((it) => {
+    if (!it || !it.title) return true;
+    const t = String(it.title).trim().toLowerCase();
+    const y = it.year == null ? null : String(it.year);
+    // Same title plus same year is the same thing twice. A missing year is a hole in one provider's
+    // metadata, not evidence of another film: "Home" with no year collides with whatever "Home" years
+    // are already there — but dated 1988 and dated 2015 stay apart.
+    const ys = seenYears.get(t);
+    if (ys && (y === null || ys.has(null) || ys.has(y))) return false;
+    if (ys) ys.add(y); else seenYears.set(t, new Set([y]));
+    return true;
+  });
 }
 
 // How many billboard tiles to answer with. The app paints the first one full-bleed; the rest are the

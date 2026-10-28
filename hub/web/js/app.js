@@ -27,6 +27,7 @@ const SCREENS = {
   detail:   () => import('/ui/js/screens/detail.js'),
   play:     () => import('/ui/js/screens/player.js'),
   search:   () => import('/ui/js/screens/search.js'),
+  browse:   () => import('/ui/js/screens/browse.js'),
   list:     () => import('/ui/js/screens/list.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
@@ -349,8 +350,9 @@ function buildNav() {
   // Right from the brand, not a walk past every menu item and a geometry jump into the hero. The whole
   // bar is one horizontal group, so Left/Right never leave it for a card below.
   // The sections between Home and Search are the three kinds of thing this app plays — films, shows,
-  // the live wall — plus the list the viewer saved. They route to the shelf the hub builds for each
-  // (rows/movies.js, rows/series.js, rows/live.js); syncSectionTabs pulls any tab the hub cannot fill.
+  // the live wall — plus the list the viewer saved. Movies and Series open the browse page, which turns
+  // the hub's section row into shelves; Live TV opens the channel wall itself, not a grid that merely
+  // names it. syncSectionTabs pulls any tab the hub cannot fill.
   nav = el('div', { class: 'nav', 'data-nav': 'h' },
     el('button', { class: 'brand', type: 'button', 'aria-label': 'Scenix home', onclick: () => navigate('home') },
       el('span', { class: 'brand-mark' })),
@@ -360,9 +362,9 @@ function buildNav() {
         onclick: () => navigate('profiles'),
       }, el('span', { class: 'ini' })),
       item('home', 'Home', 'home'),
-      item('movies', 'Movies', 'search', 'row:movies'),
-      item('series', 'Series', 'search', 'row:series'),
-      item('live', 'Live TV', 'search', 'row:live'),
+      item('movies', 'Movies', 'browse', 'movies'),
+      item('series', 'Series', 'browse', 'series'),
+      item('live', 'Live TV', 'channels'),
       item('list', 'My list', 'list'),
       item('search', 'Search', 'search'),
       item('settings', 'Settings', 'settings')));
@@ -414,6 +416,8 @@ function navTabFor(route) {
     const id = arg.slice(4);
     if (['movies', 'series', 'live'].includes(id)) return id;
   }
+  if (route.name === 'browse') return arg || 'browse';
+  if (route.name === 'channels') return 'live';
   return route.name;
 }
 
