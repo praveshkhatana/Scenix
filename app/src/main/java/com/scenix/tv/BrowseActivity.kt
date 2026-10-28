@@ -39,6 +39,16 @@ class BrowseActivity : Activity() {
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var loaded = false
 
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val next = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
+        if (next.isNotBlank() && next != profileId) {
+            profileId = next
+            load()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -85,7 +95,8 @@ class BrowseActivity : Activity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(navButton("Search") { openWeb("#/search") })
+        bar.addView(navButton("Profile") { openWeb("#/profiles") })
+        bar.addView(navButton("Search", app.theme.px(24f)) { openWeb("#/search") })
         bar.addView(navButton("Settings", app.theme.px(28f)) { openWeb("#/settings") })
         return bar
     }
@@ -142,6 +153,7 @@ class BrowseActivity : Activity() {
             Intent(this, WebShellActivity::class.java)
                 .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, route))
                 .putExtra(WebShellActivity.EXTRA_FROM_BROWSE, true)
+                .putExtra(WebShellActivity.EXTRA_PROFILE_HINT, profileId)
         )
     }
 
@@ -255,7 +267,9 @@ class BrowseActivity : Activity() {
 
     private inner class CardAdapter(private val row: BrowseRow) : RecyclerView.Adapter<CardHolder>() {
         private val theme = app.theme
-        private val poster = row.card == "poster" || row.card == "hero"
+        private val style = row.card
+        private val poster = style == "poster" || style == "rank" || style == "hero"
+        private val ranked = style == "rank"
         private val cardW = theme.px(if (poster) 280f else 320f)
         private val cardH = theme.px(if (poster) 420f else 180f)
 
@@ -292,20 +306,49 @@ class BrowseActivity : Activity() {
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
             })
+            val num = Views.text(app, "h1", 0f, Color.WHITE, "", bold = true, gravity = Gravity.CENTER)
+            num.visibility = if (ranked) View.VISIBLE else View.GONE
+            card.addView(num, FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                gravity = Gravity.START
+            })
+            val progress = android.widget.ProgressBar(this@BrowseActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progressDrawable = GradientDrawable().apply {
+                    setColor(Color.argb(210, 229, 9, 20))
+                    cornerRadius = theme.px(3f).toFloat()
+                }
+                visibility = View.GONE
+            }
+            card.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(6f)).apply {
+                gravity = Gravity.BOTTOM
+            })
             Focus.attach(card, card, app, theme.radius("card", 6f), elevate = false)
-            return CardHolder(card, art, name)
+            return CardHolder(card, art, name, num, progress)
         }
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val item = row.items[position]
             holder.name.text = item.title
             BrowseImages.load(holder.art, item.poster ?: item.backdrop, cardW)
+            if (ranked) {
+                holder.num.text = (position + 1).toString()
+                holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardH * 0.44f)
+                holder.num.setShadowLayer(theme.px(6f).toFloat(), 0f, 0f, Color.BLACK)
+            }
+            val p = item.progress
+            if (p != null && p.watchedMs > 0L) {
+                holder.progress.visibility = View.VISIBLE
+                holder.progress.progress = ((p.positionMs.toFloat() / p.watchedMs.toFloat()).coerceIn(0f, 1f) * 1000).toInt()
+            } else {
+                holder.progress.visibility = View.GONE
+            }
             holder.itemView.setOnClickListener { openDetail(item) }
         }
     }
 
     private inner class CardHolder(
         view: View, val art: ImageView, val name: TextView,
+        val num: TextView, val progress: android.widget.ProgressBar,
     ) : RecyclerView.ViewHolder(view)
 
     companion object {

@@ -562,14 +562,22 @@ class WebShellActivity : Activity() {
         fun openNativeBrowse(profileId: String) = runOnUiThread {
             if (profileId.isBlank()) return@runOnUiThread
             app.prefs.markProfileUnlocked(profileId)
-            if (intent?.getBooleanExtra(EXTRA_FROM_BROWSE, false) == true) {
+            val fromBrowse = intent?.getBooleanExtra(EXTRA_FROM_BROWSE, false) == true
+            val hint = intent?.getStringExtra(EXTRA_PROFILE_HINT).orEmpty()
+            if (fromBrowse && (hint.isBlank() || hint == profileId)) {
                 finish()
                 return@runOnUiThread
             }
-            startActivity(
-                Intent(this@WebShellActivity, BrowseActivity::class.java)
-                    .putExtra(BrowseActivity.EXTRA_PROFILE, profileId)
-            )
+            val intent = Intent(this@WebShellActivity, BrowseActivity::class.java)
+                .putExtra(BrowseActivity.EXTRA_PROFILE, profileId)
+            if (fromBrowse) {
+                // A profile switch visited from native Browse replaces the activity underneath instead
+                // of stacking a second Browse with a different person in it.
+                intent.addFlags(
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            }
+            startActivity(intent)
             finish()
         }
 
@@ -672,6 +680,9 @@ class WebShellActivity : Activity() {
 
         /** Marks a page opened from native Browse, so its Home action returns instead of opening a second Browse. */
         const val EXTRA_FROM_BROWSE = "from_browse"
+
+        /** The profile the native Browse activity is currently showing. */
+        const val EXTRA_PROFILE_HINT = "profile_hint"
 
         /** The contract origin behind the page, for the native browse reader. */
         fun apiBase(context: Context): String {
