@@ -223,6 +223,12 @@ ul { list-style: none; }
   background: var(--bg);
 }
 @keyframes screenIn { from { opacity: 0; } to { opacity: 1; } }
+/* The outgoing half of a route change. Both screens are absolutely placed in #stage, so the one being
+   left simply draws over the one arriving (the new node is later in DOM order and would otherwise win
+   the paint) and fades out under `--screen-ms` — the pair reads as one cross-fade, transform and
+   opacity only. */
+.screen.exiting { z-index: 3; pointer-events: none; animation: screenOut var(--screen-ms) ease-in both; }
+@keyframes screenOut { from { opacity: 1; } to { opacity: 0; } }
 
 /* ==========================================================================
    Top navigation — transparent over the billboard, solid once you scroll

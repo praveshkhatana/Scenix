@@ -223,7 +223,14 @@ async function mount(route, _pushed) {
   // A screen that was told to leave mid-transition stays on stage until its exit finishes, un-focusable and
   // out of the pointer path, so the profile grid can fall away while Home arrives behind it.
   const lingering = prev && prev.classList.contains('leaving');
-  if (prev && !lingering && prev.parentNode === s) s.removeChild(prev);
+  if (prev && !lingering && prev.parentNode === s) {
+    // The route hand-over is one motion, not a cut: the outgoing screen fades over the incoming one
+    // instead of being yanked away. It keeps no focus stops (the data-f marks come off immediately), so
+    // the ring never lands on a page that is already gone.
+    prev.classList.add('exiting');
+    prev.querySelectorAll('[data-f]').forEach((n) => { n.removeAttribute('data-f'); n.removeAttribute('tabindex'); });
+    setTimeout(() => { if (prev.parentNode === s) s.removeChild(prev); }, 220);
+  }
   if (nav.parentNode !== s) s.appendChild(nav);
   s.appendChild(node);
   if (lingering) {
