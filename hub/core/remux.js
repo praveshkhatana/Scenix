@@ -179,7 +179,9 @@ function baseArgs(p, plan, format) {
     if (startMs > 0) args.push('-ss', (startMs / 1000).toFixed(3));
     args.push('-i', p.audioUrl);
   }
-  args.push('-map', '0:v');
+  // One picture stream: `0:v` maps *every* video track (cover art, a second angle), and a file with
+  // two made the mixed MP4 expose an HEVC cover before the film on a panel that could not decode it.
+  args.push('-map', '0:v:0');
   if (plan !== 'none') {
     // The track ids the hub publishes are ffprobe's *global* stream indexes (`a:3` on a file whose
     // third stream is audio), so a donor is mapped as `1:3`, not `1:a:3` — the latter means "the

@@ -106,3 +106,20 @@ deployed.
 plus an **Original audio** row that re-requests `/play` with `audioMix:false` at the current playhead.
 A viewer who turned the mix off gets the language row back to turn it on again. The web player already
 prints the mix note from `player.audioMix`.
+
+
+## Donor mapping and selection, 2026-10-29
+
+- **Donor map.** The remux used `-map 1:a:<global index>`, which ffmpeg reads as "the Nth audio
+  stream", so a donor whose Hindi track was `a:3` failed with `Stream map '1:a:3' matches no streams`
+  and every mix answered zero bytes. It is `-map 1:<global index>` now; an absent index falls back to
+  the donor's first audio (`1:a:0`), never stream 0 (the picture on a video donor). Verified with a
+  forced Spider-Man mix: a confirmed Hindi donor produced H.264 + AAC with no map error.
+- **Donor tracks.** A donor row's attached tracks can describe another file of the same torrent; the
+  resolve step now probes the exact donor URL (1.5 s budget) and uses its global stream index and
+  codec for the map/plan.
+- **One picture.** `-map 0:v` mapped every video track (cover art / second angle); it is `0:v:0` so a
+  mixed MP4 exposes one picture stream.
+- **Native selection.** The player now maps the hub's `a:3` (global stream index) by the track's
+  position in the answer's `audioTracks`, not by media3's group number. Spider-Man's Audio sheet
+  shows Hindi checked on a Telugu/Tamil/Hindi file.

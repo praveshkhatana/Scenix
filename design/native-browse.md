@@ -131,10 +131,10 @@ reload.
 
 - The long tail of Settings (addons, sources, categories, PINs, household rules) is still the web
   UI, reached by one native row. The TV-relevant preferences are native.
-- Skip-intro needs `introEndMs` from the hub. The native player now honours the same window the web
-  player does (`introStartMs`, or the last 90 s before `introEndMs`), shows a "Skip intro" chip
-  outside the fading chrome and lets one OK press skip — but the hub has no intro source today, so the
-  chip is dormant rather than guessed.
+- Skip-intro now has a source: `core/introdb.js` asks IntroDB's keyless
+  `GET /segments?imdb_id=&season=&episode=` for a series episode (cached, 1.2 s budget) and the play
+  answer carries `introStartMs`/`introEndMs`. The native player shows its "Skip intro" chip exactly
+  inside that window and one OK press seeks to its end; an episode with no known window shows nothing.
 - Native Search matches the hub's index; a search for a title the hub does not know returns nothing,
   as on the web.
 - Trailer previews on dwelling cards remain a web-only behaviour; native cards show stills.

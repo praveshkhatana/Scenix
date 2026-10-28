@@ -91,6 +91,7 @@ const { origin } = require('./core/origin');
 // Both are read-only against the engine's own stream URL and both report themselves in /healthz.
 const media = require('./core/media');
 const remux = require('./core/remux');
+const introdb = require('./core/introdb');
 // The hub's own read-ahead: one bounded cushion of torrent bytes per copy, shared by the player, the
 // remuxer and the Play press that measures the copy before promising it. See core/readahead.js.
 const readahead = require('./core/readahead');
@@ -976,6 +977,7 @@ async function healthBody() {
     // Whether a browser can be handed MP4 at all: the binary, how many ffmpeg are running, how many
     // requests were refused because the box is already remuxing.
     remux: remux.status(),
+    introdb: introdb.status(),
     // The cushion in front of the player: what is buffered, how fast the swarm is actually feeding it,
     // and which copies this hub has watched fail to carry a film. This is the block to read when the
     // question is "why did the picture stop".
@@ -1427,8 +1429,12 @@ function hasAudioLanguage(source, lang) {
 
 /** The donor track's container index, or null when the source only claims a language. */
 function audioOrdinal(source, lang) {
-  const tracks = Array.isArray(source.audioTracks) ? source.audioTracks : [];
-  const t = tracks.find((x) => media.langOf(x.language) === lang);
+  return ordinalFromTracks(Array.isArray(source.audioTracks) ? source.audioTracks : [], lang);
+}
+
+/** The global stream index of the track in `lang` in an ffprobe-shaped track list. */
+function ordinalFromTracks(tracks, lang) {
+  const t = (tracks || []).find((x) => media.langOf(x.language) === lang);
   if (!t || !/^a:(\d+)$/.test(String(t.id))) return null;
   return Number(String(t.id).slice(2));
 }
@@ -1463,6 +1469,7 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
   }
   if (!o || !o.url) return null;
   let url = o.url;
+  let audioTracks = null;
   if (source.kind === 'torrent') {
     const r = await gateway.resolve(
       { ...source, url: o.url, infoHash: o.infoHash },
@@ -1471,8 +1478,23 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
     );
     if (!r.url) return null;
     url = r.url;
+    // The row's attached tracks can belong to another file of the same torrent (the engine's file id
+    // is chosen at play time). Read the file we are about to hand ffmpeg, so the donor is mapped by
+    // its real global stream index rather than by a stale one — and only when there is budget left.
+    if (deadline - Date.now() > 900) {
+      const entry = await media.probe(r.hash, r.fileId, r.url, { timeoutMs: 1500, force: true })
+        .catch(() => null);
+      if (entry && Array.isArray(entry.audioTracks) && entry.audioTracks.length) {
+        audioTracks = entry.audioTracks;
+      }
+    }
   }
-  return { url, headers: o.headers || source._headers || {}, kind: o.kind || source.kind };
+  return {
+    url,
+    headers: o.headers || source._headers || {},
+    kind: o.kind || source.kind,
+    audioTracks,
+  };
 }
 
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
@@ -1496,6 +1518,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       await contributeSources(item);
     }
   }
+  // The intro window does not depend on which copy wins, so ask IntroDB while the sources rank. A
+  // missing window is a promise of null, never a reason to fail the play. Only a series episode has one.
+  const introPromise = (type === 'series' && ep && ep.season > 0 && ep.episode > 0)
+    ? introdb.introFor(identity, ep.season, ep.episode, { timeoutMs: 1200 })
+    : Promise.resolve(null);
   const [kept] = await pipeline([item], ctx); // rules rank sources and enforce the profile's scope
   if (!kept) return { status: 403, body: { identity, droppedByRule: true } };
   let sources = kept.sources || [];
@@ -2124,8 +2151,12 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     audioUrl = donor.target.url;
     // Null means "we did not measure this donor's stream index": the remux then maps its first audio
     // stream. Coercing that to 0 would map stream 0 of a video copy, which is the picture, not audio.
-    audioOrd = audioOrdinal(donor.source, desiredLang);
-    audioPlan = audioPlanFor(donor.source, desiredLang);
+    // Prefer the donor file's own probed tracks: they are the truth about what ffmpeg will open.
+    const donorTracks = Array.isArray(donor.target.audioTracks) ? donor.target.audioTracks : null;
+    audioOrd = donorTracks ? ordinalFromTracks(donorTracks, desiredLang) : audioOrdinal(donor.source, desiredLang);
+    audioPlan = donorTracks
+      ? (remux.planFor({ audioTracks: donorTracks }, audioOrd) === 'copy' ? 'copy' : 'aac')
+      : audioPlanFor(donor.source, desiredLang);
     const track = {
       id: 'a:1',
       language: desiredLang,
@@ -2317,6 +2348,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const nx = eps.find((x) => x.season === ep.season && x.episode === ep.episode + 1)
       || eps.find((x) => x.season === ep.season + 1) || null;
     out.nextEpisode = nx ? { season: nx.season, episode: nx.episode, title: nx.title || null } : null;
+  }
+  const intro = await introPromise;
+  if (intro) {
+    out.introStartMs = intro.startMs;
+    out.introEndMs = intro.endMs;
+    out.why = (out.why || []).concat(
+      'intro: IntroDB marks the opening at ' + Math.round(intro.startMs / 1000) + '–'
+      + Math.round(intro.endMs / 1000) + ' s',
+    );
   }
   return { status: 200, body: out };
 }
