@@ -258,13 +258,18 @@ export function screen(ctx) {
     for (const b of c.querySelectorAll('.exp button')) { b.removeAttribute('data-f'); b.removeAttribute('tabindex'); }
   }
 
-  const onDwell = focus.onFocus((node) => {
+  const onDwell = focus.onFocus((node, source) => {
     if (dwell) { clearTimeout(dwell); dwell = null; }
     if (expand) { clearTimeout(expand); expand = null; }
     const hostCard = node && node.closest ? node.closest('.card') : null;
     if (expandedCard && expandedCard !== hostCard) collapseExpanded();
     if (previewFor && previewFor !== node) endPreview();
     if (!node || node === document.body) return;
+    // The expansion is the remote's signature moment: walking the ring and dwelling on a tile. A mouse
+    // does not dwell — it sweeps. Growing one card to 460 px while thirty neighbours reflow around it is
+    // exactly what reads as "the items are different widths" and "hovering scrolled the row". Pointer
+    // focus keeps the light state: scale-up and ring only.
+    if (source === 'pointer') return;
     const card = hostCard;
     const inBillboard = node.closest && node.closest('.billboard');
     const delay = token('preview', 'delayMs', 1000);

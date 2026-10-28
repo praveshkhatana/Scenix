@@ -207,7 +207,7 @@ const MAX_CARDS = 18;   // a 440-channel addon row must not become 440 DOM nodes
  * the same gesture as every other card — walk to it, press OK.
  */
 function seeAllTile(row, ctx, size) {
-  const count = (row.items || []).length;
+  const count = Number(row.total) || (row.items || []).length;
   const b = el('button', {
     class: `card seeall ${size}`, type: 'button',
     'aria-label': `See all ${row.title || 'titles'}`,
@@ -219,6 +219,21 @@ function seeAllTile(row, ctx, size) {
     el('div', { class: 'seeall-n', text: `${count}${count >= MAX_CARDS ? '+' : ''} titles` })));
   focusable(b);
   return b;
+}
+
+/*
+ * A shelf gets a See-all only when it actually hides titles off the rail. Walking right reaches every card
+ * that made it into the DOM — Top 10's ten posters, Continue Watching's few — so a tile there is a stop
+ * that leads to a page with the same titles in it, and viewers say so. The affordance exists for exactly
+ * one failure: MAX_CARDS dropped items from the row entirely. Then, and only then, the tile (and the
+ * header's Explore button) comes back as the way to see the rest.
+ */
+function fitRow(node, list, shownCount, totalCount, row, ctx, size) {
+  const total = Math.max(totalCount, Number(row && row.total) || 0);
+  const hidden = shownCount < total;
+  if (hidden && shownCount) list.appendChild(seeAllTile(row, ctx, size));
+  const btn = node.querySelector('h3 .explore');
+  if (btn) btn.style.display = hidden ? '' : 'none';
 }
 
 /** Build the shelf frame; the cards mount when the row is actually reached (see mountCards). */
@@ -240,7 +255,7 @@ function rail(row, ctx, opts = {}) {
     for (let i = 0; i < shown.length; i++) {
       list.appendChild(render(shown[i], Object.assign({}, ctx, { index: i, row })));
     }
-    list.appendChild(seeAllTile(row, ctx, size));
+    fitRow(node, list, shown.length, (items || []).length, row, ctx, size);
     node.__list = list;
     node.__mounted = true;
     return list;
@@ -269,7 +284,9 @@ registerRow('top10', (row, ctx) => {
   node.__mount = (items) => {
     const render = cardFor(row);
     const list = node.querySelector('.cards');
-    (items || []).slice(0, MAX_CARDS).forEach((item, i) => {
+    const all = items || [];
+    const shown = all.slice(0, MAX_CARDS);
+    shown.forEach((item, i) => {
       const c = render(item, Object.assign({}, ctx, { index: i, row }));
       c.classList.add('rank');
       const num = el('div', { class: 'num' }, el('span', { text: String(i + 1) }));
@@ -277,7 +294,7 @@ registerRow('top10', (row, ctx) => {
       if (a) a.parentNode.insertBefore(num, a);
       list.appendChild(c);
     });
-    list.appendChild(seeAllTile(row, ctx, 'rank'));
+    fitRow(node, list, shown.length, all.length, row, ctx, 'rank');
     node.__list = list;
     node.__mounted = true;
     return list;

@@ -2667,14 +2667,21 @@ async function handle(req, res) {
       const rowsToBuild = registry.rows.filter((r) => rowVisible(r, profile) && r.home !== false)
         .concat(enabledCategoryRows().filter((r) => rowVisible(r, profile)));
       const built = await Promise.all(
-        rowsToBuild.map(async (row) => ({
-          id: row.id,
-          title: row.title,
-          card: row.card,
-          order: row.order,
-          scope: row.scope || 'all',
-          items: generalItems(row.id, await buildRow(row, ctx, HOME_BUDGET_MS)).slice(0, HOME_ROW_MAX),
-        })),
+        rowsToBuild.map(async (row) => {
+          const full = generalItems(row.id, await buildRow(row, ctx, HOME_BUDGET_MS));
+          // `total` rides along with the trimmed shelf: a row that shows its eighteen delivered titles is
+          // not hiding anything, and the web stops drawing a See-all tile on it. A row trimmed from a
+          // longer answer says so honestly.
+          return {
+            id: row.id,
+            title: row.title,
+            card: row.card,
+            order: row.order,
+            scope: row.scope || 'all',
+            total: full.length,
+            items: full.slice(0, HOME_ROW_MAX),
+          };
+        }),
       );
       // Owner order, applied once the rows exist: names in `rows.order` come first in that sequence and
       // everything else keeps the order its plugin asked for, so a hub gains a row plugin and the screen

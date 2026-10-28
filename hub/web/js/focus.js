@@ -347,7 +347,10 @@ document.addEventListener('mouseover', (e) => {
   const node = e.target.closest && e.target.closest(`[${ATTR}]`);
   if (!node) return;
   if (current === node) return;
-  setFocus(node, { source: 'pointer' });
+  // Hovering focuses, but it never scrolls. A mouse sits where the viewer put it; yanking a row sideways
+  // (or the page up and down) under a still cursor is the "row jumps as I move over it" complaint. Only a
+  // D-pad step — which has no cursor to keep steady — may bring the ring into view.
+  setFocus(node, { source: 'pointer', scroll: false });
 }, true);
 
 // Moving the mouse out of everything should not leave a stale ring on a card that is no longer under it.
