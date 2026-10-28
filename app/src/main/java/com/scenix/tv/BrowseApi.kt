@@ -7,6 +7,7 @@ import android.util.Base64
 import android.util.Log
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Prefs
+import com.scenix.tv.core.s
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -67,13 +68,13 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 val o = arr.optJSONObject(i) ?: continue
                 out.add(
                     ProfileInfo(
-                        id = o.optString("id", ""),
-                        name = o.optString("name", ""),
+                        id = s(o, "id", ""),
+                        name = s(o, "name", ""),
                         kids = o.optBoolean("isKids", o.optBoolean("kids", false)) ||
-                            o.optString("kind", "").equals("kids", true),
+                            s(o, "kind", "").equals("kids", true),
                         pinSet = o.optBoolean("pinSet", o.optBoolean("hasPin", o.optBoolean("pinRequired", false))),
                         locked = o.optBoolean("locked", false),
-                        avatar = o.optString("avatar", ""),
+                        avatar = s(o, "avatar", ""),
                     )
                 )
             }
@@ -217,9 +218,9 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
             if (items.isEmpty()) continue
             out.add(
                 BrowseRow(
-                    id = r.optString("id", ""),
-                    title = r.optString("title", ""),
-                    card = r.optString("card", "poster"),
+                    id = s(r, "id", ""),
+                    title = s(r, "title", ""),
+                    card = s(r, "card", "poster"),
                     items = items,
                 )
             )

@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -33,6 +34,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -260,7 +262,23 @@ class PlayerActivity : Activity() {
         Ceilings.seekIncrements(builder, ctx)
         val p = builder.build()
         Ceilings.applyDefaults(p, ctx)
+        // Audio focus: a television may hand the speakers to another input or app. Without this the
+        // decoder keeps running silently behind it; with it the film pauses and resumes with the room.
+        p.setAudioAttributes(androidx.media3.common.AudioAttributes.DEFAULT, true)
         p.addListener(listener())
+        p.addAnalyticsListener(object : AnalyticsListener {
+            override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
+                Log.i(TAG, "first video frame on screen after ${renderTimeMs}ms")
+            }
+
+            override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: androidx.media3.common.VideoSize) {
+                Log.i(TAG, "video size ${videoSize.width}x${videoSize.height} par=${videoSize.pixelWidthHeightRatio}")
+            }
+
+            override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+                Log.w(TAG, "dropped $droppedFrames video frames in ${elapsedMs}ms")
+            }
+        })
         player = p
     }
 
@@ -556,6 +574,24 @@ class PlayerActivity : Activity() {
         return true
     }
 
+    /** Codec names a person recognises, not the DASH codec string the container handed media3. */
+    private fun codecName(raw: String): String {
+        val c = raw.lowercase()
+        return when {
+            c.startsWith("mp4a") || c.contains("aac") -> "AAC"
+            c.startsWith("ac-3") || c.contains("ac3") -> "Dolby Digital"
+            c.startsWith("ec-3") || c.contains("eac3") -> "Dolby Digital+"
+            c.contains("opus") -> "Opus"
+            c.contains("vorbis") -> "Vorbis"
+            c.contains("flac") -> "FLAC"
+            c.contains("avc") || c.contains("h264") -> "H.264"
+            c.contains("hevc") || c.contains("h265") -> "HEVC"
+            c.contains("av01") || c.contains("av1") -> "AV1"
+            c.contains("vp9") -> "VP9"
+            else -> ""
+        }
+    }
+
     private fun findGroup(groups: List<Tracks.Group>, id: String): Tracks.Group? {
         if (id.startsWith("hub:")) {
             val index = id.removePrefix("hub:").toIntOrNull() ?: return null
@@ -742,6 +778,11 @@ class PlayerActivity : Activity() {
         playerView = PlayerView(this).apply {
             useController = false
             controllerAutoShow = false
+            // PlayerView is a focusable FrameLayout. With the controller off it draws nothing when it
+            // takes focus, so the D-pad would land on an invisible target and every chip looked dead.
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             setShutterBackgroundColor(Color.BLACK)
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
@@ -956,7 +997,7 @@ class PlayerActivity : Activity() {
             MenuKind.AUDIO -> "Audio"
             MenuKind.SUBTITLES -> "Subtitles"
             MenuKind.SPEED -> "Speed"
-            MenuKind.QUALITY -> "Quality · ${currentSourceLabel.ifBlank { "Auto" }}"
+            MenuKind.QUALITY -> "Quality" + qualityWord(currentSourceLabel).let { if (it.isBlank()) "" else " · $it" }
         }
         box.addView(Views.text(app, "panelTitle", 26f, theme.ink, heading, bold = true),
             LinearLayout.LayoutParams(
@@ -1073,11 +1114,11 @@ class PlayerActivity : Activity() {
             if (g.length == 0) continue
             val f = g.getTrackFormat(0)
             val head = f.label ?: langName(f.language ?: "")
-            val codec = f.codecs ?: f.sampleMimeType?.substringAfter('/') ?: ""
+            val codec = codecName(f.codecs ?: f.sampleMimeType ?: "")
             out.add(
                 ActualTrack(
                     id = "$prefix:${i + 1}",
-                    label = listOf(head, codec.uppercase()).filter { it.isNotBlank() }.joinToString(" · "),
+                    label = listOf(head, codec).filter { it.isNotBlank() }.joinToString(" · "),
                     selected = g.isTrackSelected(0),
                 )
             )
@@ -1103,11 +1144,7 @@ class PlayerActivity : Activity() {
         })
         for (i in 0 until alternatives.length()) {
             val src = alternatives.optJSONObject(i) ?: continue
-            val whyArr = src.optJSONArray("why")
-            val why = (if (whyArr != null && whyArr.length() > 0) whyArr.optString(0) else "")
-                .ifBlank { str(src, "status") }
-                .ifBlank { str(src, "tagline") }
-            parent.addView(menuRow(sourceWords(src), why, false) {
+            parent.addView(menuRow(sourceWords(src), sourceNote(src), false) {
                 switchTo(src)
             })
         }
@@ -1368,7 +1405,20 @@ class PlayerActivity : Activity() {
             undoShowing -> undoButton
             else -> playButton
         }
-        target?.post { if (target.isShown) target.requestFocus() }
+        focusSoon(target)
+    }
+
+    /**
+     * Focus is requested from a post because the view can be asked for it before the window has
+     * attached (right after `setContentView`). A single post sometimes still lands before the
+     * hierarchy is ready, which left the chrome on screen with no ring; retry a few frames.
+     */
+    private fun focusSoon(target: View?, tries: Int = 0) {
+        if (target == null) return
+        target.post {
+            if (target.isShown && target.requestFocus()) return@post
+            if (tries < 6) target.postDelayed({ focusSoon(target, tries + 1) }, 150L)
+        }
     }
 
     private fun armHide() {
@@ -1825,7 +1875,16 @@ class PlayerActivity : Activity() {
         val wasHidden = !controlsVisible()
         if (down && wasHidden) {
             val seeking = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
+            val ok = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER ||
+                code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_SPACE
             showChrome(focus = !seeking)
+            if (seeking) focusSoon(if (live) playButton else seekLine)
+            // On a television, OK while the picture is clean means "pause", not "show me the chrome
+            // so I can press OK again". The chrome comes up with the ring already on Pause.
+            if (ok) {
+                togglePlay()
+                return true
+            }
             if (!seeking && !isMediaKey(code)) return true
         } else if (down) {
             armHide()
@@ -1948,11 +2007,34 @@ class PlayerActivity : Activity() {
 
     private fun sourceWords(src: JSONObject?): String {
         if (src == null) return "Auto"
-        val label = str(src, "label").ifBlank { str(src, "provider") }
-        val quality = str(src, "quality")
+        val label = str(src, "label")
+        val quality = qualityWord(str(src, "quality"))
         val provider = str(src, "provider")
+        // The hub often uses the quality as both the label and the quality ("480p · 480p" on a
+        // YouTube copy). Never print the same word twice on one row.
         val head = label.ifBlank { provider }.ifBlank { "Copy" }
-        return listOf(head, quality).filter { it.isNotBlank() }.joinToString(" · ")
+        val parts = arrayListOf(head)
+        if (quality.isNotBlank() && parts.none { it.equals(quality, true) }) parts.add(quality)
+        return parts.joinToString(" · ")
+    }
+
+    /** The right-hand note on a source row: who serves it and how big it is, not the ranking essay. */
+    private fun sourceNote(src: JSONObject): String {
+        val provider = str(src, "provider")
+        val size = src.optLong("sizeBytes", 0L)
+        val mode = str(src, "mode")
+        val parts = arrayListOf<String>()
+        if (provider.isNotBlank()) parts.add(provider.replaceFirstChar { it.uppercase() })
+        if (size > 0) parts.add(sizeWords(size))
+        if (mode.isNotBlank() && !mode.equals("direct", true)) parts.add(mode)
+        return parts.joinToString(" · ")
+    }
+
+    private fun sizeWords(bytes: Long): String {
+        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+        if (gb >= 0.95) return String.format(java.util.Locale.US, "%.1f GB", gb)
+        val mb = bytes / (1024.0 * 1024.0)
+        return String.format(java.util.Locale.US, "%.0f MB", mb)
     }
 
     private fun qualityWord(label: String): String {
@@ -1996,6 +2078,7 @@ class PlayerActivity : Activity() {
         const val EXTRA_LOGO = "logo"
         const val EXTRA_ADVISORIES = "advisories"
 
+        private const val TAG = "ScenixPlayer"
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)

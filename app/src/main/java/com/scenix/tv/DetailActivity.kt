@@ -17,6 +17,8 @@ import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
+import com.scenix.tv.core.s
+import com.scenix.tv.core.sa
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -47,7 +49,13 @@ class DetailActivity : Activity() {
             finish()
             return
         }
-        scroll = ScrollView(this).apply { setBackgroundColor(app.theme.bg) }
+        scroll = ScrollView(this).apply {
+            setBackgroundColor(app.theme.bg)
+            // A ScrollView is itself a D-pad stop on Android; on a title page that stop is an
+            // invisible full-screen ring. The page's controls are the only focus targets.
+            isFocusable = false
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
         body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, app.theme.px(64f))
@@ -76,12 +84,12 @@ class DetailActivity : Activity() {
     private fun paint(record: JSONObject) {
         body.removeAllViews()
         val theme = app.theme
-        val title = record.optString("title", "")
-        val backdrop = record.optString("backdrop", "").ifBlank { record.optString("poster", "") }
-        val poster = record.optString("poster", "")
-        val type = record.optString("type", "movie")
+        val title = s(record, "title", "")
+        val backdrop = s(record, "backdrop", "").ifBlank { s(record, "poster", "") }
+        val poster = s(record, "poster", "")
+        val type = s(record, "type", "movie")
         val year = record.optInt("year", 0)
-        val maturity = record.optString("maturity", "")
+        val maturity = s(record, "maturity", "")
         val duration = record.optLong("durationMs", 0L)
 
         val hero = FrameLayout(this).apply { setBackgroundColor(theme.surface2) }
@@ -108,14 +116,29 @@ class DetailActivity : Activity() {
             gravity = Gravity.BOTTOM or Gravity.START
             setPadding(theme.gutter, theme.px(40f), theme.gutter, theme.px(36f))
         }
-        words.addView(Views.text(app, "h1", 54f, theme.ink, title, bold = true, maxLines = 2))
+        // A long YouTube or file title must not fill the hero a line at a time. The web caps the
+        // column at 1100 px; the same cap plus a smaller size for long names keeps the meta line and
+        // Play where the eye expects them.
+        val heading = Views.text(app, "h1", 54f, theme.ink, title, bold = true, maxLines = 3)
+        heading.setTextSize(
+            android.util.TypedValue.COMPLEX_UNIT_PX,
+            if (title.length > 42) theme.px(70f).toFloat() else theme.px(104f).toFloat(),
+        )
+        words.addView(heading, LinearLayout.LayoutParams(
+            theme.px(1100f), ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
         val meta = ArrayList<String>()
         if (year > 0) meta.add(year.toString())
-        if (maturity.isNotBlank()) meta.add(maturity)
+        if (maturity.isNotBlank() && !maturity.equals("null", true)) meta.add(maturity)
         if (duration > 0) meta.add(runtime(duration))
-        if (!record.isNull("tagline")) {
-            val tagline = record.optString("tagline", "").trim()
-            if (tagline.isNotBlank() && !tagline.equals("null", true)) meta.add(tagline)
+        val tagline = s(record, "tagline", "").trim()
+        if (tagline.isNotBlank() && !tagline.equals("null", true)) meta.add(tagline)
+        val genres = record.optJSONArray("genres")
+        if (genres != null) {
+            val names = (0 until minOf(genres.length(), 3))
+                .map { sa(genres, it, "") }
+                .filter { it.isNotBlank() && !it.equals("null", true) }
+            if (names.isNotEmpty()) meta.add(names.joinToString(", "))
         }
         if (meta.isNotEmpty()) {
             words.addView(Views.text(app, "sub", 22f, theme.ink2, meta.joinToString(" · "), maxLines = 2),
@@ -125,13 +148,16 @@ class DetailActivity : Activity() {
         }
         val advisories = record.optJSONArray("advisories")
         if (advisories != null && advisories.length() > 0) {
-            val text = (0 until advisories.length()).map { advisories.optString(it) }.filter { it.isNotBlank() }.joinToString(" · ")
+            val text = (0 until advisories.length())
+                .map { sa(advisories, it, "") }
+                .filter { it.isNotBlank() && !it.equals("null", true) }
+                .joinToString(" · ")
             words.addView(Views.text(app, "sub", 19f, theme.ink3, text, maxLines = 2),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(8f)
                 })
         }
-        val overview = if (record.isNull("overview")) "" else record.optString("overview", "")
+        val overview = s(record, "overview", "")
         if (overview.isNotBlank() && !overview.equals("null", true)) {
             words.addView(Views.text(app, "sub", 21f, theme.ink2, overview, maxLines = 4),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -171,7 +197,7 @@ class DetailActivity : Activity() {
         if (cast != null && cast.length() > 0) castRow(content, cast, theme)
 
         if (episodes != null && episodes.length() > 0) episodeList(content, episodes, theme)
-        scroll.post { play.requestFocus() }
+        scroll.postDelayed({ play.requestFocus() }, 150L)
     }
 
     private fun castRow(parent: LinearLayout, cast: JSONArray, theme: com.scenix.tv.core.Theme) {
@@ -198,10 +224,10 @@ class DetailActivity : Activity() {
                 }
             }
             box.addView(face, LinearLayout.LayoutParams(theme.px(112f), theme.px(112f)))
-            BrowseImages.load(face, person.optString("profile", ""), theme.px(112f))
-            box.addView(Views.text(app, "caption", 18f, theme.ink, person.optString("name", ""), maxLines = 1, gravity = Gravity.CENTER),
+            BrowseImages.load(face, s(person, "profile", ""), theme.px(112f))
+            box.addView(Views.text(app, "caption", 18f, theme.ink, s(person, "name", ""), maxLines = 1, gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(8f) })
-            box.addView(Views.text(app, "meta", 15f, theme.ink3, person.optString("character", ""), maxLines = 1, gravity = Gravity.CENTER),
+            box.addView(Views.text(app, "meta", 15f, theme.ink3, s(person, "character", ""), maxLines = 1, gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT))
             strip.addView(box)
         }
@@ -238,14 +264,14 @@ class DetailActivity : Activity() {
                 }
             }
             row.addView(thumb, LinearLayout.LayoutParams(theme.px(160f), theme.px(90f)))
-            BrowseImages.load(thumb, ep.optString("thumb", ""), theme.px(160f))
+            BrowseImages.load(thumb, s(ep, "thumb", ""), theme.px(160f))
             val copy = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(theme.px(14f), 0, 0, 0)
             }
             copy.addView(Views.text(app, "li", 22f, theme.ink,
-                "S$season E$number · " + ep.optString("title", ""), bold = true, maxLines = 1))
-            val synopsis = ep.optString("synopsis", "")
+                "S$season E$number · " + s(ep, "title", ""), bold = true, maxLines = 1))
+            val synopsis = s(ep, "synopsis", "")
             if (synopsis.isNotBlank()) {
                 copy.addView(Views.text(app, "meta", 18f, theme.ink2, synopsis, maxLines = 2),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -276,7 +302,7 @@ class DetailActivity : Activity() {
         val advisories = ArrayList<String>()
         record.optJSONArray("advisories")?.let { arr ->
             for (i in 0 until arr.length()) {
-                val v = arr.optString(i, "")
+                val v = sa(arr, i, "")
                 if (v.isNotBlank()) advisories.add(v)
             }
         }
@@ -284,14 +310,14 @@ class DetailActivity : Activity() {
             Intent(this, PlayerActivity::class.java)
                 .putExtra(PlayerActivity.EXTRA_PROFILE, profileId)
                 .putExtra(PlayerActivity.EXTRA_IDENTITY, identity)
-                .putExtra(PlayerActivity.EXTRA_TYPE, record.optString("type", "movie"))
-                .putExtra(PlayerActivity.EXTRA_TITLE, record.optString("title", ""))
+                .putExtra(PlayerActivity.EXTRA_TYPE, s(record, "type", "movie"))
+                .putExtra(PlayerActivity.EXTRA_TITLE, s(record, "title", ""))
                 .putExtra(PlayerActivity.EXTRA_SEASON, season)
                 .putExtra(PlayerActivity.EXTRA_EPISODE, episode)
                 .putExtra(PlayerActivity.EXTRA_POSITION_MS, position)
-                .putExtra(PlayerActivity.EXTRA_MATURITY, record.optString("maturity", ""))
-                .putExtra(PlayerActivity.EXTRA_POSTER, record.optString("poster", ""))
-                .putExtra(PlayerActivity.EXTRA_LOGO, record.optString("logo", ""))
+                .putExtra(PlayerActivity.EXTRA_MATURITY, s(record, "maturity", ""))
+                .putExtra(PlayerActivity.EXTRA_POSTER, s(record, "poster", ""))
+                .putExtra(PlayerActivity.EXTRA_LOGO, s(record, "logo", ""))
                 .putStringArrayListExtra(PlayerActivity.EXTRA_ADVISORIES, advisories)
         )
     }

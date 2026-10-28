@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewParent
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.graphics.drawable.LayerDrawable
 
 /**
  * The focus language of the remaining native UI (the setup screen): white ring, a small lift and a
@@ -30,11 +31,26 @@ object Focus {
     ) {
         val theme = ctx.theme
         val ring = Views.ring(theme.focusRingColor, ringRadiusPx, theme.focusRingPx)
-        val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
+        val base = ringOn?.background
 
         focusable.isFocusable = true
         focusable.isFocusableInTouchMode = false
-        ringOn?.foreground = plain
+
+        // The ring is a background layer, not a foreground drawable: on this Android 11 panel a
+        // TextView's foreground never reached the screen, which left every native button looking
+        // unfocused even though it held focus. A LayerDrawable over the existing background renders
+        // everywhere (chips, cards, tiles) and keeps the button's own fill and radius underneath.
+        fun paintRing(focused: Boolean) {
+            val target = ringOn ?: return
+            target.background = when {
+                !focused -> base
+                base == null -> ring
+                else -> LayerDrawable(
+                    arrayOf(base.constantState?.newDrawable()?.mutate() ?: base, ring)
+                )
+            }
+        }
+        paintRing(false)
 
         if (onClick != null) {
             focusable.isClickable = true
@@ -63,7 +79,7 @@ object Focus {
 
         val ms = theme.focusDurationMs.toLong()
         focusable.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
-            ringOn?.foreground = if (has) ring else plain
+            paintRing(has)
             val target = if (has) theme.focusScale else 1f
             val elev = if (has) theme.focusElevationPx.toFloat() else 0f
             if (scale) {
