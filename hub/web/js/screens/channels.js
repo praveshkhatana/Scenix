@@ -17,8 +17,8 @@
 
 import { el, clear, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
-import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
+import { makeRows } from '/ui/js/rows.js';
 
 const PAGE = 60;
 
@@ -44,6 +44,7 @@ export function screen(ctx) {
   let activeGroup = '';
   let shown = PAGE;
   let busy = false;
+  const rows = makeRows(ctx);
 
   function ordered() {
     const rank = new Map(order.map((id, i) => [id, i]));
@@ -72,53 +73,32 @@ export function screen(ctx) {
       .finally(() => { busy = false; });
   }
 
-  function groupChip(label, id) {
-    const on = id ? !groupsHidden.has(id) : groupsHidden.size === 0;
-    const b = el('button', {
-      class: `chip${activeGroup === id ? ' on' : ''}${on ? '' : ' off'}`,
-      type: 'button', 'aria-pressed': activeGroup === id ? 'true' : 'false',
-      text: label,
-    });
-    b.onclick = () => {
-      if (id && !activeGroup) {
-        // A group chip with no filter selected is a switch; with a filter selected it is the filter.
-      }
-      if (activeGroup === id) { activeGroup = ''; paint(); return; }
-      activeGroup = id;
-      paint();
-    };
-    // A long-press is not a TV gesture: the group's own switch is the small pill beside the filter.
-    focus.focusable(b);
-    return b;
+  /* The controls are rows in the voice the rest of the app uses — one ring stop per row. The filter is
+     a dial (the whole playlist, or one group at a time), and the group switches are a checklist that
+     saves at once: walking past a wrong group costs nothing until OK. After every commit the ring goes
+     back to the row you were on, because a closed dialog on a TV must not leave the screen dark. */
+  function ringOnRow(i) {
+    const r = [...list.querySelectorAll('.li')];
+    if (!r.length) return;
+    focus.focusDefault(r[Math.max(0, Math.min(i, r.length - 1))]);
   }
-
   function paintBar() {
     clear(bar);
-    const groupsRow = el('div', { class: 'chgroups' });
-    groupsRow.appendChild(el('span', { class: 'chlabel', text: 'Groups' }));
-    groupsRow.appendChild(groupChip('All', ''));
-    for (const g of groups) groupsRow.appendChild(groupChip(g, g));
-    bar.appendChild(groupsRow);
-
-    const off = el('div', { class: 'chgroups' });
-    off.appendChild(el('span', { class: 'chlabel', text: 'Group switches' }));
-    for (const g of groups) {
-      const on = !groupsHidden.has(g);
-      const sw = el('button', {
-        class: `sw${on ? ' on' : ''}`, type: 'button', role: 'switch',
-        'aria-checked': on ? 'true' : 'false', 'aria-label': `${g} channels shown`,
-        title: `${on ? 'Hide' : 'Show'} every ${g} channel`,
-      }, el('i'));
-      focus.focusable(sw);
-      sw.onclick = () => {
-        if (on) groupsHidden.add(g); else groupsHidden.delete(g);
-        syncEnabled();
-        save({}, `${g} ${on ? 'hidden' : 'shown'}`);
-        paint();
-      };
-      off.appendChild(el('div', { class: 'chg' }, el('span', { text: g }), sw));
+    if (!channels.length) return;
+    const browseRow = rows.pickRow(bar, 'Browse', 'the whole playlist, or one group at a time',
+      ['', ...groups], activeGroup, (g) => (g === '' ? 'All groups' : g),
+      (g) => { activeGroup = g; paintList(); focus.focusDefault(browseRow); });
+    if (groups.length) {
+      const shownGroups = groups.filter((g) => !groupsHidden.has(g));
+      const switchRow = rows.multiRow(bar, 'Group switches', 'take a whole group out of the zapping order at once',
+        groups, shownGroups, (g) => g, () => {
+          groupsHidden = new Set(groups.filter((g) => !shownGroups.includes(g)));
+          syncEnabled();
+          save({}, 'group switches saved');
+          paintList();
+          focus.focusDefault(switchRow);
+        });
     }
-    bar.appendChild(off);
   }
 
   function syncEnabled() {
@@ -145,34 +125,33 @@ export function screen(ctx) {
     const slice = all.slice(0, shown);
     for (const c of slice) {
       const on = c.enabled !== false;
-      const row = el('div', {
-        class: `chrow${on ? '' : ' off'}`, dataset: { identity: c.identity },
+      const note = [c.number ? `#${c.number}` : '', (c.groups || []).slice(0, 2).join(' · ') || c.group || '']
+        .filter(Boolean).join(' · ');
+      // The whole row is one control; OK asks what to do with it — hide it, or move it in the zapping
+      // order. The old corner switch and the two round steppers were three ring stops for one decision.
+      const b = rows.actionRow(list, c.name, note, {
+        valueText: on ? 'Shown' : 'Hidden',
+        actions: () => {
+          const live = c.enabled !== false;
+          const backToRow = () => ringOnRow(visible().indexOf(c));
+          return [
+            { label: live ? 'Hide this channel' : 'Show this channel', run: () => {
+                if (live) hidden.add(c.identity); else hidden.delete(c.identity);
+                c.enabled = !live;
+                save({}, `${c.name} ${live ? 'hidden' : 'shown'}`);
+                paintList();
+                backToRow();
+              } },
+            { label: 'Move earlier', run: () => { move(c, -1); backToRow(); } },
+            { label: 'Move later', run: () => { move(c, 1); backToRow(); } },
+          ];
+        },
       });
-      const num = el('span', { class: 'chno', text: c.number ? String(c.number) : '·' });
-      const logo = el('span', { class: 'chlogo' });
-      if (c.logo) logo.appendChild(el('img', { src: c.logo, alt: '', loading: 'lazy', decoding: 'async' }));
-      const name = el('div', { class: 'chname' },
-        el('b', { text: c.name }),
-        el('span', { text: (c.groups || []).slice(0, 2).join(' · ') || c.group || '' }));
-      const sw = el('button', {
-        class: `sw${on ? ' on' : ''}`, type: 'button', role: 'switch',
-        'aria-checked': on ? 'true' : 'false', 'aria-label': `${c.name} shown`,
-      }, el('i'));
-      focus.focusable(sw);
-      sw.onclick = () => {
-        if (on) hidden.add(c.identity); else hidden.delete(c.identity);
-        c.enabled = !on;
-        save({}, `${c.name} ${on ? 'hidden' : 'shown'}`);
-        paintList();
-      };
-      const up = el('button', { class: 'round', type: 'button', 'aria-label': `Move ${c.name} earlier` }, icon('chevUp'));
-      const down = el('button', { class: 'round', type: 'button', 'aria-label': `Move ${c.name} later` }, icon('chevDown'));
-      focus.focusable(up); focus.focusable(down);
-      up.onclick = () => move(c, -1);
-      down.onclick = () => move(c, 1);
-      row.appendChild(num); row.appendChild(logo); row.appendChild(name);
-      row.appendChild(sw); row.appendChild(up); row.appendChild(down);
-      list.appendChild(row);
+      if (c.logo) {
+        const logo = el('span', { class: 'chlogo' },
+          el('img', { src: c.logo, alt: '', loading: 'lazy', decoding: 'async' }));
+        b.insertBefore(logo, b.firstChild);
+      }
     }
     clear(foot);
     const hiddenCount = channels.filter((c) => c.enabled === false).length;
@@ -205,13 +184,13 @@ export function screen(ctx) {
       }
       syncEnabled();
       paint();
-      focus.focusDefault(bar.querySelector('.chip'));
+      focus.focusDefault(bar.querySelector('.li') || list.querySelector('.li'));
     } catch (e) {
       head.appendChild(el('p', { class: 'note', text: 'The hub did not answer. Try again from Settings.' }));
     }
   })();
 
-  root.__defaultFocus = () => bar.querySelector('.chip') || list.querySelector('.sw');
+  root.__defaultFocus = () => bar.querySelector('.li') || list.querySelector('.li');
   root.__dispose = () => {};
   return root;
 }

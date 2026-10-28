@@ -713,23 +713,23 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
    the menu's own: the row fills as a rounded bar under the ring, because on a TV
    settings list the highlight IS the selection; the value sits bright and heavy so
    the eye reads state before it reads the name. */
-.settings-pane .li {
+.settings-pane .li, .channel-manager .li {
   background: none; border: 0;
   border-bottom: 1px solid var(--line);
   padding: calc(22px * var(--s)) calc(16px * var(--s));
   transition: background var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out;
 }
-.settings-pane .li.foc {
+.settings-pane .li.foc, .channel-manager .li.foc {
   background: var(--surface3); border-radius: var(--r-button);
   border-bottom-color: transparent;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 0 0 calc(3px * var(--s)) var(--focus-ring);
 }
-.settings-pane .li .lname { font-size: calc(26px * var(--s)); font-weight: 700; color: var(--ink); }
-.settings-pane .li .note {
+.settings-pane .li .lname, .channel-manager .li .lname { font-size: calc(26px * var(--s)); font-weight: 700; color: var(--ink); }
+.settings-pane .li .note, .channel-manager .li .note {
   max-width: calc(640px * var(--s)); color: var(--ink3);
   display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
 }
-.settings-pane .li .lv {
+.settings-pane .li .lv, .channel-manager .li .lv {
   display: inline-block; color: #fff; font-weight: 700; font-size: calc(24px * var(--s));
 }
 .lv.bump { animation: lvBump 280ms ease-out; }
