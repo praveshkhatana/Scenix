@@ -33,7 +33,7 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Seek honors tokens: `seekBackMs=10000` / `seekForwardMs=30000` (today a fixed ±10 s), with hold-to-repeat stepping while the key is down.
 - [x] Next-episode card gets the countdown number (uses the unused `autoplayCountdownMs` token) and autoplay-into-next with an Undo window for series.
 - [x] Seek bar scrub preview: time ghost under the ring while Left/Right seeks; thumbnails if the hub can serve them.
-- [ ] Audio menu gains an explicit default/off-equivalent row symmetric with Subtitles' "Off".
+- [x] Audio menu gains an explicit default/off-equivalent row symmetric with Subtitles' "Off".
 
 ## E. Detail page
 - [ ] Resume progress bar (Netflix red line) under the hero buttons showing watch position for partially watched titles.
@@ -66,5 +66,6 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Dwell expand 250 ms + trailer 1 s + focusable tile actions + row scroll/dim (C1-C3) — commit f16585f
 - [x] Chrome hide reads `player.controlsHideMs` and the ring inside the chrome re-arms instead of being stranded (D1) — live timeline sampled: visible 13+ s while focused, faded ~6 s after blur
 - [x] Seek tokens + hold-repeat stepping (D2): buttons/keys read `seekBackMs`/`seekForwardMs`, labels say what they do, held key keeps stepping via raw repeat events — commit 448da60
-- [x] Scrub time ghost on every arrow/media seek, fading after 1.4 s (D4; thumbnails need a sprite endpoint the hub lacks) — live probe: pill showed "11:30" with three held presses advancing 600→690 s
+- [x] Scrub time ghost on every arrow/media seek, fading after 1.4 s (D4; thumbnails need a sprite endpoint the hub lacks) — commit ca6f215, live probe: pill showed "11:30" with three held presses advancing 600→690 s
+- [x] Audio menu "Default · picked by your languages" row above the track list, ticked when nothing is manually chosen (D5) — live probe: Default(off)+Hindi(on) rows in the open menu
 - [x] Next-episode countdown from `autoplayCountdownMs`, auto-roll into S1 E2 with a focusable Undo chip back to the finished episode (D3) — verified stubbed end-to-end: "Starting in 7s" → roll at token expiry → Undo returned to S1 E1 with the chip gone

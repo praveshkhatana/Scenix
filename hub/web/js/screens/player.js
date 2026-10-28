@@ -586,6 +586,11 @@ export function screen(ctx, identity) {
       panel.appendChild(el('div', { class: 'note', text: 'Up and down pick a row; OK opens the choice; Back leaves the player.' }));
     } else if (kind === 'audio') {
       panel.appendChild(el('h4', {}, icon('audio'), el('span', { text: 'Audio' })));
+      // Symmetric with Subtitles' "Off": one row that gives up any manual pick and lets the hub rank
+      // tracks by the profile's languages again.
+      panel.appendChild(row('Default', 'picked by your languages',
+        !player.selectedAudio,
+        () => { player.setAudio(null).then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
       const list = player.audioTracks || [];
       if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'The hub has not reported the audio tracks for this copy yet. It usually arrives with the first frame.' }));
       for (const t of list) {
