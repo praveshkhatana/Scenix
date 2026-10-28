@@ -70,7 +70,8 @@ class BrowseActivity : Activity() {
 
         list = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@BrowseActivity)
-            setHasFixedSize(false)
+            setHasFixedSize(true)
+            setItemViewCacheSize(24)
             setBackgroundColor(app.theme.bg)
             itemAnimator = null
             clipToPadding = false
@@ -229,6 +230,7 @@ class BrowseActivity : Activity() {
                 val rail = RecyclerView(this@BrowseActivity).apply {
                     layoutManager = LinearLayoutManager(this@BrowseActivity, LinearLayoutManager.HORIZONTAL, false)
                     setHasFixedSize(true)
+                    setItemViewCacheSize(16)
                     itemAnimator = null
                     isNestedScrollingEnabled = false
                     setPadding(theme.gutter, theme.px(18f), theme.gutter, theme.px(26f))

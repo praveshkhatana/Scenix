@@ -221,21 +221,39 @@ class DetailActivity : Activity() {
             val season = ep.optInt("season", 1)
             val number = ep.optInt("episode", i + 1)
             val row = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(theme.px(18f), theme.px(14f), theme.px(18f), theme.px(14f))
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(theme.px(14f), theme.px(12f), theme.px(14f), theme.px(12f))
                 isFocusable = true
                 isClickable = true
                 setBackgroundColor(theme.surface)
             }
-            row.addView(Views.text(app, "li", 22f, theme.ink,
+            val thumb = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(theme.surface2)
+                clipToOutline = true
+                outlineProvider = object : android.view.ViewOutlineProvider() {
+                    override fun getOutline(v: View, outline: android.graphics.Outline) {
+                        outline.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 6f).toFloat())
+                    }
+                }
+            }
+            row.addView(thumb, LinearLayout.LayoutParams(theme.px(160f), theme.px(90f)))
+            BrowseImages.load(thumb, ep.optString("thumb", ""), theme.px(160f))
+            val copy = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(theme.px(14f), 0, 0, 0)
+            }
+            copy.addView(Views.text(app, "li", 22f, theme.ink,
                 "S$season E$number · " + ep.optString("title", ""), bold = true, maxLines = 1))
             val synopsis = ep.optString("synopsis", "")
             if (synopsis.isNotBlank()) {
-                row.addView(Views.text(app, "meta", 18f, theme.ink2, synopsis, maxLines = 2),
+                copy.addView(Views.text(app, "meta", 18f, theme.ink2, synopsis, maxLines = 2),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                         topMargin = theme.px(5f)
                     })
             }
+            row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.setOnClickListener { startPlay(season, number) }
             Focus.attach(row, row, app, theme.radius("listItem", 6f), scale = false, elevate = false)
             parent.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
