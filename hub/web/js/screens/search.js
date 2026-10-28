@@ -17,7 +17,7 @@ import { el, clear } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
 import { cardFor } from '/ui/js/plugins.js';
-import { setTypingTarget } from '/ui/js/input.js';
+import { setTypingTarget, pushHandler, popHandler } from '/ui/js/input.js';
 import { entryField } from '/ui/js/keyboard.js';
 
 const DEBOUNCE_MS = 280;
@@ -163,6 +163,7 @@ export function screen(ctx, arg) {
   }
 
   /* Typed characters. The native field already receives them; the TV pad needs the shared buffer. */
+  let backLane = null;
   if (tv) {
     setTypingTarget({
       insert: (ch) => entry.insert(ch),
@@ -170,6 +171,19 @@ export function screen(ctx, arg) {
       clear: () => entry.back(true),
       commit: () => { if (timers) { clearTimeout(timers); timers = null; } runSearch(); },
     });
+
+    /* The first BACK on a TV clears the word instead of leaving the screen — the same verb the pad's
+       Clear key runs, wired in ahead of the router's back-step. A wrong letter or two is erased where
+       you stand and the empty pane with the recent words comes back; it takes a second BACK, with an
+       empty field, to actually go anywhere. */
+    backLane = (e, key) => {
+      if (key !== 'Escape' && key !== 'GoBack' && key !== 'BrowserBack') return false;
+      if (!String(entry.value || '').trim()) return false;
+      entry.back(true);                 // onChange fires, so the debounced search unwinds itself
+      focus.focusDefault(entry.firstKey());
+      return true;
+    };
+    pushHandler(backLane);
   }
 
   async function loadShelf() {
@@ -202,7 +216,7 @@ export function screen(ctx, arg) {
 
   root.__defaultFocus = () => (tv ? entry.firstKey() : (entry.input || grid.querySelector('.card') || entry.firstKey()));
   root.__dispose = () => {
-    if (tv) setTypingTarget(null);
+    if (tv) { setTypingTarget(null); if (backLane) popHandler(backLane); }
     if (timers) clearTimeout(timers);
     seq++;
   };
