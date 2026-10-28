@@ -5,9 +5,8 @@
  * poster, a year and a list of copies. This screen therefore renders what arrived and quietly omits what
  * did not, rather than inventing filler or showing an empty box. Three rules follow from that:
  *
- *   · The copy list is the point. The hub scored every source it could find and said why — the quality, the
- *     size, the risk, the seeding — so those go on screen as chosen facts, not as a spinner. Picking one
- *     sends it back through `/app/v1/play` as the copy to open.
+ *   · The copy list lives in the player's Source sheet. The detail page is about the title; one Play button
+ *     asks the hub for the best copy and the player can change it without coming back here.
  *   · Related titles come from this hub's own shelves. The record has no `similar` field on every build, so
  *     the row is assembled from the home rows already loaded, matched on type and genre. Nothing here
  *     hardcodes a title, a row, or a language.
@@ -22,7 +21,7 @@ import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { session, rememberMeta, metaCache, inMyList } from '/ui/js/state.js';
-import { clock, runtime, size, langList, since, episodeLabel, seasonLabel, qualityWord, timeLeft, initials } from '/ui/js/format.js';
+import { clock, runtime, langList, since, episodeLabel, seasonLabel, timeLeft, initials } from '/ui/js/format.js';
 import { rowFor, lazyMount, dropMountedRows } from '/ui/js/plugins.js';
 import { startPreview, stopPreview } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
@@ -271,28 +270,6 @@ export function screen(ctx, identity) {
       if (inHero || onTrailer) armTrailer();
       else { cancelTrailer(); stopPreview(); }
     });
-  }
-
-  function srcRow(s) {
-    // Which icon, from what the copy actually is: a stream this hub serves, a swarm that needs peers, or a file
-    // already on the disk.
-    const kindIcon = (s.kind === 'hls' || s.kind === 'gateway' || s.kind === 'live') ? 'tv'
-      : s.kind === 'torrent' ? 'globe' : 'external';
-    const sl = el('div', { class: 'sl' },
-      el('b', { text: s.label || qualityWord(s.quality) || s.provider || 'copy' }),
-      el('span', { text: s.tagline || [s.provider, s.kind].filter(Boolean).join(' · ') }));
-    if (Array.isArray(s.why) && s.why.length) {
-      sl.appendChild(el('div', { class: 'why' }, ...s.why.slice(0, 3).map((w) => el('i', { text: `— ${w}` }))));
-    }
-    const q = el('div', { class: 'q' });
-    if (s.quality) q.appendChild(el('span', { class: 'tagq g', text: qualityWord(s.quality) }));
-    if (Number(s.sizeBytes) > 0) q.appendChild(el('span', { class: 'tagq', text: size(s.sizeBytes) }));
-    if (s.seeders !== undefined && s.seeders !== null) q.appendChild(el('span', { class: 'tagq', text: `${s.seeders} seeds` }));
-    if (s.risk) q.appendChild(el('span', { class: `tagq ${s.risk === 'low' ? 'g' : s.risk === 'medium' ? 'y' : 'r'}`, text: `${s.risk} risk` }));
-    if (s.status && s.status !== 'available') q.appendChild(el('span', { class: 'tagq r', text: s.status }));
-    const b = el('button', { class: 'src', type: 'button', onclick: () => play(s) }, icon(kindIcon, { solid: false }), sl, q);
-    focus.focusable(b);
-    return b;
   }
 
   /**

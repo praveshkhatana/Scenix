@@ -208,21 +208,6 @@
 }
 .cast .nm { font-size: var(--t-meta); color: var(--ink1); font-weight: 600; line-height: 1.25; }
 
-/* The household's own rating. There is no ratings endpoint on this hub, so this is a control the app
-   keeps for itself (the same deal My list makes in js/state.js) and not a number the hub claims. */
-.rate-box { display: flex; align-items: center; gap: calc(16px * var(--s)); flex-wrap: wrap; }
-.rate-stars { display: flex; gap: calc(6px * var(--s)); }
-.star-btn {
-  width: calc(54px * var(--s)); height: calc(54px * var(--s)); border-radius: var(--r-chip);
-  display: grid; place-content: center; color: rgba(255, 255, 255, .35);
-  background: rgba(255, 255, 255, .05); border: 1px solid var(--border);
-  transition: transform var(--focus-ms) ease-out;
-}
-.star-btn .ico { width: calc(32px * var(--s)); height: calc(32px * var(--s)); }
-.star-btn.on { color: var(--warn); }
-.star-btn.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
-.rate-note { font-size: var(--t-meta); color: var(--ink2); }
-
 /* ==========================================================================
    Player chrome — the way out at the top-left beside the name, a hairline of
    position across the bottom, the transport flat under it, and the next
