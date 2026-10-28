@@ -263,23 +263,21 @@ function buildNav() {
     class: 'nav-item', type: 'button', dataset: { route: target },
     onclick: () => navigate(target, arg),
   }, label);
-  nav = el('div', { class: 'nav' },
+  // The profile sits immediately after the wordmark, the way a household expects to reach it: one
+  // Right from the brand, not a walk past every menu item and a geometry jump into the hero. The whole
+  // bar is one horizontal group, so Left/Right never leave it for a card below.
+  nav = el('div', { class: 'nav', 'data-nav': 'h' },
     el('button', { class: 'brand', type: 'button', 'aria-label': 'Scenix home', onclick: () => navigate('home') },
       el('span', { class: 'brand-mark' })),
     el('div', { class: 'nav-items' },
+      el('button', {
+        class: 'avatar-chip', type: 'button', 'aria-label': 'Switch profile', title: 'Switch profile',
+        onclick: () => navigate('profiles'),
+      }, el('span', { class: 'ini' })),
       item('home', 'Home', 'home'),
       item('search', 'Search', 'search'),
-      item('settings', 'Settings', 'settings')),
-    el('div', { class: 'nav-right' },
-      el('button', {
-        class: 'nav-icon', type: 'button', 'aria-label': 'Profiles',
-        onclick: () => navigate('profiles'),
-      }, icon('user')),
-      el('button', {
-        class: 'avatar-chip', type: 'button', 'aria-label': 'Choose profile',
-        onclick: () => navigate('profiles'),
-      }, el('span', { class: 'ini' }))));
-  for (const n of nav.querySelectorAll('.nav-item, .nav-icon, .brand, .avatar-chip')) focus.focusable(n);
+      item('settings', 'Settings', 'settings')));
+  for (const n of nav.querySelectorAll('.nav-item, .brand, .avatar-chip')) focus.focusable(n);
   nav.addEventListener('scroll', () => { /* the screen scrolls, not the bar */ }, { passive: true });
   stage().addEventListener('scroll', (e) => {
     const top = e.target === stage() ? e.target.scrollTop : 0;

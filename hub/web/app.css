@@ -462,7 +462,7 @@ ul { list-style: none; }
   position: relative; flex: none; width: var(--card-w);
   /* transform only. A box-shadow transition repaints the whole area around a card on every frame, and a
      shelf is thirty of them; the ring simply arrives with the card. */
-  transition: transform var(--focus-ms) ease-out;
+  transition: transform var(--focus-ms) ease-out, width 240ms cubic-bezier(.23,1,.32,1);
   /* Layout and style containment: the card's own relayout is then kept inside the card instead of
      invalidating the shelf. Not paint containment - that would clip the focus ring. */
   contain: layout style;
@@ -1428,3 +1428,19 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   transition: width 520ms cubic-bezier(.23,1,.32,1);
 }
 .ply-loadtext { margin-top: calc(14px * var(--s)); font-size: calc(18px * var(--s)); color: var(--ink2); text-align: center; }
+
+/* Genre tiles: a shelf of the categories the library actually has. */
+.genre-art {
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start;
+  gap: calc(8px * var(--s)); padding: calc(24px * var(--s));
+  background:
+    radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.55), rgba(229,9,20,0) 55%),
+    linear-gradient(150deg, #2a2a2a, #101010);
+}
+.genre-art .gname { font-size: calc(40px * var(--s)); font-weight: 900; line-height: .95; color: #fff; letter-spacing: -.02em; }
+.genre-art .gcount { font-size: calc(18px * var(--s)); color: var(--ink2); }
+.genre-art .garrow { position: absolute; top: calc(18px * var(--s)); right: calc(18px * var(--s)); color: #fff; opacity: .8; }
+.genre-art .garrow .ico { width: calc(28px * var(--s)); height: calc(28px * var(--s)); }
+.genre-card.foc .genre-art { background:
+  radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.8), rgba(229,9,20,0) 60%),
+  linear-gradient(150deg, #3a3a3a, #121212); }

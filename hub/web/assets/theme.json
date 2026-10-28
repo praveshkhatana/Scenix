@@ -104,8 +104,8 @@
   },
   "focus": {
     "ringWidth": 4,
-    "scale": 1.06,
-    "durationMs": 140,
+    "scale": 1.10,
+    "durationMs": 160,
     "shadowElevation": 12
   },
   "boot": {
@@ -142,13 +142,13 @@
     "firstRowUnderHeroPx": -60,
     "rankTextRatio": 0.495,
     "rankWidthRatio": 0.55,
-    "rankOverlapRatio": 0.229,
+    "rankOverlapRatio": 0.10,
     "rankStrokePx": 8
   },
   "rows": { "perRow": 5, "exploreThreshold": 6, "maxRows": 30 },
   "chips": { "max": 8 },
   "pin": { "length": 4, "keysPerRow": 3 },
-  "preview": { "enabled": 1, "delayMs": 1500 },
+  "preview": { "enabled": 1, "delayMs": 350 },
   "hero": { "rotateMs": 6000, "rotateFadeMs": 500, "maxItems": 5, "playWidth": 320, "playHeight": 72 },
   "player": {
     "controlsHideMs": 6000,

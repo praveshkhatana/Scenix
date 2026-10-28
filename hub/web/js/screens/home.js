@@ -78,6 +78,7 @@ export function screen(ctx) {
       open: (item) => { rememberFocus('home', item.identity); ctx.open(item); },
       list: (item) => ctx.list(item),
       explore: (r) => ctx.navigate('search', `row:${r.id}`),
+      search: (q) => ctx.navigate('search', q),
     });
     const node = rowFor(row)(row, ctxFor());
     node.style.setProperty('--i', String(index));

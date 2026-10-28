@@ -147,6 +147,23 @@ registerCard('poster', (item, ctx) => card(item, ctx, { art: item.poster || item
    broken 1920 px card. */
 registerCard('hero', (item, ctx) => card(item, ctx, { art: item.backdrop || item.poster }));
 
+/* A category the library actually has: the name is the tile, the count is the promise. */
+registerCard('genre', (item, ctx) => {
+  const node = el('div', {
+    class: 'card genre-card', dataset: { identity: item.identity, i: ctx.index },
+    'aria-label': `${item.title} — ${item.count || 0} titles`,
+  });
+  node.style.setProperty('--i', String(ctx.index || 0));
+  const a = el('div', { class: 'art genre-art' },
+    el('span', { class: 'gname', text: item.title || '' }),
+    el('span', { class: 'gcount', text: `${item.count || 0} titles` }),
+    el('span', { class: 'garrow' }, icon('chevRight')));
+  node.appendChild(a);
+  node.addEventListener('click', () => { if (ctx.search) ctx.search(item.title); });
+  focusable(node);
+  return node;
+});
+
 /* Live channels: numbered, logo-centred, with what is on right now. */
 registerCard('channel', (item, ctx) => {
   const node = el('div', {
@@ -233,6 +250,9 @@ registerRow('continue', (row, ctx) => rail(row, ctx, { size: 'landscape' }));
 
 /* Channel rail: same footprint as landscape, its own sizing hook. */
 registerRow('channel', (row, ctx) => rail(row, ctx, { size: 'channel' }));
+
+/* Category rail: the library's own genres. */
+registerRow('genre', (row, ctx) => rail(row, ctx, { size: 'poster' }));
 
 /* A registered exception: this one shelf draws its rank numeral over the art (spec B: 208 px, weight
    900, black fill, 8 px grey stroke, 96 px overlap). Keyed by row id so no screen names it. */

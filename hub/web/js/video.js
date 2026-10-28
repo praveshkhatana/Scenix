@@ -32,8 +32,12 @@ function ensurePreview() {
   previewVideo = document.createElement('video');
   // Muted + loop + playsinline is the whole contract for a background preview: it must never make a TV
   // shout, and it must survive a firmware that refuses an unrequested play.
-  previewVideo.muted = true;
-  previewVideo.defaultMuted = true;
+  // A preview is a trailer, not wallpaper: it carries its own sound. The shell allows autoplay with
+  // audio; a desktop browser that blocks it falls back to muted playback in startPreview() and still
+  // shows the picture rather than nothing.
+  previewVideo.muted = false;
+  previewVideo.defaultMuted = false;
+  previewVideo.volume = 1;
   previewVideo.loop = true;
   previewVideo.playsInline = true;
   previewVideo.setAttribute('playsinline', '');
@@ -93,11 +97,19 @@ export async function startPreview(slot, target, poster) {
     v.load();
   }
   try {
+    v.muted = false;
     await v.play();
     return true;
   } catch (e) {
-    // A firmware that refuses the play leaves the still poster exactly where it was.
-    return false;
+    // A browser with an autoplay-with-sound policy: keep the picture, mute the sound, and let the next
+    // real keypress be the gesture that turns it back on.
+    try {
+      v.muted = true;
+      await v.play();
+      return true;
+    } catch (e2) {
+      return false;
+    }
   }
 }
 

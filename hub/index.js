@@ -37,6 +37,7 @@ const gateway = require('./core/gateway');
 const addons = require('./core/addons');
 const trailers = require('./core/trailers');
 const ratings = require('./core/ratings');
+const castApi = require('./core/cast');
 const probe = require('./core/probe');
 const webui = require('./core/webui');
 // What a copy actually contains (core/media.js) and how to re-wrap it for a browser (core/remux.js).
@@ -2426,6 +2427,12 @@ const server = http.createServer(async (req, res) => {
         // Probing off, but the files spoke: rank on what they said. The rule still refuses to set
         // status/tagline without a measurement, so the response keeps its old shape.
         await rerank(kept, ctx);
+      }
+      // The cast list is the one place a detail page needs a face rather than a name. It is cached per
+      // title forever, so this costs a round trip once; a slow network falls back to the addon's names.
+      if (kept) {
+        const faces = await castApi.enrich(kept, Math.min(1400, budget));
+        if (faces && faces.length) kept.cast = faces;
       }
       send(res, kept ? 200 : 403, kept || { identity, droppedByRule: true });
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,
