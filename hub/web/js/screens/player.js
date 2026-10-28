@@ -937,6 +937,11 @@ export function screen(ctx, identity) {
       ctx.zap(key === 'MediaTrackNext' ? 1 : -1);
       return true;
     }
+    // The remote's own Channel Up/Down keys tune the live row, exactly as the native player answers them.
+    if (isLiveFeed && (key === 'ChannelUp' || key === 'ChannelDown')) {
+      ctx.zap(key === 'ChannelUp' ? 1 : -1);
+      return true;
+    }
     if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(SEEK_FWD); showGhost(); return true; }
     if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-SEEK_BACK); showGhost(); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }

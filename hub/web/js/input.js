@@ -21,6 +21,8 @@ const NAV_KEYS = new Set([
 ]);
 const MEDIA_KEYS = new Set([
   'MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaTrackNext', 'MediaTrackPrevious',
+  // The channel keys belong to whoever is showing a live feed; the page never scrolls under them.
+  'ChannelUp', 'ChannelDown',
 ]);
 
 /* Some boxes deliver only a keyCode; map the Android TV keycodes onto the names the rest of the code uses. */
@@ -29,6 +31,9 @@ const KEYCODES = {
   39: 'ArrowRight', 40: 'ArrowDown', 46: 'Delete',
   48: '0', 49: '1', 50: '2', 51: '3', 52: '4', 53: '5', 54: '6', 55: '7', 56: '8', 57: '9',
   85: 'MediaPlayPause', 89: 'MediaTrackNext', 90: 'MediaTrackPrevious',
+  // Android TV's KEYCODE_CHANNEL_UP/DOWN, which the live player tunes with — the same keys the native
+  // player answers. Some firmwares deliver them as `key` names directly; those need no mapping.
+  166: 'ChannelUp', 167: 'ChannelDown',
   96: '0', 97: '1', 98: '2', 99: '3', 100: '4', 101: '5', 102: '6', 103: '7', 104: '8', 105: '9',
   160: 'MediaPlayPause', 161: 'MediaPause', 162: 'MediaPlay',
 };
