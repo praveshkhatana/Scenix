@@ -114,6 +114,7 @@ class PlayerActivity : Activity() {
     private val tried = LinkedHashSet<String>()
     private var liveChannels: List<Item> = emptyList()
     private var liveLoaded = false
+    private var pausedForBackground = false
 
     // ---- media ----------------------------------------------------------------------------
     private var player: ExoPlayer? = null
@@ -211,8 +212,20 @@ class PlayerActivity : Activity() {
         if (isFinishing) return
         // A TV asleep behind a paused activity must not keep decoding, and the hub still deserves the
         // playhead the viewer left on.
+        pausedForBackground = player?.isPlaying == true
         player?.playWhenReady = false
         saveProgress(force = true)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Coming back from the launcher to a paused player with the chrome already faded left a black
+        // screen until a key was pressed. Bring the ring back; the viewer decides whether to resume.
+        if (pausedForBackground) {
+            pausedForBackground = false
+            updatePlayLabel()
+            showChrome(focus = true)
+        }
     }
 
     override fun onDestroy() {

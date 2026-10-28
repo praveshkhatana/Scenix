@@ -164,7 +164,13 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             )
         } else {
             Log.i(TAG, "opening the native profile gate")
-            startActivity(Intent(this, ProfilesActivity::class.java))
+            // A relaunch from the TV home screen lands on top of the task that was left behind
+            // (Browse, Detail, maybe a paused player). Starting the gate in a cleared task means a
+            // person switch cannot walk back into the previous person's player.
+            startActivity(
+                Intent(this, ProfilesActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
         }
         finish()
     }
