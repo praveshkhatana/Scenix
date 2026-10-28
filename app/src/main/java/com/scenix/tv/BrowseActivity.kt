@@ -96,7 +96,12 @@ class BrowseActivity : Activity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(navButton("Profile") { openWeb("#/profiles") })
+        bar.addView(navButton("Profile") {
+            startActivity(
+                Intent(this@BrowseActivity, ProfilesActivity::class.java)
+                    .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
+            )
+        })
         bar.addView(navButton("Search", app.theme.px(24f)) { openWeb("#/search") })
         bar.addView(navButton("Settings", app.theme.px(28f)) { openWeb("#/settings") })
         return bar

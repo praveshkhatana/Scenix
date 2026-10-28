@@ -156,11 +156,16 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     }
 
     private fun openShell(route: String?) {
-        Log.i(TAG, "opening the web shell${route?.let { " at $it" } ?: ""}")
-        startActivity(
-            Intent(this, WebShellActivity::class.java)
-                .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, route ?: ""))
-        )
+        if (route != null && route.startsWith("#/")) {
+            Log.i(TAG, "opening the web shell at $route")
+            startActivity(
+                Intent(this, WebShellActivity::class.java)
+                    .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, route))
+            )
+        } else {
+            Log.i(TAG, "opening the native profile gate")
+            startActivity(Intent(this, ProfilesActivity::class.java))
+        }
         finish()
     }
 

@@ -21,6 +21,16 @@ data class BrowseRow(
     val items: List<Item>,
 )
 
+/** One person the native profile gate offers. */
+data class ProfileInfo(
+    val id: String,
+    val name: String,
+    val kids: Boolean,
+    val pinSet: Boolean,
+    val locked: Boolean,
+    val avatar: String,
+)
+
 /**
  * The small native read path for the browse surface. The hub remains the source of truth; this only
  * fetches `/app/v1/home` and turns the same item JSON into the model the native cards render.
@@ -40,10 +50,86 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     }
 
     /** One title, exactly the record the web detail page reads: cast, advisories, episodes included. */
+    fun profiles(done: (profiles: List<ProfileInfo>?, error: String?) -> Unit) {
+        fetch("/app/v1/profiles", "") { root, error ->
+            val arr = root?.optJSONArray("profiles") ?: root?.optJSONArray("items")
+            if (arr == null) {
+                done(null, error ?: "The hub did not send profiles")
+                return@fetch
+            }
+            val out = ArrayList<ProfileInfo>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                out.add(
+                    ProfileInfo(
+                        id = o.optString("id", ""),
+                        name = o.optString("name", ""),
+                        kids = o.optBoolean("isKids", o.optBoolean("kids", false)) ||
+                            o.optString("kind", "").equals("kids", true),
+                        pinSet = o.optBoolean("pinSet", o.optBoolean("hasPin", o.optBoolean("pinRequired", false))),
+                        locked = o.optBoolean("locked", false),
+                        avatar = o.optString("avatar", ""),
+                    )
+                )
+            }
+            done(out, null)
+        }
+    }
+
+    fun unlock(profileId: String, pin: String, done: (ok: Boolean, error: String?) -> Unit) {
+        post(
+            "/app/v1/profiles/${URLEncoder.encode(profileId, "UTF-8")}/unlock",
+            JSONObject().put("pin", pin)
+        ) { root, error ->
+            done(root?.optBoolean("ok") == true, error)
+        }
+    }
+
+    fun absolute(path: String): String {
+        if (path.isBlank() || path.startsWith("http://") || path.startsWith("https://")) return path
+        return WebShellActivity.apiBase(context) + (if (path.startsWith("/")) path else "/$path")
+    }
+
     fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
         val path = "/app/v1/meta/${URLEncoder.encode(identity, "UTF-8").replace("+", "%20")}"
         fetch(path, "profile=${URLEncoder.encode(profileId, "UTF-8")}") { root, error ->
             done(root?.optJSONObject("item") ?: root, error)
+        }
+    }
+
+    private fun post(path: String, body: JSONObject, done: (JSONObject?, String?) -> Unit) {
+        pool.execute {
+            var root: JSONObject? = null
+            var error: String? = null
+            try {
+                val conn = URL(WebShellActivity.apiBase(context) + path).openConnection() as HttpURLConnection
+                try {
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 15000
+                    conn.requestMethod = "POST"
+                    conn.doOutput = true
+                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    conn.setRequestProperty("Accept", "application/json")
+                    val token = prefs.hubToken()
+                    if (token.isNotBlank()) {
+                        val basic = Base64.encodeToString("scenix:$token".toByteArray(), Base64.NO_WRAP)
+                        conn.setRequestProperty("Authorization", "Basic $basic")
+                    }
+                    conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                    if (conn.responseCode !in 200..299) {
+                        error = "The hub answered ${conn.responseCode}"
+                    } else {
+                        val text = conn.inputStream.bufferedReader().use { it.readText() }
+                        root = if (text.isBlank()) JSONObject() else JSONObject(text)
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "native POST $path failed", t)
+                error = t.message ?: "The hub is not answering"
+            }
+            main.post { done(root, error) }
         }
     }
 
