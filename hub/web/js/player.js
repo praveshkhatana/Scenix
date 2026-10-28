@@ -805,6 +805,9 @@ export function createPlayer() {
       };
     },
     onStuck: (d) => bus.emit('stuck', d),
+    // A cold copy often spends 10-25 s before its first frame. During that window the player's own
+    // preparing screen is the honest one; the stall rule starts only after the copy has had its chance.
+    startupMs: 30000,
   });
 
   // The decoder is the authority on the tracks that actually exist in the file. The hub's answer is the

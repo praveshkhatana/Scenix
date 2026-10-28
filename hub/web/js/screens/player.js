@@ -28,8 +28,9 @@ import { token, px } from '/ui/js/theme.js';
 import { setFeatureVisible, setSurfaceLive } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
 
-const SKIP_FROM = 5000;          // spec B: the intro button lives between 5 s and 90 s
-const SKIP_TO = 90000;
+// An intro window is data from the hub, not a guess from the clock. The old 5 s..90 s window put a
+// Skip intro button over the first minute and a half of every series, whether or not it had an intro.
+const SKIP_DEFAULT_LENGTH = 90000;
 const NEXT_WINDOW = 7000;       // spec B: the next-episode card appears in the last 7 s
 const HIDE_AFTER = 5000;
 
@@ -142,8 +143,9 @@ export function screen(ctx, identity) {
      enough for anyone to want out of it. So the button starts put away — `gone` is opacity 0, which is also
      how focus.js decides a control is not there — and only a position report that lands inside an intro brings
      it back. */
+  let skipToMs = 0;
   const skip = el('button', { class: 'skip gone', type: 'button', text: 'Skip intro',
-    onclick: () => { player.seek(SKIP_TO); hideSkip(); } });
+    onclick: () => { if (skipToMs > 0) player.seek(skipToMs); hideSkip(); } });
   focus.focusable(skip);
   let skipShown = false;
 
@@ -508,7 +510,18 @@ export function screen(ctx, identity) {
     // Native captions are painted by the shell, which does not know our bar is there.
     player.subMargin(Math.round(bottom.getBoundingClientRect().height || px(140)));
   }));
-  offs.push(player.on('position', () => { drawPosition(); drawNext(); tickSkip(); }));
+  offs.push(player.on('position', () => {
+    drawPosition(); drawNext(); tickSkip();
+    // A question about a frozen copy is answered by the picture moving again, not only by a keypress.
+    if (asking) {
+      const st = player.state();
+      if (st.playing && st.positionMs > 0) {
+        asking = false;
+        center.hidden = true;
+        refreshStatus();
+      }
+    }
+  }));
   offs.push(player.on('buffering', (d) => {
     refreshStatus(d && d.on === false ? {} : {});
     drawPosition();
@@ -633,11 +646,16 @@ export function screen(ctx, identity) {
   function tickSkip() {
     const st = player.state();
     if (live || player.ended) return hideSkip();
-    // An intro is a thing the hub marks on an episode. On a feature, or on a channel, a button offering to
-    // jump past one would be a guess dressed up as a control.
-    if (isLiveFeed || (!isSeries && !spec.introEndMs)) return hideSkip();
-    const introEnd = Number(spec.introEndMs) || SKIP_TO;
-    if (st.positionMs >= SKIP_FROM && st.positionMs < introEnd) showSkip();
+    // An intro is a thing the hub marks on an episode. No window, no button: a control that guesses is
+    // worse than a control that is absent. A future intro source only has to send `introEndMs`
+    // (and optionally `introStartMs`) in the play answer.
+    if (isLiveFeed) return hideSkip();
+    const introEnd = Number(spec.introEndMs) || 0;
+    if (introEnd <= 0) return hideSkip();
+    const introStart = Number(spec.introStartMs) > 0
+      ? Number(spec.introStartMs)
+      : Math.max(0, introEnd - SKIP_DEFAULT_LENGTH);
+    if (st.positionMs >= introStart && st.positionMs < introEnd) { skipToMs = introEnd; showSkip(); }
     else hideSkip();
   }
 

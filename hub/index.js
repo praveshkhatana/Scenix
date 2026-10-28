@@ -2764,7 +2764,7 @@ const server = http.createServer(async (req, res) => {
     };
     if (path === '/app/v1/prefs' && req.method === 'POST') {
       const body = await readBody(req);
-      const wanted = (body && (body.profile || body.profileId)) || '';
+      const wanted = (body && (body.profile || body.profileId)) || u.searchParams.get('profile') || u.searchParams.get('profileId') || '';
       if (!wanted) return send(res, 400, { error: 'profile required' });
       const current = store.profile(wanted);
       if (!current || !current.id) return send(res, 404, { error: 'no such profile', profile: wanted });

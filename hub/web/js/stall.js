@@ -34,11 +34,17 @@ export function createWatchdog(opts) {
   const {
     state, heal, onHealing, onHealed, onStuck, describe,
     stallMs = STALL_MS, cooldownMs = HEAL_COOLDOWN_MS, healsPerCopy = HEALS_PER_COPY,
-    now = () => Date.now(),
+    startupMs = 0, now = () => Date.now(),
   } = opts || {};
 
   let lastPos = -1;
   let movedAt = now();
+  // A cold copy spends its first seconds at 0 with no frame on screen. That is the hub preparing it, not
+  // a freeze halfway through a film; counting it as a stall put the "stopped moving" card over a film
+  // that had never started, and the card outlived the wait. Only a playhead that has actually moved is
+  // eligible for the stall rule.
+  let everMoved = false;
+  let startedAt = now();
   let heals = 0;
   // The gap is measured from the last reload, and none has happened yet - starting it at zero would put every
   // freeze inside the first two minutes of a film beyond the cooldown, which is exactly when they happen.
@@ -50,6 +56,8 @@ export function createWatchdog(opts) {
   function reset() {
     lastPos = -1;
     movedAt = now();
+    startedAt = now();
+    everMoved = false;
     heals = 0;
     lastHealAt = Number.NEGATIVE_INFINITY;
     pending = false;
@@ -71,12 +79,18 @@ export function createWatchdog(opts) {
     if (pos !== lastPos) {
       lastPos = pos;
       movedAt = now();
+      if (pos > 0) everMoved = true;
       if (pending) {
         pending = false;
         if (onHealed) onHealed();
       }
     }
     if (!st.playing || st.ended) return null;
+    // A cold copy may be handed to the player before the first byte exists. The player already owns that
+    // wait (first-byte timeout, preparing state); the stall rule must not add a "stopped moving" card on
+    // top of it. After the grace, a real freeze is still healed.
+    if (startupMs > 0 && now() - startedAt < startupMs) return null;
+    if (!everMoved) return null;
     if (now() - movedAt < stallMs) return null;
     return decide();
   }

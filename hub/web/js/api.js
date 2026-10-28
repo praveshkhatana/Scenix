@@ -104,7 +104,11 @@ export const api = {
   switchSource: (body) => request('/app/v1/switch', { method: 'POST', body, timeout: 30000 }),
   progress: (body) => request('/app/v1/progress', { method: 'POST', body, timeout: 6000 }),
   prefs: (profile) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
-  savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { method: 'POST', body: prefs, timeout: 6000 }),
+  // The hub's POST reads the profile from the body (the native client has always sent it there); the
+  // query is for a reader. Sending only the query made every write from this page answer `400 profile
+  // required`, so a switch flipped on screen and the value never changed.
+  savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`,
+    { method: 'POST', body: Object.assign({}, prefs, { profile }), timeout: 6000 }),
   health: () => request('/healthz', { timeout: 8000 }),
 
   // Add-on management. The hub keeps the registry, so this is only a view of it: what is installed,
