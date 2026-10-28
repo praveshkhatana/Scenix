@@ -6,8 +6,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Format
-import com.scenix.tv.core.PlayTarget
-import com.scenix.tv.core.Source
 
 /**
  * The ceilings every plugin shares, in one place, because this whole app is written for one known

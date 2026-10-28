@@ -151,7 +151,7 @@ class LocalHub private constructor(context: Context) : HubClient {
 
     // ---- the contract in JSON -----------------------------------------------------------------
     // [LocalServer] answers these paths directly and the [HubClient] methods at the bottom wrap the
-    // same calls, so the native screens and the WebView front end of standalone mode cannot drift.
+    // same calls, so the standalone page cannot drift from the contract a hub serves.
 
     fun manifestJson(): JSONObject {
         val manifests = addonManifests()
@@ -1426,9 +1426,8 @@ class LocalHub private constructor(context: Context) : HubClient {
         private val SIZE = Regex("([\\d.]+)\\s*(GB|MB|KB)", RegexOption.IGNORE_CASE)
 
         /**
-         * One instance per process. The native screens and [LocalServer] must answer out of the same
-         * cache, profiles and settings, or the two front ends of standalone mode would drift apart on
-         * the same TV.
+         * One instance per process. [LocalServer] and the HTTP client must answer out of the same
+         * cache, profiles and settings, or standalone mode would drift from the contract it serves.
          */
         @Volatile private var instance: LocalHub? = null
 

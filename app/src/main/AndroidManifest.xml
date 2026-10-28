@@ -56,15 +56,12 @@
         </activity>
 
         <!--
-            The hybrid shell: the same web interface in a WebView, with media3 underneath it. Hub mode
+            The product: the hub's web interface in a WebView, with media3 underneath it. Hub mode
             loads the page from the hub; standalone mode loads it from this app's own server
-            (core/LocalServer.kt) out of assets/web/. Not the launcher, and it has no intent filter, so
-            nothing lands here by accident — it is started by name while the two front ends are compared
-            on the same panel:
-                adb shell am start -n com.scenix.tv/.WebShellActivity
-            A string extra named `url` overrides which page to load. configChanges keeps the WebView
-            and its video surface alive through the orientation and density changes Android TV makes on
-            its own.
+            (core/LocalServer.kt) out of assets/web/. Started by MainActivity after its one hub
+            probe, or by a `tv://` deep link with a `url` extra naming the page route. configChanges
+            keeps the WebView and its video surface alive through the orientation and density changes
+            Android TV makes on its own.
         -->
         <activity
             android:name=".WebShellActivity"

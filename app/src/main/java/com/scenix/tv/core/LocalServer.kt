@@ -16,14 +16,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 
 /**
- * The HTTP half of standalone mode. The WebView front end speaks the `/app/v1` contract over HTTP
- * exactly as it does against a hub on another machine, so in this mode the app is its own hub: the
- * same routes on loopback, answered by the same [LocalHub] the native screens call, and the page
- * itself out of `assets/web`.
+ * The HTTP half of standalone mode. The web shell speaks the `/app/v1` contract over HTTP exactly
+ * as it does against a hub on another machine, so in this mode the app is its own hub: the same
+ * routes on loopback, answered by the same [LocalHub] the hub client calls, and the page itself out
+ * of `assets/web`.
  *
  * One consequence worth stating: there is no second backend implementation to keep in step. The JSON
- * a hub answers and the JSON this answers come from the same functions, so a screen cannot behave one
- * way natively and another way in the WebView.
+ * a hub answers and the JSON this answers come from the same functions, so the page cannot tell
+ * which machine it is talking to.
  *
  * Loopback only, ephemeral port, no authentication — nothing outside this TV can reach it, so a guest
  * on the network cannot browse a household they were not invited into.

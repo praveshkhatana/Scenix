@@ -32,14 +32,11 @@ import com.scenix.tv.core.Views
  *  - standalone, where this app is the backend and pulls its own content from addons.
  *
  * Once a choice is made the watcher is told to look again (`ctx.watch?.rechoose()`), so the new
- * backend is live immediately rather than at the next scheduled probe, and the app moves to the
- * profile picker — the same front door every other path leads to.
+ * backend is live immediately, and the app opens the web shell — the only product after setup.
  */
 object PairingScreen : ScreenPlugin {
     override val id get() = "pairing"
     override val title get() = "Set up"
-    override val route get() = "pairing"
-    override val showInNav = false
     override val order = 600
 
     /** One line of feedback on the field: what was wrong with the address just typed. */
@@ -129,9 +126,8 @@ object PairingScreen : ScreenPlugin {
         ctx.prefs.setFixture("")
         ctx.hub = HttpHub(ctx.app, ctx.prefs)
         ctx.offline = false
-        ctx.capabilities = null
-        ctx.watch?.rechoose { online -> BrowseHelper.runOnUiThread { host.toast(if (online) "Streaming from the hub" else "That hub is not answering yet") } }
-        host.requireProfilePicker("paired")
+        ctx.watch?.rechoose()
+        host.openShell()
     }
 
     /** Standalone: this app hosts the contract itself, so there is no reachability question to ask. */
@@ -142,9 +138,8 @@ object PairingScreen : ScreenPlugin {
         ctx.prefs.setFixture("")
         ctx.hub = LocalHub.get(ctx.app)
         ctx.offline = false
-        ctx.capabilities = null
         ctx.watch?.rechoose()
-        host.requireProfilePicker("standalone")
+        host.openShell()
     }
 
     private fun scan(host: ScreenHost, silent: Boolean = false) {

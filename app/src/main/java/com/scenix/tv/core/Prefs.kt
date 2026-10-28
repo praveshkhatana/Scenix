@@ -54,7 +54,7 @@ class Prefs(context: Context) {
     fun setHubLastWorking(url: String) = sp.edit().putString(KEY_HUB_LAST, url.trim()).apply()
     fun hubLastWorking(): String? = sp.getString(KEY_HUB_LAST, null)?.takeIf { it.isNotBlank() }
 
-    // ---- pairing: how this TV gets a backend ---------------------------------------------
+    // ---- which backend this TV talks to ------------------------------------------------------
     //
     // A build names no machine, so a stranger's first run has three ways in — a hub announcing
     // itself on the LAN, an address typed by hand, or this app hosting the contract itself. Which
@@ -67,19 +67,6 @@ class Prefs(context: Context) {
     fun standalone(): Boolean = backendChoice() == BACKEND_STANDALONE
     fun setStandalone(on: Boolean) = sp.edit()
         .putString(KEY_BACKEND, if (on) BACKEND_STANDALONE else BACKEND_HUB).apply()
-
-    // ---- which front end this device draws -------------------------------------------------
-    //
-    // One contract, two surfaces: the web front end the browser and phone apps use, or the screens
-    // this build draws itself. Which one a TV should open is the owner's call, not something the code
-    // decides for them, and it stays on the device because it describes the device.
-
-    /** "shell" = the web front end in a WebView over the native player | "native" = built-in screens. */
-    fun interfaceMode(): String = sp.getString(KEY_INTERFACE, SHELL) ?: SHELL
-    fun setInterfaceMode(mode: String) = sp.edit().putString(KEY_INTERFACE, mode).apply()
-
-    /** True when this device should open the web front end rather than draw its own screens. */
-    fun shellWanted(): Boolean = interfaceMode() == SHELL
 
     /** Hubs found by the LAN announcement, kept so the next run can list them by name. */
     fun discoveredHubs(): List<HubAddress> {
@@ -207,9 +194,6 @@ class Prefs(context: Context) {
         private const val KEY_HUB = "hub_url"
         private const val KEY_HUB_LAST = "hub_url_last_working"
         private const val KEY_BACKEND = "backend_choice"
-        private const val KEY_INTERFACE = "interface_mode"
-        const val SHELL = "shell"
-        const val NATIVE = "native"
         private const val KEY_DISCOVERED = "discovered_hubs"
         const val BACKEND_HUB = "hub"
         const val BACKEND_STANDALONE = "standalone"

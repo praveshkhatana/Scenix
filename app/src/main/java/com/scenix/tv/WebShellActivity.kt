@@ -1,6 +1,7 @@
 package com.scenix.tv
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -54,9 +55,8 @@ import java.util.concurrent.TimeUnit
  *
  * The shell is deliberately thin. Rank, probe, self-heal and the "choose another stream" prompt live in the
  * web player module, because they must be identical on every device; the shell decodes and reports. It is
- * also deliberately not the launcher: [MainActivity] stays the product on this TV until the web UI is proven
- * to hold 60 fps on a 2019 panel, so the two can be compared on the same hardware
- * (`am start -n com.scenix.tv/.WebShellActivity`).
+ * also deliberately not the first screen: [MainActivity] runs the one hub probe and either opens this
+ * activity or, on a fresh TV with no hub, the native pairing/setup screen first.
  */
 class WebShellActivity : Activity() {
 
@@ -117,7 +117,7 @@ class WebShellActivity : Activity() {
             }
         }
 
-        val url = intent?.getStringExtra("url")?.takeIf { it.isNotBlank() } ?: pageRoot()
+        val url = intent?.getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() } ?: shellUrl(this, "")
         android.util.Log.i("ScenixWeb", "shell loading $url")
         web.loadUrl(url)
     }
@@ -160,30 +160,6 @@ class WebShellActivity : Activity() {
 
     private fun deviceName(): String =
         android.os.Build.MODEL.lowercase().replace(' ', '-').replace(Regex("[^a-z0-9-]"), "")
-
-    /** The hub this TV already uses — the same candidate list [MainActivity] walks. */
-    private fun hubRoot(): String {
-        val candidates = app.prefs.hubUrlCandidates(getString(R.string.hub_urls))
-        val base = candidates.firstOrNull() ?: app.prefs.hubUrl(getString(R.string.hub_url))
-        return base.trimEnd('/') + "/"
-    }
-
-    /**
-     * Which front end this shell shows. In hub mode it is the hub's own page, exactly as a browser on the
-     * LAN would open it. In standalone mode it is the page bundled in this app, opened off the in-app
-     * contract server on the loopback — so its relative `/app/v1` calls land on this TV instead of on a
-     * machine elsewhere, and the page cannot tell the two apart.
-     */
-    private fun pageRoot(): String {
-        if (!app.prefs.standalone()) return hubRoot()
-        val port = runCatching { LocalServer.portFor(app) }.getOrDefault(0)
-        if (port <= 0) {
-            android.util.Log.e("ScenixWeb", "no local contract server; falling back to the last hub address")
-            return hubRoot()
-        }
-        // The same path a hub serves it from, so nothing in the bundle has to know which mode it is in.
-        return "http://127.0.0.1:$port/ui/index.html"
-    }
 
     // ---- the player, built on first use so a session that only browses allocates no decoder ----
 
@@ -620,5 +596,43 @@ class WebShellActivity : Activity() {
         player = null
         web.destroy()
         super.onDestroy()
+    }
+
+    companion object {
+        /** `url` extra: an absolute page address, including a `#/route` when a deep link named one. */
+        const val EXTRA_URL = "url"
+
+        /**
+         * The page root this TV should load, plus an optional page route (`#/detail/<id>`,
+         * `#/play/<id>`). Hub mode is the hub's own page, exactly as a browser on the LAN opens it;
+         * standalone mode is the bundle served by this app off the loopback contract server, so its
+         * relative `/app/v1` calls land on this TV.
+         *
+         * Kept here rather than in the launcher so the launcher, a deep link and the activity's own
+         * default all resolve the same address.
+         */
+        fun shellUrl(context: Context, route: String): String {
+            val app = context.applicationContext as ScenixApp
+            val root = if (!app.prefs.standalone()) hubRoot(context) else {
+                val port = runCatching { LocalServer.portFor(context.applicationContext) }.getOrDefault(0)
+                if (port <= 0) {
+                    android.util.Log.e("ScenixWeb", "no local contract server; falling back to the last hub address")
+                    hubRoot(context)
+                } else {
+                    // The same path a hub serves it from, so nothing in the bundle has to know which
+                    // mode it is in.
+                    "http://127.0.0.1:$port/ui/index.html"
+                }
+            }
+            return root + route
+        }
+
+        /** The hub this TV already uses — the candidate list [MainActivity]'s watcher walks. */
+        private fun hubRoot(context: Context): String {
+            val app = context.applicationContext as ScenixApp
+            val candidates = app.prefs.hubUrlCandidates(context.getString(R.string.hub_urls))
+            val base = candidates.firstOrNull() ?: app.prefs.hubUrl(context.getString(R.string.hub_url))
+            return base.trimEnd('/') + "/"
+        }
     }
 }
