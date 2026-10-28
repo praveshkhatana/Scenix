@@ -30,6 +30,7 @@ const SCREENS = {
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
   channels: () => import('/ui/js/screens/channels.js'),
+  categories: () => import('/ui/js/screens/categories.js'),
   add:      () => import('/ui/js/screens/add.js'),
   manage:   () => import('/ui/js/screens/manage.js'),
 };

@@ -77,6 +77,9 @@ const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS || 30000);
 const PROXY_ENGINE_HEADERS_MS = Number(process.env.PROXY_ENGINE_HEADERS_MS || 45000);
 const ROW_MAX = Number(process.env.ROW_MAX || 80);
 const SEARCH_MAX = Number(process.env.SEARCH_MAX || 60);
+// The settings screen asks every mounted addon what catalogues it publishes. That is a cache read for a
+// warmed addon and a short wait for a cold one; it must not hold the settings page open longer than this.
+const CATALOG_OPTIONS_BUDGET_MS = Number(process.env.CATALOG_OPTIONS_BUDGET_MS || 600);
 // A person typed this, so it is worth a round trip; a home row is never allowed one.
 const SEARCH_BUDGET_MS = Number(process.env.SEARCH_BUDGET_MS || 3000);
 const ALT_MAX = Number(process.env.ALT_MAX || 9);
@@ -535,6 +538,104 @@ async function pipeline(items, ctx) {
     kept.push(it);
   }
   return kept;
+}
+
+/**
+ * A catalog descriptor can state the genres it answers, either as `genreOptions` (the hub's own
+ * providers) or in the addon-protocol form `extra: [{ name: 'genre', options: [...] }]`. Reading both
+ * here is what lets the Categories screen offer real choices without carrying a genre list of its own.
+ */
+function genreOptionsOf(cat) {
+  const out = [];
+  const add = (value) => {
+    const name = String(value == null ? '' : value).trim().slice(0, 80);
+    if (name && !out.includes(name)) out.push(name);
+  };
+  if (Array.isArray(cat.genreOptions)) {
+    for (const g of cat.genreOptions) add(g);
+  }
+  if (!out.length && Array.isArray(cat.extra)) {
+    for (const e of cat.extra) {
+      if (!e || typeof e !== 'object') continue;
+      if (e.name !== 'genre' && e.key !== 'genre') continue;
+      if (Array.isArray(e.options)) for (const g of e.options) add(g);
+    }
+  }
+  return out;
+}
+
+/** The catalogues an owner can build a category from, in the order the providers asked for. */
+async function catalogOptions() {
+  const groups = await Promise.all(registry.providers.map(async (p) => {
+    if (typeof p.catalogs !== 'function' || typeof p.catalog !== 'function') return [];
+    let cats = [];
+    try {
+      cats = await withBudget(
+        Promise.resolve().then(() => p.catalogs()),
+        CATALOG_OPTIONS_BUDGET_MS, [], 'catalogs ' + p.id,
+      );
+    } catch (e) {
+      return []; // an addon that cannot list its catalogues is not offered as a source
+    }
+    return (Array.isArray(cats) ? cats : []).filter((c) => c && c.id).map((c) => ({
+      provider: p.id,
+      providerName: p.name || p.id,
+      catalog: String(c.id),
+      name: c.name || String(c.id),
+      type: c.type || null,
+      // What the home screen should draw. A live/TV catalogue is a channel wall; everything else is a
+      // poster rail. The decision is a fact about the catalogue, not a setting the owner has to make.
+      card: (c.type === 'tv' || c.type === 'channel' || p.kind === 'channel') ? 'channel' : 'poster',
+      genres: genreOptionsOf(c),
+    }));
+  }));
+  return groups.flat();
+}
+
+const CATEGORY_ROW_PREFIX = 'category:';
+
+/** The id a category has on /home and in `rows.hidden` / `rows.order`. */
+function categoryRowId(category) {
+  return CATEGORY_ROW_PREFIX + category.id;
+}
+
+/**
+ * One owner-made shelf, shaped exactly like a plugin row so it walks the same pipeline: build -> budget
+ * -> dedupe -> rules -> trim. It names a provider and a catalogue rather than importing one, so an
+ * addon that is slow, disabled or gone simply yields an empty row which /home drops. Nothing here can
+ * take the home screen down with it.
+ */
+function categoryRow(category) {
+  const provider = registry.byId[category.provider];
+  const extra = category.genre ? { genre: category.genre } : {};
+  return {
+    id: categoryRowId(category),
+    title: category.title || category.genre || category.catalog,
+    card: provider && (provider.kind === 'channel' || provider.kind === 'tv') ? 'channel' : 'poster',
+    // Plugin rows keep their own order; categories start behind them. `rows.order` can still place a
+    // category explicitly because the home route sorts the finished list by that same list.
+    order: 1000 + (Number(category.order) || 0),
+    scope: 'all',
+    category,
+    build(ctx) {
+      return ctx.catalog(category.provider, category.catalog, extra);
+    },
+  };
+}
+
+/** A category by its virtual row id or its bare id, for the one-row route. */
+function categoryById(id) {
+  const key = String(id || '');
+  const category = (settings.get().categories || [])
+    .find((c) => c.id === key || categoryRowId(c) === key);
+  return category ? categoryRow(category) : null;
+}
+
+/** Every category the owner left switched on, as virtual home rows. */
+function enabledCategoryRows() {
+  return (settings.get().categories || [])
+    .filter((c) => c.enabled !== false)
+    .map(categoryRow);
 }
 
 function rowVisible(row, profile) {
@@ -1998,6 +2099,7 @@ const server = http.createServer(async (req, res) => {
     // control. GET answers the current values plus what each means; PUT merges a patch and re-applies
     // whatever other subsystems derived from the old one.
     if (path === '/app/v1/settings' && req.method === 'GET') {
+      const options = await catalogOptions();
       return send(res, 200, {
         settings: settings.get(),
         defaults: settings.DEFAULTS,
@@ -2012,6 +2114,11 @@ const server = http.createServer(async (req, res) => {
         rows: registry.rows.map((r) => ({
           id: r.id, title: r.title, card: r.card || 'card', scope: r.scope || 'all',
         })),
+        // The owner's virtual home rows and the raw material for making more. `catalogOptions` is one
+        // entry per mounted provider catalogue, with the genres that catalogue says it publishes, so
+        // the screen can offer a real choice on any hub without naming a provider or a genre here.
+        categories: settings.get().categories,
+        catalogOptions: options,
         // Live TV's published channels and groups, with the owner's current selection state. The
         // channel manager needs the list the playlist published, not the filtered one it shows.
         live: (() => {
@@ -2065,6 +2172,7 @@ const server = http.createServer(async (req, res) => {
         playlist: (next.live || {}).playlist || '(none)',
         addons: effects.addonsResynced + ' remounted',
         rows: next.rows.hidden.length + ' hidden, ' + (next.rows.order.length ? 'owner order' : 'plugin order'),
+        categories: next.categories.length + ' (' + next.categories.filter((c) => c.enabled !== false).length + ' on)',
       }));
       return send(res, 200, { ok: true, settings: next, effects });
     }
@@ -2209,9 +2317,13 @@ const server = http.createServer(async (req, res) => {
       const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
       // Rows build in parallel, each inside the home budget: /app/v1/home never waits on a slow
-      // upstream, it answers from addon cache and degrades to a shorter row.
+      // upstream, it answers from addon cache and degrades to a shorter row. The owner's categories are
+      // virtual rows built the same way and appended after the plugin rows, so a category from a slow
+      // or removed addon becomes an empty row here and is dropped below like any other.
+      const rowsToBuild = registry.rows.filter((r) => rowVisible(r, profile))
+        .concat(enabledCategoryRows().filter((r) => rowVisible(r, profile)));
       const built = await Promise.all(
-        registry.rows.filter((r) => rowVisible(r, profile)).map(async (row) => ({
+        rowsToBuild.map(async (row) => ({
           id: row.id,
           title: row.title,
           card: row.card,
@@ -2244,7 +2356,9 @@ const server = http.createServer(async (req, res) => {
 
     m = /^\/app\/v1\/row\/([^/]+)$/.exec(path);
     if (m) {
-      const row = registry.rows.find((r) => r.id === m[1]);
+      // Plugin rows come from the registry; a category is a virtual row that exists only in settings.
+      // Both answer the same shape, which is what lets "See all" open an owner-made shelf too.
+      const row = registry.rows.find((r) => r.id === m[1]) || categoryById(m[1]);
       if (!row) return send(res, 404, { error: 'no such row', rowId: m[1] });
       const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
       if (!rowVisible(row, profile)) {

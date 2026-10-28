@@ -652,7 +652,12 @@ class External {
     if (!this.manifest) this.ensureManifest(); // background: a shelf answers from cache, the next ask has it
     // `type` travels with the descriptor: a shelf that wants movies has to be able to tell a movie
     // catalog from a series catalog without reaching into the addon's internals.
-    return this.cats.map((c) => ({ id: c.id, name: c.name, type: c.type, extra: c.extra }));
+    return this.cats.map((c) => ({
+      id: c.id, name: c.name, type: c.type, extra: c.extra,
+      // The values the addon itself said it answers. The owner's Categories screen offers exactly these;
+      // a local genre list would be a guess that goes stale the moment another addon is installed.
+      genreOptions: Array.isArray(c.genreOptions) ? c.genreOptions : [],
+    }));
   }
 
   async fetchCatalog(cat, extra, { wait = false } = {}) {

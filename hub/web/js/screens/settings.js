@@ -36,6 +36,7 @@ export function screen(ctx) {
   let installed = [];      // /app/v1/addons → addons
   let rowList = null;      // /app/v1/settings → rows, when this backend has any to offer
   let liveInfo = null;     // /app/v1/settings → live {channels, groups}, the channel manager's data
+  let catalogOptions = null; // /app/v1/settings → catalogOptions, the material for owner-made categories
   let busy = false;
 
   root.appendChild(el('div', { class: 'page-head' },
@@ -447,7 +448,29 @@ export function screen(ctx) {
       right.appendChild(g);
     }
 
-    /* --------------------------------------------------------------- add-ons */
+    /* --------------------------------------------------------------- categories */
+
+    // A category is a shelf the owner makes out of a catalogue the hub already carries. It sits beside
+    // Home rows because it is the same decision — what appears on the home screen — but a hundred genres
+    // do not belong in a wall of switches here: the screen that can reorder and rename them is its own.
+    if (setting && canHub && (Array.isArray(catalogOptions) || Array.isArray(setting.categories))) {
+      const cats = Array.isArray(setting.categories) ? setting.categories : [];
+      const opts = Array.isArray(catalogOptions) ? catalogOptions : [];
+      const on = cats.filter((c) => c.enabled !== false).length;
+      const g = group('Categories', 'Shelves built from a catalogue or genre, added by you and drawn under the home rows in your order.');
+      const l = line('Your categories',
+        !cats.length ? 'None yet — add one from any catalogue this hub carries.'
+          : `${on} shown of ${cats.length} · ${opts.length} catalogue${opts.length === 1 ? '' : 's'} to choose from`);
+      const go = el('button', { class: 'btn line', type: 'button', text: cats.length ? 'Manage categories' : 'Add a category' });
+      focus.focusable(go);
+      go.onclick = () => ctx.navigate('categories');
+      l.appendChild(go);
+      g.appendChild(l);
+      if (!opts.length) {
+        g.appendChild(el('p', { class: 'note', text: 'No add-on is publishing a catalogue right now. Categories you already made stay in the list; install or enable a source to add more.' }));
+      }
+      right.appendChild(g);
+    }
 
     // The registry is the hub's, so the page shows what it reports rather than assuming a fixed set: an
     // owner installs Torrentio or a catalog on one box and every screen then has to render whatever that
@@ -669,6 +692,7 @@ export function screen(ctx) {
       caps.addonAdmin ? api.addons().catch(() => null) : Promise.resolve(null),
     ]);
     rowList = Array.isArray(s && s.rows) ? s.rows : null;
+    catalogOptions = Array.isArray(s && s.catalogOptions) ? s.catalogOptions : null;
     const ad = a3 ? (a3.addons || []) : null;
     installed = Array.isArray(ad) ? ad : null === ad ? [] : ad;
     setting = s ? (s.settings || s) : null;

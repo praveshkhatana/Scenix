@@ -510,8 +510,11 @@ module.exports = {
     // country's TV this is comes from the owner's playlist, and a row labelled "India Live TV" above a
     // Brazilian playlist is the hub contradicting its own settings.
     return [
-      { id: CATALOG_ID, name: 'Live TV', extra: ['search', 'genre', 'language'] },
-      { id: KIDS_CATALOG_ID, name: 'Kids Live TV', extra: ['search'] },
+      // `type` and `genreOptions` are what the owner's Categories screen reads: a catalog can state the
+      // genres it actually publishes, so no screen has to guess one. Both are the live groups this box
+      // fetched, in this box's language, not a list baked into the build.
+      { id: CATALOG_ID, name: 'Live TV', type: 'tv', extra: ['search', 'genre', 'language'], genreOptions: genres() },
+      { id: KIDS_CATALOG_ID, name: 'Kids Live TV', type: 'tv', extra: ['search'], genreOptions: [] },
     ];
   },
 

@@ -56,6 +56,12 @@ const DEFAULTS = {
   // edits land here as an override rather than a rewrite. `hidden` names rows to leave off the screen;
   // `order` is the sequence they should appear in, with anything it does not mention following behind.
   rows: { hidden: [], order: [] },
+  // Owner-made shelves: a provider's catalogue, optionally narrowed to one genre it publishes. This is
+  // the one place "more categories" lives, because which genres a household wants is not something a
+  // build can know. Each entry is { id, title, provider, catalog, genre, enabled, order }; `genre` is
+  // empty for the whole catalogue. They are virtual rows on /app/v1/home — no file is written under
+  // rows/ — and they follow `rows.hidden`/`rows.order` like every plugin row once their id is known.
+  categories: [],
   // Generated profile faces. Empty means this hub does not proxy any avatar service and a client draws
   // its own; pointing it at one (self-hosted or public) makes the hub fetch and cache through it, so the
   // TV still only ever talks to this box.
@@ -165,6 +171,57 @@ function normalizePlayback(p) {
   return out;
 }
 
+/** A stable, URL-safe piece of an id. Titles change; the id a row is addressed by must not. */
+function slugPart(raw) {
+  return String(raw || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
+
+/**
+ * The owner's category shelves, cleaned and renumbered.
+ *
+ * A category is only meaningful with a provider and a catalogue, so an entry missing either is dropped:
+ * a broken row on the home screen is worse than a category the owner has to add again. Ids are kept when
+ * they are safe, generated from the three fields when they are not, and made unique so two "Action" rows
+ * from different providers remain two rows. `order` is renumbered in the stored sequence, which is what
+ * the home route and the Categories screen both read.
+ */
+function normalizeCategories(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const parsed = [];
+  const seen = new Set();
+  list.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+    const provider = String(entry.provider || '').trim().slice(0, 80);
+    const catalog = String(entry.catalog || '').trim().slice(0, 120);
+    if (!provider || !catalog) return;
+    const genre = String(entry.genre == null ? '' : entry.genre).trim().slice(0, 80);
+    let id = String(entry.id || '').trim().toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    if (!id) id = [provider, catalog, genre].filter(Boolean).map(slugPart).join('-').slice(0, 64) || 'category';
+    let unique = id;
+    let n = 2;
+    while (seen.has(unique)) {
+      unique = id.slice(0, 60).replace(/-+$/, '') + '-' + n;
+      n++;
+    }
+    seen.add(unique);
+    const title = String(entry.title || '').trim().slice(0, 60)
+      || [genre, catalog].filter(Boolean).join(' · ') || 'Category';
+    const order = Number(entry.order);
+    parsed.push({
+      id: unique,
+      title,
+      provider,
+      catalog,
+      genre,
+      enabled: entry.enabled !== false,
+      order: Number.isFinite(order) ? order : index,
+    });
+  });
+  parsed.sort((a, b) => a.order - b.order);
+  return parsed.map((entry, index) => Object.assign(entry, { order: index }));
+}
+
 function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
@@ -185,6 +242,7 @@ function normalize(s) {
       hidden: idList((s.rows || {}).hidden),
       order: idList((s.rows || {}).order),
     },
+    categories: normalizeCategories(s.categories),
     avatar: {
       baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300),
       superheroApi: String((s.avatar || {}).superheroApi == null

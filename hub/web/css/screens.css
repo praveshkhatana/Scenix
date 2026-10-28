@@ -524,3 +524,50 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 .chrow .round { width: calc(38px * var(--s)); height: calc(38px * var(--s)); }
 .chfoot { display: flex; align-items: center; gap: calc(18px * var(--s)); margin-top: calc(22px * var(--s)); }
 .chfoot .note { color: var(--ink3); font-size: var(--t-meta); }
+
+/* ==========================================================================
+   Owner-made categories
+
+   A category is a shelf, not a channel: the add row is a short ladder of chips
+   (source, catalogue, optional genre) and every saved shelf is one row with the
+   controls a remote can reach without a text field. The rows carry the same
+   weight as the settings list they sit next to, so a hundred categories read as
+   a list rather than a wall of panels.
+   ========================================================================== */
+.categories { padding: calc(28px * var(--s)) var(--gutter) calc(60px * var(--s)); }
+.cat-builder {
+  display: grid; gap: calc(12px * var(--s));
+  padding: calc(20px * var(--s)) calc(24px * var(--s));
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-panel);
+  margin-bottom: calc(24px * var(--s));
+}
+.cat-step { display: flex; flex-wrap: wrap; align-items: center; gap: calc(10px * var(--s)); }
+.cat-label { color: var(--ink3); font-size: var(--t-meta); min-width: calc(110px * var(--s)); }
+.cat-chips { display: flex; flex-wrap: wrap; gap: calc(8px * var(--s)); }
+.cat-chips .chip { font-size: var(--t-chip); }
+.cat-addline {
+  display: flex; align-items: center; gap: calc(18px * var(--s)); flex-wrap: wrap;
+  padding-top: calc(10px * var(--s)); border-top: 1px solid var(--line);
+}
+.cat-summary { color: var(--ink2); font-size: var(--t-meta); }
+.cat-addline .btn { padding: calc(10px * var(--s)) calc(22px * var(--s)); font-size: var(--t-meta); }
+.cat-addline .btn[disabled] { opacity: .45; }
+.cat-list { display: grid; gap: calc(8px * var(--s)); }
+.cat-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
+  align-items: center; gap: calc(14px * var(--s));
+  padding: calc(12px * var(--s)) calc(16px * var(--s));
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-list, calc(6px * var(--s)));
+}
+.cat-row:focus-within { border-color: var(--focus-ring); background: var(--surface2); }
+.cat-row.off { opacity: .5; }
+.cat-body { min-width: 0; }
+.cat-body b { display: block; font-size: var(--t-li); color: var(--ink); font-weight: 700; }
+.cat-body span { display: block; font-size: var(--t-meta); color: var(--ink3); margin-top: calc(2px * var(--s));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-row .round { width: calc(38px * var(--s)); height: calc(38px * var(--s)); }
+.cat-row .round[disabled] { opacity: .35; }
+.cat-row .btn.ghost { padding: calc(8px * var(--s)) calc(18px * var(--s)); font-size: var(--t-meta); }
+.cat-empty { color: var(--ink3); font-size: var(--t-sub); }
+.cat-foot { display: flex; align-items: center; gap: calc(18px * var(--s)); margin-top: calc(22px * var(--s)); }
+.cat-foot .note { color: var(--ink3); font-size: var(--t-meta); }
