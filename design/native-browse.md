@@ -74,10 +74,11 @@ reload.
 - `SearchActivity` — a remote A-Z keyboard (space, delete) beside a 4-column poster grid. A query
   goes to `/app/v1/search` after a 320 ms pause, results are drawn with the same card/focus language
   as Home, and OK opens native Detail. Back clears the query first, then leaves.
-- `SettingsActivity` — audio language, subtitle language, quality ceiling, the profile gate, and one
-  "Everything else / Open the web settings" row for addons, sources and household rules. It reads
-  and writes the same `/app/v1/prefs` the web page does; choosing a language moves it to the front
-  of the existing list instead of replacing the fallbacks. Ranked rows draw their numeral over the poster;
+- `SettingsActivity` — audio language, subtitle language, quality ceiling, the profile gate, a
+  native **Home rows** editor (show/hide and move shelves, writing the hub's `rows` settings), and
+  one "Everything else / Open the web settings" row for addons, source packs and household rules.
+  It reads and writes the same `/app/v1/prefs` and `/app/v1/settings` the web page does; choosing a
+  language moves it to the front of the existing list instead of replacing the fallbacks. Ranked rows draw their numeral over the poster;
   Continue Watching draws its position line; posters and landscape rows are sized from the card kind.
 - `DetailActivity` — native hero, metadata/advisories/overview, cast strip and episode list with
   stills. Long titles are capped at 1100 px and get a smaller size, and a record with no maturity or

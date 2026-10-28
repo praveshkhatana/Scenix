@@ -55,6 +55,16 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** The hub's settings document plus the row metadata the Home editor needs. */
+    fun settings(done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/settings", "", "GET", null, 12000) { root, _, error -> done(root, error) }
+    }
+
+    /** A settings patch (the hub merges it, as the web settings writer does). */
+    fun saveSettings(patch: JSONObject, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/settings", "", "PUT", patch, 12000) { root, _, error -> done(root, error) }
+    }
+
     /** The person's playback preferences, as the web settings page reads them. */
     fun prefs(profileId: String, done: (prefs: JSONObject?, error: String?) -> Unit) {
         request("/app/v1/prefs", "profile=" + enc(profileId), "GET", null, 12000) { root, _, error ->

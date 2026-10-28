@@ -34,6 +34,8 @@ class SettingsActivity : Activity() {
     private lateinit var status: TextView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var prefs: JSONObject? = null
+    private var rowList: JSONArray? = null
+    private var rowsCfg: JSONObject? = null
     private var picker: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,6 +99,18 @@ class SettingsActivity : Activity() {
             }
             prefs = p
             status.text = ""
+            loadRows()
+        }
+    }
+
+    /** Settings carries the row metadata and its hidden/order config; the editor is optional. */
+    private fun loadRows() {
+        api.settings { root, _ ->
+            if (isFinishing || isDestroyed) return@settings
+            if (root != null) {
+                rowList = root.optJSONArray("rows")
+                rowsCfg = root.optJSONObject("settings")?.optJSONObject("rows")
+            }
             paint()
         }
     }
@@ -112,6 +126,12 @@ class SettingsActivity : Activity() {
         }
         addRow("Quality ceiling", qualityLabel(p.optString("qualityCap", "auto")), "Largest copy this TV should be offered") {
             showQualityPicker()
+        }
+        val shelfRows = rowList
+        if (shelfRows != null && shelfRows.length() > 0) {
+            val hidden = rowsCfg?.optJSONArray("hidden")?.length() ?: 0
+            addRow("Home rows", "${shelfRows.length() - hidden} of ${shelfRows.length()} shown",
+                "Hide, show or reorder the shelves on Home") { showHomeRows() }
         }
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
@@ -154,6 +174,120 @@ class SettingsActivity : Activity() {
         rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)).apply {
             bottomMargin = app.theme.px(10f)
         })
+    }
+
+    // ---- Home rows -------------------------------------------------------------------------
+
+    private fun rowIds(): List<String> {
+        val list = rowList ?: return emptyList()
+        val out = ArrayList<String>()
+        for (i in 0 until list.length()) {
+            val id = list.optJSONObject(i)?.optString("id").orEmpty()
+            if (id.isNotBlank()) out.add(id)
+        }
+        return out
+    }
+
+    private fun rowTitle(id: String): String {
+        val list = rowList ?: return id
+        for (i in 0 until list.length()) {
+            val o = list.optJSONObject(i) ?: continue
+            if (o.optString("id") == id) return o.optString("title", id).ifBlank { id }
+        }
+        return id
+    }
+
+    private fun rowOrder(): MutableList<String> {
+        val ids = rowIds()
+        val named = ArrayList<String>()
+        rowsCfg?.optJSONArray("order")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val v = arr.optString(i, "")
+                if (v in ids && v !in named) named.add(v)
+            }
+        }
+        for (id in ids) if (id !in named) named.add(id)
+        return named
+    }
+
+    private fun hiddenRows(): MutableList<String> {
+        val out = ArrayList<String>()
+        rowsCfg?.optJSONArray("hidden")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val v = arr.optString(i, "")
+                if (v.isNotBlank()) out.add(v)
+            }
+        }
+        return out
+    }
+
+    private fun showHomeRows() {
+        val order = rowOrder()
+        if (order.isEmpty()) {
+            status.text = "The hub listed no Home rows"
+            return
+        }
+        val hidden = hiddenRows().toSet()
+        val options = ArrayList<Pair<String, String>>()
+        for (id in order) {
+            options.add(id to rowTitle(id) + if (id in hidden) "  ·  Hidden" else "  ·  On Home")
+        }
+        showPicker("Home rows", options, "") { id -> showRowActions(id) }
+    }
+
+    private fun showRowActions(id: String) {
+        val order = rowOrder()
+        val at = order.indexOf(id)
+        if (at < 0) return
+        val title = rowTitle(id)
+        val hidden = id in hiddenRows()
+        val options = ArrayList<Pair<String, String>>()
+        options.add("toggle" to (if (hidden) "Show \"$title\" on Home" else "Hide \"$title\" from Home"))
+        if (at > 0) options.add("earlier" to "Move \"$title\" earlier")
+        if (at < order.size - 1) options.add("later" to "Move \"$title\" later")
+        options.add("back" to "Back to rows")
+        showPicker(title, options, "") { action ->
+            when (action) {
+                "back" -> showHomeRows()
+                "toggle" -> {
+                    val nextHidden = hiddenRows()
+                    if (hidden) nextHidden.remove(id) else if (id !in nextHidden) nextHidden.add(id)
+                    writeRows(nextHidden, order)
+                }
+                "earlier", "later" -> {
+                    val next = order.toMutableList()
+                    next.removeAt(at)
+                    next.add(if (action == "earlier") at - 1 else at + 1, id)
+                    writeRows(hiddenRows(), next)
+                }
+            }
+        }
+    }
+
+    private fun writeRows(hidden: List<String>, order: List<String>) {
+        closePicker()
+        status.text = "Saving…"
+        val cfg = JSONObject()
+            .put("hidden", JSONArray(hidden))
+            .put("order", JSONArray(order))
+        api.saveSettings(JSONObject().put("rows", cfg)) { _, error ->
+            if (isFinishing || isDestroyed) return@saveSettings
+            if (error != null) {
+                status.text = error
+                return@saveSettings
+            }
+            api.settings { root, _ ->
+                if (isFinishing || isDestroyed) return@settings
+                if (root != null) {
+                    rowList = root.optJSONArray("rows")
+                    rowsCfg = root.optJSONObject("settings")?.optJSONObject("rows")
+                }
+                status.text = "Saved"
+                paint()
+                showHomeRows()
+                rows.postDelayed({ status.text = "" }, 2500)
+            }
+        }
     }
 
     private fun firstOf(p: JSONObject, key: String): String {

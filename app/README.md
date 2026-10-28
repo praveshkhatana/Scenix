@@ -34,8 +34,9 @@ Nothing is installed or deployed from here.
   player. See [../design/native-browse.md](../design/native-browse.md).
 - **Native Search + Settings** — `SearchActivity` is a remote A-Z keyboard over the hub's
   `/app/v1/search` index, with the same poster cards and focus ring as Home. `SettingsActivity`
-  covers audio language, subtitle language, quality ceiling, the profile gate, and one row into the
-  web settings for the long tail. Search and Settings no longer load a WebView.
+  covers audio language, subtitle language, quality ceiling, a native Home-rows editor (hide/show
+  and reorder shelves), the profile gate, and one row into the web settings for addon/source-pack
+  URL forms. Search and Settings no longer load a WebView for the everyday screens.
 - **The web product** — `WebShellActivity` still loads `http://<backend>/` for the full web settings,
   browser deep links and the web player. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
