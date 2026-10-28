@@ -103,9 +103,9 @@
     "panelNote": 18
   },
   "focus": {
-    "ringWidth": 4,
+    "ringWidth": 5,
     "scale": 1.10,
-    "durationMs": 160,
+    "durationMs": 200,
     "shadowElevation": 12
   },
   "boot": {

@@ -1,0 +1,61 @@
+# Netflix parity loop — the checklist
+
+The owner's standing order: Scenix's UI/UX must match Netflix Android-TV in every small detail,
+motion and interaction, and must be fully remote friendly. This file is the work queue. One box =
+one change small enough to land and verify in one pass. Each pass takes the FIRST unchecked box,
+implements it, verifies it against the live hub (`PORT=8791 node hub/index.js`, screenshots via
+`node scripts/webshot.mjs <url> shots/<name>.png --key ... --js ...`), checks the box **in the same
+commit**, and commits on branch **experience-ui** only (never main; stage only your own hunks in
+shared files — other agents' uncommitted work lives in the same tree).
+
+Already landed (no boxes): player quality/audio/speed menus + live zap badge, settings rail with
+whole-row list items + dial + checklist + actions modals + inline toggles, Add-ons own tab, Movies/
+Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate.
+
+## A. Motion language (the base everything else rides on)
+- [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms (today runtime says 4 px / 160 ms).
+- [ ] Eased scrolling in focus.js using the existing `--row-scroll-ms` token: rows center the focused tile with an eased scroll instead of instant `scrollTo` with a 24 px reveal (focus.js:124-146); vertical page scroll in bands eases too.
+- [ ] Modal entrance motion: scrim fade + box scale-in for every `.mbox` (app.css has none today except PIN shake).
+- [ ] Toast exit: fade/slide out before DOM removal (dom.js toast() yanks it; app.css only animates in).
+- [ ] Screen transitions: brief outgoing fade on route change (app.js mount() removes the old node instantly while the new fades 180 ms — make the pair cross-fade ≤220 ms, transform+opacity only).
+
+## B. Billboard
+- [ ] Replace the sideways push rotation (translateX 7% + 420 ms) with a token-driven crossfade using `hero.rotateFadeMs=500`; copy column fades with the art on every turn, not just first mount (plugins.js:561-570 rebuilds text with clear()).
+- [ ] Fix the dwell fallback bug: home.js:252 references an out-of-scope `item` — use the card's own item.
+
+## C. Tile dwell preview (Netflix's signature moment)
+- [ ] Retime to Netflix: retime the preview token so expansion happens after ~250 ms dwell and the trailer starts at ~1 s (theme.json preview.delayMs is 350 today; split into two timers as home.js:234 comment already promises).
+- [ ] Expanded tile shows focusable Play and My-List (+) actions inside it (today they are non-focusable reveal-on-hover spans, plugins.js:83-93) — pressing OK in the expanded state plays directly.
+- [ ] When a tile expands, its row scrolls so the tile stays fully visible and neighbours dim slightly, like Netflix.
+
+## D. Player
+- [ ] Read `player.controlsHideMs` from theme.json instead of the hardcoded 5000 ms (screens/player.js:42), and never hide chrome while the ring sits inside it (player.js:266-278 hides regardless of focus).
+- [ ] Seek honors tokens: `seekBackMs=10000` / `seekForwardMs=30000` (today a fixed ±10 s), with hold-to-repeat stepping while the key is down.
+- [ ] Next-episode card gets the countdown number (uses the unused `autoplayCountdownMs` token) and autoplay-into-next with an Undo window for series.
+- [ ] Seek bar scrub preview: time ghost under the ring while Left/Right seeks; thumbnails if the hub can serve them.
+- [ ] Audio menu gains an explicit default/off-equivalent row symmetric with Subtitles' "Off".
+
+## E. Detail page
+- [ ] Resume progress bar (Netflix red line) under the hero buttons showing watch position for partially watched titles.
+- [ ] Episodes become a vertical list with per-episode synopsis + still that expands on dwell (today a horizontal still strip, detail.js:281-302).
+- [ ] Season selector uses the settings dial pattern instead of numbered chips (detail.js:164-181).
+- [ ] More-like-this has an honest empty state when the pool is thin (detail.js:419-445 silently drops the row).
+
+## F. The remaining screens get the settings remote standard
+(whole-row list items with value + chevron; dial for numbers/single choice; checklist for multi; actions modal where several verbs exist; inline whole-row toggle for one switch.)
+- [ ] Channels screen: convert chip filters, corner switches and round steppers (channels.js:95-187) to rowShell/pickRow/actionRow.
+- [ ] Categories builder: convert the chip ladder and per-row sw/up/down/Rename/Delete (categories.js:178-309) to the same rows + actions modal.
+- [ ] Manage person sheet: replace old line()+text buttons and radioSet chips (manage.js:142-223) with actionRow/pickRow.
+- [ ] Add-profile: kind/age chips → pickRow dial, languages chipSet → multiRow checklist (add.js:119-171).
+- [ ] "N series · Top 10 in India today" style ranked ribbon on top-10 shelf cards (plugins.js badges() emits none today).
+
+## G. Search
+- [ ] Show recent searches as the TV empty state (they're stored but only painted when !tv, search.js:71).
+- [ ] First Back clears a non-empty query instead of leaving the screen (wire the existing clear verb into back-stepping).
+- [ ] After a typing pause, step the ring into results automatically so Down continues where typing left off.
+
+## H. Returning to a screen
+- [ ] Focus + scroll persistence on return for channels, manage and search results (today only home/detail remember via card identity).
+
+## Done
+- [x] Align `hub/web/assets/theme.json` focus tokens with design/ui-tokens.md: scale 1.10, ring 5 px, 200 ms — verified computed `--ring-w` 5 px, `--focus-ms` 200 ms on the live page (commit pending)
