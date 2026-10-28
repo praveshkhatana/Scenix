@@ -79,6 +79,11 @@ export function screen(ctx, identity) {
     el('div', { class: 'right' }, status));
   const top = el('div', { class: 'ply-top ply-fade' });
 
+  // The theme owns how far a seek jumps; a label that promises ten seconds while the token says thirty
+  // is a lie on every box that retunes it.
+  const SEEK_BACK = Math.max(1000, Number(token('player', 'seekBackMs', 10000)) || 10000);
+  const SEEK_FWD = Math.max(1000, Number(token('player', 'seekForwardMs', 30000)) || 30000);
+
   const buf = el('i', { class: 'buf' });
   const fill = el('i', { class: 'pl' });
   const knob = el('i', { class: 'kn' });
@@ -94,9 +99,9 @@ export function screen(ctx, identity) {
     return b;
   };
   const btnBack = pbtn('back', '', 'Back', () => ctx.back());
-  const btnRew = pbtn('rew', '', 'Rewind 10s', () => player.seekBy(-10000), 'rew');
+  const btnRew = pbtn('rew', '', `Rewind ${Math.round(SEEK_BACK / 1000)}s`, () => player.seekBy(-SEEK_BACK), 'rew');
   const btnPlay = pbtn('play', 'play', 'Play', () => player.toggle());
-  const btnFwd = pbtn('fwd', '', 'Forward 10s', () => player.seekBy(10000), 'fwd');
+  const btnFwd = pbtn('fwd', '', `Forward ${Math.round(SEEK_FWD / 1000)}s`, () => player.seekBy(SEEK_FWD), 'fwd');
   // Not in the row with the transport: the next episode waits at the right edge of the picture, where it can
   // be seen coming without covering the one that is playing.
   const btnNext = pbtn('next', 'edge', 'Next episode', () => playNext());
@@ -884,15 +889,15 @@ export function screen(ctx, identity) {
       ctx.zap(key === 'MediaTrackNext' ? 1 : -1);
       return true;
     }
-    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(10000); return true; }
-    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-10000); return true; }
+    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(SEEK_FWD); return true; }
+    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-SEEK_BACK); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       const a = document.activeElement;
       // The track is the scrubber; the transport buttons and the menu chips in the same row step along the
       // band instead. Same rule as before the chips moved into the bar — they just have to be named now.
       if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
-        player.seekBy(key === 'ArrowLeft' ? -10000 : 10000);
+        player.seekBy(key === 'ArrowLeft' ? -SEEK_BACK : SEEK_FWD);
         return true;
       }
       return false;
@@ -905,6 +910,21 @@ export function screen(ctx, identity) {
     return false;
   };
   pushHandler(handler);
+
+  // Holding Left or Right on the scrubber keeps seeking: the remote auto-repeats the key while it is held,
+  // and input.js swallows repeats on purpose everywhere else. Here a repeat is the whole point, so this
+  // screen listens for them directly at the window — same band rule as a single press, one step per repeat.
+  const holdSeek = (e) => {
+    if (!e.repeat || isLiveFeed || openKind) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const a = document.activeElement;
+    if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
+      player.seekBy(e.key === 'ArrowLeft' ? -SEEK_BACK : SEEK_FWD);
+      e.preventDefault();
+    }
+  };
+  window.addEventListener('keydown', holdSeek);
+  offs.push(() => window.removeEventListener('keydown', holdSeek));
   // The scrubber is only a control when there is a position to scrub to.
   if (!isLiveFeed) {
     focus.focusable(trk);

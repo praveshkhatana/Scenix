@@ -65,5 +65,5 @@ Series/Home nav tabs, My List screen, row skeletons, nav gradient, profiles gate
 - [x] Billboard token crossfade + copy fade + dwell fallback fix (B1, B2) — commit 5a71bbb
 - [x] Dwell expand 250 ms + trailer 1 s + focusable tile actions + row scroll/dim (C1-C3) — commit f16585f
 - [x] Chrome hide reads `player.controlsHideMs` and the ring inside the chrome re-arms instead of being stranded (D1) — live timeline sampled: visible 13+ s while focused, faded ~6 s after blur
-- [x] Seek tokens + hold-repeat stepping (D2) — landed on main as commit 09a81d7 by another session; box verified there
+- [ ] (hash follows) Seek tokens + hold-repeat stepping (D2): buttons/keys read `seekBackMs`/`seekForwardMs`, labels say what they do, held key keeps stepping via raw repeat events
 - [x] Next-episode countdown from `autoplayCountdownMs`, auto-roll into S1 E2 with a focusable Undo chip back to the finished episode (D3) — verified stubbed end-to-end: "Starting in 7s" → roll at token expiry → Undo returned to S1 E1 with the chip gone
