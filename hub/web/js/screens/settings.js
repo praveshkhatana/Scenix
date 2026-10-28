@@ -80,12 +80,16 @@ export function screen(ctx) {
   // walking Down past "Live TV" while Playback rows sit under it reads as a broken page. So the section
   // switches the moment the ring lands on a rail item — the same rule every TV settings menu follows,
   // and why the ring never waits for an Enter the viewer has no reason to press.
-  rail.addEventListener('focusin', (e) => {
-    const b = e.target && e.target.closest ? e.target.closest('.sitem') : null;
-    if (!b) return;
+  // The engine's own focus listener is the hook, not the DOM `focusin` event: the engine moves the ring
+  // through setFocus, and a document that has lost browser focus (a backgrounded webview) moves
+  // activeElement without ever firing focusin — the pane would then stop answering the rail.
+  const onRailFocus = focus.onFocus((node) => {
+    const b = node && node.closest ? node.closest('.sitem') : null;
+    if (!b || !rail.contains(b)) return;
     const i = Array.prototype.indexOf.call(rail.children, b);
     if (i >= 0 && i !== current) selectSection(i);
   });
+  root.__dispose = () => onRailFocus();
 
   /* ------------------------------------------------------------------- parts */
 
@@ -103,6 +107,15 @@ export function screen(ctx) {
     return li;
   }
   function value(text) { return el('span', { class: 'lv', text: String(text == null ? '—' : text) }); }
+  /** Write a row's value and let it mark the change: a short pop, so a saved number is visibly the
+   *  same number the dial just held rather than new text that appeared somewhere. */
+  function setLv(b, text) {
+    if (!b.__lv) return;
+    b.__lv.textContent = text;
+    b.__lv.classList.remove('bump');
+    void b.__lv.offsetWidth;
+    b.__lv.classList.add('bump');
+  }
 
   /**
    * The whole list item as one focusable button: name on the left, current value on the right, a chevron
@@ -167,6 +180,11 @@ export function screen(ctx) {
       const paintVal = () => {
         wval.textContent = show(values[i]);
         wval.setAttribute('aria-label', `${label}: ${show(values[i])}`);
+        // The number itself marks every step: it re-pops as it changes, so turning the dial has a
+        // tick you can see instead of silent text swapping in place.
+        wval.classList.remove('pop');
+        void wval.offsetWidth;
+        wval.classList.add('pop');
       };
       const move = (d) => {
         const j = Math.min(values.length - 1, Math.max(0, i + d));
@@ -176,7 +194,7 @@ export function screen(ctx) {
       };
       const commit = () => {
         ctx.closeModals();
-        if (b.__lv) b.__lv.textContent = show(values[i]);
+        setLv(b, show(values[i]));
         write(values[i]);
       };
       // The dial answers to the D-pad before anything else on the stage does: Up/Down move the value
@@ -248,7 +266,7 @@ export function screen(ctx) {
           ctx.closeModals();
           selected.length = 0;
           Array.prototype.push.apply(selected, chosen);
-          if (b.__lv) b.__lv.textContent = summary();
+          setLv(b, summary());
           write(chosen.slice());
         }; focus.focusable(s); return s; })()));
       ctx.mountModal(box, null);
@@ -382,8 +400,19 @@ export function screen(ctx) {
     // remote needs.
     pane.textContent = '';
     const node = el('div', { class: 'settings-section' });
+    // The pane names itself the way every TV menu does — section title and its mark at the head of the
+    // list — so the eye confirms the selection without checking back to the rail each time.
+    node.appendChild(el('div', { class: 'pane-head' },
+      icon(sections[i].icon), el('h2', { text: sections[i].title })));
     sections[i].build(node);
     pane.appendChild(node);
+    // Rows rise in sequence as a section enters: the same staggered fade the home shelves use, so the
+    // pane arrives as a stack of things rather than a wall that pops into being all at once.
+    const movers = node.querySelectorAll('.pane-head, .sgroup > h3, .li');
+    for (let k = 0; k < movers.length && k < 14; k++) {
+      movers[k].classList.add('rise');
+      movers[k].style.animationDelay = `${Math.min(420, k * 35)}ms`;
+    }
     pane.scrollTop = 0;
     if (refocus) focus.focusDefault(rail.children[i]);
   }
