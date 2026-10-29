@@ -32,6 +32,7 @@ import kotlin.math.roundToInt
 class LocalHub private constructor(context: Context) {
 
     private val appContext = context.applicationContext
+    private val assets = appContext.assets
     private val addons = AddonClient(appContext)
 
     /** Everything this app owns for itself: settings, profiles, what it has seen, where people stopped. */
@@ -57,6 +58,7 @@ class LocalHub private constructor(context: Context) {
             .put("subtitleLanguages", o.optJSONArray("subtitleLanguages") ?: JSONArray())
             .put("adult", o.optBoolean("adult", false))
             .put("cacheTtlHours", o.optInt("cacheTtlHours", 6))
+            .put("theme", o.optString("theme", "scenix-dark"))
     }
 
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
@@ -67,6 +69,7 @@ class LocalHub private constructor(context: Context) {
         }
         if (body.has("adult")) merged.put("adult", body.optBoolean("adult", false))
         if (body.has("cacheTtlHours")) merged.put("cacheTtlHours", body.optInt("cacheTtlHours", 6))
+        if (body.has("theme")) merged.put("theme", body.optString("theme", "scenix-dark"))
         writeJson(settingsFile, merged)
         merged
     }
@@ -110,6 +113,7 @@ class LocalHub private constructor(context: Context) {
         .put("settings", settings())
         .put("defaults", defaultSettings())
         .put("languageNames", languageNames())
+        .put("themes", themeCatalog())
         .put("file", settingsPath())
 
     /** What a settings file that says nothing means: no addon, no language and no channel preselected. */
@@ -119,12 +123,45 @@ class LocalHub private constructor(context: Context) {
         .put("subtitleLanguages", JSONArray())
         .put("adult", false)
         .put("cacheTtlHours", 6)
+        .put("theme", "scenix-dark")
 
     /**
      * Words for the codes this backend actually holds. There is no table of every language baked in here —
      * which tongues a household listens in is not a fact about this app — so a screen labels exactly the
      * choices in front of it.
      */
+    /** The theme registry shipped in the APK's assets, in the same shape the hub serves. */
+    fun themeCatalog(): JSONArray {
+        return try {
+            val text = assets.open("themes.json").bufferedReader().use { it.readText() }
+            JSONObject(text).optJSONArray("themes") ?: JSONArray()
+        } catch (t: Throwable) {
+            JSONArray().put(JSONObject().put("id", "scenix-dark")
+                .put("name", "Scenix Dark").put("asset", "theme.json").put("pack", "Classic"))
+        }
+    }
+
+    /** `GET /app/v1/theme`: the selected tokens, so the bundled web UI follows the TV's theme too. */
+    fun themeJson(): JSONObject {
+        val themes = themeCatalog()
+        val wanted = settings().optString("theme", "scenix-dark")
+        var choice: JSONObject? = null
+        for (i in 0 until themes.length()) {
+            val o = themes.optJSONObject(i) ?: continue
+            if (o.optString("id") == wanted) { choice = o; break }
+        }
+        if (choice == null && themes.length() > 0) choice = themes.optJSONObject(0)
+        val id = choice?.optString("id") ?: "scenix-dark"
+        val name = choice?.optString("name") ?: "Scenix Dark"
+        val asset = choice?.optString("asset")?.takeIf { it.isNotBlank() } ?: "theme.json"
+        val tokens = try {
+            JSONObject(assets.open(asset).bufferedReader().use { it.readText() })
+        } catch (t: Throwable) {
+            JSONObject()
+        }
+        return JSONObject().put("id", id).put("name", name).put("themes", themes).put("tokens", tokens)
+    }
+
     private fun languageNames(): JSONObject {
         val codes = LinkedHashSet<String>()
         val owned = settings()
@@ -174,7 +211,7 @@ class LocalHub private constructor(context: Context) {
             .put("id", "standalone")
             .put("name", appContext.getString(R.string.app_name))
             .put("version", appContext.getString(R.string.app_name) + " standalone")
-            .put("theme", "scenix-dark")
+            .put("theme", settings().optString("theme", "scenix-dark"))
             .put("api", "/app/v1")
             .put("capabilities", caps)
             .put("addons", addonsJson())

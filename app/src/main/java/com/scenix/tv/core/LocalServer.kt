@@ -146,6 +146,8 @@ class LocalServer private constructor(
                 }
             }
 
+            path == "/app/v1/theme" -> res.json(200, hub.themeJson())
+
             path == "/app/v1/settings" -> {
                 val o = parse(body)
                 when {
