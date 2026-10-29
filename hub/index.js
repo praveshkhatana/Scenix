@@ -2488,6 +2488,50 @@ async function handle(req, res) {
     // because a value only changeable by editing a file on the server is a value the household does not
     // control. GET answers the current values plus what each means; PUT merges a patch and re-applies
     // whatever other subsystems derived from the old one.
+    if (path === '/app/v1/settings/unlock' && req.method === 'POST') {
+      const body = await readBody(req);
+      const lock = settings.get().lock || {};
+      if (!lock.pinHash) return send(res, 200, { ok: true, pinSet: false });
+      if (!unlockAllowed('settings-lock')) {
+        return send(res, 429, { error: 'too many attempts', retryAfterMs: 300000 });
+      }
+      if (pinMatches({ pinHash: lock.pinHash }, body && body.pin)) {
+        unlockSucceeded('settings-lock');
+        return send(res, 200, { ok: true, pinSet: true });
+      }
+      unlockFailed('settings-lock');
+      return send(res, 403, { error: 'wrong PIN', ok: false });
+    }
+
+    if (path === '/app/v1/settings/lock' && req.method === 'POST') {
+      const body = await readBody(req);
+      const cur = settings.get().lock || {};
+      const wantsEnabled = body && body.enabled === true;
+      if (cur.pinHash) {
+        const given = (body && (body.pinCurrent || body.current)) || '';
+        if (!pinMatches({ pinHash: cur.pinHash }, given)) {
+          return send(res, 403, { error: 'the current settings PIN is needed', gate: 'settings-lock' });
+        }
+      }
+      let pinHash = cur.pinHash || '';
+      const fresh = body && typeof body.pin === 'string' ? body.pin.trim() : '';
+      if (body && body.pin === null) {
+        // Explicit null removes the stored PIN (after the current one was proved above).
+        pinHash = '';
+      } else if (fresh) {
+        if (!/^\d{4,8}$/.test(fresh)) return send(res, 400, { error: 'the PIN must be 4 to 8 digits' });
+        pinHash = hashPin(fresh);
+      }
+      if (wantsEnabled && !pinHash) {
+        return send(res, 400, { error: 'set a PIN before turning the lock on' });
+      }
+      const next = settings.set({ lock: { enabled: wantsEnabled, pinHash } });
+      return send(res, 200, {
+        ok: true,
+        lock: { enabled: (next.lock || {}).enabled === true, pinSet: !!((next.lock || {}).pinHash) },
+      });
+    }
+
     if (path === '/app/v1/settings' && req.method === 'GET') {
       const options = await catalogOptions();
       return send(res, 200, {
@@ -2536,6 +2580,10 @@ async function handle(req, res) {
       // the hub answered 200 without changing anything - a settings screen that looked saved and wasn't.
       const body = (raw.settings && typeof raw.settings === 'object' && !Array.isArray(raw.settings))
         ? raw.settings : raw;
+      // The lock is changed only through its own route (it needs the current PIN, and the GET redacts
+      // the hash). Settings screens send back the whole settings object they read, so an unmodified
+      // `lock: {enabled, pinSet}` in this PUT must never be allowed to erase the stored hash.
+      delete body.lock;
       const before = settings.get();
       const next = settings.set(body);
       const effects = {};

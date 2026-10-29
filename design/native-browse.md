@@ -88,6 +88,15 @@ reload.
   `settings.rows`/`settings.live` as the floor: a person can hide/reorder a row and keep their own
   channel wall without changing anyone else's. Add-ons, source packs, Debrid, the hub name and the
   live playlist are household infrastructure and stay global.
+- **Kids profiles never see infrastructure.** Source packs, Add-ons and Debrid are not drawn on a
+  kids profile at all (not just hidden behind the lock), and the Home-rows editor filters
+  adult-scope rows for a child. The hub also refuses an adult switch (`xxxEnabled`) without an adult
+  PIN and keeps `scope: adult` rows off a kids home.
+- **Household settings lock.** `settings.lock` is an optional scrypt-hashed PIN. When enabled, every
+  Settings entry asks for it; the hash is never returned (`pinSet` only), the current PIN is required
+  to change or disable it, and a settings PUT cannot overwrite it. The lock is set/changed on an adult
+  profile; a wrong PIN is rate-limited. The web settings page does not yet read this lock — the gate
+  is the television's.
 - `TextEntryActivity` is the one native text field (add-on manifest, source URL, debrid token) and
   uses the platform IME with the whole screen, rather than a cramped dialog. Ranked rows draw their numeral over the poster;
   Continue Watching draws its position line; posters and landscape rows are sized from the card kind.

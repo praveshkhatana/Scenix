@@ -55,6 +55,25 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** The household settings PIN: verify it, or change the lock (the current PIN is required). */
+    fun unlockSettings(pin: String, done: (ok: Boolean, error: String?) -> Unit) {
+        request("/app/v1/settings/unlock", "", "POST", JSONObject().put("pin", pin), 10000) { root, status, error ->
+            done(root?.optBoolean("ok") == true, error ?: if (status == 403) "That PIN is not right" else null)
+        }
+    }
+
+    fun saveSettingsLock(
+        enabled: Boolean,
+        pin: String?,
+        current: String?,
+        done: (root: JSONObject?, error: String?) -> Unit,
+    ) {
+        val body = JSONObject().put("enabled", enabled)
+        if (!pin.isNullOrBlank()) body.put("pin", pin)
+        if (!current.isNullOrBlank()) body.put("pinCurrent", current)
+        request("/app/v1/settings/lock", "", "POST", body, 12000) { root, _, error -> done(root, error) }
+    }
+
     /** Installed add-ons, with the same enable/remove/add calls the web settings uses. */
     fun addons(done: (addons: JSONArray?, error: String?) -> Unit) {
         request("/app/v1/addons", "", "GET", null, 12000) { root, _, error ->

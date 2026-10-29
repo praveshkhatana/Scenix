@@ -30,6 +30,7 @@ class SettingsActivity : Activity() {
     private lateinit var app: AppContext
     private lateinit var profileId: String
     private lateinit var root: FrameLayout
+    private lateinit var page: LinearLayout
     private lateinit var rows: LinearLayout
     private lateinit var status: TextView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
@@ -38,6 +39,16 @@ class SettingsActivity : Activity() {
     private var globalRows: JSONObject? = null
     private var rowsCfg: JSONObject? = null
     private var picker: View? = null
+    private var lockInfo: JSONObject? = null
+    private var profileKind = ""
+    private var pinLayer: FrameLayout? = null
+    private var pinIsGate = false
+    private val pinBuf = StringBuilder()
+    private var pinSub: TextView? = null
+    private var pinDots: TextView? = null
+    private var pinOnDone: ((String) -> Unit)? = null
+    private var sessionPin = ""
+    private var unlocked = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,9 +58,10 @@ class SettingsActivity : Activity() {
         if (profileId.isBlank()) { finish(); return }
 
         root = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
-        val page = LinearLayout(this).apply {
+        page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
+            visibility = View.INVISIBLE
         }
         page.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
         val scroll = ScrollView(this).apply {
@@ -100,7 +112,12 @@ class SettingsActivity : Activity() {
             }
             prefs = p
             status.text = ""
-            loadRows()
+            api.profiles { list, _ ->
+                if (list != null) {
+                    profileKind = if (list.firstOrNull { it.id == profileId }?.kids == true) "kids" else "adult"
+                }
+                if (!isFinishing && !isDestroyed) loadRows()
+            }
         }
     }
 
@@ -111,10 +128,16 @@ class SettingsActivity : Activity() {
             if (root != null) {
                 rowList = root.optJSONArray("rows")
                 globalRows = root.optJSONObject("settings")?.optJSONObject("rows")
+                lockInfo = root.optJSONObject("settings")?.optJSONObject("lock")
                 // The editor edits this profile's rows; the household's list is the floor it cannot lift.
                 rowsCfg = prefs?.optJSONObject("rows") ?: JSONObject()
             }
             paint()
+            if (lockInfo?.optBoolean("enabled") == true && !unlocked) {
+                showLockGate()
+            } else {
+                page.visibility = View.VISIBLE
+            }
         }
     }
 
@@ -132,8 +155,9 @@ class SettingsActivity : Activity() {
         }
         val shelfRows = rowList
         if (shelfRows != null && shelfRows.length() > 0) {
-            val hidden = effectiveHidden().size
-            addRow("Home rows", "${shelfRows.length() - hidden} of ${shelfRows.length()} shown",
+            val hidden = effectiveHidden()
+            val visible = rowIds().filter { profileKind != "kids" || rowScope(it) != "adult" }
+            addRow("Home rows", "${visible.count { it !in hidden }} of ${visible.size} shown",
                 "This profile's shelves — hide, show or reorder") { showHomeRows() }
         }
         addRow("Live TV channels", "This profile's lineup", "Choose the channels and their zap order") {
@@ -145,14 +169,28 @@ class SettingsActivity : Activity() {
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
         }
-        addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
-            startActivity(Intent(this, SourcePacksActivity::class.java))
-        }
-        addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL") {
-            startActivity(Intent(this, AddonsActivity::class.java))
-        }
-        addRow("Debrid", "Cached torrents", "Provider, token and the on/off switch") {
-            startActivity(Intent(this, DebridActivity::class.java))
+        // Infrastructure is not a child's to edit. A kids profile never sees the add-on list, the
+        // source packs or Debrid, with or without the household lock: the adult add-ons are exactly
+        // what must not be browsable from a child's profile.
+        if (profileKind != "kids") {
+            addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
+                startActivity(Intent(this, SourcePacksActivity::class.java))
+            }
+            addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL") {
+                startActivity(Intent(this, AddonsActivity::class.java))
+            }
+            addRow("Debrid", "Cached torrents", "Provider, token and the on/off switch") {
+                startActivity(Intent(this, DebridActivity::class.java))
+            }
+            addRow("Settings lock", if (lockInfo?.optBoolean("enabled") == true) "On" else "Off",
+                "A household PIN in front of add-ons, packs and these settings") {
+                changeLock()
+            }
+            if (lockInfo?.optBoolean("enabled") == true) {
+                addRow("Change settings PIN", "Choose a new household PIN", "The current PIN is needed") {
+                    changePin()
+                }
+            }
         }
     }
 
@@ -193,6 +231,15 @@ class SettingsActivity : Activity() {
             if (id.isNotBlank()) out.add(id)
         }
         return out
+    }
+
+    private fun rowScope(id: String): String {
+        val list = rowList ?: return "all"
+        for (i in 0 until list.length()) {
+            val o = list.optJSONObject(i) ?: continue
+            if (o.optString("id") == id) return o.optString("scope", "all")
+        }
+        return "all"
     }
 
     private fun rowTitle(id: String): String {
@@ -250,6 +297,7 @@ class SettingsActivity : Activity() {
         val hidden = effectiveHidden()
         val options = ArrayList<Pair<String, String>>()
         for (id in order) {
+            if (profileKind == "kids" && rowScope(id) == "adult") continue
             options.add(id to rowTitle(id) + if (id in hidden) "  ·  Hidden" else "  ·  On Home")
         }
         showPicker("Home rows", options, "") { id -> showRowActions(id) }
@@ -452,12 +500,207 @@ class SettingsActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (pinLayer != null) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_BACK -> {
+                        if (pinIsGate) finish() else closePinPad()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DEL -> { backspacePin(); return true }
+                    KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { submitPin(); return true }
+                    in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> {
+                        addPinDigit(event.keyCode - KeyEvent.KEYCODE_0)
+                        return true
+                    }
+                }
+            }
+            return super.dispatchKeyEvent(event)
+        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN && picker != null) {
             closePicker()
             // The row that opened the picker is the last focused view; Android restores it.
             return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    // ---- settings lock -----------------------------------------------------------------------
+
+    private fun showLockGate() {
+        page.visibility = View.INVISIBLE
+        showPinPad("Settings are locked", "Enter the household PIN", gate = true) { entered ->
+            api.unlockSettings(entered) { ok, error ->
+                if (isFinishing || isDestroyed) return@unlockSettings
+                if (ok) {
+                    unlocked = true
+                    sessionPin = entered
+                    closePinPad()
+                    page.visibility = View.VISIBLE
+                    paint()
+                } else {
+                    pinError(error ?: "That PIN is not right")
+                }
+            }
+        }
+    }
+
+    private fun changePin() {
+        showPinPad("Change the settings PIN", "Enter the current PIN", gate = false) { current ->
+            api.unlockSettings(current) { ok, _ ->
+                if (isFinishing || isDestroyed) return@unlockSettings
+                if (!ok) { pinError("That PIN is not right"); return@unlockSettings }
+                showPinPad("Change the settings PIN", "Choose 4 to 8 digits", gate = false) { fresh ->
+                    if (fresh.length !in 4..8) { pinError("Use 4 to 8 digits"); return@showPinPad }
+                    api.saveSettingsLock(true, fresh, current) { root, error ->
+                        if (isFinishing || isDestroyed) return@saveSettingsLock
+                        if (error != null) { pinError(error); return@saveSettingsLock }
+                        lockInfo = root?.optJSONObject("lock") ?: JSONObject().put("enabled", true)
+                        sessionPin = fresh
+                        closePinPad()
+                        paint()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun changeLock() {
+        val on = lockInfo?.optBoolean("enabled") == true
+        if (on) {
+            showPinPad("Turn off the settings lock", "Enter the current PIN", gate = false) { entered ->
+                api.saveSettingsLock(false, null, entered) { root, error ->
+                    if (isFinishing || isDestroyed) return@saveSettingsLock
+                    if (error != null) { pinError(error); return@saveSettingsLock }
+                    lockInfo = root?.optJSONObject("lock") ?: JSONObject().put("enabled", false)
+                    sessionPin = ""
+                    closePinPad()
+                    paint()
+                }
+            }
+        } else if (lockInfo?.optBoolean("pinSet") == true) {
+            // The lock is off but a PIN is already stored (it was turned off, not erased). Re-enabling
+            // must prove the stored PIN; the hub refuses a blind change.
+            showPinPad("Turn on the settings lock", "Enter the current PIN", gate = false) { entered ->
+                api.saveSettingsLock(true, null, entered) { root, error ->
+                    if (isFinishing || isDestroyed) return@saveSettingsLock
+                    if (error != null) { pinError(error); return@saveSettingsLock }
+                    lockInfo = root?.optJSONObject("lock") ?: JSONObject().put("enabled", true)
+                    unlocked = true
+                    sessionPin = entered
+                    closePinPad()
+                    paint()
+                }
+            }
+        } else {
+            showPinPad("Set a settings PIN", "Choose 4 to 8 digits", gate = false) { entered ->
+                if (entered.length !in 4..8) { pinError("Use 4 to 8 digits"); return@showPinPad }
+                api.saveSettingsLock(true, entered, null) { root, error ->
+                    if (isFinishing || isDestroyed) return@saveSettingsLock
+                    if (error != null) { pinError(error); return@saveSettingsLock }
+                    lockInfo = root?.optJSONObject("lock") ?: JSONObject().put("enabled", true)
+                    unlocked = true
+                    sessionPin = entered
+                    closePinPad()
+                    paint()
+                }
+            }
+        }
+    }
+
+    private fun showPinPad(title: String, subtitle: String, gate: Boolean, onDone: (String) -> Unit) {
+        closePinPad()
+        pinIsGate = gate
+        pinBuf.setLength(0)
+        pinOnDone = onDone
+        val layer = FrameLayout(this).apply { setBackgroundColor(Color.rgb(16, 16, 16)) }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(app.theme.px(48f), app.theme.px(36f), app.theme.px(48f), app.theme.px(24f))
+        }
+        panel.addView(Views.text(app, "li", 34f, app.theme.ink, title, bold = true, gravity = Gravity.CENTER))
+        pinSub = Views.text(app, "meta", 19f, app.theme.ink3, subtitle, gravity = Gravity.CENTER, maxLines = 2)
+        panel.addView(pinSub, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = app.theme.px(8f)
+        })
+        pinDots = Views.text(app, "li", 32f, app.theme.ink, "○ ○ ○ ○", bold = true, gravity = Gravity.CENTER)
+        panel.addView(pinDots, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, app.theme.px(64f)).apply {
+            topMargin = app.theme.px(16f)
+        })
+        val keys = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val rows = listOf(
+            listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"),
+            listOf("CLR", "0", "OK"),
+        )
+        for (row in rows) {
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (label in row) {
+                val b = Views.text(app, "li", 24f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
+                b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                    app.theme.px(if (label.length > 1) 17f else 26f).toFloat())
+                b.background = Views.rounded(app.theme.surface2, app.theme.px(10f))
+                b.isFocusable = true
+                b.isClickable = true
+                b.setOnClickListener {
+                    when (label) {
+                        "CLR" -> { pinBuf.setLength(0); renderPin() }
+                        "OK" -> submitPin()
+                        else -> addPinDigit(label.toInt())
+                    }
+                }
+                Focus.attach(b, b, app, app.theme.px(10f), scale = false, elevate = false)
+                line.addView(b, LinearLayout.LayoutParams(app.theme.px(120f), app.theme.px(64f)).apply {
+                    marginStart = app.theme.px(6f)
+                    marginEnd = app.theme.px(6f)
+                })
+            }
+            keys.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, app.theme.px(70f)))
+        }
+        panel.addView(keys, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        layer.addView(panel, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        root.addView(layer, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        pinLayer = layer
+        (keys.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.post {
+            (keys.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.requestFocus()
+        }
+        renderPin()
+    }
+
+    private fun addPinDigit(d: Int) {
+        if (pinBuf.length < 8) { pinBuf.append(d); renderPin() }
+    }
+
+    private fun backspacePin() {
+        if (pinBuf.isNotEmpty()) { pinBuf.deleteCharAt(pinBuf.length - 1); renderPin() }
+    }
+
+    private fun renderPin() {
+        val n = pinBuf.length.coerceAtLeast(4)
+        pinDots?.text = (0 until n).joinToString(" ") { if (it < pinBuf.length) "●" else "○" }
+    }
+
+    private fun submitPin() {
+        val entered = pinBuf.toString()
+        if (entered.isBlank()) return
+        pinOnDone?.invoke(entered)
+    }
+
+    private fun pinError(message: String) {
+        pinBuf.setLength(0)
+        renderPin()
+        pinSub?.text = message
+        pinSub?.setTextColor(app.theme.color("warn", "#F2C33A"))
+    }
+
+    private fun closePinPad() {
+        pinLayer?.let { root.removeView(it) }
+        pinLayer = null
+        pinOnDone = null
     }
 
     companion object {

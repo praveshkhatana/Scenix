@@ -61,6 +61,10 @@ const DEFAULTS = {
   // edits land here as an override rather than a rewrite. `hidden` names rows to leave off the screen;
   // `order` is the sequence they should appear in, with anything it does not mention following behind.
   rows: { hidden: [], order: [] },
+  // A household PIN in front of the settings surfaces (add-on list, packs, debrid, household rules).
+  // `pinHash` is a scrypt tag/salt/hash string and is redacted from every GET; `enabled` is the switch
+  // the television reads to decide whether to ask before opening Settings.
+  lock: { enabled: false, pinHash: '' },
   // Owner-made shelves: a provider's catalogue, optionally narrowed to one genre it publishes. This is
   // the one place "more categories" lives, because which genres a household wants is not something a
   // build can know. Each entry is { id, title, provider, catalog, genre, enabled, order }; `genre` is
@@ -313,6 +317,10 @@ function normalize(s) {
       hidden: idList((s.rows || {}).hidden),
       order: idList((s.rows || {}).order),
     },
+    lock: {
+      enabled: (s.lock || {}).enabled === true,
+      pinHash: String((s.lock || {}).pinHash || '').slice(0, 200),
+    },
     categories: normalizeCategories(s.categories),
     igc: { sources: normalizeSourcePacks((s.igc || {}).sources, false) },
     audio: { sources: normalizeSourcePacks((s.audio || {}).sources, true) },
@@ -432,6 +440,9 @@ function redacted(which) {
     const token = String(out.debrid.token || '');
     out.debrid.tokenSet = !!token;
     delete out.debrid.token;
+  }
+  if (out && out.lock && typeof out.lock === 'object') {
+    out.lock = { enabled: out.lock.enabled === true, pinSet: !!out.lock.pinHash };
   }
   return out;
 }

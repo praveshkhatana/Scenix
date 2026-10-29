@@ -39,8 +39,10 @@ Nothing is installed or deployed from here.
   the profile gate, native Source packs (IGC/audio donors), Add-ons
   (enable/disable/remove/add), and Debrid (provider, switch, write-only token). Home rows and the
   live lineup are per profile; audio/subtitles/quality always were. Add-ons, source packs, Debrid and
-  the live playlist are household resources. There is no "open the web settings" path from the TV;
-  `TextEntryActivity` handles the few URL/token fields.
+  the live playlist are household resources, and a kids profile never sees those rows. A household
+  **settings lock** (optional scrypt-hashed PIN) gates every Settings entry; the current PIN is needed
+  to change or disable it, and the hash is never returned. There is no "open the web settings" path
+  from the TV; `TextEntryActivity` handles the few URL/token fields.
 - **The web product** — `WebShellActivity` still loads `http://<backend>/` for the full web settings,
   browser deep links and the web player. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
