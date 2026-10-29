@@ -126,4 +126,6 @@ dependencies {
     // Standalone torrent engine: libtorrent compiled for this TV's 32-bit ARM ABI.
     implementation 'org.libtorrent4j:libtorrent4j:2.1.0-35'
     implementation 'org.libtorrent4j:libtorrent4j-android-arm:2.1.0-35'
+    // The same engine for 64-bit ARM, so the APK also installs on an arm64 TV emulator.
+    implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-35'
 }
