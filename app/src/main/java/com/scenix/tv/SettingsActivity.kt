@@ -48,7 +48,7 @@ class SettingsActivity : Activity() {
     private var pinDots: TextView? = null
     private var pinOnDone: ((String) -> Unit)? = null
     private var sessionPin = ""
-    private var unlocked = false
+    private var adminUnlocked = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -133,11 +133,7 @@ class SettingsActivity : Activity() {
                 rowsCfg = prefs?.optJSONObject("rows") ?: JSONObject()
             }
             paint()
-            if (lockInfo?.optBoolean("enabled") == true && !unlocked) {
-                showLockGate()
-            } else {
-                page.visibility = View.VISIBLE
-            }
+            page.visibility = View.VISIBLE
         }
     }
 
@@ -169,26 +165,31 @@ class SettingsActivity : Activity() {
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
         }
-        // Infrastructure is not a child's to edit. A kids profile never sees the add-on list, the
-        // source packs or Debrid, with or without the household lock: the adult add-ons are exactly
-        // what must not be browsable from a child's profile.
-        if (profileKind != "kids") {
+        // The admin areas are a separate door from the profile PINs. With no admin lock set, a kids
+        // profile does not see them at all (the default-safe state). Once the household turns the lock
+        // on, the rows exist for everyone and the admin PIN is what opens them — a person who knows it
+        // can use them from any profile, exactly like an office's shared settings PIN.
+        val adminOn = lockInfo?.optBoolean("enabled") == true
+        val showAdmin = profileKind != "kids" || adminOn
+        if (showAdmin) {
             addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
-                startActivity(Intent(this, SourcePacksActivity::class.java))
+                requireAdmin { startActivity(Intent(this, SourcePacksActivity::class.java)) }
             }
             addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL") {
-                startActivity(Intent(this, AddonsActivity::class.java))
+                requireAdmin { startActivity(Intent(this, AddonsActivity::class.java)) }
             }
             addRow("Debrid", "Cached torrents", "Provider, token and the on/off switch") {
-                startActivity(Intent(this, DebridActivity::class.java))
+                requireAdmin { startActivity(Intent(this, DebridActivity::class.java)) }
             }
-            addRow("Settings lock", if (lockInfo?.optBoolean("enabled") == true) "On" else "Off",
-                "A household PIN in front of add-ons, packs and these settings") {
-                changeLock()
-            }
-            if (lockInfo?.optBoolean("enabled") == true) {
-                addRow("Change settings PIN", "Choose a new household PIN", "The current PIN is needed") {
-                    changePin()
+            if (profileKind != "kids") {
+                addRow("Settings lock", if (adminOn) "On" else "Off",
+                    "A separate admin PIN for add-ons, packs and these common settings") {
+                    changeLock()
+                }
+                if (adminOn) {
+                    addRow("Change admin PIN", "Choose a new common-settings PIN", "The current PIN is needed") {
+                        changePin()
+                    }
                 }
             }
         }
@@ -527,17 +528,23 @@ class SettingsActivity : Activity() {
 
     // ---- settings lock -----------------------------------------------------------------------
 
-    private fun showLockGate() {
-        page.visibility = View.INVISIBLE
-        showPinPad("Settings are locked", "Enter the household PIN", gate = true) { entered ->
+    /**
+     * The admin areas share one PIN, separate from any profile's PIN. It is asked only when a protected
+     * area is opened, not when Settings itself is opened: changing this profile's audio language is not
+     * a household act. Once proved in this visit, the other admin rows open without asking again.
+     */
+    private fun requireAdmin(block: () -> Unit) {
+        if (lockInfo?.optBoolean("enabled") != true || adminUnlocked) {
+            block()
+            return
+        }
+        showPinPad("Admin PIN required", "Enter the household settings PIN", gate = false) { entered ->
             api.unlockSettings(entered) { ok, error ->
                 if (isFinishing || isDestroyed) return@unlockSettings
                 if (ok) {
-                    unlocked = true
-                    sessionPin = entered
+                    adminUnlocked = true
                     closePinPad()
-                    page.visibility = View.VISIBLE
-                    paint()
+                    block()
                 } else {
                     pinError(error ?: "That PIN is not right")
                 }
@@ -586,7 +593,7 @@ class SettingsActivity : Activity() {
                     if (isFinishing || isDestroyed) return@saveSettingsLock
                     if (error != null) { pinError(error); return@saveSettingsLock }
                     lockInfo = root?.optJSONObject("lock") ?: JSONObject().put("enabled", true)
-                    unlocked = true
+                    adminUnlocked = true
                     sessionPin = entered
                     closePinPad()
                     paint()
@@ -599,7 +606,7 @@ class SettingsActivity : Activity() {
                     if (isFinishing || isDestroyed) return@saveSettingsLock
                     if (error != null) { pinError(error); return@saveSettingsLock }
                     lockInfo = root?.optJSONObject("lock") ?: JSONObject().put("enabled", true)
-                    unlocked = true
+                    adminUnlocked = true
                     sessionPin = entered
                     closePinPad()
                     paint()
