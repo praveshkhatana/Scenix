@@ -1427,6 +1427,82 @@ function audioPlanFor(source, lang) {
 }
 
 /**
+ * Measure a donor's own length and audio codec before trusting it against a picture.
+ *
+ * A donor row only promises a language; nothing says the file is the same cut as the film on screen.
+ * One archive rip measured 2 h 00 m for a 1 h 49 m film: mapped as-is, that is eleven minutes of drift
+ * past the closing credits, mixed with total confidence. So the hub reads the donor's header the same
+ * way it reads any other file — ffmpeg prints `Duration:` before it has read the body, so a 1.5 s wait
+ * is enough — and the play path compares it against the title's runtime. An unreadable header is not a
+ * refusal: a donor whose length the hub cannot check is still offered, because a hub with no ffmpeg
+ * cannot check anything and must not become worse than a hub with no donor feature at all.
+ */
+const donorProbe = new Map(); // url -> { at, durationMs, audioCodec }
+const DONOR_PROBE_TTL_MS = 30 * 60 * 1000;
+// A dub that runs within this fraction of the film's length is treated as the same cut. Real rips
+// differ by a few seconds of logo and credit padding, not by minutes.
+const DONOR_FIT_SLACK = 0.04;
+
+function probeDonorUrl(url, headers, timeoutMs) {
+  const hit = donorProbe.get(url);
+  if (hit && Date.now() - hit.at < DONOR_PROBE_TTL_MS) return Promise.resolve(hit);
+  return new Promise((resolveP) => {
+    const args = ['-hide_banner', '-loglevel', 'info'];
+    if (headers && Object.keys(headers).length) {
+      args.push('-headers', Object.entries(headers).map(([k, v]) => k + ': ' + String(v)).join('\r\n') + '\r\n');
+    }
+    args.push('-i', url, '-t', '0.01', '-f', 'null', '-');
+    let child = null;
+    try {
+      child = require('child_process').spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (e) { resolveP(null); return; }
+    let err = '';
+    let done = false;
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      try { if (child && child.exitCode === null) child.kill('SIGKILL'); } catch (e) { /* gone */ }
+      resolveP(val);
+    };
+    const timer = setTimeout(() => finish(null), Math.max(300, timeoutMs || 1500));
+    if (timer.unref) timer.unref();
+    child.stderr.on('data', (c) => {
+      err += c;
+      if (err.length > 8000) err = err.slice(0, 8000);
+      const dm = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(err);
+      const am = /Audio:\s*([a-z0-9_]+)/i.exec(err);
+      if (dm) {
+        const durationMs = Math.round((Number(dm[1]) * 3600 + Number(dm[2]) * 60 + Number(dm[3])) * 1000);
+        const entry = { at: Date.now(), durationMs, audioCodec: am ? am[1].toLowerCase() : null };
+        donorProbe.set(url, entry);
+        clearTimeout(timer);
+        finish(entry);
+      }
+    });
+    child.on('error', () => { clearTimeout(timer); finish(null); });
+    child.on('close', () => { clearTimeout(timer); finish(null); });
+  });
+}
+
+// The measured verdict for a donor URL, if the hub already has one. Slow CDNs hand over a header in
+// 15+ seconds — longer than a Play press may spend — so the first mix against such a donor is blind,
+// and this kick fills the cache for the next one. One flight per URL, generous timeout.
+const donorFlights = new Set();
+function donorPeek(url) {
+  const hit = donorProbe.get(url);
+  return hit && Date.now() - hit.at < DONOR_PROBE_TTL_MS ? hit : null;
+}
+function donorProbeAsync(url, headers) {
+  if (donorFlights.has(url)) return;
+  donorFlights.add(url);
+  probeDonorUrl(url, headers, 30000).then((p) => {
+    donorFlights.delete(url);
+    if (p) log('AUDIO DONOR MEASURED', url.replace(/^https?:\/\//, '').slice(0, 60),
+      Math.round(p.durationMs / 60000) + ' min', p.audioCodec || '');
+  });
+}
+
+/**
  * Ask the donor addon for a playable URL. A torrent donor needs the gateway; an audio-only or direct
  * donor is already an HTTP stream. This is deliberately separate from the primary picker: the donor is
  * allowed to be an audio-only row, and it must never be used as the picture.
@@ -1455,7 +1531,29 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
     if (!r.url) return null;
     url = r.url;
   }
-  return { url, headers: o.headers || source._headers || {}, kind: o.kind || source.kind };
+  const out = { url, headers: o.headers || source._headers || {}, kind: o.kind || source.kind };
+  // A direct donor gets the same header read the hub gives every other file it is about to map: its
+  // length, and the codec the muxer will have to accept. A torrent donor is not an HTTP link, and this
+  // never holds up a press: a cached verdict is free, a host that answers quickly is measured on the
+  // press itself, and a slow CDN is measured in the background for the next one.
+  if (source.kind !== 'torrent' && /^https?:/i.test(url)) {
+    const hit = donorPeek(url);
+    if (hit) {
+      out.durationMs = hit.durationMs;
+      out.audioCodec = hit.audioCodec;
+    } else if (deadline - Date.now() > 1400) {
+      const p2 = await probeDonorUrl(url, out.headers, 1200);
+      if (p2) {
+        out.durationMs = p2.durationMs;
+        out.audioCodec = p2.audioCodec;
+      } else {
+        donorProbeAsync(url, out.headers);
+      }
+    } else {
+      donorProbeAsync(url, out.headers);
+    }
+  }
+  return out;
 }
 
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
@@ -2096,6 +2194,17 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       if (Date.now() >= deadline) break;
       const target = await resolveAudioDonor(cand, kept.streamId || identity, opts, deadline);
       if (!target) continue;
+      // A donor measured a different length than the film is a different cut; mapping it would play
+      // the right language over the wrong scene, silently. Only a measured disagreement refuses —
+      // an unreadable header is no opinion.
+      const filmMs = Number(kept.durationMs) || Number(source.durationMs) || 0;
+      const donorMs = Number(target.durationMs) || 0;
+      if (filmMs > 0 && donorMs > 0 && Math.abs(donorMs - filmMs) > filmMs * DONOR_FIT_SLACK) {
+        log('AUDIO DONOR SKIP', identity, (cand.label || cand.provider)
+          + ': runs ' + Math.round(donorMs / 60000) + ' min against a '
+          + Math.round(filmMs / 60000) + ' min picture');
+        continue;
+      }
       donor = { source: cand, target };
       break;
     }
@@ -2108,6 +2217,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     audioOrd = audioOrdinal(donor.source, desiredLang);
     if (audioOrd == null) audioOrd = 0;
     audioPlan = audioPlanFor(donor.source, desiredLang);
+    // A codec read from the donor's own header overrides the row's claim: MP4 may carry AAC or MP3
+    // untouched, and re-encoding something that needed no re-encoding is a quality loss nobody asked for.
+    if (donor.target.audioCodec) {
+      audioPlan = ['aac', 'mp3'].includes(donor.target.audioCodec) ? 'copy' : 'aac';
+    }
     const track = {
       id: 'a:1',
       language: desiredLang,
@@ -2130,6 +2244,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       claimed: audioEvidence(donor.source, desiredLang).fromClaims,
       audioTrack: 'a:1',
       plan: audioPlan,
+      // What the hub measured about the donor file itself: its length, and the drift against the
+      // picture it was accepted for. Null means the header was never readable.
+      donorDurationMs: donor.target.durationMs || null,
+      driftMs: (donor.target.durationMs && (Number(kept.durationMs) || null))
+        ? donor.target.durationMs - Number(kept.durationMs) : null,
     };
     extraWhy.push('audio: mixed ' + (ranking.LANG_NAMES[desiredLang] || desiredLang)
       + ' from ' + (donor.source.label || donor.source.provider || 'a donor')

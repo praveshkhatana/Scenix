@@ -71,3 +71,25 @@ With a generated 320x240 MP4 whose only audio is a 440 Hz tone, and an audio-pac
 and the tone in the output measured 880 Hz — the donor's, not the picture's — with and without a 4 s
 `start=`. The HLS path produced a playlist whose segments carry the same mix. The `framextv` addon
 resolved a real episode of a live series to its upstream `.m3u8` at play time.
+
+## Donor fit: never dub the wrong cut (2026-10-29)
+
+A donor row only promises a language. The archive's Ransom Hindi rip measures 2 h 00 m for a 1 h 49 m
+film — mapped as-is, that is eleven minutes of drift mixed with total confidence. So the hub now reads
+the donor's own header before accepting it:
+
+- `probeDonorUrl` runs `ffmpeg -i <url> -t 0.01 -f null -`; the `Duration:` line is printed before the
+  body is read, so a short wait is enough. Cached per URL for 30 minutes, single-flight.
+- A host that answers in ~1.2 s is measured on the press itself; a slow CDN (archive.org needs 15 s+)
+  is measured in the background (`AUDIO DONOR MEASURED` in the hub log) and enforced on the next press.
+- The selection loop refuses a donor whose measured length differs from the title's runtime by more
+  than 4% (`DONOR_FIT_SLACK`) and logs `AUDIO DONOR SKIP ... runs X min against a Y min picture`.
+  An unmeasured donor or a title with no runtime is no opinion — it stays offered.
+- The same header read gives the audio codec, which overrides the plan claim: AAC/MP3 copy untouched,
+  anything else re-encodes to AAC.
+- The answer carries the evidence: `audioMix.donorDurationMs` and `audioMix.driftMs`.
+
+Verified end-to-end on this box (2026-10-29): an 8 s test donor and the 121 min archive rip were both
+skipped against a title whose runtime is 111 min (both logged with the minutes), the archive rip was
+accepted blind on the first press and measured in the background, and a donor generated to the exact
+6,660,000 ms runtime mixed with `driftMs: 0` and plan `copy`.
