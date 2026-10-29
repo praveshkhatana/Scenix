@@ -10,7 +10,7 @@ import android.widget.FrameLayout
  */
 class AppContext(
     val app: Application,
-    val theme: Theme,
+    var theme: Theme,
     val prefs: Prefs,
 ) {
     /**

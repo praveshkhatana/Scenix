@@ -39,6 +39,9 @@ const DEFAULTS = {
   // What this hub calls itself where a client lists what it found on the network. Not a machine name:
   // the owner gives it, and two hubs on one LAN must be tellable apart by a person, not by a hostname.
   hubName: 'Scenix Hub',
+  // The visual theme selected for the browser/native chrome. The token files live in web/assets and
+  // are the same shape as the Android assets; an unknown id falls back to the shipped dark theme.
+  theme: 'scenix-dark',
   // ISO-639-2/T codes, the form the hub's own rules and profiles work in (hin, eng, pan).
   // Empty means: no language filter at all — every copy the addons return is allowed.
   languages: [],
@@ -300,6 +303,7 @@ function normalizeDebrid(d) {
 function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
+    theme: String(s.theme || DEFAULTS.theme).trim().slice(0, 40) || DEFAULTS.theme,
     languages: normalizeLanguages(s.languages),
     live: {
       playlist: String((s.live || {}).playlist || '').trim().slice(0, 400),

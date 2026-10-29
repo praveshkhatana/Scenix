@@ -42,6 +42,9 @@ function art(img, src, alt) {
 }
 
 function isNew(item) {
+  // The hub decides this once for every surface: a recent release OR a recent library addition.
+  // The local date check remains only for an older hub that does not send the field yet.
+  if (item && typeof item.isNew === 'boolean') return item.isNew;
   const added = Number(item.addedAt) || 0;
   return added && (Date.now() - added) < 7 * 86400000;
 }
@@ -115,6 +118,14 @@ function card(item, ctx, { art: artSrc, ratio, rank, progress, extra } = {}) {
   // The poster is artwork, not a guarantee: many stills carry no lettering, and a Top 10 still is a
   // frame from the film. The name sits on the art itself, hidden until the tile is focused (always on
   // for a ranked tile), so a viewer can read what they are pointing at without a caption below the rail.
+  // When the hub knows the title's own lettering, that logo is drawn instead of the typed name; a broken
+  // image removes itself and the typed title comes back.
+  if (item.logo) {
+    const logo = el('img', { class: 'clogo', src: item.logo, alt: item.title || '', loading: 'lazy', decoding: 'async' });
+    logo.addEventListener('error', () => { logo.remove(); a.classList.remove('has-logo'); });
+    a.classList.add('has-logo');
+    a.appendChild(logo);
+  }
   a.appendChild(el('div', { class: 'ctitle', text: item.title || '' }));
   node.appendChild(a);
   node.setAttribute('aria-label', item.title || '');

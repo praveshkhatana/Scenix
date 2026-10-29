@@ -50,6 +50,7 @@ export function screen(ctx) {
   const caps = manifest.capabilities || {};
 
   let setting = null;      // /app/v1/settings → settings
+  let themeChoices = [];  // /app/v1/settings → themes
   let names = {};          // /app/v1/settings → languageNames, supplied by the hub
   let prefs = null;        // /app/v1/prefs → prefs
   let installed = [];      // /app/v1/addons → addons
@@ -928,6 +929,16 @@ export function screen(ctx) {
 
   function buildSystem(parent) {
     const canHub = !!caps.settingsAdmin;
+
+    if (themeChoices.length) {
+      const g = group('Theme', 'The colour and surface language of both the television and this page. Changing it reloads the browser.');
+      pickRow(g, 'Theme', 'One token file drives both clients.', themeChoices.map((t) => t.id),
+        (setting && setting.theme) || 'scenix-dark',
+        (id) => { const t = themeChoices.find((x) => x.id === id); return t ? t.name : id; },
+        (id) => { writeSettings({ theme: id }).then(() => window.location.reload()); });
+      parent.appendChild(g);
+    }
+
 
     if (setting) {
       const g = group('This hub', 'Set once for the whole house. The values below are what the hub is running with.');

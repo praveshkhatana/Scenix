@@ -147,16 +147,29 @@ export function token(group, key, fallback) {
 
 export function tokens() { return T; }
 
-export async function load() {
+async function fetchTheme() {
+  // The hub knows the selected theme; a standalone/fixture host may not have the endpoint, so the
+  // bundled token file remains the fallback and app.css remains the last resort.
+  try {
+    const res = await fetch('/app/v1/theme', { cache: 'no-cache' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.tokens && typeof json.tokens === 'object') return json.tokens;
+    }
+  } catch (e) { /* older host: try the static file */ }
   try {
     const res = await fetch(TOKEN_PATH, { cache: 'no-cache' });
     if (res.ok) {
       const json = await res.json();
-      if (json && typeof json === 'object') T = json;
+      if (json && typeof json === 'object') return json;
     }
-  } catch (e) {
-    /* app.css already carries the defaults; the interface is still correct without the JSON. */
-  }
+  } catch (e) { /* app.css already carries the defaults */ }
+  return null;
+}
+
+export async function load() {
+  const json = await fetchTheme();
+  if (json) T = json;
   applyTokens();
   computeScale();
   window.addEventListener('resize', () => { computeScale(); });

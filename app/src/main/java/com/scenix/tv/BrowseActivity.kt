@@ -217,6 +217,10 @@ class BrowseActivity : Activity() {
                     setPadding(theme.gutter, theme.px(32f), theme.gutter, theme.px(44f))
                 }
                 val title = Views.text(app, "h1", 54f, theme.ink, "", bold = true)
+                val logo = ImageView(this@BrowseActivity).apply {
+                    scaleType = ImageView.ScaleType.FIT_START
+                    visibility = View.GONE
+                }
                 val meta = Views.text(app, "sub", 22f, theme.ink2, "")
                 val play = Views.text(app, "button", 22f, theme.ink, "Play", bold = true, gravity = Gravity.CENTER)
                 play.setPadding(theme.px(32f), theme.px(14f), theme.px(32f), theme.px(14f))
@@ -224,6 +228,9 @@ class BrowseActivity : Activity() {
                 play.isFocusable = true
                 play.isClickable = true
                 Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false)
+                words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(130f)).apply {
+                    bottomMargin = theme.px(6f)
+                })
                 words.addView(title)
                 words.addView(meta, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(10f)
@@ -232,7 +239,7 @@ class BrowseActivity : Activity() {
                     topMargin = theme.px(22f)
                 })
                 slot.addView(words, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                HeroHolder(slot, art, title, meta, play)
+                HeroHolder(slot, art, title, logo, meta, play)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -260,9 +267,23 @@ class BrowseActivity : Activity() {
             if (holder is HeroHolder) {
                 val item = hero ?: return
                 holder.title.text = item.title
-                holder.meta.text = listOf(item.year.takeIf { it > 0 }?.toString(), item.maturity, item.genres.firstOrNull())
-                    .filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+                holder.title.visibility = View.VISIBLE
+                holder.logo.visibility = View.GONE
+                val facts = ArrayList<String>()
+                if (item.match > 0) facts.add("${item.match}% match")
+                if (item.isNew) facts.add("New")
+                if (item.year > 0) facts.add(item.year.toString())
+                if (item.maturity.isNotBlank()) facts.add(item.maturity)
+                item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
+                holder.meta.text = facts.joinToString(" · ")
                 BrowseImages.load(holder.art, item.poster ?: item.backdrop, app.theme.px(1100f))
+                if (!item.logo.isNullOrBlank()) {
+                    holder.logo.visibility = View.VISIBLE
+                    BrowseImages.load(holder.logo, item.logo, app.theme.px(560f)) { ok ->
+                        holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
+                        holder.title.visibility = if (ok) View.GONE else View.VISIBLE
+                    }
+                }
                 heroPlay = holder.play
                 holder.play.setOnClickListener { openDetail(item) }
                 holder.itemView.setOnClickListener { openDetail(item) }
@@ -275,7 +296,8 @@ class BrowseActivity : Activity() {
     }
 
     private inner class HeroHolder(
-        view: View, val art: ImageView, val title: TextView, val meta: TextView, val play: TextView,
+        view: View, val art: ImageView, val title: TextView, val logo: ImageView,
+        val meta: TextView, val play: TextView,
     ) : RecyclerView.ViewHolder(view)
 
     private inner class ShelfHolder(
@@ -323,6 +345,21 @@ class BrowseActivity : Activity() {
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
             })
+            val logo = ImageView(this@BrowseActivity).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                visibility = View.GONE
+            }
+            card.addView(logo, FrameLayout.LayoutParams(cardW - theme.px(28f), theme.px(76f)).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = theme.px(8f)
+            })
+            val badge = Views.text(app, "meta", 13f, Color.WHITE, "", bold = true, maxLines = 1)
+            badge.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+            badge.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            card.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = theme.px(10f); topMargin = theme.px(10f)
+            })
             val num = Views.text(app, "h1", 0f, Color.WHITE, "", bold = true, gravity = Gravity.CENTER)
             num.visibility = if (ranked) View.VISIBLE else View.GONE
             card.addView(num, FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
@@ -340,13 +377,27 @@ class BrowseActivity : Activity() {
                 gravity = Gravity.BOTTOM
             })
             Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
-            return CardHolder(card, art, name, num, progress)
+            return CardHolder(card, art, name, logo, badge, num, progress)
         }
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val item = row.items[position]
             holder.name.text = item.title
+            holder.name.visibility = View.VISIBLE
+            holder.logo.visibility = View.GONE
+            val facts = ArrayList<String>()
+            if (item.isNew) facts.add("NEW")
+            if (item.match > 0) facts.add("${item.match}% match")
+            holder.badge.text = facts.joinToString(" · ")
+            holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art, item.poster ?: item.backdrop, cardW)
+            if (!item.logo.isNullOrBlank()) {
+                holder.logo.visibility = View.VISIBLE
+                BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
+                    holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
+                    holder.name.visibility = if (ok) View.GONE else View.VISIBLE
+                }
+            }
             if (ranked) {
                 holder.num.text = (position + 1).toString()
                 holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardH * 0.44f)
@@ -364,8 +415,8 @@ class BrowseActivity : Activity() {
     }
 
     private inner class CardHolder(
-        view: View, val art: ImageView, val name: TextView,
-        val num: TextView, val progress: android.widget.ProgressBar,
+        view: View, val art: ImageView, val name: TextView, val logo: ImageView,
+        val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
     ) : RecyclerView.ViewHolder(view)
 
     companion object {

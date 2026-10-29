@@ -19,6 +19,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
@@ -26,6 +27,7 @@ const zlib = require('zlib');
 const { URL, URLSearchParams } = require('url');
 
 const ROOT = __dirname;
+const THEME_DIR = path.join(ROOT, 'web', 'assets');
 const PORT = Number(process.env.PORT || 8788);
 const TLS_CERT = String(process.env.TLS_CERT || '').trim();
 const TLS_KEY = String(process.env.TLS_KEY || '').trim();
@@ -75,6 +77,7 @@ const HUB_VERSION = process.env.HUB_VERSION || '0.1.0';
 const registry = require('./core/registry').load(ROOT);
 const store = require('./core/store').create(ROOT);
 const merge = require('./core/merge');
+const taste = require('./core/taste');
 const prefs = require('./core/prefs');
 const gateway = require('./core/gateway');
 // Optional: a paid resolver, off unless the owner configures a provider and a token. It is tried before
@@ -2575,6 +2578,28 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   return { status: 200, body: out };
 }
 
+/** The theme registry and the selected theme's tokens, for the web boot and the settings picker. */
+function themeCatalog() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(THEME_DIR, 'themes.json'), 'utf8'));
+    return Array.isArray(j.themes) ? j.themes : [];
+  } catch (e) {
+    return [];
+  }
+}
+function themePayload() {
+  const themes = themeCatalog();
+  const wanted = String(settings.get().theme || 'scenix-dark');
+  const choice = themes.find((t) => t.id === wanted) || themes[0]
+    || { id: 'scenix-dark', name: 'Scenix Dark', asset: 'theme.json' };
+  let tokens = null;
+  try {
+    // The manifest is the allow-list; an id from a request never becomes a path.
+    tokens = JSON.parse(fs.readFileSync(path.join(THEME_DIR, path.basename(String(choice.asset))), 'utf8'));
+  } catch (e) { /* the page keeps app.css defaults */ }
+  return { id: choice.id, name: choice.name, themes, tokens };
+}
+
 async function handle(req, res) {
   const raw = req.url || '/';
   // A bad URL is a bad request, not a broken hub. `decodeURIComponent` THROWS on a malformed escape (a
@@ -2741,6 +2766,10 @@ async function handle(req, res) {
       });
     }
 
+    if (path === '/app/v1/theme') {
+      return send(res, 200, themePayload());
+    }
+
     if (path === '/app/v1/settings' && req.method === 'GET') {
       const options = await catalogOptions();
       return send(res, 200, {
@@ -2748,6 +2777,7 @@ async function handle(req, res) {
         // say "set" or "not set" and never receives the secret back over the network.
         settings: settings.redacted(settings.get()),
         defaults: settings.redacted(settings.DEFAULTS),
+        themes: themeCatalog(),
         // The resolver's own view: which providers this build loaded, whether one is configured, and
         // what it last did. It cannot contain the token.
         debrid: debrid.status(),
@@ -3027,6 +3057,9 @@ async function handle(req, res) {
       if (filled.length !== built.length) {
         log('HOME', 'dropped empty row(s):', built.filter((r) => !r.items.length).map((r) => r.id).join(','));
       }
+      // Every tile carries this viewer's own match percentage and one shared definition of "New".
+      // The fingerprint is built from data/progress.json only; no recommendation service is involved.
+      await taste.decorate(ctx, filled.flatMap((r) => r.items));
       return send(res, 200, { rows: arrangeHome(filled) });
     }
 
@@ -3041,9 +3074,11 @@ async function handle(req, res) {
         return send(res, 403, { error: 'row not for this profile', rowId: row.id, scope: row.scope });
       }
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
+      const items = generalItems(row.id, await buildRow(row, ctx));
+      await taste.decorate(ctx, items);
       return send(res, 200, {
         id: row.id, title: row.title, card: row.card, order: row.order, scope: row.scope || 'all',
-        items: generalItems(row.id, await buildRow(row, ctx)),
+        items,
       });
     }
 
@@ -3065,8 +3100,9 @@ async function handle(req, res) {
           all.push(...(await ctx.catalog(p.id, c.id, { search: q }, SEARCH_BUDGET_MS)));
         }
       }
-      const items = generalItems('search', await pipeline(all, ctx));
-      return send(res, 200, { q, items: items.slice(0, SEARCH_MAX) });
+      const items = generalItems('search', await pipeline(all, ctx)).slice(0, SEARCH_MAX);
+      await taste.decorate(ctx, items);
+      return send(res, 200, { q, items });
     }
 
     m = /^\/app\/v1\/meta\/(.+)$/.exec(path);
@@ -3108,6 +3144,8 @@ async function handle(req, res) {
       if (kept) {
         const faces = await castApi.enrich(kept, Math.min(2200, budget));
         if (faces && faces.length) kept.cast = faces;
+        // The detail page prints the same personal match and New state as the card that opened it.
+        await taste.decorate(ctx, [kept]);
       }
       send(res, kept ? 200 : 403, kept || { identity, droppedByRule: true });
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,

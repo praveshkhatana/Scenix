@@ -90,6 +90,17 @@ data class Source(
             why = strList(o.optJSONArray("why")),
         )
 
+        /** `rating` may be a number or the hub's { value, source } record; both read the same. */
+        private fun ratingValue(v: Any?): Double = when (v) {
+            is Number -> v.toDouble()
+            is JSONObject -> v.optDouble("value", 0.0)
+            is String -> v.toDoubleOrNull() ?: 0.0
+            else -> 0.0
+        }
+
+        private fun ratingSource(v: Any?): String =
+            if (v is JSONObject) s(v, "source", "") else ""
+
         private fun strList(a: JSONArray?): List<String> {
             if (a == null) return emptyList()
             val out = ArrayList<String>(a.length())
@@ -127,7 +138,13 @@ data class Item(
     val poster: String? = null,
     val backdrop: String? = null,
     val logo: String? = null,
+    /** This viewer's own percentage, learned from watch history by the hub; 0 = not known yet. */
     val match: Int = 0,
+    /** A recent release or a recent library addition, as the hub defines "New" for every surface. */
+    val isNew: Boolean = false,
+    /** The addon's editorial rating (IMDb when available); separate from `match`. */
+    val rating: Double = 0.0,
+    val ratingSource: String = "",
     val maturity: String = "",
     val durationMs: Long = 0,
     val languages: List<String> = emptyList(),
@@ -170,6 +187,9 @@ data class Item(
             backdrop = s(o, "backdrop", "").takeIf { it.isNotBlank() },
             logo = s(o, "logo", "").takeIf { it.isNotBlank() },
             match = o.optInt("match", 0),
+            isNew = o.optBoolean("isNew", false),
+            rating = ratingValue(o.opt("rating")),
+            ratingSource = ratingSource(o.opt("rating")),
             maturity = s(o, "maturity", ""),
             durationMs = o.optLong("durationMs", 0L),
             languages = strList(o.optJSONArray("languages")),
@@ -194,6 +214,17 @@ data class Item(
             }
             return out
         }
+
+        /** `rating` may be a number or the hub's { value, source } record; both read the same. */
+        private fun ratingValue(v: Any?): Double = when (v) {
+            is Number -> v.toDouble()
+            is JSONObject -> v.optDouble("value", 0.0)
+            is String -> v.toDoubleOrNull() ?: 0.0
+            else -> 0.0
+        }
+
+        private fun ratingSource(v: Any?): String =
+            if (v is JSONObject) s(v, "source", "") else ""
 
         private fun strList(a: JSONArray?): List<String> {
             if (a == null) return emptyList()

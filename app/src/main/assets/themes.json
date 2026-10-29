@@ -1,0 +1,19 @@
+{
+ "themes": [
+  {
+   "id": "scenix-dark",
+   "name": "Scenix Dark",
+   "asset": "theme.json"
+  },
+  {
+   "id": "scenix-midnight",
+   "name": "Midnight",
+   "asset": "theme-midnight.json"
+  },
+  {
+   "id": "scenix-ember",
+   "name": "Ember",
+   "asset": "theme-ember.json"
+  }
+ ]
+}

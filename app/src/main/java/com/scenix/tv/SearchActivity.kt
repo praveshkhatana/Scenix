@@ -265,19 +265,51 @@ class SearchActivity : Activity() {
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
             })
+            val logo = ImageView(this@SearchActivity).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                visibility = View.GONE
+            }
+            card.addView(logo, FrameLayout.LayoutParams(cardW - theme.px(24f), theme.px(64f)).apply {
+                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                bottomMargin = theme.px(8f)
+            })
+            val badge = Views.text(app, "meta", 12f, Color.WHITE, "", bold = true, maxLines = 1)
+            badge.setPadding(theme.px(7f), theme.px(3f), theme.px(7f), theme.px(3f))
+            badge.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            card.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = theme.px(8f); topMargin = theme.px(8f)
+            })
             Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
-            return ResultHolder(card, art, name)
+            return ResultHolder(card, art, name, logo, badge)
         }
 
         override fun onBindViewHolder(holder: ResultHolder, position: Int) {
             val item = items[position]
             holder.name.text = item.title
+            holder.name.visibility = View.VISIBLE
+            holder.logo.visibility = View.GONE
+            val facts = ArrayList<String>()
+            if (item.isNew) facts.add("NEW")
+            if (item.match > 0) facts.add("${item.match}%")
+            holder.badge.text = facts.joinToString(" · ")
+            holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art, item.poster ?: item.backdrop, cardW)
+            if (!item.logo.isNullOrBlank()) {
+                holder.logo.visibility = View.VISIBLE
+                BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
+                    holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
+                    holder.name.visibility = if (ok) View.GONE else View.VISIBLE
+                }
+            }
             holder.itemView.setOnClickListener { open(item) }
         }
     }
 
-    private inner class ResultHolder(view: View, val art: ImageView, val name: TextView) : RecyclerView.ViewHolder(view)
+    private inner class ResultHolder(
+        view: View, val art: ImageView, val name: TextView,
+        val logo: ImageView, val badge: TextView,
+    ) : RecyclerView.ViewHolder(view)
 
     companion object {
         const val EXTRA_PROFILE = "profile"

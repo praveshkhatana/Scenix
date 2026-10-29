@@ -9,7 +9,7 @@
  */
 
 const FIELDS = [
-  'identity', 'type', 'title', 'year', 'poster', 'backdrop', 'logo', 'match', 'maturity',
+  'identity', 'type', 'title', 'year', 'poster', 'backdrop', 'logo', 'rating', 'match', 'maturity',
   'durationMs', 'languages', 'genres', 'addedAt', 'releasedAt', 'inCinemas', 'live', 'progress',
   'episodes',
   // The detail page's text. Off this whitelist a synopsis picked up from one addon vanishes the
@@ -25,7 +25,7 @@ const FIELDS = [
 function blankItem() {
   return {
     identity: null, type: null, title: null, year: null, poster: null, backdrop: null, logo: null,
-    match: null, maturity: null, durationMs: null, languages: null, genres: null,
+    rating: null, match: null, maturity: null, durationMs: null, languages: null, genres: null,
     addedAt: null, releasedAt: null, inCinemas: false, live: null, progress: null, sources: [],
     episodes: null, streamId: null, overview: null, tagline: null, cast: null, crew: null, country: null,
   };

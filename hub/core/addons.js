@@ -715,7 +715,10 @@ class External {
       poster: meta.poster || null,
       backdrop: meta.background || null,
       logo: meta.logo || null,
-      match: meta.imdbRating ? Math.round(Number(meta.imdbRating) * 10) : null,
+      // The addon's rating is a fact about the title; `match` is the viewer's own taste, filled in
+      // per profile by core/taste.js. Keeping them apart stops an IMDb score being printed as "% match".
+      rating: meta.imdbRating ? { value: Number(meta.imdbRating), source: 'IMDb' } : null,
+      match: null,
       maturity: meta.certification || null,
       durationMs: runtimeMs(meta.runtime),
       languages: langCodes(meta.language || meta.languages),

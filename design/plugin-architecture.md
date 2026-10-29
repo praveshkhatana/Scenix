@@ -48,7 +48,10 @@ Two rules make that shape possible, and nothing may violate them:
   "type": "movie | series | channel | video",
   "title": "…", "year": 2026,
   "poster": "https://…", "backdrop": "https://…", "logo": "https://…",
-  "match": 98, "maturity": "16+", "durationMs": 8040000,
+  "match": 98,                           // THIS profile's taste, 0–100 (see §1.1)
+  "rating": { "value": 8.1, "source": "IMDb" },  // editorial rating, never mixed into match
+  "isNew": true,                        // recent release OR recently added to the library
+  "maturity": "16+", "durationMs": 8040000,
   "languages": ["hin","eng","pan"], "genres": ["Action"],
   "addedAt": 1761300000000,            // first sweep the hub saw it
   "releasedAt": 1767225600000,         // from Cinemeta
@@ -64,6 +67,20 @@ Two rules make that shape possible, and nothing may violate them:
 ```
 
 `identity` is the merge key (`imdb:tt…`, else `norm:<slug>-<year>`). No screen ever sees duplicates.
+
+### 1.1 The three viewer-facing signals
+
+- **`logo`** is the title's own lettering, when a provider supplies it. It rides on the same item in
+  home rows, search, a row's See-all and the detail page, so a hero or a focused card can show the film's
+  logo instead of setting its name in type. The clients fall back to the typed title when the image fails.
+- **`match`** is personal: `core/taste.js` builds a fingerprint from *that profile's* `data/progress.json`
+  history (genre, cast, crew, type, decade, languages, weighted by recency and completion) and scores each
+  tile against it. It is recalculated per request, never shared between profiles, and stays `null` until
+  the profile has watched something. The addon's editorial score lives in **`rating`**, not here, so an
+  IMDb number can never be printed as a taste percentage.
+- **`isNew`** is decided once by the hub: a title released in the last 45 days (and not still upcoming),
+  or one that entered this hub's library in the last 7 days. The browser and the native cards read the
+  same boolean instead of each keeping their own date rule.
 
 ## 2. Hub plugin host (`hub/`)
 

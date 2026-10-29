@@ -17,6 +17,10 @@ class Prefs(context: Context) {
     private val sp: SharedPreferences =
         context.getSharedPreferences("scenix", Context.MODE_PRIVATE)
 
+    /** The visual theme's id in assets/themes.json; a device preference, mirrored to the hub. */
+    fun theme(): String = sp.getString(KEY_THEME, "scenix-dark") ?: "scenix-dark"
+    fun setTheme(id: String) = sp.edit().putString(KEY_THEME, id.trim()).apply()
+
     // ---- hub -----------------------------------------------------------------------------
     fun hubUrl(fallback: String): String = sp.getString(KEY_HUB, null)?.takeIf { it.isNotBlank() } ?: fallback
     fun setHubUrl(url: String) = sp.edit().putString(KEY_HUB, url.trim()).apply()
@@ -123,6 +127,7 @@ class Prefs(context: Context) {
         private const val KEY_HUB_LAST = "hub_url_last_working"
         private const val KEY_BACKEND = "backend_choice"
         private const val KEY_DISCOVERED = "discovered_hubs"
+        private const val KEY_THEME = "theme"
         private const val KEY_TOKEN = "hub_token"
         private const val KEY_PROFILE_UNLOCKED = "profile_unlocked"
         private const val KEY_PROFILE_UNLOCKED_AT = "profile_unlocked_at"

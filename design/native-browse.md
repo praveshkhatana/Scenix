@@ -133,7 +133,8 @@ reload.
   row so Audio/Subtitles stay reachable. A hub with no channel row makes zap a clean no-op.
 - A series ending shows a native next-episode card. The theme's `player.autoplayCountdownMs`
   (default 7 s) rolls into the next episode, with an Undo chip that returns to the finished one.
-- Each shelf is a horizontal RecyclerView; cards are `FrameLayout`s with an ImageView, a title scrim
+- Each shelf is a horizontal RecyclerView; cards are `FrameLayout`s with an ImageView, a title scrim,
+  a `NEW · n% match` chip fed by the hub, and the title's own logo when it loads (typed title otherwise).
   and the existing `Focus` ring/scale. Focus is native, not a WebView focus engine.
 - `BrowseImages` uses a 48 MB LRU cache, four workers, `RGB_565`, one HTTP download per image (bounds
   decode then sampled decode), and a tag check so a recycled card cannot show the previous poster.

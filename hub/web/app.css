@@ -1538,3 +1538,15 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   pointer-events: none;
 }
 .card.foc .ctitle, .card.rank .ctitle { opacity: 1; transform: none; }
+/* A title's own lettering, when the hub carries it. It occupies the title's slot, appears with the same
+   focus fade, and is hidden behind the typed title's own fallback rules above. */
+.card .art .clogo {
+  position: absolute; left: calc(12px * var(--s)); right: calc(12px * var(--s)); bottom: calc(14px * var(--s));
+  z-index: 6; max-height: 34%; width: auto; max-width: calc(100% - 24px * var(--s));
+  object-fit: contain; object-position: left bottom; pointer-events: none;
+  opacity: 0; transform: translateY(calc(5px * var(--s)));
+  transition: opacity var(--focus-ms) ease, transform var(--focus-ms) ease;
+  filter: drop-shadow(0 2px 10px rgba(0,0,0,.65));
+}
+.card .art.has-logo + .ctitle { display: none; }
+.card.foc .art .clogo, .card.rank .art .clogo { opacity: 1; transform: none; }

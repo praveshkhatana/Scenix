@@ -91,6 +91,9 @@ class DetailActivity : Activity() {
         val year = record.optInt("year", 0)
         val maturity = s(record, "maturity", "")
         val duration = record.optLong("durationMs", 0L)
+        val match = record.optInt("match", 0)
+        val isNew = record.optBoolean("isNew", false)
+        val logoUrl = s(record, "logo", "").takeIf { it.isNotBlank() }
 
         val hero = FrameLayout(this).apply { setBackgroundColor(theme.surface2) }
         body.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(600f)))
@@ -124,10 +127,26 @@ class DetailActivity : Activity() {
             android.util.TypedValue.COMPLEX_UNIT_PX,
             if (title.length > 42) theme.px(70f).toFloat() else theme.px(104f).toFloat(),
         )
+        val logo = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_START
+            visibility = View.GONE
+        }
+        words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(130f)).apply {
+            bottomMargin = theme.px(8f)
+        })
         words.addView(heading, LinearLayout.LayoutParams(
             theme.px(1100f), ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
+        if (logoUrl != null) {
+            logo.visibility = View.VISIBLE
+            BrowseImages.load(logo, logoUrl, theme.px(560f)) { ok ->
+                logo.visibility = if (ok) View.VISIBLE else View.GONE
+                heading.visibility = if (ok) View.GONE else View.VISIBLE
+            }
+        }
         val meta = ArrayList<String>()
+        if (match > 0) meta.add("$match% match")
+        if (isNew) meta.add("New")
         if (year > 0) meta.add(year.toString())
         if (maturity.isNotBlank() && !maturity.equals("null", true)) meta.add(maturity)
         if (duration > 0) meta.add(runtime(duration))

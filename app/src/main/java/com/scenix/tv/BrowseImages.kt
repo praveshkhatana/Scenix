@@ -23,21 +23,32 @@ object BrowseImages {
     private val pool = Executors.newFixedThreadPool(4) { r -> Thread(r, "scenix-image").apply { isDaemon = true } }
     private val main = Handler(Looper.getMainLooper())
 
-    fun load(view: ImageView, url: String?, targetWidthPx: Int = 420) {
+    /**
+     * Load into a recycled view. `onResult` is called on the main thread with true/false when the URL
+     * settles, so a card can swap between a title logo and typed fallback text without guessing.
+     */
+    fun load(view: ImageView, url: String?, targetWidthPx: Int = 420, onResult: ((Boolean) -> Unit)? = null) {
         val clean = url?.trim().orEmpty()
         // RecyclerView rebinds a card every time it leaves and re-enters the window. Re-setting the
         // same bitmap clears the drawable first, which costs a frame and a bitmap upload for nothing.
-        if (view.tag == clean && view.drawable != null) return
+        if (view.tag == clean && view.drawable != null) { onResult?.invoke(true); return }
         view.tag = clean
         view.setImageDrawable(null)
-        if (clean.isEmpty()) return
-        cache.get(clean)?.let { view.setImageBitmap(it); return }
+        if (clean.isEmpty()) { onResult?.invoke(false); return }
+        cache.get(clean)?.let {
+            view.setImageBitmap(it)
+            onResult?.invoke(true)
+            return
+        }
 
         pool.execute {
             val bitmap = decode(clean, targetWidthPx)
             if (bitmap != null) cache.put(clean, bitmap)
             main.post {
-                if (view.tag == clean && bitmap != null) view.setImageBitmap(bitmap)
+                if (view.tag == clean) {
+                    if (bitmap != null) view.setImageBitmap(bitmap)
+                    onResult?.invoke(bitmap != null)
+                }
             }
         }
     }

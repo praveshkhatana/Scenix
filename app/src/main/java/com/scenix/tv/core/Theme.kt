@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 import android.graphics.Color
 import android.util.Log
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -82,10 +83,36 @@ class Theme private constructor(
         private const val TAG = "ScenixTheme"
         const val ASSET = "theme.json"
 
-        fun load(assets: AssetManager, screenW: Int, screenH: Int): Theme {
+        /** One selectable theme from assets/themes.json. */
+        data class Choice(val id: String, val name: String, val asset: String)
+
+        /** What the settings picker offers. A missing manifest keeps the built-in default only. */
+        fun catalog(assets: AssetManager): List<Choice> {
+            val out = ArrayList<Choice>()
+            try {
+                val text = assets.open("themes.json").bufferedReader().use { it.readText() }
+                val arr = JSONObject(text).optJSONArray("themes") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id").trim()
+                    val asset = o.optString("asset").trim()
+                    if (id.isBlank() || asset.isBlank()) continue
+                    out.add(Choice(id, o.optString("name", id), asset))
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "assets/themes.json missing or unreadable", t)
+            }
+            if (out.isEmpty()) out.add(Choice("scenix-dark", "Scenix Dark", ASSET))
+            return out
+        }
+
+        fun assetFor(assets: AssetManager, id: String): String =
+            catalog(assets).firstOrNull { it.id == id }?.asset ?: ASSET
+
+        fun load(assets: AssetManager, screenW: Int, screenH: Int, asset: String = ASSET): Theme {
             var root = JSONObject()
             try {
-                assets.open(ASSET).use { inp ->
+                assets.open(asset).use { inp ->
                     BufferedReader(InputStreamReader(inp, "UTF-8")).use { r ->
                         val sb = StringBuilder()
                         var line: String?
@@ -94,7 +121,7 @@ class Theme private constructor(
                     }
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "assets/$ASSET missing or unreadable — using built-in defaults", t)
+                Log.w(TAG, "assets/$asset missing or unreadable — using built-in defaults", t)
             }
             val canvas = root.optJSONObject("canvas")
             val cw = canvas?.optInt("width", 1920) ?: 1920

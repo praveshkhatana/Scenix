@@ -15,6 +15,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Views
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,6 +40,9 @@ class SettingsActivity : Activity() {
     private var globalRows: JSONObject? = null
     private var rowsCfg: JSONObject? = null
     private var picker: View? = null
+    // The D-pad is trapped inside a picker: Android's default search treats the overlay as a plain
+    // rectangle and can hand focus to a row behind it, which turned "pick a theme" into "open Live TV".
+    private var pickerRows: List<View> = emptyList()
     private var lockInfo: JSONObject? = null
     private var profileKind = ""
     private var pinLayer: FrameLayout? = null
@@ -173,6 +177,11 @@ class SettingsActivity : Activity() {
         // A kids profile never sees the admin rows, lock or no lock. An authorised person uses an
         // adult profile and proves the admin PIN there.
         if (profileKind != "kids") {
+            val themeName = Theme.catalog(assets).firstOrNull { it.id == app.prefs.theme() }?.name
+                ?: app.prefs.theme()
+            addRow("Theme", themeName, "The look of the native screens and the web UI") {
+                requireAdmin { pickTheme() }
+            }
             addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks") {
                 requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
             }
@@ -489,6 +498,7 @@ class SettingsActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
         picker = layer
+        pickerRows = firstRows
         val target = firstRows.getOrNull(options.indexOfFirst { it.first == current }.coerceAtLeast(0)) ?: firstRows.firstOrNull()
         target?.post { target.requestFocus() }
     }
@@ -496,6 +506,17 @@ class SettingsActivity : Activity() {
     private fun closePicker() {
         picker?.let { root.removeView(it) }
         picker = null
+        pickerRows = emptyList()
+    }
+
+    /** Move the ring one option up/down in the open picker, wrapping at the ends. */
+    private fun movePicker(delta: Int): Boolean {
+        if (pickerRows.isEmpty()) return false
+        val at = pickerRows.indexOfFirst { it.isFocused }
+        val next = if (at < 0) 0 else (at + delta).coerceIn(0, pickerRows.lastIndex)
+        if (next == at) return true
+        pickerRows[next].requestFocus()
+        return true
     }
 
     private fun write(patch: JSONObject) {
@@ -531,10 +552,23 @@ class SettingsActivity : Activity() {
             }
             return super.dispatchKeyEvent(event)
         }
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN && picker != null) {
-            closePicker()
-            // The row that opened the picker is the last focused view; Android restores it.
-            return true
+        if (picker != null && event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_BACK -> {
+                    closePicker()
+                    // The row that opened the picker is the last focused view; Android restores it.
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> return movePicker(-1)
+                KeyEvent.KEYCODE_DPAD_DOWN -> return movePicker(1)
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                    val focused = pickerRows.firstOrNull { it.isFocused }
+                    if (focused != null) {
+                        focused.performClick()
+                        return true
+                    }
+                }
+            }
         }
         return super.dispatchKeyEvent(event)
     }
@@ -582,6 +616,22 @@ class SettingsActivity : Activity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun pickTheme() {
+        val choices = Theme.catalog(assets)
+        showPicker("Theme", choices.map { it.id to it.name }, app.prefs.theme()) { id ->
+            app.prefs.setTheme(id)
+            (application as ScenixApp).reloadTheme()
+            // Keep the browser chrome on the same theme as the television.
+            api.saveSettings(JSONObject().put("settings", JSONObject().put("theme", id))) { _, _ -> }
+            // The whole task was built with the old tokens; start clean at the profile gate so every
+            // native screen is drawn with the new theme.
+            startActivity(
+                Intent(this, ProfilesActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
         }
     }
 
@@ -685,6 +735,8 @@ class SettingsActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
         pinLayer = layer
+        // The keypad is a full-screen overlay; the page behind it must not take the ring.
+        page.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
         (keys.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.post {
             (keys.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.requestFocus()
         }
@@ -721,6 +773,7 @@ class SettingsActivity : Activity() {
         pinLayer?.let { root.removeView(it) }
         pinLayer = null
         pinOnDone = null
+        page.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
     }
 
     companion object {
