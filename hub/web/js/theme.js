@@ -90,6 +90,7 @@ function applyPack() {
   attr('motion', 'rise');
   attr('detail', 'backdrop');
   attr('nav', 'classic');
+  attr('stage', 'off');
   root.setAttribute('data-theme', String(T.id || 'scenix-dark'));
   root.style.setProperty('--focus-color',
     p.focusColor ? cssColor(p.focusColor) : 'var(--focus-ring)');

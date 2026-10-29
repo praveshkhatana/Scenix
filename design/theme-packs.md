@@ -65,10 +65,10 @@ the asset named by `Prefs.theme`; changing the theme restarts the task at the pr
 - **nav** — `pill` floats one centred capsule over the stage (Apple); `classic` keeps the wordmark
   left and the links right.
 - **rank** — `outline` draws hollow Top-10 numerals (Apple); `solid` fills them (classic/Netflix).
-- **stage** — `focus` gives the native home one full-screen backdrop behind the shelves. It crossfades
-  to the focused tile's art, dims every other card and blurs/dims the stage while the viewer roams;
-  `off` keeps the opaque page. This is native-only; the browser's shelf layer already sits on its own
-  page background.
+- **stage** — `focus` gives home one full-screen backdrop behind the shelves, on both clients. It
+  crossfades to the focused tile's art, dims every other card and blurs/dims the stage while the viewer
+  roams; `off` keeps the opaque page. The browser stage is `js/screens/home.js` + the `.apple-stage`
+  rules in `packs.css`; the native one is `BrowseActivity.Stage`.
 
 ## 3. The three packs now
 

@@ -102,7 +102,12 @@ function quickActions(item, ctx) {
 function card(item, ctx, { art: artSrc, ratio, rank, progress, extra } = {}) {
   const node = el('div', {
     class: 'card',
-    dataset: { identity: item.identity, i: ctx.index },
+    // The stage reads the focused tile's own art. Keeping it on the element means the focus observer
+    // does not need a second map from DOM node back to item.
+    dataset: {
+      identity: item.identity, i: ctx.index,
+      bd: item.backdrop || item.poster || '', p: item.poster || '',
+    },
     'aria-label': item.title,
   });
   node.style.setProperty('--i', String(ctx.index || 0));
@@ -186,7 +191,7 @@ registerCard('genre', (item, ctx) => {
 registerCard('channel', (item, ctx) => {
   const node = el('div', {
     class: 'card chan-card',
-    dataset: { identity: item.identity, i: ctx.index },
+    dataset: { identity: item.identity, i: ctx.index, bd: item.backdrop || item.poster || '' },
     'aria-label': item.title,
   });
   node.style.setProperty('--i', String(ctx.index || 0));

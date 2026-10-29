@@ -28,6 +28,55 @@ export function screen(ctx) {
   const shelves = el('div', { class: 'rows pulled' });
   root.appendChild(shelves);
 
+  /* ---- the Apple stage -------------------------------------------------- */
+  // One backdrop behind the shelves, crossfading to the tile under the ring and blurring while the
+  // viewer walks. Only the Apple pack opts in; every other pack keeps the opaque page.
+  const stagePack = token('pack', 'stage', 'off') === 'focus';
+  let homeStage = null;
+  let stageFront = null;
+  let stageBack = null;
+  let stageUrl = '';
+  if (stagePack) {
+    const host = document.getElementById('stage');
+    if (host) {
+      homeStage = el('div', { class: 'apple-stage', 'aria-hidden': 'true' });
+      stageFront = el('div', { class: 'sg a' });
+      stageBack = el('div', { class: 'sg b' });
+      homeStage.appendChild(stageFront);
+      homeStage.appendChild(stageBack);
+      homeStage.appendChild(el('div', { class: 'veil' }));
+      host.insertBefore(homeStage, host.firstChild);
+    }
+  }
+
+  function stageShow(url) {
+    if (!homeStage || !url || url === stageUrl) return;
+    stageUrl = url;
+    const incoming = stageFront && stageFront.classList.contains('on') ? stageBack : stageFront;
+    if (!incoming) return;
+    const paint = () => {
+      if (stageUrl !== url) return;
+      incoming.style.backgroundImage = `url("${url}")`;
+      incoming.classList.add('on');
+      if (incoming === stageFront) stageBack && stageBack.classList.remove('on');
+      else { stageFront && stageFront.classList.remove('on'); stageFront = incoming; }
+    };
+    const img = new Image();
+    img.onload = paint;
+    img.onerror = () => { if (stageUrl === url) stageUrl = ''; };
+    img.src = url;
+  }
+
+  function stageRoam(on) {
+    if (!homeStage) return;
+    document.body.classList.toggle('roaming', !!on);
+  }
+
+  function stageHero() {
+    const item = bb && bb.__items && bb.__index ? bb.__items[bb.__index()] : null;
+    return item ? (item.backdrop || item.poster) : '';
+  }
+
   let rotate = null;
   let bb = null;
   let dwell = null;
@@ -63,6 +112,9 @@ export function screen(ctx) {
       const next = (row.__index() + 1) % row.__items.length;
       // The timed turn fades (art cross-fade + copy column leave/arrive); a press-driven turn does not.
       row.__setItem(next, true);
+      if (focus.getFocus() && focus.getFocus().closest && focus.getFocus().closest('.billboard')) {
+        stageShow(row.__items[next] && (row.__items[next].backdrop || row.__items[next].poster));
+      }
       prewarm(row.__items[next]);
       for (const b of row.querySelectorAll('.bb-btns .btn, .bb-btns .round')) focus.focusable(b);
     }, ms);
@@ -187,6 +239,23 @@ export function screen(ctx) {
 
   const disposers = [];
 
+  if (stagePack) {
+    const offStageFocus = focus.onFocus((node) => {
+      if (!node || !homeStage) return;
+      const card = node.closest && node.closest('.card');
+      if (card) {
+        stageShow(card.dataset.bd || card.dataset.p || '');
+        stageRoam(true);
+        return;
+      }
+      if (node.closest && (node.closest('.billboard') || node.closest('.nav'))) {
+        stageShow(stageHero());
+        stageRoam(false);
+      }
+    });
+    disposers.push(offStageFocus);
+  }
+
   /** Stop whatever is moving and give the card back the size it had before. */
   function endPreview() {
     const n = previewFor;
@@ -228,6 +297,10 @@ export function screen(ctx) {
 
     const hero = ordered.find((r) => r.card === 'hero');
     const rest = ordered.filter((r) => r !== hero);
+    const firstStage = (hero && (hero.items || [])[0])
+      || (rest[0] && (rest[0].items || [])[0]);
+    if (firstStage) stageShow(firstStage.backdrop || firstStage.poster);
+    stageRoam(false);
 
     if (hero && (hero.items || []).length) {
       bb = billboard(hero, {
@@ -321,6 +394,8 @@ export function screen(ctx) {
     collapseExpanded();
     stopPreview();
     dropMountedRows(root);
+    stageRoam(false);
+    if (homeStage) { homeStage.remove(); homeStage = null; }
     for (const d of disposers) { try { d(); } catch (e) { /* ignore */ } }
   };
 
