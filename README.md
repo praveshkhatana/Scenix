@@ -3,9 +3,10 @@
 A self-hosted streaming system: one content hub, the same catalogue, every screen.
 
 Scenix puts the catalogue, the sources and the policy on a machine you own. Browsers and phones
-draw the web interface; the television draws its shelves natively and uses the same web interface for
-title details, playback and settings. Nothing has to be rented, nothing is licensed
-per device, and no vendor decides what your family may watch. If you already pay for a debrid account,
+draw the web interface; the television draws Home, title pages, search, settings and playback natively,
+themed by the same pack files. The bundled web UI is still what a browser gets, and it remains the
+surface for the catalogue browse grids and the `tv://` deep links. Nothing has to be rented, nothing is
+licensed per device, and no vendor decides what your family may watch. If you already pay for a debrid account,
 the hub can optionally use it as a faster source; it is off until you turn it on.
 
 ```
@@ -17,8 +18,8 @@ the hub can optionally use it as a faster source; it is off until you turn it on
         ┌────────┴────────┐
         ▼                 ▼
    TV APP                    ANY BROWSER / PHONE
-   native Home + Detail      (the web interface
-   + web player/settings      the hub serves)
+   native Home, Detail,      (the web interface
+   Search, Settings, Player   the hub serves)
 ```
 
 One contract, two presentation surfaces. The catalogue, ranking, profiles and policy stay on the hub;

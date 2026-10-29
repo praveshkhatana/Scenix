@@ -96,14 +96,14 @@ A user must never have to edit a file or set an environment variable to make Sce
 
 ### Which surface a device draws
 
-Two surfaces, one contract. The television draws **Home/browse** natively (`BrowseActivity` over
-RecyclerViews) because that is the scroll/focus surface where a WebView cannot reach native smoothness.
-Detail, Player, Search and Settings are `WebShellActivity` loading the hub's page, with a Media3
-surface for video. Browsers and phones use the web page for everything. The native browse surface reads
-the same `/app/v1/home` rows and opens web Detail; it is not a second catalogue or a second player.
+Two surfaces, one contract. The television draws Home/browse (`BrowseActivity`), Detail, Search,
+Settings, Profiles and Player natively, with a Media3 surface for video; the theme packs drive those
+native screens directly through `Theme.kt`. Browsers and phones use the web page for everything. The
+bundled web UI is still the browser surface and the fallback for `tv://` deep links; the normal
+television path no longer goes through a WebView for a shelf, a title, a search, a setting or a play.
 
-Setup and the profile gate remain the handoff: setup finds the backend, the web profile gate produces a
-profile, and `Scenix.openNativeBrowse(profile)` opens native Home. Web Home returns to it.
+Setup and the profile gate remain the handoff: setup finds the backend, the profile gate produces a
+profile, and native Home opens against the same `/app/v1` contract.
 
 `tv://detail/<identity>` and `tv://play/<identity>` deep links open the web page at `#/detail/…` or
 `#/play/…`. The old per-device **Settings → Interface** switch and the old native Detail/Search/Player

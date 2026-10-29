@@ -15,14 +15,15 @@ import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.plugins.nav.PairingScreen
 
 /**
- * The launcher. There is one product — the hub's web UI in [WebShellActivity] over this device's
- * native player — so this activity does only the work that must happen before the page exists:
+ * The launcher. The product is the native television surface over the hub's `/app/v1` contract;
+ * [WebShellActivity] remains the browser surface and the `tv://` deep-link fallback. This activity
+ * does only the work that must happen before a screen exists:
  *
  *  1. apply the launch switches (`--es hub_url …`, `--es fixture …`, `--es token …`, `--ez setup/standalone`);
  *  2. run [HubWatch] once to find a hub (or notice that this TV is standalone);
  *  3. if nothing is paired and nothing answers, show the native setup screen
  *     ([PairingScreen]) so a fresh TV can find or type a hub, or choose standalone;
- *  4. otherwise open [WebShellActivity] and finish.
+ *  4. otherwise open the native profile gate (or the requested web route) and finish.
  *
  * Deep links `tv://detail/<identity>` and `tv://play/<identity>` become the hub's own page route
  * (`#/detail/<identity>`, `#/play/<identity>`) and are handed to the shell as its `url` extra. A
