@@ -179,6 +179,9 @@ class SettingsActivity : Activity() {
             addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips") {
                 requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
             }
+            addRow("Categories", "Shelves built from your catalogues", "Name a catalogue or genre this hub carries as its own Home shelf") {
+                requireAdmin { startActivity(Intent(this, CategoriesActivity::class.java)) }
+            }
             addRow("Manage profiles", "Add, rename, PINs", "Create people, set their kind and remove them") {
                 requireAdmin { startActivity(Intent(this, ManageProfilesActivity::class.java)) }
             }
