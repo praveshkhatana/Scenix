@@ -270,17 +270,25 @@ class BrowseActivity : Activity() {
                 mp.isLooping = true
                 mp.setVolume(0f, 0f)
                 mp.start()
-                if (!isFinishing && !isDestroyed) {
-                    video.alpha = 0f
-                    video.visibility = View.VISIBLE
-                    video.animate().alpha(1f).setDuration(500).start()
-                }
+                video.animate().alpha(1f).setDuration(500).start()
             }
             video.setOnErrorListener { _, _, _ ->
                 if (!isFinishing && !isDestroyed) video.visibility = View.GONE
                 true
             }
+            // A GONE VideoView has no surface, so it would never prepare. It goes up transparent
+            // with the URI set, and the fade to opaque happens on the first real frame — a black
+            // box over the backdrop is worse than a beat of nothing. If nothing ever prepared,
+            // take it back down so the billboard is not parked on an empty slot forever.
+            video.alpha = 0f
+            video.visibility = View.VISIBLE
             video.setVideoURI(Uri.parse(api.absolute(target)))
+            video.postDelayed({
+                if (video.alpha == 0f) {
+                    runCatching { video.stopPlayback() }
+                    video.visibility = View.GONE
+                }
+            }, 8000L)
         }
     }
 
@@ -527,10 +535,16 @@ class BrowseActivity : Activity() {
             if (slides.size > 1) {
                 clock.postDelayed(rotateHero, app.theme.token("hero", "rotateMs", 6000.0).toLong())
             }
-            list.postDelayed({
-                val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list) ?: return@postDelayed
-                first.requestFocus()
-            }, 700)
+            // The first tile takes initial focus, but only once the rails have actually laid out
+            // their children — on a cold load that can be well after the data lands, so retry.
+            list.postDelayed(object : Runnable {
+                var tries = 0
+                override fun run() {
+                    val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list)
+                    if (first?.requestFocus() == true) return
+                    if (++tries < 10) list.postDelayed(this, 300)
+                }
+            }, 400)
         }
     }
 
