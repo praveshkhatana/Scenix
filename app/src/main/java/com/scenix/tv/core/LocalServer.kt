@@ -157,9 +157,13 @@ class LocalServer private constructor(
                         // `addonsResynced` is the one effect a TV can cause: new addon URLs mean the shelves
                         // are fetched again. There is no live tuner here to reload.
                         val touchedAddons = o.has("addons")
+                        hub.setSettings(o)
+                        // The token is write-only: answer with the redacted settings envelope, never the
+                        // object that was just stored.
                         res.json(
                             200,
-                            JSONObject().put("ok", true).put("settings", hub.setSettings(o))
+                            JSONObject().put("ok", true)
+                                .put("settings", hub.settingsEnvelope().optJSONObject("settings"))
                                 .put("effects", JSONObject().put("addonsResynced", touchedAddons)),
                         )
                     }

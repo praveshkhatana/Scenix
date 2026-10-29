@@ -38,7 +38,7 @@ playback bridge. Two implementations satisfy it:
         │                                        │
         ├─ addons, profiles, settings            ├─ addons (same protocol)
         ├─ torrent engine + gateway              ├─ local libtorrent + local DB
-        ├─ live TV, local files, trailers        ├─ direct HTTP/HLS and torrents
+        ├─ live TV, local files, trailers        ├─ M3U live wall, debrid, direct HTTP/HLS
         └─ serves the shared UI                  └─ UI bundled in the app
                  │                                        │
                  └────────── one client UI ───────────────┘
@@ -58,19 +58,24 @@ catalogue DB. The app is thin: pair, browse, play.
 
 ### Standalone mode
 One app, no server, nothing to install twice — the simple shape. The app runs the contract itself,
-talks to addons directly, and serves the same bundled interface on a loopback port. It also carries a
+talks to addons directly, and serves the same bundled interface on a loopback port. It carries a
 libtorrent engine for the 32-bit ARM panel: a magnet is downloaded sequentially into the app cache and
-served to the player as ordinary seekable HTTP. Trade-offs, stated honestly: the engine shares the
-TV's 2 GB and CPU with decoding, a large film needs free storage (the app refuses a copy that does not
-fit), and a far seek waits for those pieces; the hub still does this better with one engine and a
-disk. Standalone remains the easy shape, not the better one.
+served to the player as ordinary seekable HTTP. An optional Real-Debrid token turns a magnet or a
+hoster page into ordinary HTTP before the local engine is asked, and an owner-supplied M3U gives the
+same per-profile live wall the hub has. There is no health probing of those channels, no device file
+browser, and no server-side remux or container track probing.
+
+Trade-offs, stated honestly: the engine shares the TV's 2 GB and CPU with decoding, a large film needs
+free storage (the app refuses a copy that does not fit), and a far seek waits for those pieces; the hub
+still does this better with one engine and a disk. Standalone remains the easy shape, not the better
+one.
 
 Both shapes have run on the same panel in the same build, with only an owner setting changed between
 them. In hub mode the shell loaded the paired hub's address and played through the gateway. In
 standalone the app started its own contract host on a loopback port chosen at boot, served the
 identical page out of its own assets, and answered `GET /app/v1/manifest` with the richer flags turned
-off — `live:false, localFiles:false, remux:false, tracks:false` beside `gateway:true, search:true,
-settingsAdmin:true, profileEdit:true, addonAdmin:true` — with one profile created on first run. That
+off — `localFiles:false, remux:false, tracks:false` beside `gateway:true, live:true when an M3U is set,
+debrid:true when a token is ready, search:true, settingsAdmin:true, profileEdit:true, addonAdmin:true` — with one profile created on first run. That
 state drew no audio-track or subtitle control, which is the capability rule doing its job rather than a
 diminished screen.
 

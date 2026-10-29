@@ -43,7 +43,9 @@ it can draw.
 | What you run | the hub on any box on your network, plus the app | the app alone |
 | Configuration | the Hub UI, in any browser | the same UI, hosted in the app |
 | Torrent playback | one gateway reader shared by the household | a local libtorrent engine; downloads to the TV cache and is limited by free space |
-| Live TV, local files, shared cache | yes | no |
+| Debrid | one account shared by the household | one account on the TV |
+| Live TV | playlist + health + per-profile lineup | playlist + per-profile lineup, no health probing |
+| Local files, shared cache | yes | no |
 
 Both speak the same `/app/v1` contract, so the interface is identical and the app only branches on
 capabilities the backend advertises. See [design/deployment-modes.md](design/deployment-modes.md).
@@ -125,8 +127,9 @@ and use **Type an address** in the TV setup.
    (or "Standalone") and reopens this setup screen. It is admin-gated, and kids profiles never see it.
 4. The old `tv://setup` link still works from a phone or another app.
 
-Standalone mode hosts the same web UI and contract inside the TV app. It can play direct HTTP links
-and add-on catalogues; it has no household cache, no live TV and no torrent gateway.
+Standalone mode hosts the same web UI and contract inside the TV app. It can play direct HTTP links,
+add-on catalogues and torrents through the TV's own engine, can use a Real-Debrid account, and can
+draw an M3U live wall. It has no household cache, no local-file browser and no server-side remuxing.
 
 ## Running it
 

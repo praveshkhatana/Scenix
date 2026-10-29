@@ -19,9 +19,11 @@ import kotlin.math.roundToInt
  * belongs to the owner — it is read from this app's own settings, never from a constant, so a build
  * ships no content source at all and an empty home is a normal first-run state rather than a bug.
  *
- * What this mode honestly cannot do is stated in `capabilities` instead of broken in the UI: there is
- * no torrent engine here and no shared gateway, so a source is playable only if an addon hands back
- * an HTTP/HLS/DASH file this device can read by itself; there is no live tuner, no local files, no
+ * What this mode honestly does: addons, direct HTTP/HLS/DASH, a local torrent engine, an optional
+ * Real-Debrid account, profiles and an M3U live wall. What it does not have is stated in
+ * `capabilities` instead of broken in the UI: there is no local file browser and no server-side
+ * remux/track probing; a source is playable if it is direct or the engine/provider can hand over HTTP.
+ * There is no live tuner, no local files, no
  * trailer search. Anything not listed is not offered.
  *
  * Everything the addons answer is cached under `filesDir`, along with this app's own profiles,
@@ -59,6 +61,8 @@ class LocalHub private constructor(context: Context) {
             .put("adult", o.optBoolean("adult", false))
             .put("cacheTtlHours", o.optInt("cacheTtlHours", 6))
             .put("theme", o.optString("theme", "scenix-dark"))
+            .put("debrid", o.optJSONObject("debrid") ?: defaultDebrid())
+            .put("live", o.optJSONObject("live") ?: JSONObject())
     }
 
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
@@ -70,6 +74,20 @@ class LocalHub private constructor(context: Context) {
         if (body.has("adult")) merged.put("adult", body.optBoolean("adult", false))
         if (body.has("cacheTtlHours")) merged.put("cacheTtlHours", body.optInt("cacheTtlHours", 6))
         if (body.has("theme")) merged.put("theme", body.optString("theme", "scenix-dark"))
+        if (body.has("debrid")) {
+            // A token is write-only: null removes it, a blank string keeps the stored one.
+            val cur = merged.optJSONObject("debrid") ?: defaultDebrid()
+            val next = body.optJSONObject("debrid") ?: JSONObject()
+            val out = JSONObject(cur.toString())
+            if (next.has("enabled")) out.put("enabled", next.optBoolean("enabled", false))
+            if (next.has("provider")) out.put("provider", next.optString("provider", "real-debrid"))
+            if (next.has("token")) {
+                if (next.isNull("token")) out.put("token", "")
+                else next.optString("token").takeIf { it.isNotBlank() }?.let { out.put("token", it) }
+            }
+            merged.put("debrid", out)
+        }
+        if (body.has("live")) merged.put("live", body.optJSONObject("live") ?: JSONObject())
         writeJson(settingsFile, merged)
         merged
     }
@@ -110,11 +128,62 @@ class LocalHub private constructor(context: Context) {
      * needs the defaults beside the settings to tell an owner's choice from a build's silence.
      */
     fun settingsEnvelope(): JSONObject = JSONObject()
-        .put("settings", settings())
+        .put("settings", publicSettings())
         .put("defaults", defaultSettings())
         .put("languageNames", languageNames())
         .put("themes", themeCatalog())
+        .put("debrid", debridStatus())
+        .put("live", liveEnvelope())
         .put("file", settingsPath())
+
+    private fun defaultDebrid(): JSONObject = JSONObject()
+        .put("enabled", false).put("provider", "real-debrid").put("token", "")
+
+    /** The settings shape a screen may see: the token is write-only and never crosses the contract. */
+    private fun publicSettings(): JSONObject {
+        val out = JSONObject(settings().toString())
+        val d = out.optJSONObject("debrid") ?: defaultDebrid()
+        d.remove("token")
+        d.put("tokenSet", ((settings().optJSONObject("debrid") ?: JSONObject()).optString("token")).isNotBlank())
+        out.put("debrid", d)
+        return out
+    }
+
+    private fun debridToken(): String {
+        val d = settings().optJSONObject("debrid") ?: return ""
+        if (!d.optBoolean("enabled", false)) return ""
+        if (d.optString("provider", "real-debrid") != "real-debrid") return ""
+        return d.optString("token").trim()
+    }
+
+    fun debridStatus(): JSONObject {
+        val d = settings().optJSONObject("debrid") ?: defaultDebrid()
+        val token = d.optString("token").trim()
+        val enabled = d.optBoolean("enabled", false)
+        val ready = enabled && d.optString("provider", "real-debrid") == "real-debrid" && token.isNotBlank()
+        val note = when {
+            !enabled -> "off: torrents use this TV's engine"
+            token.isBlank() -> "enabled, but no token is stored"
+            else -> "Real-Debrid is configured; magnets are tried before the local engine"
+        }
+        return JSONObject()
+            .put("enabled", enabled)
+            .put("provider", d.optString("provider", "real-debrid"))
+            .put("providerLabel", "Real-Debrid")
+            .put("tokenSet", token.isNotBlank())
+            .put("ready", ready)
+            .put("providers", JSONArray().put(JSONObject().put("id", "real-debrid").put("label", "Real-Debrid")))
+            .put("note", note)
+    }
+
+    /** Live settings and the parsed channel list, in the shape the web and native settings expect. */
+    private fun liveEnvelope(): JSONObject {
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val channels = channelsJson()
+        return JSONObject(live.toString())
+            .put("channels", channels)
+            .put("groups", liveGroups(channels))
+    }
 
     /** What a settings file that says nothing means: no addon, no language and no channel preselected. */
     private fun defaultSettings(): JSONObject = JSONObject()
@@ -124,6 +193,8 @@ class LocalHub private constructor(context: Context) {
         .put("adult", false)
         .put("cacheTtlHours", 6)
         .put("theme", "scenix-dark")
+        .put("debrid", defaultDebrid())
+        .put("live", JSONObject())
 
     /**
      * Words for the codes this backend actually holds. There is no table of every language baked in here —
@@ -188,7 +259,8 @@ class LocalHub private constructor(context: Context) {
         // point is that nothing here is unknown.
         val caps = JSONObject()
             .put("gateway", true)      // a local libtorrent engine streams torrents over loopback HTTP
-            .put("live", false)        // no channel list to tune
+            // An owner-supplied M3U is a channel list this TV can tune; there is no terrestrial tuner.
+            .put("live", settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true)
             .put("localFiles", false)  // no device file browser: sources come from addons
             .put("remux", false)       // a file plays as it is, or not at all
             .put("tracks", false)      // languages are not read out of containers, only from addons
@@ -201,6 +273,7 @@ class LocalHub private constructor(context: Context) {
             .put("profileEdit", true)  // this backend creates, changes and removes the people
             .put("cacheAdmin", true)   // what was cached from upstream can be thrown away on purpose
             .put("avatarFaces", hasFaces())  // only if this build actually carries the pictures
+        if (debridStatus().optBoolean("ready")) caps.put("debrid", true)
         // No key is left out. A key that is absent reads as "the backend did not say", and the point of
         // this list is that a TV answering for itself says something about every one of them.
         val rows = JSONArray()
@@ -259,6 +332,109 @@ class LocalHub private constructor(context: Context) {
         val owned = settings()
         for (k in arrayOf("audioLanguages", "subtitleLanguages")) {
             if ((out.optJSONArray(k)?.length() ?: 0) == 0) out.put(k, owned.optJSONArray(k) ?: JSONArray())
+        }
+        return out
+    }
+
+    /** Parse the owner's M3U. A playlist that cannot be read is an empty wall, never a failed home. */
+    fun channelsJson(): JSONArray = synchronized(lock) {
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val playlist = live.optString("playlist").trim()
+        if (playlist.isBlank()) return JSONArray()
+        val now = System.currentTimeMillis()
+        if (playlist == liveCacheKey && now - liveCacheAt < 5 * 60_000L) return liveCache
+        val text = fetchText(playlist, 9000)
+        if (text.isNullOrBlank()) return liveCache
+        val out = JSONArray()
+        val urls = HashMap<String, String>()
+        val lines = text.split("\n")
+        var pending: JSONObject? = null
+        for (raw in lines) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            if (line.startsWith("#EXTINF", true)) {
+                val meta = JSONObject()
+                val name = line.substringAfter(',', "").trim()
+                meta.put("name", name.ifBlank { "Channel" })
+                meta.put("group", attr(line, "group-title"))
+                meta.put("logo", attr(line, "tvg-logo"))
+                meta.put("tvgId", attr(line, "tvg-id"))
+                pending = meta
+            } else if (!line.startsWith("#") && pending != null) {
+                val name = pending.optString("name", "Channel")
+                val tvg = pending.optString("tvgId").trim()
+                val id = tvg.ifBlank { "live:" + Integer.toHexString(line.hashCode()) }
+                val channel = JSONObject()
+                    .put("id", id)
+                    .put("name", name)
+                    .put("group", pending.optString("group", "Live"))
+                    .put("logo", pending.optString("logo", ""))
+                    .put("url", line)
+                out.put(channel)
+                urls[id] = line
+                pending = null
+            }
+        }
+        liveCache = out
+        liveUrls.clear()
+        liveUrls.putAll(urls)
+        liveCacheAt = now
+        liveCacheKey = playlist
+        out
+    }
+
+    private fun liveGroups(channels: JSONArray): JSONArray {
+        val groups = LinkedHashSet<String>()
+        for (i in 0 until channels.length()) {
+            val g = channels.optJSONObject(i)?.optString("group").orEmpty()
+            if (g.isNotBlank()) groups.add(g)
+        }
+        return JSONArray(groups.toList())
+    }
+
+    private fun attr(line: String, key: String): String {
+        val m = Regex(key + "=\"([^\"]*)\"", RegexOption.IGNORE_CASE).find(line)
+        if (m != null) return m.groupValues[1]
+        val u = Regex(key + "=([^\\s,]+)", RegexOption.IGNORE_CASE).find(line)
+        return u?.groupValues?.getOrNull(1) ?: ""
+    }
+
+    private fun fetchText(url: String, timeoutMs: Int): String? {
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            val opened = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                setRequestProperty("User-Agent", "Scenix/standalone")
+            }
+            conn = opened
+            if (opened.responseCode !in 200..299) null
+            else opened.inputStream.bufferedReader().use { it.readText() }
+        } catch (t: Throwable) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun channelItems(): List<Item> {
+        val out = ArrayList<Item>()
+        val channels = channelsJson()
+        for (i in 0 until channels.length()) {
+            val c = channels.optJSONObject(i) ?: continue
+            val id = c.optString("id")
+            val name = c.optString("name", "Channel")
+            val group = c.optString("group", "Live")
+            val logo = c.optString("logo")
+            out.add(Item(
+                identity = id,
+                type = "channel",
+                title = name,
+                poster = logo.takeIf { it.isNotBlank() },
+                genres = listOf(group).filter { it.isNotBlank() },
+                live = Live(now = group),
+                sources = listOf(Source(provider = "live", label = group, kind = "hls", mode = "direct")),
+            ))
         }
         return out
     }
@@ -332,6 +508,9 @@ class LocalHub private constructor(context: Context) {
     }
 
     fun metaJson(identity: String, type: String?): JSONObject? {
+        // A live channel is not a catalogue title: it has no addon meta and no sources lookup. Answer
+        // from the parsed playlist so the native Detail/Play path can open it.
+        channelItems().firstOrNull { it.identity == identity }?.let { return itemJson(it) }
         val t = type?.takeIf { it.isNotBlank() } ?: knownType(identity) ?: "movie"
         val answers = ArrayList<Item>()
         for (am in addonManifests()) {
@@ -363,6 +542,27 @@ class LocalHub private constructor(context: Context) {
         // A series is one tile with many addresses: the addon names an episode `<show>:<season>:<episode>`.
         val address = if (season > 0 && episode > 0) "$identity:$season:$episode" else identity
         val profileId = s(body, "profile", "").ifBlank { null }
+        if (type == "channel" || identity.startsWith("live:")) {
+            var url = liveUrls[identity].orEmpty()
+            if (url.isBlank()) {
+                val arr = channelsJson()
+                for (i in 0 until arr.length()) {
+                    val c = arr.optJSONObject(i) ?: continue
+                    if (c.optString("id") == identity) { url = c.optString("url"); break }
+                }
+            }
+            if (url.isNotBlank()) {
+                return JSONObject()
+                    .put("url", url)
+                    .put("kind", if (url.contains(".m3u8", true)) "hls" else "http")
+                    .put("mode", "direct")
+                    .put("live", true)
+                    .put("headers", JSONObject())
+                    .put("title", s(body, "title", "Live"))
+                    .put("episode", JSONObject.NULL)
+                    .put("nextEpisode", JSONObject.NULL)
+            }
+        }
         val sources = applyCaps(collectSources(address, type, wait = true), profileId)
         val wanted = s(body, "source", s(body, "provider", ""))
         val named = sources.firstOrNull { wanted.isNotBlank() && (it.label == wanted || it.provider == wanted) }
@@ -381,12 +581,32 @@ class LocalHub private constructor(context: Context) {
                 .put("sources", JSONArray(sources.map { sourceJson(it) }))
 
         if (pick.mode == "torrent") {
+            val magnet = torrentFor(address, pick)
+            val token = debridToken()
+            if (token.isNotBlank() && magnet != null) {
+                val d = Debrid.resolveMagnet(magnet, season, episode, token)
+                if (d.url != null) {
+                    return JSONObject()
+                        .put("url", d.url)
+                        .put("kind", d.kind)
+                        .put("mode", "debrid")
+                        .put("headers", JSONObject())
+                        .put("sizeBytes", if (d.fileSize > 0) d.fileSize else pick.sizeBytes)
+                        .put("sourceName", d.fileName ?: pick.label)
+                        .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
+                        .put("why", JSONArray(listOf("${pick.provider} · served by Real-Debrid")))
+                        .put("episode", if (season > 0 && episode > 0) JSONObject()
+                            .put("season", season).put("episode", episode) else JSONObject.NULL)
+                        .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
+                            .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+                }
+            }
             if (pick.sizeBytes > 0 && pick.sizeBytes > torrentRoom) {
                 return JSONObject()
                     .put("error", "this copy is larger than the free space on this TV")
                     .put("sources", JSONArray(sources.map { sourceJson(it) }))
             }
-            val uri = torrentFor(address, pick)
+            val uri = magnet
                 ?: return JSONObject().put("error", "this copy has no magnet the local engine can use")
             val prepared = TorrentEngine.prepare(appContext, uri, season, episode)
                 ?: return JSONObject()
@@ -409,6 +629,28 @@ class LocalHub private constructor(context: Context) {
                     .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
         }
 
+        // A hoster page the addon handed over is not a media file, but a debrid account can turn it
+        // into one. Direct files are left alone: they already play and must not spend a provider call.
+        val token = debridToken()
+        if (token.isNotBlank() && pick.mode != "direct") {
+            val hoster = urlFor(address, pick)
+            if (hoster != null && hoster.startsWith("http")) {
+                val d = Debrid.unrestrict(hoster, token)
+                if (d.url != null) {
+                    return JSONObject()
+                        .put("url", d.url)
+                        .put("kind", d.kind)
+                        .put("mode", "debrid")
+                        .put("headers", JSONObject())
+                        .put("sizeBytes", if (d.fileSize > 0) d.fileSize else pick.sizeBytes)
+                        .put("sourceName", d.fileName ?: pick.label)
+                        .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
+                        .put("why", JSONArray(listOf("${pick.provider} \u00B7 served by Real-Debrid")))
+                        .put("episode", JSONObject.NULL)
+                        .put("nextEpisode", JSONObject.NULL)
+                }
+            }
+        }
         val url = urlFor(address, pick) ?: return JSONObject().put("error", "stream link expired, open the title again")
         return JSONObject()
             .put("url", url)
@@ -698,6 +940,9 @@ class LocalHub private constructor(context: Context) {
         val out = ArrayList<LocalRow>()
         out.add(LocalRow("continue", "Continue watching", "continue", 5, "all", emptyList()))
         out.add(LocalRow("justadded", "Recently added", "poster", 10, "all", emptyList()))
+        if (settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true) {
+            out.add(LocalRow("live", "Live TV", "channel", 15, "all", emptyList()))
+        }
         var order = 20
         for (am in manifests) {
             for (c in am.catalogs.take(MAX_CATALOGS_PER_ADDON)) {
@@ -746,6 +991,9 @@ class LocalHub private constructor(context: Context) {
         // Recently added: this app's own memory of what it has put on a shelf, newest first.
         val library = libraryItems().filter { it.addedAt > 0 }.sortedByDescending { it.addedAt }.take(ROW_MAX)
         if (library.isNotEmpty()) out.add(LocalRow("justadded", "Recently added", "poster", 10, "all", library))
+
+        val liveChannels = channelItems()
+        if (liveChannels.isNotEmpty()) out.add(LocalRow("live", "Live TV", "channel", 15, "all", liveChannels))
 
         for (am in addonManifests()) {
             if (!am.has("catalog")) continue
@@ -933,6 +1181,15 @@ class LocalHub private constructor(context: Context) {
 
     private val sourceUrls = HashMap<String, HashMap<String, String>>()
     private val sourceTorrents = HashMap<String, HashMap<String, String>>()
+
+    // ---- live TV ----------------------------------------------------------------------------
+    // The owner pastes an M3U URL; this parses it into the same channel objects the hub's live row
+    // carries. The URL stays in the app's settings, and the parsed list is cached so home does not
+    // refetch a playlist on every shelf.
+    private val liveUrls = HashMap<String, String>()
+    private var liveCacheAt = 0L
+    private var liveCacheKey = ""
+    private var liveCache: JSONArray = JSONArray()
 
     private val MEDIA_EXT = Regex("\\.(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(\\?|#|$)", RegexOption.IGNORE_CASE)
 
