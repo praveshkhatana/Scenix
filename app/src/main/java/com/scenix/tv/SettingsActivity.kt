@@ -15,6 +15,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -177,6 +178,25 @@ class SettingsActivity : Activity() {
         // A kids profile never sees the admin rows, lock or no lock. An authorised person uses an
         // adult profile and proves the admin PIN there.
         if (profileKind != "kids") {
+            // The backend is a property of this television, not of a person: a new hub address, a
+            // different box on the LAN, or standalone. It lives behind the same admin door as the
+            // other household settings, and a kids profile never sees it at all.
+            val backend = app.prefs.backendChoice()
+            val hubUrl = app.prefs.hubUrl(getString(R.string.hub_url))
+            val hubName = app.prefs.discoveredHubs().firstOrNull { it.url == hubUrl }?.name.orEmpty()
+            val backendValue = when {
+                backend == Prefs.BACKEND_STANDALONE -> "Standalone"
+                hubName.isNotBlank() -> "Hub · $hubName"
+                else -> "Hub · $hubUrl"
+            }
+            addRow("Hub connection", backendValue,
+                "Change hub, enter an address, or use this TV on its own") {
+                requireAdmin {
+                    startActivity(
+                        Intent(this, MainActivity::class.java).putExtra("setup", true)
+                    )
+                }
+            }
             val picked = Theme.catalog(assets).firstOrNull { it.id == app.prefs.theme() }
             val themeName = when {
                 picked == null -> app.prefs.theme()

@@ -75,6 +75,19 @@ object PairingScreen {
             lp(theme.px(8f)),
         )
 
+        // A paired TV that reopens setup needs to know what it is currently using before it can
+        // decide whether to replace it.
+        val backend = ctx.prefs.backendChoice()
+        val currentHub = ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url))
+        val currentName = ctx.prefs.discoveredHubs().firstOrNull { it.url == currentHub }?.name.orEmpty()
+        val current = when {
+            backend == Prefs.BACKEND_STANDALONE -> "Currently: this TV is the backend (standalone)."
+            backend == Prefs.BACKEND_HUB && currentName.isNotBlank() -> "Currently connected to $currentName."
+            backend == Prefs.BACKEND_HUB -> "Currently connected to $currentHub."
+            else -> ""
+        }
+        if (current.isNotBlank()) infoRow(ctx, col, current)
+
         // ---- hubs announcing themselves -------------------------------------------------------
         section(ctx, col, "Hubs on this network")
         if (HubDiscovery.isScanning()) {
@@ -91,6 +104,21 @@ object PairingScreen {
         // ---- or an address nobody announced ---------------------------------------------------
         section(ctx, col, "Or type an address")
         addressField(ctx, col, host)
+
+        // ---- installing a hub, for someone who has never had one ------------------------------
+        section(ctx, col, "First time? Install a hub")
+        infoRow(
+            ctx, col,
+            "1. Pick a computer that can stay on and install Node.js 18 or newer.\n" +
+                "2. Copy Scenix there and run:  cd hub && node index.js\n" +
+                "3. Open http://<that-computer>:8788 in a browser; add your sources and profiles there.\n" +
+                "4. Come back here, press Search again, or type that address above.",
+        )
+        infoRow(
+            ctx, col,
+            "Both devices must be on the same network. Allow TCP 8788 and UDP 1900 through the " +
+                "computer's firewall; the hub prints its address when it starts.",
+        )
 
         // ---- or no hub at all -----------------------------------------------------------------
         section(ctx, col, "Or no hub")
@@ -260,7 +288,7 @@ object PairingScreen {
         val slp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         slp.topMargin = theme.px(14f)
 
-        val save = Views.text(ctx, "button", 21f, theme.ink, "Connect", bold = true, gravity = Gravity.CENTER)
+        val save = Views.text(ctx, "button", 21f, theme.onBrand, "Connect", bold = true, gravity = Gravity.CENTER)
         save.setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
         save.background = Views.rounded(theme.brand, theme.radius("button", 6f))
         save.isFocusable = true
@@ -297,7 +325,7 @@ object PairingScreen {
         val row = LinearLayout(ctx.app)
         row.setPadding(theme.px(20f), theme.px(12f), theme.px(20f), theme.px(12f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
-        row.addView(Views.text(ctx, "li", 22f, theme.ink2, value, maxLines = 3))
+        row.addView(Views.text(ctx, "li", 21f, theme.ink2, value, maxLines = 6))
         col.addView(row, lp(theme.px(8f)))
     }
 

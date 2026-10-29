@@ -86,6 +86,48 @@ slow or refuses the link. The token is stored only on the hub, never returned to
 in a log. See [design/debrid.md](design/debrid.md) for the provider contract, security notes and what
 still needs a live account to verify.
 
+## First install
+
+### 1. Install the hub on a computer that stays on
+
+The hub is a Node process with **no npm dependencies**. Use any always-on machine on the same
+network as the TV — a Mac, a Linux box, a Raspberry Pi or a Windows PC.
+
+1. Install **Node.js 18 or newer** from <https://nodejs.org>.
+2. Get the repository and start the hub:
+   ```sh
+   git clone https://github.com/praveshkhatana/Scenix.git
+   cd Scenix
+   ./scripts/install-hub.sh          # checks Node and creates hub/profiles.json
+   cd hub && node index.js
+   ```
+   On Windows without the script: `cd hub` then `node index.js`.
+3. The hub prints `http://<machine>:8788`. Open that in a browser on the same network and configure
+   the things the hub owns: add-ons, source packs, languages, profiles and the hub's name.
+4. Allow **TCP 8788** and **UDP 1900** through that machine's firewall. 1900 is the LAN announcement
+   that lets the TV find the hub without typing an address.
+
+The hub advertises itself on the local network. If it is on another network, note its public address
+and use **Type an address** in the TV setup.
+
+### 2. Connect the TV app
+
+1. Build and install the Android TV app from `app/`:
+   ```sh
+   cd app && ./gradlew assembleDebug
+   adb install -r build/outputs/apk/debug/app-debug.apk
+   ```
+2. Open Scenix on the TV. On first run it tries the last backend, then searches the LAN:
+   - a hub that answers is listed by the name its owner gave it — choose it;
+   - or choose **Type an address** and enter `http://<machine>:8788`;
+   - or choose **Keep this TV on its own** for standalone mode.
+3. To change the backend later, open **Settings → Hub connection**. That row shows the current hub
+   (or "Standalone") and reopens this setup screen. It is admin-gated, and kids profiles never see it.
+4. The old `tv://setup` link still works from a phone or another app.
+
+Standalone mode hosts the same web UI and contract inside the TV app. It can play direct HTTP links
+and add-on catalogues; it has no household cache, no live TV and no torrent gateway.
+
 ## Running it
 
 **Hub** — Node with built-ins only, no `npm install`:

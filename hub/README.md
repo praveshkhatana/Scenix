@@ -4,6 +4,17 @@ The content side of Scenix: one Node process, Node built-ins only, that merges s
 sources into one item model and serves it to the TV app **and** to the web app from the same
 port, at the same time.
 
+## Quick start
+
+1. Install Node.js 18+ — there is no `npm install`; the hub uses Node built-ins only.
+2. From the repository root, run `./scripts/install-hub.sh` once to create `hub/profiles.json` from
+   the example (it never overwrites an existing one).
+3. Start it with `cd hub && node index.js`, then open `http://<this-machine>:8788` in a browser on
+   the same network. Give the hub a name and add your sources there.
+4. Allow TCP 8788 and UDP 1900 through the machine's firewall. 1900 is the LAN announcement the TV
+   uses to find this hub. On the TV, open setup (**Settings → Hub connection**) and choose the hub,
+   or type `http://<this-machine>:8788`.
+
 ```
 node index.js                    # 0.0.0.0:8788
 PORT=8789 LOG_REQUESTS=1 node index.js
