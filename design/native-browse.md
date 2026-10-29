@@ -75,11 +75,19 @@ reload.
   goes to `/app/v1/search` after a 320 ms pause, results are drawn with the same card/focus language
   as Home, and OK opens native Detail. Back clears the query first, then leaves.
 - `SettingsActivity` — audio language, subtitle language, quality ceiling, the profile gate, a
-  native **Home rows** editor (show/hide and move shelves), native **Source packs** (IGC/audio
-  donors), **Add-ons** (enable/disable/remove/add), and **Debrid** (provider, switch, write-only
-  token). Choosing a language moves it to the front of the existing list instead of replacing the
-  fallbacks. There is no "open the web settings" row: the television never enters the WebView from
-  Settings.
+  native **Home rows** editor (this profile's show/hide and order), a native **Live TV channels**
+  lineup (this profile's channels and zap order), native **Source packs** (IGC/audio donors),
+  **Add-ons** (enable/disable/remove/add), and **Debrid** (provider, switch, write-only token).
+  Choosing a language moves it to the front of the existing list instead of replacing the fallbacks.
+  There is no "open the web settings" row: the television never enters the WebView from Settings.
+- The live wall (`rows/live.js`) uses the profile's `live.only`/`order` when present; the kids
+  discovery shelf (`kids_school`) intersects the profile's lineup instead of ignoring it. The
+  household's global channel order/hidden list remains the default.
+- **Scoping.** Audio/subtitle language and quality are per profile (`/prefs`). Home-row hidden/order
+  and the live lineup are per profile too (`prefs.rows`, `prefs.live`), with the household's
+  `settings.rows`/`settings.live` as the floor: a person can hide/reorder a row and keep their own
+  channel wall without changing anyone else's. Add-ons, source packs, Debrid, the hub name and the
+  live playlist are household infrastructure and stay global.
 - `TextEntryActivity` is the one native text field (add-on manifest, source URL, debrid token) and
   uses the platform IME with the whole screen, rather than a cramped dialog. Ranked rows draw their numeral over the poster;
   Continue Watching draws its position line; posters and landscape rows are sized from the card kind.

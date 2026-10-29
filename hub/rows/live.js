@@ -28,10 +28,23 @@ module.exports = {
   async build(ctx) {
     const items = await ctx.library();
     // More candidates than the row shows, so a rule filtering one channel does not shorten the wall.
-    const channels = items.filter((it) => it.type === 'channel');
-    // The owner's own order wins; anything it does not mention keeps the health-then-number order.
-    // This is the order the remote zaps through, so it is also the order of the channel manager.
-    const wanted = (settings.get().live || {}).order || [];
+    const local = (ctx.profile && ctx.profile.prefs && ctx.profile.prefs.live) || {};
+    const hidden = new Set([
+      ...(((settings.get().live || {}).hidden) || []),
+      ...(Array.isArray(local.hidden) ? local.hidden : []),
+    ]);
+    let channels = items.filter((it) => it.type === 'channel' && !hidden.has(it.identity));
+    // A profile's lineup: when `only` has entries the wall is those channels, in that order. Empty means
+    // every channel the rules allow, which is the old behaviour and the sensible default for a new profile.
+    const only = Array.isArray(local.only) ? local.only : [];
+    if (only.length) {
+      const set = new Set(only);
+      channels = channels.filter((it) => set.has(it.identity));
+    }
+    // The profile's order, then its lineup order, then the household's; anything unmentioned keeps the
+    // health-then-number order. This is the zap order the remote walks.
+    const localOrder = Array.isArray(local.order) ? local.order : [];
+    const wanted = localOrder.length ? localOrder : (only.length ? only : ((settings.get().live || {}).order || []));
     const rank = new Map(wanted.map((id, i) => [id, i]));
     channels.sort((a, b) => {
       const ar = rank.has(a.identity) ? rank.get(a.identity) : Number.MAX_SAFE_INTEGER;

@@ -695,9 +695,14 @@ function enabledCategoryRows() {
 
 function rowVisible(row, profile) {
   const scope = row.scope || 'all';
-  // An owner's choice is final before any rule runs: "do not show this row on the home screen" is not
-  // something a profile's age or a row's scope should be able to overrule.
-  if ((settings.get().rows || {}).hidden.includes(row.id)) return false;
+  // The household's hidden list is final; a profile may also hide a row of its own (one viewer does not
+  // want Live TV, another does), but cannot un-hide what the owner removed for everyone.
+  const local = (profile && profile.prefs && profile.prefs.rows) || {};
+  const hidden = new Set([
+    ...(((settings.get().rows || {}).hidden) || []),
+    ...(Array.isArray(local.hidden) ? local.hidden : []),
+  ]);
+  if (hidden.has(row.id)) return false;
   // A billboard is a SHAPE, not a content tier, so every profile gets one — including a child, whose
   // billboard is decided by the rules that run over its items (maturity, then the kids allowlist) rather
   // than by a second hero row for kids. rows/hero.js is scope 'all' and carries no adult-only content.
@@ -2744,7 +2749,12 @@ async function handle(req, res) {
       // Owner order, applied once the rows exist: names in `rows.order` come first in that sequence and
       // everything else keeps the order its plugin asked for, so a hub gains a row plugin and the screen
       // still places it sensibly without the owner having to re-list every row.
-      const wanted = (settings.get().rows || {}).order || [];
+      // A profile's own order runs first, then the household's, then the plugin's. This is what lets one
+      // person put Live TV above the shelves and another leave the default.
+      const localOrder = (profile.prefs && profile.prefs.rows && Array.isArray(profile.prefs.rows.order))
+        ? profile.prefs.rows.order : [];
+      const globalOrder = (settings.get().rows || {}).order || [];
+      const wanted = [...localOrder, ...globalOrder.filter((id) => !localOrder.includes(id))];
       if (wanted.length) {
         const rank = new Map(wanted.map((id, i) => [id, i]));
         built.sort((a, b) => (rank.has(a.id) ? rank.get(a.id) : wanted.length)
@@ -3053,6 +3063,25 @@ async function handle(req, res) {
       // a no. Off, tier-3 titles are not in home, search, history or Continue Watching for that profile.
       if (src.xxxEnabled !== undefined) {
         out.xxxEnabled = src.xxxEnabled === true || ['true', '1', 'yes', 'on'].includes(String(src.xxxEnabled).toLowerCase());
+      }
+      // Per-profile Home rows and live lineup. The household's settings.rows/settings.live remain the
+      // default; these lists only add to or narrow them for the person this prefs call names.
+      const cleanIds = (v) => Array.isArray(v)
+        ? v.filter((x) => typeof x === 'string' && x.length > 0 && x.length < 200).slice(0, 600)
+        : null;
+      if (src.rows && typeof src.rows === 'object') {
+        const rows = {};
+        const h = cleanIds(src.rows.hidden); if (h) rows.hidden = h;
+        const o = cleanIds(src.rows.order); if (o) rows.order = o;
+        if (Object.keys(rows).length) out.rows = rows;
+      }
+      if (src.live && typeof src.live === 'object') {
+        const live = {};
+        for (const k of ['hidden', 'order', 'only']) {
+          const a = cleanIds(src.live[k]);
+          if (a) live[k] = a;
+        }
+        if (Object.keys(live).length) out.live = live;
       }
       const bytes = Number(src.maxFileSizeBytes || src.maxSizeBytes || 0);
       if (bytes > 0) out.maxSizeGB = Number((bytes / 1e9).toFixed(3));

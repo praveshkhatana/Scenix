@@ -35,6 +35,7 @@ class SettingsActivity : Activity() {
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var prefs: JSONObject? = null
     private var rowList: JSONArray? = null
+    private var globalRows: JSONObject? = null
     private var rowsCfg: JSONObject? = null
     private var picker: View? = null
 
@@ -109,7 +110,9 @@ class SettingsActivity : Activity() {
             if (isFinishing || isDestroyed) return@settings
             if (root != null) {
                 rowList = root.optJSONArray("rows")
-                rowsCfg = root.optJSONObject("settings")?.optJSONObject("rows")
+                globalRows = root.optJSONObject("settings")?.optJSONObject("rows")
+                // The editor edits this profile's rows; the household's list is the floor it cannot lift.
+                rowsCfg = prefs?.optJSONObject("rows") ?: JSONObject()
             }
             paint()
         }
@@ -129,9 +132,15 @@ class SettingsActivity : Activity() {
         }
         val shelfRows = rowList
         if (shelfRows != null && shelfRows.length() > 0) {
-            val hidden = rowsCfg?.optJSONArray("hidden")?.length() ?: 0
+            val hidden = effectiveHidden().size
             addRow("Home rows", "${shelfRows.length() - hidden} of ${shelfRows.length()} shown",
-                "Hide, show or reorder the shelves on Home") { showHomeRows() }
+                "This profile's shelves — hide, show or reorder") { showHomeRows() }
+        }
+        addRow("Live TV channels", "This profile's lineup", "Choose the channels and their zap order") {
+            startActivity(
+                Intent(this, LiveChannelsActivity::class.java)
+                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+            )
         }
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
@@ -208,9 +217,20 @@ class SettingsActivity : Activity() {
         return named
     }
 
-    private fun hiddenRows(): MutableList<String> {
+    private fun localHidden(): MutableList<String> {
         val out = ArrayList<String>()
         rowsCfg?.optJSONArray("hidden")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val v = arr.optString(i, "")
+                if (v.isNotBlank() && v !in out) out.add(v)
+            }
+        }
+        return out
+    }
+
+    private fun globalHidden(): Set<String> {
+        val out = HashSet<String>()
+        globalRows?.optJSONArray("hidden")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val v = arr.optString(i, "")
                 if (v.isNotBlank()) out.add(v)
@@ -219,13 +239,15 @@ class SettingsActivity : Activity() {
         return out
     }
 
+    private fun effectiveHidden(): Set<String> = globalHidden() + localHidden()
+
     private fun showHomeRows() {
         val order = rowOrder()
         if (order.isEmpty()) {
             status.text = "The hub listed no Home rows"
             return
         }
-        val hidden = hiddenRows().toSet()
+        val hidden = effectiveHidden()
         val options = ArrayList<Pair<String, String>>()
         for (id in order) {
             options.add(id to rowTitle(id) + if (id in hidden) "  ·  Hidden" else "  ·  On Home")
@@ -238,9 +260,12 @@ class SettingsActivity : Activity() {
         val at = order.indexOf(id)
         if (at < 0) return
         val title = rowTitle(id)
-        val hidden = id in hiddenRows()
+        val hidden = id in localHidden()
+        val householdHidden = id in globalHidden()
         val options = ArrayList<Pair<String, String>>()
-        options.add("toggle" to (if (hidden) "Show \"$title\" on Home" else "Hide \"$title\" from Home"))
+        if (!householdHidden) {
+            options.add("toggle" to (if (hidden) "Show \"$title\" on Home" else "Hide \"$title\" from Home"))
+        }
         if (at > 0) options.add("earlier" to "Move \"$title\" earlier")
         if (at < order.size - 1) options.add("later" to "Move \"$title\" later")
         options.add("back" to "Back to rows")
@@ -248,7 +273,7 @@ class SettingsActivity : Activity() {
             when (action) {
                 "back" -> showHomeRows()
                 "toggle" -> {
-                    val nextHidden = hiddenRows()
+                    val nextHidden = localHidden()
                     if (hidden) nextHidden.remove(id) else if (id !in nextHidden) nextHidden.add(id)
                     writeRows(nextHidden, order)
                 }
@@ -256,7 +281,7 @@ class SettingsActivity : Activity() {
                     val next = order.toMutableList()
                     next.removeAt(at)
                     next.add(if (action == "earlier") at - 1 else at + 1, id)
-                    writeRows(hiddenRows(), next)
+                    writeRows(localHidden(), next)
                 }
             }
         }
@@ -268,23 +293,20 @@ class SettingsActivity : Activity() {
         val cfg = JSONObject()
             .put("hidden", JSONArray(hidden))
             .put("order", JSONArray(order))
-        api.saveSettings(JSONObject().put("rows", cfg)) { _, error ->
-            if (isFinishing || isDestroyed) return@saveSettings
+        api.savePrefs(profileId, JSONObject().put("rows", cfg)) { saved, error ->
+            if (isFinishing || isDestroyed) return@savePrefs
             if (error != null) {
                 status.text = error
-                return@saveSettings
+                return@savePrefs
             }
-            api.settings { root, _ ->
-                if (isFinishing || isDestroyed) return@settings
-                if (root != null) {
-                    rowList = root.optJSONArray("rows")
-                    rowsCfg = root.optJSONObject("settings")?.optJSONObject("rows")
-                }
-                status.text = "Saved"
-                paint()
-                showHomeRows()
-                rows.postDelayed({ status.text = "" }, 2500)
+            if (saved != null) {
+                prefs = saved
+                rowsCfg = saved.optJSONObject("rows") ?: JSONObject()
             }
+            status.text = "Saved"
+            paint()
+            showHomeRows()
+            rows.postDelayed({ status.text = "" }, 2500)
         }
     }
 

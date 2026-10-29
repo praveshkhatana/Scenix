@@ -34,10 +34,13 @@ Nothing is installed or deployed from here.
   player. See [../design/native-browse.md](../design/native-browse.md).
 - **Native Search + Settings** — `SearchActivity` is a remote A-Z keyboard over the hub's
   `/app/v1/search` index, with the same poster cards and focus ring as Home. `SettingsActivity`
-  covers audio language, subtitle language, quality ceiling, a native Home-rows editor (hide/show
-  and reorder shelves), the profile gate, native Source packs (IGC/audio donors), Add-ons
-  (enable/disable/remove/add), and Debrid (provider, switch, write-only token). There is no
-  "open the web settings" path from the TV; `TextEntryActivity` handles the few URL/token fields.
+  covers audio language, subtitle language, quality ceiling, a native Home-rows editor (this
+  profile's hide/show and order), a native Live TV lineup (this profile's channels and zap order),
+  the profile gate, native Source packs (IGC/audio donors), Add-ons
+  (enable/disable/remove/add), and Debrid (provider, switch, write-only token). Home rows and the
+  live lineup are per profile; audio/subtitles/quality always were. Add-ons, source packs, Debrid and
+  the live playlist are household resources. There is no "open the web settings" path from the TV;
+  `TextEntryActivity` handles the few URL/token fields.
 - **The web product** — `WebShellActivity` still loads `http://<backend>/` for the full web settings,
   browser deep links and the web player. Those are the same `hub/web/` files a browser gets.
 - **Torrents** — standalone carries `TorrentEngine` (libtorrent4j, 32-bit ARM). It downloads a magnet
