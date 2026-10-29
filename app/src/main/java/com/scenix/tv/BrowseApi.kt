@@ -31,6 +31,10 @@ data class ProfileInfo(
     val pinSet: Boolean,
     val locked: Boolean,
     val avatar: String,
+    /** The band the hub holds a Kids profile to; blank when the profile has no age. */
+    val age: String = "",
+    /** The profile's own language list; empty means it inherits the household's. */
+    val languages: List<String> = emptyList(),
 )
 
 /**
@@ -144,6 +148,13 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
             val out = ArrayList<ProfileInfo>()
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
+                val langs = ArrayList<String>()
+                o.optJSONArray("languages")?.let { la ->
+                    for (j in 0 until la.length()) {
+                        val v = la.optString(j, "")
+                        if (v.isNotBlank()) langs.add(v)
+                    }
+                }
                 out.add(
                     ProfileInfo(
                         id = s(o, "id", ""),
@@ -153,6 +164,8 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                         pinSet = o.optBoolean("pinSet", o.optBoolean("hasPin", o.optBoolean("pinRequired", false))),
                         locked = o.optBoolean("locked", false),
                         avatar = s(o, "avatar", ""),
+                        age = if (o.isNull("age")) "" else o.opt("age")?.toString().orEmpty(),
+                        languages = langs,
                     )
                 )
             }
@@ -170,6 +183,35 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         ) { root, _, error ->
             done(root?.optBoolean("ok") == true, error)
         }
+    }
+
+    /**
+     * Create, change or remove a person. The status is handed over with the body because a refusal is
+     * not one thing: a locked profile answers 403 with `locked`, an act that belongs to an adult answers
+     * 403 with `gate: 'profiles'`, and only the body says which. The caller asks for the PIN the hub
+     * named, then retries the same call with `pinCurrent`.
+     */
+    fun createProfile(body: JSONObject, done: (root: JSONObject?, status: Int, error: String?) -> Unit) =
+        request("/app/v1/profiles", "", "POST", body, 15000) { root, status, error ->
+            done(root, status, error)
+        }
+
+    /** `PUT /app/v1/profiles/<id>` — the hub answers PUT and PATCH with the same handler. */
+    fun updateProfile(
+        profileId: String,
+        body: JSONObject,
+        done: (root: JSONObject?, status: Int, error: String?) -> Unit,
+    ) = request("/app/v1/profiles/" + enc(profileId), "", "PUT", body, 15000) { root, status, error ->
+        done(root, status, error)
+    }
+
+    /** A DELETE may carry the body that proves the profile's PIN; no body means an unlocked profile. */
+    fun deleteProfile(
+        profileId: String,
+        body: JSONObject,
+        done: (root: JSONObject?, status: Int, error: String?) -> Unit,
+    ) = request("/app/v1/profiles/" + enc(profileId), "", "DELETE", body, 15000) { root, status, error ->
+        done(root, status, error)
     }
 
     fun absolute(path: String): String {

@@ -34,6 +34,7 @@ class TextEntryActivity : Activity() {
         val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
         val value = intent?.getStringExtra(EXTRA_VALUE).orEmpty()
         val hint = intent?.getStringExtra(EXTRA_HINT).orEmpty()
+        val plainText = intent?.getBooleanExtra(EXTRA_PLAIN_TEXT, false) == true
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -55,7 +56,13 @@ class TextEntryActivity : Activity() {
             setTextColor(app.theme.ink)
             setHint(hint)
             setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            inputType = InputType.TYPE_CLASS_TEXT or if (plainText) {
+                // A person's name needs spaces; a URL or token wants the URI keyboard. The rest of
+                // the settings keep the URI default they were written against.
+                InputType.TYPE_TEXT_VARIATION_PERSON_NAME
+            } else {
+                InputType.TYPE_TEXT_VARIATION_URI
+            }
             imeOptions = EditorInfo.IME_ACTION_DONE
             setBackgroundColor(app.theme.surface2)
             setPadding(app.theme.px(18f), app.theme.px(14f), app.theme.px(18f), app.theme.px(14f))
@@ -117,6 +124,7 @@ class TextEntryActivity : Activity() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_VALUE = "value"
         const val EXTRA_HINT = "hint"
+        const val EXTRA_PLAIN_TEXT = "plain_text"
         const val EXTRA_RESULT = "text"
     }
 }

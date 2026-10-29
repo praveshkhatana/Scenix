@@ -21,9 +21,9 @@ import org.json.JSONObject
 
 /**
  * The television's own settings page. It covers the preferences that change what a D-pad viewer
- * hears and sees — the language order, the quality ceiling — and leaves the long tail (addons,
- * profiles, household rules) to the web UI through one honest row. Reads and writes the same
- * `/app/v1/prefs` the web page uses, so the two surfaces cannot disagree.
+ * hears and sees — the language order, the quality ceiling — and the household's people, add-ons,
+ * packs and lock. Reads and writes the same `/app/v1` contract the web page uses, so the two
+ * surfaces cannot disagree.
  */
 class SettingsActivity : Activity() {
 
@@ -178,6 +178,9 @@ class SettingsActivity : Activity() {
             }
             addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips") {
                 requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
+            }
+            addRow("Manage profiles", "Add, rename, PINs", "Create people, set their kind and remove them") {
+                requireAdmin { startActivity(Intent(this, ManageProfilesActivity::class.java)) }
             }
             addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
                 requireAdmin { startActivity(Intent(this, SourcePacksActivity::class.java)) }

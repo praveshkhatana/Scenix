@@ -43,7 +43,7 @@ class ProfilesActivity : Activity() {
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         head.addView(Views.text(app, "logo", 34f, app.theme.brand, "SCENIX", bold = true))
         head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        head.addView(Views.text(app, "sub", 22f, app.theme.ink2, "Manage profiles in the web UI"))
+        head.addView(Views.text(app, "sub", 22f, app.theme.ink2, "Manage profiles in Settings"))
         root.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(Views.text(app, "h1", 52f, app.theme.ink, "Who's watching?", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
