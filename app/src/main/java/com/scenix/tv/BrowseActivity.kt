@@ -9,6 +9,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -43,6 +45,21 @@ class BrowseActivity : Activity() {
     private var loaded = false
     private var stage: Stage? = null
     private var heroItem: Item? = null
+
+    // The hero and the first shelf are ONE section, the way Apple's shelf-top works: the slides the
+    // hero shows are the tiles of the Featured row, and whichever side moves, the other follows.
+    private var slides: List<Item> = emptyList()
+    private var heroPos = 0
+    private var browseAdapter: BrowseAdapter? = null
+    private var liveTab: View? = null
+    private val clock = Handler(Looper.getMainLooper())
+    private var rotationPaused = false
+    private val rotateHero = object : Runnable {
+        override fun run() {
+            if (!rotationPaused && slides.size > 1) setHero((heroPos + 1) % slides.size)
+            clock.postDelayed(this, app.theme.token("hero", "rotateMs", 6000.0).toLong())
+        }
+    }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
@@ -187,13 +204,38 @@ class BrowseActivity : Activity() {
     }
 
     private fun onCardFocused(card: View, item: Item) {
+        rotationPaused = false
         val s = stage ?: return
         s.show(item.backdrop ?: item.poster ?: item.logo)
         s.setRoaming(true)
         eachCard { it.alpha = if (it === card) 1f else 0.58f }
     }
 
+    /**
+     * A tile of the Featured row holds focus: the hero above it follows to that slide, and the room
+     * stays lit — walking the hero's own section is browsing the hero, not roaming the shelves.
+     */
+    private fun onSlideFocused(pos: Int) {
+        rotationPaused = true
+        setHero(pos)
+        val s = stage ?: return
+        s.setRoaming(false)
+        eachCard { it.alpha = 1f }
+    }
+
+    private fun setHero(pos: Int) {
+        if (slides.isEmpty()) return
+        val prev = heroPos
+        heroPos = pos.coerceIn(0, slides.size - 1)
+        val item = slides[heroPos]
+        heroItem = item
+        browseAdapter?.showSlide(heroPos)
+        browseAdapter?.syncFeaturedSlide(prev, heroPos)
+        stage?.show(item.backdrop ?: item.poster ?: item.logo)
+    }
+
     private fun onChromeFocused() {
+        rotationPaused = true
         val s = stage ?: return
         s.setRoaming(false)
         s.show(heroItem?.backdrop ?: heroItem?.poster)
@@ -223,6 +265,8 @@ class BrowseActivity : Activity() {
         }
         if (theme.navStyle == "pill") {
             // Apple-style packs float one centred pill over the stage; the wordmark stays at the edge.
+            // The pill carries the household and the sections this app can play, in the order the web
+            // bar teaches: face, Home, Movies, Series, Live TV, then the actions.
             val bar = FrameLayout(this)
             bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
             bar.addView(brand, FrameLayout.LayoutParams(
@@ -237,7 +281,25 @@ class BrowseActivity : Activity() {
                 setPadding(theme.px(10f), theme.px(6f), theme.px(10f), theme.px(6f))
                 background = Views.rounded(theme.surface2, theme.px(999f), theme.px(1f), theme.line)
             }
-            pill.addView(profile)
+            pill.addView(profileDisc())
+            pill.addView(navTab("Home", active = true) { list.smoothScrollToPosition(0) })
+            pill.addView(navTab("Movies") { openWeb("#/browse/movies") })
+            pill.addView(navTab("Series") { openWeb("#/browse/series") })
+            val live = navTab("Live TV") {
+                startActivity(
+                    Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
+                        .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+                )
+            }
+            // A tab the hub cannot fill is a dead key on a remote: Live TV appears only once Home
+            // answers with a live wall that has channels in it.
+            live.visibility = View.GONE
+            liveTab = live
+            pill.addView(live)
+            pill.addView(View(this).apply { setBackgroundColor(theme.line) },
+                LinearLayout.LayoutParams(theme.px(1f), theme.px(26f)).apply {
+                    marginStart = theme.px(10f); marginEnd = theme.px(4f)
+                })
             pill.addView(search)
             pill.addView(settings)
             bar.addView(pill, FrameLayout.LayoutParams(
@@ -276,6 +338,61 @@ class BrowseActivity : Activity() {
         return b
     }
 
+    /** A section of the pill. The one you are standing on wears the white face; the rest wait as text. */
+    private fun navTab(label: String, active: Boolean = false, action: () -> Unit): View {
+        val b = navButton(label, app.theme.px(4f), action)
+        if (active) {
+            (b as TextView).setTextColor(Color.BLACK)
+            b.background = Views.rounded(Color.argb(242, 242, 243, 245), app.theme.px(999f))
+        }
+        return b
+    }
+
+    /** The household at the head of the pill: the profile's face when the hub has one, its initial otherwise. */
+    private fun profileDisc(): View {
+        val theme = app.theme
+        val size = theme.px(44f)
+        val disc = FrameLayout(this).apply {
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setRoundRect(0, 0, v.width, v.height, size.toFloat())
+                }
+            }
+            background = Views.rounded(theme.surface2, size / 2, theme.px(1f), theme.line)
+        }
+        val face = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        disc.addView(face, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, size))
+        val ini = Views.text(app, "li", 16f, theme.ink2, "?", bold = true, gravity = Gravity.CENTER)
+        disc.addView(ini, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        disc.isFocusable = true
+        disc.isClickable = true
+        disc.setOnClickListener {
+            startActivity(
+                Intent(this@BrowseActivity, ProfilesActivity::class.java)
+                    .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
+            )
+        }
+        Focus.attach(disc, disc, app, size / 2, scale = false, elevate = false,
+            onFocus = { if (it) onChromeFocused() })
+        disc.layoutParams = LinearLayout.LayoutParams(size, size).apply {
+            marginEnd = theme.px(8f)
+        }
+        api.profiles { people, _ ->
+            if (isFinishing || isDestroyed) return@profiles
+            val me = people?.firstOrNull { it.id == profileId } ?: return@profiles
+            ini.text = me.name.trim().take(1).uppercase()
+            if (me.avatar.isNotBlank()) {
+                BrowseImages.load(face, api.absolute(me.avatar), size) { ok ->
+                    if (!isFinishing && !isDestroyed) ini.visibility = if (ok) View.GONE else View.VISIBLE
+                }
+            }
+        }
+        return disc
+    }
+
     private fun load() {
         status.visibility = View.VISIBLE
         status.text = "Loading the shelves…"
@@ -289,18 +406,52 @@ class BrowseActivity : Activity() {
             }
             loaded = true
             status.visibility = View.GONE
-            val hero = rows.firstOrNull { it.id == "hero" }?.items?.firstOrNull()
-            heroItem = hero
-            val shelves = rows.filter { it.id != "hero" && it.items.isNotEmpty() }
-            stage?.show(hero?.backdrop ?: hero?.poster
+            // The hub sometimes sends the hero as its own row and sometimes folds the featured
+            // titles into the first shelf. Either way Home opens on a hero — the viewer's first
+            // sight on this set is the featured title, never a bare shelf head — and the hero's
+            // slides are exactly the tiles of the Featured row that sits under it.
+            val heroRow = rows.firstOrNull { it.id == "hero" }
+            val others = rows.filter { it.id != "hero" && it.items.isNotEmpty() }
+            val maxSlides = app.theme.token("hero", "maxItems", 5.0).toInt().coerceAtLeast(1)
+            val shelves: List<BrowseRow>
+            if (heroRow != null && heroRow.items.isNotEmpty()) {
+                slides = heroRow.items.take(maxSlides)
+                shelves = listOf(BrowseRow("featured", "Featured on Scenix", "poster", slides)) + others
+            } else {
+                val first = others.firstOrNull()
+                if (first == null) {
+                    slides = emptyList()
+                    shelves = others
+                } else {
+                    slides = first.items.take(maxSlides)
+                    shelves = listOf(BrowseRow("featured", "Featured on Scenix", first.card, slides)) +
+                        others.drop(1)
+                }
+            }
+            heroPos = 0
+            heroItem = slides.firstOrNull()
+            liveTab?.visibility =
+                if (rows.any { it.id == "live" && it.items.isNotEmpty() }) View.VISIBLE else View.GONE
+            stage?.show(heroItem?.backdrop ?: heroItem?.poster
                 ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
-            val adapter = BrowseAdapter(hero, shelves)
+            val adapter = BrowseAdapter(heroItem, shelves)
+            browseAdapter = adapter
             list.adapter = adapter
+            clock.removeCallbacks(rotateHero)
+            rotationPaused = false
+            if (slides.size > 1) {
+                clock.postDelayed(rotateHero, app.theme.token("hero", "rotateMs", 6000.0).toLong())
+            }
             list.postDelayed({
-                val first = adapter.heroPlay ?: firstFocusable(list) ?: return@postDelayed
+                val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list) ?: return@postDelayed
                 first.requestFocus()
             }, 700)
         }
+    }
+
+    override fun onDestroy() {
+        clock.removeCallbacks(rotateHero)
+        super.onDestroy()
     }
 
     private fun firstFocusable(parent: ViewGroup): View? {
@@ -337,6 +488,29 @@ class BrowseActivity : Activity() {
 
         var heroPlay: View? = null
             private set
+        private var heroHolder: HeroHolder? = null
+        // The rail whose tiles ARE the hero's slides; the hero follows its focused tile and the
+        // current slide keeps a rim even when focus walks away, so the two never drift apart.
+        var featuredCards: CardAdapter? = null
+            private set
+        private var featuredRail: RecyclerView? = null
+
+        /** There is no separate hero stop: a landing on Home stands on the Featured row, as Apple's does. */
+        fun focusFirstSlide(): View? = featuredRail?.getChildAt(0)
+
+        fun showSlide(pos: Int) {
+            heroPos = pos.coerceIn(0, slides.size - 1)
+            heroHolder?.let { renderHero(it) }
+        }
+
+        fun syncFeaturedSlide(prev: Int, next: Int) {
+            val rail = featuredCards ?: return
+            if (prev == next) return
+            // Rebind only the two tiles whose rim state changed; the rest of the shelf — and the
+            // ring's focus — stay exactly where they are.
+            if (prev in 0 until rail.itemCount) rail.notifyItemChanged(prev)
+            if (next in 0 until rail.itemCount) rail.notifyItemChanged(next)
+        }
 
         override fun getItemCount(): Int = (if (hero != null) 1 else 0) + shelves.size
 
@@ -428,7 +602,27 @@ class BrowseActivity : Activity() {
                     topMargin = theme.px(22f)
                 })
                 slot.addView(words, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                HeroHolder(slot, art, poster, title, logo, meta, play, split)
+                // The dots say how many slides the hero carries — and they match the Featured row
+                // tile for tile, because the row IS the hero's slide list laid out on the floor.
+                val dots = LinearLayout(this@BrowseActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    visibility = if (slides.size > 1) View.VISIBLE else View.GONE
+                }
+                for (i in slides.indices) {
+                    dots.addView(View(this@BrowseActivity), LinearLayout.LayoutParams(
+                        theme.px(10f), theme.px(10f)
+                    ).apply {
+                        leftMargin = theme.px(4f); rightMargin = theme.px(4f)
+                    })
+                }
+                slot.addView(dots, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    bottomMargin = theme.px(26f)
+                })
+                HeroHolder(slot, art, poster, title, logo, meta, play, dots, split)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -454,42 +648,63 @@ class BrowseActivity : Activity() {
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             if (holder is HeroHolder) {
-                val item = hero ?: return
-                holder.title.text = item.title
-                holder.title.visibility = View.VISIBLE
-                holder.logo.visibility = View.GONE
-                val facts = ArrayList<String>()
-                if (item.match > 0) facts.add("${item.match}% match")
-                if (item.isNew) facts.add("New")
-                if (item.year > 0) facts.add(item.year.toString())
-                if (item.maturity.isNotBlank()) facts.add(item.maturity)
-                item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
-                holder.meta.text = facts.joinToString(" · ")
-                BrowseImages.load(holder.art,
-                    if (holder.split) item.backdrop ?: item.poster else item.poster ?: item.backdrop,
-                    app.theme.px(1100f))
-                if (holder.split) BrowseImages.load(holder.poster, item.poster ?: item.backdrop, app.theme.px(420f))
-                if (!item.logo.isNullOrBlank()) {
-                    holder.logo.visibility = View.VISIBLE
-                    BrowseImages.load(holder.logo, item.logo, app.theme.px(560f)) { ok ->
-                        holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
-                        holder.title.visibility = if (ok) View.GONE else View.VISIBLE
-                    }
-                }
+                if (slides.isEmpty()) return
+                heroHolder = holder
+                renderHero(holder)
+                val item = slides[heroPos]
                 heroPlay = holder.play
-                holder.play.setOnClickListener { openDetail(item) }
-                holder.itemView.setOnClickListener { openDetail(item) }
+                holder.play.setOnClickListener { openDetail(slides.getOrElse(heroPos) { item }) }
+                holder.itemView.setOnClickListener { openDetail(slides.getOrElse(heroPos) { item }) }
             } else if (holder is ShelfHolder) {
                 val row = shelves[position - (if (hero != null) 1 else 0)]
                 holder.head.text = row.title
-                holder.rail.adapter = CardAdapter(row)
+                val cards = CardAdapter(row)
+                featuredCards = if (row.id == "featured") cards else null
+                featuredRail = if (row.id == "featured") holder.rail else featuredRail
+                holder.rail.adapter = cards
+            }
+        }
+
+        /** Paint the hero block with the current slide — title, facts, art and the dot strip. */
+        private fun renderHero(holder: HeroHolder) {
+            val item = slides.getOrNull(heroPos) ?: return
+            holder.title.text = item.title
+            holder.title.visibility = View.VISIBLE
+            holder.logo.visibility = View.GONE
+            val facts = ArrayList<String>()
+            if (item.match > 0) facts.add("${item.match}% match")
+            if (item.isNew) facts.add("New")
+            if (item.year > 0) facts.add(item.year.toString())
+            if (item.maturity.isNotBlank()) facts.add(item.maturity)
+            item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
+            holder.meta.text = facts.joinToString(" · ")
+            BrowseImages.load(holder.art,
+                if (holder.split) item.backdrop ?: item.poster else item.poster ?: item.backdrop,
+                app.theme.px(1100f))
+            if (holder.split) BrowseImages.load(holder.poster, item.poster ?: item.backdrop, app.theme.px(420f))
+            if (!item.logo.isNullOrBlank()) {
+                holder.logo.visibility = View.VISIBLE
+                BrowseImages.load(holder.logo, item.logo, app.theme.px(560f)) { ok ->
+                    holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
+                    holder.title.visibility = if (ok) View.GONE else View.VISIBLE
+                }
+            }
+            // The slide under the ring sits as a long dash; the others wait as plain dots.
+            val theme = app.theme
+            for (i in 0 until holder.dots.childCount) {
+                val dot = holder.dots.getChildAt(i)
+                (dot.layoutParams as LinearLayout.LayoutParams).width =
+                    theme.px(if (i == heroPos) 26f else 10f)
+                dot.requestLayout()
+                dot.background = Views.rounded(
+                    if (i == heroPos) Color.WHITE else Color.argb(90, 255, 255, 255), theme.px(5f))
             }
         }
     }
 
     private inner class HeroHolder(
         view: View, val art: ImageView, val poster: ImageView, val title: TextView, val logo: ImageView,
-        val meta: TextView, val play: TextView, val split: Boolean,
+        val meta: TextView, val play: TextView, val dots: LinearLayout, val split: Boolean,
     ) : RecyclerView.ViewHolder(view)
 
     private inner class ShelfHolder(
@@ -499,6 +714,8 @@ class BrowseActivity : Activity() {
     private inner class CardAdapter(private val row: BrowseRow) : RecyclerView.Adapter<CardHolder>() {
         private val theme = app.theme
         private val style = row.card
+        // The featured tiles are the hero's slide list: focus on one turns the billboard above it.
+        private val featured = row.id == "featured"
         // The pack owns the rail shape: Midnight turns ordinary poster shelves into wide 16:9 stills,
         // Ember keeps portraits but frames them. Ranked rows keep their numeral geometry.
         private val landscape = style == "poster" && theme.rowStyle == "landscape"
@@ -624,9 +841,23 @@ class BrowseActivity : Activity() {
                 gravity = Gravity.BOTTOM
                 bottomMargin = captionH
             })
-            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress)
+            val slideRing = if (featured) View(this@BrowseActivity).apply {
+                // The tile that the hero is currently showing wears a rim even when the ring is
+                // elsewhere — the prototype's slide-on outline, so the pair reads as one object.
+                background = Views.ring(Color.argb(140, 255, 255, 255), radius, theme.px(2f))
+                visibility = View.GONE
+            } else null
+            if (slideRing != null) card.addView(slideRing,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
+                    gravity = Gravity.TOP
+                })
+            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideRing)
             Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false,
-                onFocus = { focused -> if (focused) holder.item?.let { onCardFocused(card, it) } })
+                onFocus = { focused ->
+                    if (!focused) return@attach
+                    if (featured) onSlideFocused(holder.bindingAdapterPosition)
+                    else holder.item?.let { onCardFocused(card, it) }
+                })
             return holder
         }
 
@@ -680,6 +911,7 @@ class BrowseActivity : Activity() {
             } else {
                 holder.progress.visibility = View.GONE
             }
+            holder.slideRing?.visibility = if (position == heroPos) View.VISIBLE else View.GONE
             holder.itemView.setOnClickListener { openDetail(item) }
         }
     }
@@ -687,6 +919,7 @@ class BrowseActivity : Activity() {
     private inner class CardHolder(
         view: View, val art: ImageView, val name: TextView, val sub: TextView, val logo: ImageView,
         val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
+        val slideRing: View?,
     ) : RecyclerView.ViewHolder(view) {
         var item: Item? = null
     }
