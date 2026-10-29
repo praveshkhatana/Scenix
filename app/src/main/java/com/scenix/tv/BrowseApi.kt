@@ -22,6 +22,9 @@ data class BrowseRow(
     val title: String,
     val card: String,
     val items: List<Item>,
+    // How many titles the shelf really holds. The home payload sends a slice; the gap is what the
+    // shelf's "see all" tile opens.
+    val total: Int = items.size,
 )
 
 /** One person the native profile gate offers. */
@@ -368,6 +371,7 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                     title = s(r, "title", ""),
                     card = s(r, "card", "poster"),
                     items = items,
+                    total = r.optInt("total", items.size),
                 )
             )
         }

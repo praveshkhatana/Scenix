@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewParent
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.graphics.Color
 import android.graphics.drawable.LayerDrawable
 
 /**
@@ -30,6 +31,7 @@ object Focus {
         glowInset: Int = 0,
         onClick: (() -> Unit)? = null,
         onFocus: ((Boolean) -> Unit)? = null,
+        arrow: ((Int) -> Boolean)? = null,
     ) {
         val theme = ctx.theme
         // The pack chooses the focus language. `ring` is the classic white outline; `glow` thickens it
@@ -43,17 +45,29 @@ object Focus {
             style == "glow" -> {
                 // Apple's focus is not one line but a soft halo in the pack colour: two fading
                 // bands behind the solid ring. `glowInset` pulls the solid ring to the art's own
-                // edge while the halo spills into the space around the tile.
+                // edge while the halo spills into the space around the tile — but the bands hug
+                // the art's edges, not the far corners of the pad, so a caption under the tile
+                // never sits inside a band of its own.
                 val c = theme.focusGlowColor
                 val r = android.graphics.Color.red(c)
                 val g = android.graphics.Color.green(c)
                 val b = android.graphics.Color.blue(c)
-                val halo = LayerDrawable(arrayOf(
-                    Views.ring(android.graphics.Color.argb(26, r, g, b), ringRadiusPx + 14, 24),
-                    Views.ring(android.graphics.Color.argb(70, r, g, b), ringRadiusPx + 8, 12),
+                val spread = theme.px(14f)
+                val mid = theme.px(6f)
+                val halo = if (glowInset > 0) LayerDrawable(arrayOf(
+                    Views.ring(Color.argb(26, r, g, b), ringRadiusPx + spread, theme.px(24f)),
+                    Views.ring(Color.argb(70, r, g, b), ringRadiusPx + mid, theme.px(12f)),
+                    Views.ring(c, ringRadiusPx, theme.focusRingPx),
+                )) else LayerDrawable(arrayOf(
+                    Views.ring(Color.argb(26, r, g, b), ringRadiusPx + 14, 24),
+                    Views.ring(Color.argb(70, r, g, b), ringRadiusPx + 8, 12),
                     Views.ring(c, ringRadiusPx, theme.focusRingPx),
                 ))
-                if (glowInset > 0) halo.setLayerInset(2, glowInset, glowInset, glowInset, glowInset)
+                if (glowInset > 0) {
+                    halo.setLayerInset(0, glowInset - spread, glowInset - spread, glowInset - spread, glowInset - spread)
+                    halo.setLayerInset(1, glowInset - mid, glowInset - mid, glowInset - mid, glowInset - mid)
+                    halo.setLayerInset(2, glowInset, glowInset, glowInset, glowInset)
+                }
                 halo
             }
             else -> Views.ring(ringColor, ringRadiusPx, ringWidth)
@@ -93,6 +107,9 @@ object Focus {
 
         focusable.setOnKeyListener { _, code, ev ->
             if (ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            // A row may want an arrow for itself — the hero's Featured rail wraps at its ends to
+            // keep the loop illusion — before the arrow falls through to the system's focus search.
+            arrow?.let { if (it(code)) return@setOnKeyListener true }
             when (code) {
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
                 KeyEvent.KEYCODE_SPACE, -> {
