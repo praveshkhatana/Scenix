@@ -96,11 +96,11 @@ A user must never have to edit a file or set an environment variable to make Sce
 
 ### Which surface a device draws
 
-Two surfaces, one contract. The television draws Home/browse (`BrowseActivity`), Detail, Search,
-Settings, Profiles and Player natively, with a Media3 surface for video; the theme packs drive those
-native screens directly through `Theme.kt`. Browsers and phones use the web page for everything. The
-bundled web UI is still the browser surface and the fallback for `tv://` deep links; the normal
-television path no longer goes through a WebView for a shelf, a title, a search, a setting or a play.
+Two surfaces, one contract. The television draws Home/browse (`BrowseActivity`), Movies/Series
+(`SectionActivity`), Detail, Search, Settings, Profiles and Player natively, with a Media3 surface for
+video; the theme packs drive those native screens directly through `Theme.kt`. Browsers and phones use
+the web page the hub serves. The APK carries no WebView and no bundled page: `tv://detail` and
+`tv://play` pass through the native profile gate to the native screens.
 
 Setup and the profile gate remain the handoff: setup finds the backend, the profile gate produces a
 profile, and native Home opens against the same `/app/v1` contract.
@@ -153,10 +153,9 @@ the exceptions are genuine runtime dependencies (Node, ffmpeg, the media player 
 engine) and the addon services an owner chooses to install. The design vocabulary in
 `design/ui-tokens.md` is ours; the research that informed it stays out of this repository.
 
-## The offline copy is built, not remembered
+## No offline page, by design
 
-The Android shell carries a copy of the hub's web UI so a device with no hub reachable still opens
-something. That copy is taken from the hub tree at build time, which means a device's fallback ages from
-the moment its APK was built: install an APK today, change the UI tomorrow, and tomorrow's offline screen
-shows today's interface. So an APK is rebuilt whenever the UI it bundles changes, not only when the shell
-code changes. The build's copy task does the copying; the obligation is to run the build.
+The Android shell no longer carries the hub's web UI. Every normal screen is native and the client reads
+`/app/v1` directly, so there is no bundled page that can age behind the hub. The build copies only the
+character list and cached faces the native profile screen uses. A browser or phone still gets the web UI
+from the hub itself.

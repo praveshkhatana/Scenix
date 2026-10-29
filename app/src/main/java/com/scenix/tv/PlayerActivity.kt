@@ -41,6 +41,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
@@ -267,7 +268,7 @@ class PlayerActivity : Activity() {
         // A hub with HUB_TOKEN protects its own URLs, including the gateway's stream. The token is
         // added only for this hub's origin: a direct third-party stream must never learn the
         // household's token.
-        val base = WebShellActivity.apiBase(this)
+        val base = HubEndpoint.base(this)
         val hubOrigin = Uri.parse(base)
         val dataSource = ResolvingDataSource.Factory(
             DefaultDataSource.Factory(this, httpFactory)
@@ -575,7 +576,7 @@ class PlayerActivity : Activity() {
     /** A hub-relative subtitle path becomes an address the decoder can open. */
     private fun absoluteUrl(url: String): String = when {
         url.startsWith("http://", true) || url.startsWith("https://", true) -> url
-        url.startsWith("/") -> WebShellActivity.apiBase(this).trimEnd('/') + url
+        url.startsWith("/") -> HubEndpoint.base(this).trimEnd('/') + url
         else -> url
     }
 

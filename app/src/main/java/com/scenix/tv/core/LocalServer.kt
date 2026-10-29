@@ -6,10 +6,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The HTTP half of standalone mode. The web shell speaks the `/app/v1` contract over HTTP exactly
+ * The HTTP half of standalone mode. The native client speaks the `/app/v1` contract over HTTP exactly
  * as it does against a hub on another machine, so in this mode the app is its own hub: the same
- * routes on loopback, answered by the same [LocalHub] the page calls, and the page itself out of
- * `assets/web`.
+ * routes on loopback, answered by the same [LocalHub] the native screens call.
  *
  * One consequence worth stating: there is no second backend implementation to keep in step. The JSON
  * a hub answers and the JSON this answers come from the same functions, so the page cannot tell

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.s
@@ -56,6 +57,18 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     fun load(profileId: String, done: (rows: List<BrowseRow>?, error: String?) -> Unit) {
         request("/app/v1/home", "profile=" + enc(profileId), "GET", null, 20000) { root, _, error ->
             done(root?.let { parse(it) }, error)
+        }
+    }
+
+    /** One section row (Movies, Series), as a native grid instead of a WebView browse page. */
+    fun row(profileId: String, rowId: String, done: (title: String, items: List<Item>?, error: String?) -> Unit) {
+        request("/app/v1/row/" + enc(rowId), "profile=" + enc(profileId), "GET", null, 20000) { root, _, error ->
+            if (root == null) { done(rowId, null, error); return@request }
+            done(
+                s(root, "title", rowId),
+                Item.list(root.optJSONArray("items")),
+                error,
+            )
         }
     }
 
@@ -216,7 +229,7 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
 
     fun absolute(path: String): String {
         if (path.isBlank() || path.startsWith("http://") || path.startsWith("https://")) return path
-        return WebShellActivity.apiBase(context) + (if (path.startsWith("/")) path else "/$path")
+        return HubEndpoint.base(context) + (if (path.startsWith("/")) path else "/$path")
     }
 
     fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
@@ -266,6 +279,19 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
             done(root, error)
         }
 
+    /**
+     * `GET /app/v1/trailer/<identity>` — the hub looks the clip up on its own box and answers a
+     * playable URL. The proxied form is preferred: a signed clip demands headers a bare player
+     * will not replay, and the hub proxy replays them.
+     */
+    fun trailer(identity: String, done: (url: String?, error: String?) -> Unit) {
+        request("/app/v1/trailer/" + enc(identity), "", "GET", null, 30000) { root, _, error ->
+            val proxied = root?.optString("proxiedUrl", "").orEmpty()
+            val direct = root?.optString("url", "").orEmpty()
+            done(proxied.ifBlank { direct }.takeIf { it.isNotBlank() }, error)
+        }
+    }
+
     private fun request(
         path: String,
         query: String,
@@ -279,7 +305,7 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
             var status = 0
             var error: String? = null
             try {
-                val base = WebShellActivity.apiBase(context)
+                val base = HubEndpoint.base(context)
                 val url = "$base$path" + (if (query.isBlank()) "" else "?$query")
                 val conn = URL(url).openConnection() as HttpURLConnection
                 try {

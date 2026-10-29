@@ -55,14 +55,6 @@
             </intent-filter>
         </activity>
 
-        <!--
-            The product: the hub's web interface in a WebView, with media3 underneath it. Hub mode
-            loads the page from the hub; standalone mode loads it from this app's own server
-            (core/LocalServer.kt) out of assets/web/. Started by MainActivity after its one hub
-            probe, or by a `tv://` deep link with a `url` extra naming the page route. configChanges
-            keeps the WebView and its video surface alive through the orientation and density changes
-            Android TV makes on its own.
-        -->
         <activity
             android:name=".PinActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
@@ -155,6 +147,13 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".SectionActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".DetailActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="false"
@@ -172,14 +171,6 @@
 
         <activity
             android:name=".BrowseActivity"
-            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:screenOrientation="sensorLandscape"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".WebShellActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="true"
             android:launchMode="singleTop"

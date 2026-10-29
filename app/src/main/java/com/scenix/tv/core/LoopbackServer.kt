@@ -15,7 +15,7 @@ import java.util.concurrent.ThreadFactory
 /**
  * The HTTP/1.1 plumbing both on-device backends share.
  *
- * Standalone mode and the bundled fixture preview answer the same page from the same APK, so the
+ * Standalone mode and the fixture preview answer the same contract from the same APK, so the
  * socket handling, the bounded body reader, the static asset server and the response writer live
  * here once. A subclass only decides what `/app/v1` means; everything else — loopback binding,
  * `Connection: close`, cache policy, path traversal refusal — is identical.

@@ -3,9 +3,9 @@
 A self-hosted streaming system: one content hub, the same catalogue, every screen.
 
 Scenix puts the catalogue, the sources and the policy on a machine you own. Browsers and phones
-draw the web interface; the television draws Home, title pages, search, settings and playback natively,
-themed by the same pack files. The bundled web UI is still what a browser gets, and it remains the
-surface for the catalogue browse grids and the `tv://` deep links. Nothing has to be rented, nothing is
+draw the web interface; the television draws Home, Movies/Series, title pages, search, settings and playback natively,
+themed by the same pack files. The app carries no WebView; the web UI is what a browser or phone gets
+from the hub. Nothing has to be rented, nothing is
 licensed per device, and no vendor decides what your family may watch. If you already pay for a debrid account,
 the hub can optionally use it as a faster source; it is off until you turn it on.
 
@@ -157,9 +157,9 @@ automatically. `/healthz` stays public for pairing and exposes only the product 
 **TV app** — Android 8+ / Android TV, `./gradlew assembleDebug` in `app/`. On first run it tries a
 hub it already remembers, then asks the LAN; one that answers is opened without a question. If none
 does, setup lists the hubs it heard, accepts a typed address, and offers standalone mode. That is the
-whole native interface: once a backend is chosen the app opens the hub's page and stays there.
-`tv://detail/…` and `tv://play/…` links open the same page at that route; `tv://setup` brings the
-front door back on a TV that already has a backend.
+whole native interface: once a backend is chosen the app opens the native profile gate and stays native.
+`tv://detail/…` and `tv://play/…` links pass through that gate to the native Detail/Player;
+`tv://setup` brings the front door back on a TV that already has a backend.
 
 ## Layout
 

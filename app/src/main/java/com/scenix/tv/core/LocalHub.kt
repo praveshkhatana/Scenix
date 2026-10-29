@@ -943,6 +943,11 @@ class LocalHub private constructor(context: Context) {
         if (settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true) {
             out.add(LocalRow("live", "Live TV", "channel", 15, "all", emptyList()))
         }
+        // The two section tabs are rows like any other, even when empty: the native Movies/Series grid
+        // asks /app/v1/row/movies or /series, and a fresh install should answer "nothing yet" rather
+        // than 404.
+        out.add(LocalRow("movies", "Movies", "poster", 60, "all", emptyList()))
+        out.add(LocalRow("series", "Series", "poster", 61, "all", emptyList()))
         var order = 20
         for (am in manifests) {
             for (c in am.catalogs.take(MAX_CATALOGS_PER_ADDON)) {
@@ -994,6 +999,14 @@ class LocalHub private constructor(context: Context) {
 
         val liveChannels = channelItems()
         if (liveChannels.isNotEmpty()) out.add(LocalRow("live", "Live TV", "channel", 15, "all", liveChannels))
+
+        val allLibrary = libraryItems()
+        val movies = allLibrary.filter { it.type == "movie" }
+            .sortedByDescending { it.releasedAt }
+        if (movies.isNotEmpty()) out.add(LocalRow("movies", "Movies", "poster", 60, "all", movies.take(300)))
+        val series = allLibrary.filter { it.type == "series" }
+            .sortedByDescending { it.releasedAt }
+        if (series.isNotEmpty()) out.add(LocalRow("series", "Series", "poster", 61, "all", series.take(300)))
 
         for (am in addonManifests()) {
             if (!am.has("catalog")) continue

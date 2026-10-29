@@ -15,9 +15,8 @@ import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.plugins.nav.PairingScreen
 
 /**
- * The launcher. The product is the native television surface over the hub's `/app/v1` contract;
- * [WebShellActivity] remains the browser surface and the `tv://` deep-link fallback. This activity
- * does only the work that must happen before a screen exists:
+ * The launcher. The product is the native television surface over the hub's `/app/v1` contract. This
+ * activity does only the work that must happen before a screen exists:
  *
  *  1. apply the launch switches (`--es hub_url …`, `--es fixture …`, `--es token …`, `--ez setup/standalone`);
  *  2. run [HubWatch] once to find a hub (or notice that this TV is standalone);
@@ -157,22 +156,15 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     }
 
     private fun openShell(route: String?) {
-        if (route != null && route.startsWith("#/")) {
-            Log.i(TAG, "opening the web shell at $route")
-            startActivity(
-                Intent(this, WebShellActivity::class.java)
-                    .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, route))
-            )
-        } else {
-            Log.i(TAG, "opening the native profile gate")
-            // A relaunch from the TV home screen lands on top of the task that was left behind
-            // (Browse, Detail, maybe a paused player). Starting the gate in a cleared task means a
-            // person switch cannot walk back into the previous person's player.
-            startActivity(
-                Intent(this, ProfilesActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            )
-        }
+        Log.i(TAG, if (route != null) "opening the profile gate for $route" else "opening the native profile gate")
+        // A relaunch from the TV home screen lands on top of the task that was left behind (Browse,
+        // Detail, maybe a paused player). Starting the gate in a cleared task means a person switch
+        // cannot walk back into the previous person's player. A deep link keeps its route through the
+        // native gate and opens the native screen once a profile is chosen; no WebView is involved.
+        val next = Intent(this, ProfilesActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        if (route != null && route.startsWith("#/")) next.putExtra(ProfilesActivity.EXTRA_ROUTE, route)
+        startActivity(next)
         finish()
     }
 

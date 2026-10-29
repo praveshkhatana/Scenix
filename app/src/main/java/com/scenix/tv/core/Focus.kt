@@ -27,6 +27,7 @@ object Focus {
         scale: Boolean = true,
         animateScale: Boolean = true,
         elevate: Boolean = true,
+        glowInset: Int = 0,
         onClick: (() -> Unit)? = null,
         onFocus: ((Boolean) -> Unit)? = null,
     ) {
@@ -37,8 +38,26 @@ object Focus {
         val style = theme.focusStyle
         val ringColor = if (style == "glow") theme.focusGlowColor else theme.focusRingColor
         val ringWidth = if (style == "glow") theme.focusRingPx * 2 else theme.focusRingPx
-        val ring = if (style == "lift") Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
-            else Views.ring(ringColor, ringRadiusPx, ringWidth)
+        val ring: android.graphics.drawable.Drawable = when {
+            style == "lift" -> Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
+            style == "glow" -> {
+                // Apple's focus is not one line but a soft halo in the pack colour: two fading
+                // bands behind the solid ring. `glowInset` pulls the solid ring to the art's own
+                // edge while the halo spills into the space around the tile.
+                val c = theme.focusGlowColor
+                val r = android.graphics.Color.red(c)
+                val g = android.graphics.Color.green(c)
+                val b = android.graphics.Color.blue(c)
+                val halo = LayerDrawable(arrayOf(
+                    Views.ring(android.graphics.Color.argb(26, r, g, b), ringRadiusPx + 14, 24),
+                    Views.ring(android.graphics.Color.argb(70, r, g, b), ringRadiusPx + 8, 12),
+                    Views.ring(c, ringRadiusPx, theme.focusRingPx),
+                ))
+                if (glowInset > 0) halo.setLayerInset(2, glowInset, glowInset, glowInset, glowInset)
+                halo
+            }
+            else -> Views.ring(ringColor, ringRadiusPx, ringWidth)
+        }
         val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
         val base = ringOn?.background
         // Foreground is the right layer for a container whose children reach its edges (a poster

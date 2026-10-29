@@ -51,12 +51,13 @@ class BrowseActivity : Activity() {
     private var slides: List<Item> = emptyList()
     private var heroPos = 0
     private var browseAdapter: BrowseAdapter? = null
-    private var liveTab: View? = null
     private val clock = Handler(Looper.getMainLooper())
     private var rotationPaused = false
     private val rotateHero = object : Runnable {
         override fun run() {
-            if (!rotationPaused && slides.size > 1) setHero((heroPos + 1) % slides.size)
+            // A preview that is running is the viewer paying attention: rotation waits for it.
+            val watching = browseAdapter?.heroVideo()?.visibility == View.VISIBLE
+            if (!rotationPaused && slides.size > 1 && !watching) setHero((heroPos + 1) % slides.size)
             clock.postDelayed(this, app.theme.token("hero", "rotateMs", 6000.0).toLong())
         }
     }
@@ -78,9 +79,8 @@ class BrowseActivity : Activity() {
         app = sc.ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         if (profileId.isBlank()) {
-            // Never guess who is watching. The web profile gate is the one place a PIN is checked.
-            startActivity(Intent(this, WebShellActivity::class.java)
-                .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, "#/profiles")))
+            // Never guess who is watching. The native profile gate is the one place a PIN is checked.
+            startActivity(Intent(this, ProfilesActivity::class.java))
             finish()
             return
         }
@@ -205,6 +205,8 @@ class BrowseActivity : Activity() {
 
     private fun onCardFocused(card: View, item: Item) {
         rotationPaused = false
+        // A viewer walking a deep shelf is not looking at the billboard: its preview stops with them.
+        stopTrailer()
         val s = stage ?: return
         s.show(item.backdrop ?: item.poster ?: item.logo)
         s.setRoaming(true)
@@ -217,7 +219,11 @@ class BrowseActivity : Activity() {
      */
     private fun onSlideFocused(pos: Int) {
         rotationPaused = true
+        // Entering the hero's group always shows the whole hero: the banner and its tiles are one
+        // section, and a banner scrolled off the top breaks that.
+        list.smoothScrollToPosition(0)
         setHero(pos)
+        scheduleTrailer()
         val s = stage ?: return
         s.setRoaming(false)
         eachCard { it.alpha = 1f }
@@ -232,6 +238,50 @@ class BrowseActivity : Activity() {
         browseAdapter?.showSlide(heroPos)
         browseAdapter?.syncFeaturedSlide(prev, heroPos)
         stage?.show(item.backdrop ?: item.poster ?: item.logo)
+        // The trailer belongs to one slide at a time; moving the billboard moves or stops it.
+        clock.removeCallbacks(trailerTick)
+        stopTrailer()
+    }
+
+    private val trailerTick = Runnable { loadTrailer() }
+
+    /** A preview starts a beat after attention settles on a slide, not mid-step. */
+    private fun scheduleTrailer() {
+        clock.removeCallbacks(trailerTick)
+        clock.postDelayed(trailerTick, 1000L)
+    }
+
+    private fun stopTrailer() {
+        browseAdapter?.heroVideo()?.let {
+            runCatching { it.stopPlayback() }
+            it.visibility = View.GONE
+        }
+    }
+
+    private fun loadTrailer() {
+        val item = slides.getOrNull(heroPos) ?: return
+        api.trailer(item.identity) { url, _ ->
+            if (isFinishing || isDestroyed) return@trailer
+            // A lookup that answers after the billboard moved on is stale art: drop it.
+            if (slides.getOrNull(heroPos) !== item) return@trailer
+            val video = browseAdapter?.heroVideo() ?: return@trailer
+            val target = url?.takeIf { it.isNotBlank() } ?: return@trailer
+            video.setOnPreparedListener { mp ->
+                mp.isLooping = true
+                mp.setVolume(0f, 0f)
+                mp.start()
+                if (!isFinishing && !isDestroyed) {
+                    video.alpha = 0f
+                    video.visibility = View.VISIBLE
+                    video.animate().alpha(1f).setDuration(500).start()
+                }
+            }
+            video.setOnErrorListener { _, _, _ ->
+                if (!isFinishing && !isDestroyed) video.visibility = View.GONE
+                true
+            }
+            video.setVideoURI(Uri.parse(api.absolute(target)))
+        }
     }
 
     private fun onChromeFocused() {
@@ -283,25 +333,32 @@ class BrowseActivity : Activity() {
             }
             pill.addView(profileDisc())
             pill.addView(navTab("Home", active = true) { list.smoothScrollToPosition(0) })
-            pill.addView(navTab("Movies") { openWeb("#/browse/movies") })
-            pill.addView(navTab("Series") { openWeb("#/browse/series") })
+            pill.addView(navTab("Movies") { openSection("movies") })
+            pill.addView(navTab("Series") { openSection("series") })
             val live = navTab("Live TV") {
                 startActivity(
                     Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
                         .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
                 )
             }
-            // A tab the hub cannot fill is a dead key on a remote: Live TV appears only once Home
-            // answers with a live wall that has channels in it.
-            live.visibility = View.GONE
-            liveTab = live
             pill.addView(live)
             pill.addView(View(this).apply { setBackgroundColor(theme.line) },
                 LinearLayout.LayoutParams(theme.px(1f), theme.px(26f)).apply {
                     marginStart = theme.px(10f); marginEnd = theme.px(4f)
                 })
-            pill.addView(search)
-            pill.addView(settings)
+            // Search and Settings ride as icons in the pill, as Apple's bar and the prototype draw them.
+            pill.addView(navIcon(R.drawable.ic_nav_search, "Search") {
+                startActivity(
+                    Intent(this@BrowseActivity, SearchActivity::class.java)
+                        .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
+                )
+            })
+            pill.addView(navIcon(R.drawable.ic_nav_settings, "Settings") {
+                startActivity(
+                    Intent(this@BrowseActivity, SettingsActivity::class.java)
+                        .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
+                )
+            })
             bar.addView(pill, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.CENTER })
@@ -314,7 +371,17 @@ class BrowseActivity : Activity() {
         bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
         bar.addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(profile)
+        bar.addView(navButton("Movies") { openSection("movies") },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = theme.px(22f)
+            })
+        bar.addView(navButton("Series") { openSection("series") },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = theme.px(18f)
+            })
+        bar.addView(profile, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginStart = theme.px(24f)
+        })
         bar.addView(search, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = theme.px(24f)
         })
@@ -346,6 +413,26 @@ class BrowseActivity : Activity() {
             b.background = Views.rounded(Color.argb(242, 242, 243, 245), app.theme.px(999f))
         }
         return b
+    }
+
+    /** The pill's icon actions: a tinted glyph on a round focus pad, same focus language as the tabs. */
+    private fun navIcon(res: Int, desc: String, action: () -> Unit): View {
+        val theme = app.theme
+        val iv = ImageView(this).apply {
+            setImageResource(res)
+            contentDescription = desc
+            setColorFilter(theme.ink)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        iv.isFocusable = true
+        iv.isClickable = true
+        iv.setOnClickListener { action() }
+        Focus.attach(iv, iv, app, theme.px(15f), scale = false, elevate = false,
+            onFocus = { if (it) onChromeFocused() })
+        iv.layoutParams = LinearLayout.LayoutParams(theme.px(40f), theme.px(40f)).apply {
+            marginStart = theme.px(6f)
+        }
+        return iv
     }
 
     /** The household at the head of the pill: the profile's face when the hub has one, its initial otherwise. */
@@ -430,8 +517,6 @@ class BrowseActivity : Activity() {
             }
             heroPos = 0
             heroItem = slides.firstOrNull()
-            liveTab?.visibility =
-                if (rows.any { it.id == "live" && it.items.isNotEmpty() }) View.VISIBLE else View.GONE
             stage?.show(heroItem?.backdrop ?: heroItem?.poster
                 ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
             val adapter = BrowseAdapter(heroItem, shelves)
@@ -463,13 +548,24 @@ class BrowseActivity : Activity() {
         return null
     }
 
-    private fun openWeb(hash: String) {
-        val route = "?profile=${Uri.encode(profileId)}$hash"
+    /** Movies/Series are native grids; the browser's `#/browse/…` route is no longer opened here. */
+    private fun openSection(section: String) {
         startActivity(
-            Intent(this, WebShellActivity::class.java)
-                .putExtra(WebShellActivity.EXTRA_URL, WebShellActivity.shellUrl(this, route))
-                .putExtra(WebShellActivity.EXTRA_FROM_BROWSE, true)
-                .putExtra(WebShellActivity.EXTRA_PROFILE_HINT, profileId)
+            Intent(this, SectionActivity::class.java)
+                .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
+                .putExtra(SectionActivity.EXTRA_SECTION, section)
+        )
+    }
+
+    /** A live tile is a channel, not a title page: pressing it tunes it. */
+    private fun openLive(item: Item) {
+        startActivity(
+            Intent(this, PlayerActivity::class.java)
+                .putExtra(PlayerActivity.EXTRA_PROFILE, profileId)
+                .putExtra(PlayerActivity.EXTRA_IDENTITY, item.identity)
+                .putExtra(PlayerActivity.EXTRA_TYPE, "channel")
+                .putExtra(PlayerActivity.EXTRA_TITLE, item.title)
+                .putExtra(PlayerActivity.EXTRA_POSTER, item.poster.orEmpty())
         )
     }
 
@@ -497,6 +593,8 @@ class BrowseActivity : Activity() {
 
         /** There is no separate hero stop: a landing on Home stands on the Featured row, as Apple's does. */
         fun focusFirstSlide(): View? = featuredRail?.getChildAt(0)
+
+        fun heroVideo(): android.widget.VideoView? = heroHolder?.video
 
         fun showSlide(pos: Int) {
             heroPos = pos.coerceIn(0, slides.size - 1)
@@ -533,6 +631,13 @@ class BrowseActivity : Activity() {
                     setBackgroundColor(theme.surface2)
                 }
                 slot.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                // The trailer plays inside the banner, behind the words and the scrim, muted and
+                // looping — the home billboard's rule, not the player's.
+                val video = android.widget.VideoView(this@BrowseActivity).apply {
+                    visibility = View.GONE
+                    setBackgroundColor(Color.TRANSPARENT)
+                }
+                slot.addView(video, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 val scrim = View(this@BrowseActivity).apply {
                     background = if (split) GradientDrawable(
                         GradientDrawable.Orientation.LEFT_RIGHT,
@@ -622,7 +727,7 @@ class BrowseActivity : Activity() {
                     gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                     bottomMargin = theme.px(26f)
                 })
-                HeroHolder(slot, art, poster, title, logo, meta, play, dots, split)
+                HeroHolder(slot, art, video, poster, title, logo, meta, play, dots, split)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -675,12 +780,13 @@ class BrowseActivity : Activity() {
             if (item.match > 0) facts.add("${item.match}% match")
             if (item.isNew) facts.add("New")
             if (item.year > 0) facts.add(item.year.toString())
+            if (item.rating > 0) facts.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
             if (item.maturity.isNotBlank()) facts.add(item.maturity)
             item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
             holder.meta.text = facts.joinToString(" · ")
-            BrowseImages.load(holder.art,
-                if (holder.split) item.backdrop ?: item.poster else item.poster ?: item.backdrop,
-                app.theme.px(1100f))
+            // The banner shows the wide card — the same picture the stage carries — never a portrait
+            // poster stretched across the frame.
+            BrowseImages.load(holder.art, item.backdrop ?: item.poster, app.theme.px(1400f))
             if (holder.split) BrowseImages.load(holder.poster, item.poster ?: item.backdrop, app.theme.px(420f))
             if (!item.logo.isNullOrBlank()) {
                 holder.logo.visibility = View.VISIBLE
@@ -703,7 +809,8 @@ class BrowseActivity : Activity() {
     }
 
     private inner class HeroHolder(
-        view: View, val art: ImageView, val poster: ImageView, val title: TextView, val logo: ImageView,
+        view: View, val art: ImageView, val video: android.widget.VideoView,
+        val poster: ImageView, val title: TextView, val logo: ImageView,
         val meta: TextView, val play: TextView, val dots: LinearLayout, val split: Boolean,
     ) : RecyclerView.ViewHolder(view)
 
@@ -738,7 +845,10 @@ class BrowseActivity : Activity() {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             val card = FrameLayout(this@BrowseActivity)
-            card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH)
+            card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH).apply {
+                // Apple's shelves breathe; tiles never touch each other.
+                marginEnd = theme.px(26f)
+            }
             card.isFocusable = true
             card.isClickable = true
             card.setBackgroundColor(if (frame) theme.surface else Color.TRANSPARENT)
@@ -829,6 +939,29 @@ class BrowseActivity : Activity() {
             card.addView(num, FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
                 gravity = Gravity.START
             })
+            // IMDb rating and the certificate ride the top-right corner, gold star and plain badge,
+            // exactly as the pack's card design drew them.
+            val imdb = Views.text(app, "meta", 13f, Color.parseColor("#F6C621"), "", bold = true, maxLines = 1)
+            imdb.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+            imdb.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            val cert = Views.text(app, "meta", 13f, Color.WHITE, "", bold = true, maxLines = 1)
+            cert.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+            cert.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            val corner = LinearLayout(this@BrowseActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                visibility = View.GONE
+            }
+            corner.addView(imdb)
+            corner.addView(cert, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = theme.px(6f) })
+            card.addView(corner, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                rightMargin = theme.px(10f); topMargin = theme.px(10f)
+            })
             val progress = android.widget.ProgressBar(this@BrowseActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 1000
                 progressDrawable = GradientDrawable().apply {
@@ -851,8 +984,19 @@ class BrowseActivity : Activity() {
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
                     gravity = Gravity.TOP
                 })
-            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideRing)
-            Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false,
+            // The focus ring belongs to the ART, not to the caption under it: the ring view is an
+            // oversized transparent pad around the image, and the glow bands spill into that pad.
+            val glowPad = theme.px(26f)
+            val ringOn = View(this@BrowseActivity)
+            card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = -glowPad
+                topMargin = -glowPad
+            })
+            card.clipChildren = false
+            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideRing, imdb, cert, corner)
+            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
+                glowInset = glowPad,
                 onFocus = { focused ->
                     if (!focused) return@attach
                     if (featured) onSlideFocused(holder.bindingAdapterPosition)
@@ -875,6 +1019,13 @@ class BrowseActivity : Activity() {
                 holder.sub.text = sub.joinToString(" · ")
             }
             holder.logo.visibility = View.GONE
+            val imdbR = if (item.rating > 0) String.format(java.util.Locale.US, "★ %.1f", item.rating) else ""
+            holder.imdb.text = imdbR
+            holder.imdb.visibility = if (imdbR.isNotEmpty()) View.VISIBLE else View.GONE
+            holder.cert.text = item.maturity
+            holder.cert.visibility = if (item.maturity.isNotBlank()) View.VISIBLE else View.GONE
+            holder.corner.visibility =
+                if (imdbR.isNotEmpty() || item.maturity.isNotBlank()) View.VISIBLE else View.GONE
             val facts = ArrayList<String>()
             if (item.isNew) facts.add("NEW")
             if (item.match > 0) facts.add("${item.match}% match")
@@ -912,14 +1063,16 @@ class BrowseActivity : Activity() {
                 holder.progress.visibility = View.GONE
             }
             holder.slideRing?.visibility = if (position == heroPos) View.VISIBLE else View.GONE
-            holder.itemView.setOnClickListener { openDetail(item) }
+            holder.itemView.setOnClickListener {
+                if (item.isLive()) openLive(item) else openDetail(item)
+            }
         }
     }
 
     private inner class CardHolder(
         view: View, val art: ImageView, val name: TextView, val sub: TextView, val logo: ImageView,
         val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
-        val slideRing: View?,
+        val slideRing: View?, val imdb: TextView, val cert: TextView, val corner: View,
     ) : RecyclerView.ViewHolder(view) {
         var item: Item? = null
     }

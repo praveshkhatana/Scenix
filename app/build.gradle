@@ -5,11 +5,10 @@ plugins {
     id 'org.jetbrains.kotlin.android' version '1.9.24'
 }
 
-// ---- one web UI, held in one place ---------------------------------------------------------------
-// The interface is the hub's (`hub/web/`), not a copy that can drift. A build step carries it into a
-// generated assets dir, so git holds a single copy and an APK ships whatever the UI changed minutes ago.
-// The bundle keeps its own layout because LocalServer mounts it at `/ui/*`, which is how a hub serves it:
-// the page's absolute paths (`/ui/js/app.js`) need no rewriting against either backend.
+// ---- the character faces, not a web UI ---------------------------------------------------------
+// The television is native now: its Home, sections, Detail, Search, Settings and Player never load a
+// WebView. The only hub-owned assets the APK still needs are the character list and cached faces the
+// native profile screen offers. A build step carries those in from the hub tree so there is one copy.
 //
 // The hub sits next to this app in the repository, and further up in a working copy checked out beside it,
 // so it is found by walking up until a directory holds `hub/web/index.html`. `-Pscenix.hub=<dir>` says so
@@ -88,17 +87,11 @@ android {
 // repository never holds the same files twice.
 def copyHubUi = tasks.register('copyHubUi', Copy) {
     group = 'scenix'
-    description = 'Carry the hub\'s web UI, its character list and its cached faces into the assets.'
+    description = 'Carry the character list and cached faces into the native profile assets.'
     onlyIf { hubRoot != null && new File(hubRoot, 'web/index.html').isFile() }
     into hubUiDir
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     if (hubRoot != null) {
-        from(new File(hubRoot, 'web')) {
-            // `web/ui` is a link to `web` itself — it is how a hub answers /ui/<path> straight off disk —
-            // and copying it would copy the tree into itself.
-            exclude 'ui', 'ui/**'
-            into 'web'
-        }
         from(new File(hubRoot, 'characters.json')) { into 'characters' }
         from(new File(hubRoot, 'data/avatar-faces')) {
             include '**'
@@ -108,7 +101,7 @@ def copyHubUi = tasks.register('copyHubUi', Copy) {
 }
 tasks.named('preBuild') { dependsOn copyHubUi }
 if (hubRoot == null) {
-    logger.warn("scenix: no hub/web found near ${projectDir}, so this APK carries no web UI. " +
+    logger.warn("scenix: no hub found near ${projectDir}, so this APK carries no character faces. " +
         'Pass -Pscenix.hub=<dir> to point at one.')
 }
 

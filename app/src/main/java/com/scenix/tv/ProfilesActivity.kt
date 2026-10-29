@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -28,12 +29,15 @@ class ProfilesActivity : Activity() {
     private lateinit var status: TextView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var profiles: List<ProfileInfo> = emptyList()
+    /** A `tv://detail`/`tv://play` route that waits for the person to be chosen. */
+    private var pendingRoute: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         app = (application as ScenixApp).ctx
         profileId = intent?.getStringExtra(BrowseActivity.EXTRA_PROFILE).orEmpty()
+        pendingRoute = intent?.getStringExtra(EXTRA_ROUTE)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -139,6 +143,29 @@ class ProfilesActivity : Activity() {
 
     private fun open(p: ProfileInfo) {
         (application as ScenixApp).prefs.markProfileUnlocked(p.id)
+        val route = pendingRoute
+        pendingRoute = null
+        if (route != null && route.startsWith("#/detail/")) {
+            val identity = Uri.decode(route.removePrefix("#/detail/"))
+            startActivity(
+                Intent(this, DetailActivity::class.java)
+                    .putExtra(DetailActivity.EXTRA_PROFILE, p.id)
+                    .putExtra(DetailActivity.EXTRA_IDENTITY, identity)
+            )
+            finish()
+            return
+        }
+        if (route != null && route.startsWith("#/play/")) {
+            val identity = Uri.decode(route.removePrefix("#/play/"))
+            startActivity(
+                Intent(this, PlayerActivity::class.java)
+                    .putExtra(PlayerActivity.EXTRA_PROFILE, p.id)
+                    .putExtra(PlayerActivity.EXTRA_IDENTITY, identity)
+                    .putExtra(PlayerActivity.EXTRA_TYPE, "movie")
+            )
+            finish()
+            return
+        }
         val fromBrowse = intent?.getBooleanExtra(EXTRA_FROM_BROWSE, false) == true
         val intent = Intent(this, BrowseActivity::class.java)
             .putExtra(BrowseActivity.EXTRA_PROFILE, p.id)
@@ -169,6 +196,7 @@ class ProfilesActivity : Activity() {
 
     companion object {
         const val EXTRA_FROM_BROWSE = "from_browse"
+        const val EXTRA_ROUTE = "route"
         private const val REQ_PIN = 10
     }
 }
