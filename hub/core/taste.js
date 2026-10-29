@@ -200,6 +200,14 @@ async function decorate(ctx, items) {
   const fp = signals(ctx, byId);
   for (const it of items) {
     if (!it) continue;
+    // A live channel is not a title to recommend: "you watched BBC News for four minutes" is not a
+    // taste for news, and a percentage or a New badge on a channel tile is noise. Channels keep their
+    // own Live treatment; taste and New are for films, series and videos.
+    if (it.type === 'channel' || it.live) {
+      it.match = null;
+      it.isNew = false;
+      continue;
+    }
     it.isNew = isNew(it, now);
     if (!fp) {
       it.match = null;
