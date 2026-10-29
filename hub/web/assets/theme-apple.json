@@ -238,6 +238,7 @@
   "motion": "fade",
   "detail": "backdrop",
   "nav": "pill",
-  "rank": "outline"
+  "rank": "outline",
+  "stage": "focus"
  }
 }

@@ -37,7 +37,8 @@ the asset named by `Prefs.theme`; changing the theme restarts the task at the pr
   "motion": "fade",          // rise | fade
   "detail": "backdrop",      // backdrop | split
   "nav": "classic",          // classic | pill
-  "rank": "solid"            // solid | outline
+  "rank": "solid",           // solid | outline
+  "stage": "off"             // off | focus (native Apple scene: backdrop follows the ring)
 }
 ```
 
@@ -64,6 +65,10 @@ the asset named by `Prefs.theme`; changing the theme restarts the task at the pr
 - **nav** — `pill` floats one centred capsule over the stage (Apple); `classic` keeps the wordmark
   left and the links right.
 - **rank** — `outline` draws hollow Top-10 numerals (Apple); `solid` fills them (classic/Netflix).
+- **stage** — `focus` gives the native home one full-screen backdrop behind the shelves. It crossfades
+  to the focused tile's art, dims every other card and blurs/dims the stage while the viewer roams;
+  `off` keeps the opaque page. This is native-only; the browser's shelf layer already sits on its own
+  page background.
 
 ## 3. The three packs now
 
@@ -76,8 +81,8 @@ the asset named by `Prefs.theme`; changing the theme restarts the task at the pr
 | **Classic** (Netflix) | full, left | portrait | overlay, red brand | white ring | classic | backdrop |
 
 The Apple pack follows `design/prototypes/atv-home.html` (the other agent's prototype): 16:9 scene
-cards with names underneath, a centred floating pill, lift with a white rim/bloom, and hollow rank
-numerals. Netflix is the canonical red-on-black cinematic shape with portrait shelves. The packs are
+cards with names underneath, a centred floating pill, lift with a white rim/bloom, hollow rank
+numerals, and the native stage that follows focus (`stage: "focus"`). Netflix is the canonical red-on-black cinematic shape with portrait shelves. The packs are
 therefore structurally different, not five repaints of one screen.
 
 ## 4. Adding a pack

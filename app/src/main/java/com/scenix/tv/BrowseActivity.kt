@@ -3,8 +3,11 @@ package com.scenix.tv
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -38,6 +41,8 @@ class BrowseActivity : Activity() {
     private lateinit var status: TextView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var loaded = false
+    private var stage: Stage? = null
+    private var heroItem: Item? = null
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
@@ -63,29 +68,139 @@ class BrowseActivity : Activity() {
             return
         }
 
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setBackgroundColor(app.theme.bg)
-        root.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)))
+        // Apple's scene pack puts one stage behind the whole screen: the shelves float on it, and the
+        // stage crossfades to whatever tile holds focus. Other packs keep the opaque page they had.
+        val stageMode = app.theme.packString("stage", "off") == "focus"
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(if (stageMode) Color.TRANSPARENT else app.theme.bg)
+        }
+        val root: View = if (stageMode) {
+            val frame = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
+            val s = Stage()
+            stage = s
+            frame.addView(s.frame, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            frame.addView(content, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            frame
+        } else content
 
+        content.addView(topBar(stageMode), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)
+        ))
         list = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@BrowseActivity)
             setHasFixedSize(true)
             setItemViewCacheSize(24)
-            setBackgroundColor(app.theme.bg)
+            setBackgroundColor(if (stageMode) Color.TRANSPARENT else app.theme.bg)
             itemAnimator = null
             clipToPadding = false
             setPadding(0, app.theme.px(16f), 0, app.theme.px(64f))
         }
-        root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        content.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         status = Views.text(app, "sub", 24f, app.theme.ink2, "Loading the shelves…", gravity = Gravity.CENTER)
-        root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)))
+        content.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)))
         setContentView(root)
         load()
     }
 
-    private fun topBar(): View {
+    /**
+     * The Apple scene stage: one full-screen backdrop for the whole screen, crossfading to the tile
+     * under the ring and dimming/blurring while the viewer walks the shelves. Two ImageViews are
+     * enough for a crossfade; `front` is whichever one is currently opaque.
+     */
+    private inner class Stage {
+        val frame = FrameLayout(this@BrowseActivity)
+        private val a = ImageView(this@BrowseActivity).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            alpha = 0f
+        }
+        private val b = ImageView(this@BrowseActivity).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            alpha = 0f
+        }
+        private val veil = View(this@BrowseActivity).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(120, 0, 0, 0), Color.argb(30, 0, 0, 0), Color.argb(215, 0, 0, 0))
+            )
+            alpha = 0.84f
+        }
+        private var front = a
+        private var current: String? = null
+
+        init {
+            frame.addView(a, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            frame.addView(b, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            frame.addView(veil, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
+
+        fun show(url: String?) {
+            val clean = url?.trim().orEmpty()
+            if (clean.isEmpty() || clean == current) return
+            current = clean
+            val incoming = if (front === a) b else a
+            incoming.animate().cancel()
+            incoming.alpha = 0f
+            BrowseImages.load(incoming, clean, app.theme.px(1400f)) { ok ->
+                if (isFinishing || isDestroyed) return@load
+                if (!ok || current != clean) return@load
+                incoming.animate().alpha(1f).setDuration(650).withEndAction {
+                    front.alpha = 0f
+                    front = incoming
+                }.start()
+            }
+        }
+
+        fun setRoaming(roam: Boolean) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val effect = if (roam) RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP) else null
+                a.setRenderEffect(effect)
+                b.setRenderEffect(effect)
+            }
+            veil.animate().alpha(if (roam) 1f else 0.84f).setDuration(350).start()
+        }
+    }
+
+    /** Every mounted card in every visible rail, for the stage's "everything but the ring dims" pass. */
+    private fun eachCard(block: (View) -> Unit) {
+        for (i in 0 until list.childCount) {
+            val shelf = list.getChildAt(i)
+            if (shelf !is ViewGroup) continue
+            for (j in 0 until shelf.childCount) {
+                val rail = shelf.getChildAt(j)
+                if (rail is RecyclerView) {
+                    for (k in 0 until rail.childCount) block(rail.getChildAt(k))
+                }
+            }
+        }
+    }
+
+    private fun onCardFocused(card: View, item: Item) {
+        val s = stage ?: return
+        s.show(item.backdrop ?: item.poster ?: item.logo)
+        s.setRoaming(true)
+        eachCard { it.alpha = if (it === card) 1f else 0.58f }
+    }
+
+    private fun onChromeFocused() {
+        val s = stage ?: return
+        s.setRoaming(false)
+        s.show(heroItem?.backdrop ?: heroItem?.poster)
+        eachCard { it.alpha = 1f }
+    }
+
+    private fun topBar(transparent: Boolean = false): View {
         val theme = app.theme
         val brand = Views.text(app, "logo", 30f, theme.brand, "SCENIX", bold = true)
         val profile = navButton("Profile") {
@@ -109,7 +224,7 @@ class BrowseActivity : Activity() {
         if (theme.navStyle == "pill") {
             // Apple-style packs float one centred pill over the stage; the wordmark stays at the edge.
             val bar = FrameLayout(this)
-            bar.setBackgroundColor(theme.bg)
+            bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
             bar.addView(brand, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
@@ -134,7 +249,7 @@ class BrowseActivity : Activity() {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setPadding(theme.gutter, 0, theme.gutter, 0)
-        bar.setBackgroundColor(theme.bg)
+        bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
         bar.addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         bar.addView(profile)
@@ -153,7 +268,8 @@ class BrowseActivity : Activity() {
         b.isFocusable = true
         b.isClickable = true
         b.setOnClickListener { action() }
-        Focus.attach(b, b, app, app.theme.radius("button", 6f), scale = false, elevate = false)
+        Focus.attach(b, b, app, app.theme.radius("button", 6f), scale = false, elevate = false,
+            onFocus = { if (it) onChromeFocused() })
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lp.marginStart = left
         b.layoutParams = lp
@@ -174,7 +290,10 @@ class BrowseActivity : Activity() {
             loaded = true
             status.visibility = View.GONE
             val hero = rows.firstOrNull { it.id == "hero" }?.items?.firstOrNull()
+            heroItem = hero
             val shelves = rows.filter { it.id != "hero" && it.items.isNotEmpty() }
+            stage?.show(hero?.backdrop ?: hero?.poster
+                ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
             val adapter = BrowseAdapter(hero, shelves)
             list.adapter = adapter
             list.postDelayed({
@@ -289,7 +408,8 @@ class BrowseActivity : Activity() {
                 play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
                 play.isFocusable = true
                 play.isClickable = true
-                Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false)
+                Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false,
+                    onFocus = { if (it) onChromeFocused() })
                 words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(130f)).apply {
                     bottomMargin = theme.px(6f)
                     if (centred) gravity = Gravity.CENTER_HORIZONTAL
@@ -504,12 +624,15 @@ class BrowseActivity : Activity() {
                 gravity = Gravity.BOTTOM
                 bottomMargin = captionH
             })
-            Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
-            return CardHolder(card, art, name, sub, logo, badge, num, progress)
+            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress)
+            Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false,
+                onFocus = { focused -> if (focused) holder.item?.let { onCardFocused(card, it) } })
+            return holder
         }
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val item = row.items[position]
+            holder.item = item
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
             holder.sub.visibility = if (below) View.VISIBLE else View.GONE
@@ -564,7 +687,9 @@ class BrowseActivity : Activity() {
     private inner class CardHolder(
         view: View, val art: ImageView, val name: TextView, val sub: TextView, val logo: ImageView,
         val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
-    ) : RecyclerView.ViewHolder(view)
+    ) : RecyclerView.ViewHolder(view) {
+        var item: Item? = null
+    }
 
     companion object {
         const val EXTRA_PROFILE = "profile"

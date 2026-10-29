@@ -28,6 +28,7 @@ object Focus {
         animateScale: Boolean = true,
         elevate: Boolean = true,
         onClick: (() -> Unit)? = null,
+        onFocus: ((Boolean) -> Unit)? = null,
     ) {
         val theme = ctx.theme
         // The pack chooses the focus language. `ring` is the classic white outline; `glow` thickens it
@@ -94,6 +95,7 @@ object Focus {
         val ms = theme.focusDurationMs.toLong()
         focusable.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
             paintRing(has)
+            onFocus?.invoke(has)
             val target = if (has) {
                 if (style == "lift") Math.max(theme.focusScale, 1.045f) else theme.focusScale
             } else 1f
