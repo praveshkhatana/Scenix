@@ -173,6 +173,12 @@ class SettingsActivity : Activity() {
         // A kids profile never sees the admin rows, lock or no lock. An authorised person uses an
         // adult profile and proves the admin PIN there.
         if (profileKind != "kids") {
+            addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks") {
+                requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
+            }
+            addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips") {
+                requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
+            }
             addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
                 requireAdmin { startActivity(Intent(this, SourcePacksActivity::class.java)) }
             }
