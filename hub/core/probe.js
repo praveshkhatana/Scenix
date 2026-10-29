@@ -302,6 +302,131 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
 }
 
 /**
+ * Is this link a stream, or a page wearing a stream's URL?
+ *
+ * A direct/adaptive addon can mint its playable URL at play time, so the hub has never measured that
+ * exact URL: the probe cache has nothing to say about it, and an HTML service page answering 200 reaches
+ * the player and is reported there as a corrupt file. This is the cheapest question that separates the
+ * two — one ranged GET of a few KB, a hard cap of about a second, and no cache write. A real media body
+ * starts with bytes that are not a document, and an HLS/DASH manifest is recognised by its own first
+ * line. A non-2xx answer, an HTML document, or a 2xx with nothing in it is refused.
+ *
+ * The verdict is deliberately lenient about speed: a link that has already started sending bytes when
+ * the cap is spent is accepted, and a slow-but-real stream is never failed here. This check exists to
+ * catch the wrong KIND of answer; the picker's measured ordering already knows how to avoid slow ones.
+ *
+ * Returns { ok, reason, status, contentType, bytes, latencyMs, checkedAt } and never throws.
+ */
+function check(url, headers = {}, { timeoutMs = 1200, maxBytes = 4096 } = {}) {
+  const verdict = (ok, reason, extra) => ({
+    ok,
+    reason: reason || null,
+    status: null,
+    contentType: null,
+    bytes: 0,
+    latencyMs: null,
+    checkedAt: Date.now(),
+    ...(extra || {}),
+  });
+  if (!probeable(url)) return Promise.resolve(verdict(false, 'not an HTTP URL'));
+
+  const t0 = process.hrtime.bigint();
+  const ms = (big) => Number(big) / 1e6;
+  const rnd = (v) => Math.round(v * 10) / 10;
+  // Enough to sniff a document and no more: one chunk of a real stream is usually this size already.
+  const bytesLimit = Math.min(64 * 1024, Math.max(512, maxBytes));
+  return new Promise((resolve) => {
+    let settled = false;
+    let req = null;
+    let status = null;
+    let contentType = null;
+    let bytes = 0;
+    let head = '';
+    let ttfb = null;
+
+    const done = (ok, reason, extra) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hard);
+      if (req) { try { req.destroy(); } catch (e) { /* already gone */ } }
+      resolve(verdict(ok, reason, {
+        status,
+        contentType,
+        bytes,
+        latencyMs: ttfb == null ? null : rnd(ms(ttfb - t0)),
+        ...(extra || {}),
+      }));
+    };
+    // A document is not a stream even when the content-type lies. `#EXTM3U`, an XML declaration and an
+    // MPD root are the only manifests this hub can hand a player, so they are the only non-media openers
+    // allowed. The content-type is deliberately not used here: CDNs label real HLS `text/html` often
+    // enough that the bytes are the better witness, and a media body never starts with markup or JSON.
+    const judge = (extra) => {
+      const manifest = /^\s*(?:#EXTM3U|<\?xml|<MPD[\s>])/i.test(head);
+      if (!manifest && /^\s*[<{\[]/.test(head)) {
+        return done(false, 'answered with a document, not a stream', extra);
+      }
+      if (bytes <= 0) return done(false, 'answered ' + (status == null ? 'nothing' : status) + ' with no bytes', extra);
+      return done(true, null, extra);
+    };
+
+    const hard = setTimeout(() => {
+      // Bytes already moving: a slow start is not a reason to refuse a real stream. A document that has
+      // only half arrived is still a document, and refusing it is the whole point of this check.
+      if (bytes > 0) return judge({ partial: true });
+      done(false, ttfb != null ? 'headers, then no bytes in ' + timeoutMs + 'ms' : 'no answer in ' + timeoutMs + 'ms');
+    }, timeoutMs);
+    if (hard.unref) hard.unref();
+
+    const walk = (target, redirectsLeft) => {
+      let mod;
+      try {
+        mod = new URL(target).protocol === 'https:' ? https : http;
+      } catch (e) {
+        return done(false, 'bad url');
+      }
+      req = mod.get(target, {
+        headers: { 'User-Agent': UA, Accept: '*/*', 'Accept-Encoding': 'identity', Range: 'bytes=0-' + (bytesLimit - 1), ...headers },
+        timeout: timeoutMs,
+      }, (res) => {
+        status = res.statusCode;
+        if (status >= 300 && status < 400 && res.headers.location && redirectsLeft > 0) {
+          res.resume();
+          return walk(new URL(res.headers.location, target).toString(), redirectsLeft - 1);
+        }
+        ttfb = process.hrtime.bigint();
+        if (status < 200 || status >= 300) {
+          res.resume();
+          return done(false, 'HTTP ' + status);
+        }
+        contentType = String(res.headers['content-type'] || '').toLowerCase() || null;
+        res.on('data', (chunk) => {
+          bytes += chunk.length;
+          if (head.length < 1024) head += chunk.slice(0, 1024 - head.length).toString('utf8');
+          // Enough to know what kind of answer this is: stop instead of downloading the sample.
+          if (head.length >= 512 || bytes >= bytesLimit) judge();
+        });
+        res.on('end', () => judge());
+        res.on('error', () => {
+          if (bytes > 0) judge();
+          else done(false, 'stream read failed');
+        });
+      });
+      req.on('timeout', () => {
+        if (bytes > 0) judge({ partial: true });
+        else done(false, 'timeout ' + timeoutMs + 'ms');
+      });
+      req.on('error', (e) => {
+        if (bytes > 0) judge({ partial: true });
+        else done(false, e.code || e.message || 'connect failed');
+      });
+    };
+
+    walk(url, MAX_REDIRECTS);
+  });
+}
+
+/**
  * A real media file or a real manifest says what it is in its first bytes; a parked domain, a captcha
  * or an addon's landing page answers 200 with a document. Content-type alone is not evidence in either
  * direction — plenty of CDN-hosted HLS says `text/html` — so the sniff decides.
@@ -518,7 +643,7 @@ function status() {
 }
 
 module.exports = {
-  probeAll, probeUrl, probeOne, peek, invalidate, clearCache, keyFor, hash, probeable, sourceId, status,
+  probeAll, probeUrl, probeOne, check, peek, invalidate, clearCache, keyFor, hash, probeable, sourceId, status,
   ENABLED, FILE,
   limits: { PROBE_BYTES, SAMPLE_BYTES_MAX, MIN_SAMPLE_MS, PROBE_TIMEOUT_MS, OK_TTL_MS, FAIL_TTL_MS, CONCURRENCY, BUDGET_MS, CACHE_MAX },
 };

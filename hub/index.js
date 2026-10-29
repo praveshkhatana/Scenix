@@ -144,6 +144,12 @@ const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 5000);
 // the client guessing, because only the hub knows whether it is talking to an engine that is awake.
 const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 2000);
 const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 1500);
+// A direct/adaptive addon can mint its playable URL at play time, so the hub has no measurement of that
+// exact link and cannot rank it honestly. One short check catches a service page answering 200 before a
+// player does; this many more ranked copies are woken when that check refuses one.
+const PLAY_VALIDATE_TIMEOUT_MS = Number(process.env.PLAY_VALIDATE_TIMEOUT_MS || 1200);
+const PLAY_VALIDATE_RETRIES = Number.isFinite(Number(process.env.PLAY_VALIDATE_RETRIES))
+  ? Math.max(0, Math.min(5, Number(process.env.PLAY_VALIDATE_RETRIES))) : 2;
 // How much of the ranking rule's speed bar applies to a client that plays the copy itself.
 //
 // A browser over MSE and a native player on a TV are not equally nervous about a swarm that delivers at
@@ -1502,6 +1508,44 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
   };
 }
 
+/**
+ * Refuse a direct/adaptive link the hub has never measured, and only that.
+ *
+ * An addon that mints its URL inside play() gives the picker a link with no probe result: every ranking
+ * number on the row describes some other address. Nothing checked it, so a service page answering 200
+ * (Prime Video detail page, a parked CDN, an addon's landing page) was handed to the player and read
+ * there as a corrupt file. One short ranged read settles which kind of answer it is.
+ *
+ * This never waits on a link the hub has already measured (the probe cache is consulted synchronously),
+ * never touches a torrent/gateway URL (not HTTP), and never touches the audio donor (that is resolved
+ * after the picture is chosen). `null` means "no opinion, hand the link over": probing is off, the link
+ * is not HTTP, it is already in the probe cache, or the play budget is spent.
+ */
+async function mintedRefusal(o, deadline) {
+  if (!probe.ENABLED || !probe.probeable(o && o.url)) return null;
+  const headers = o.headers || {};
+  const known = probe.peek(o.url, headers);
+  // Already measured: a working link needs nothing from this check, and a failure we still believe is
+  // refused without spending a millisecond on it. An old failure is re-checked like any other mint,
+  // because a link coming back to life must not be refused on a stale verdict.
+  if (known) {
+    if (known.ok === true) return null;
+    if (Number(known.ageMs) <= probe.limits.FAIL_TTL_MS) return known.error || 'measured dead';
+  }
+  const left = deadline - Date.now();
+  if (left < 400) return null; // no time to judge it: answer as the hub did before this check existed
+  try {
+    const v = await probe.check(o.url, headers, {
+      timeoutMs: Math.max(300, Math.min(PLAY_VALIDATE_TIMEOUT_MS, left)),
+    });
+    if (!v || v.ok !== false) return null;
+    return v.reason || 'not a stream';
+  } catch (e) {
+    log('PLAY VALIDATE FAIL', e.message); // a check must never break a play
+    return null;
+  }
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
   const item = await ctx.resolve(identity, type);
@@ -1608,8 +1652,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // draw H.265 was handed a black screen with sound because three better-ranked H.265 files got there
   // first. A viewer who picked a source by hand still leads.
   const seated = candidates.slice().sort((a, b) => rankDown(a) - rankDown(b));
-  const queue = wanted && source ? [source, ...seated.filter((s) => s !== source)] : seated;
-  if (queue.length > PLAY_MAX_TRIES) queue.length = PLAY_MAX_TRIES;
+  // The whole ranked walk is kept: an ordinary press only seats PLAY_MAX_TRIES copies, but a minted link
+  // refused below may wake one more copy from further down the same ranking (bounded by the retry count).
+  const ranked = wanted && source ? [source, ...seated.filter((s) => s !== source)] : seated.slice();
+  const queue = ranked.slice(0, PLAY_MAX_TRIES);
   // Then the copies this connection can actually feed. Once the hub has measured the engine's rate, a
   // 6 GB 4K copy stops competing with a 900 MB 720p one: the smaller is tried first because the bigger
   // one is known to stall. A source that is not a torrent gets the same standing as one that fits,
@@ -1624,10 +1670,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     return need <= gatewayMbps * fitCeiling ? 0 : need;
   };
   queue.sort((a, b) => fitRank(a) - fitRank(b));
+  // Copies past the first seats, in the same measured order: woken only when a minted link is refused.
+  const spare = ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
   const labelOf = (s) => (s && (s.label || s.provider || s.id)) || 'source';
 
   const deadline = Date.now() + PLAY_TOTAL_BUDGET_MS;
   const tried = [];
+  let mintedTries = 0; // how many minted links this press has actually had to check
   // What this response adds to the source's own reasoning: the container it chose and why, and whether
   // the engine is the one holding the copy back. Appended to `source.why` at the end, never replacing it.
   const extraWhy = [];
@@ -1717,6 +1766,26 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         tried.push(labelOf(cand) + ': measured down (' + ((cand.probe && cand.probe.error) || 'no bytes') + ')');
         lastResort = lastResort || { o, cand };
         continue;
+      }
+      // A link the addon minted inside play() has no probe result of its own, so nothing has asked what
+      // kind of answer it is. One short ranged read, and a refusal walks the ranking instead of handing
+      // the player an HTML page. Cached measurements are trusted above (mintedRefusal reads them first),
+      // so a link the hub already probed never waits here.
+      if (mintedTries < 1 + PLAY_VALIDATE_RETRIES) {
+        mintedTries++;
+        const refusal = await mintedRefusal(o, deadline);
+        if (refusal) {
+          log('PLAY REJECT', identity, labelOf(cand), refusal);
+          tried.push(labelOf(cand) + ': ' + refusal);
+          // The ranked list was longer than the seats. Waking its next copy is only for a refused mint,
+          // only while another validation attempt is still allowed, and only once the current walk has
+          // nothing left queued behind it — the retry copies are appended in ranked order.
+          if (mintedTries < 1 + PLAY_VALIDATE_RETRIES && queue.indexOf(cand) === queue.length - 1) {
+            const next = spare.shift();
+            if (next) queue.push(next);
+          }
+          continue;
+        }
       }
       out = o; source = cand; break;
     }

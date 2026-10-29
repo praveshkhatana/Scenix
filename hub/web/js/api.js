@@ -124,6 +124,9 @@ export const api = {
   /* Settings and administration — the hub owns all of it, and the manifest says which of it exists. */
   settings: () => request('/app/v1/settings', { timeout: 8000 }),
   saveSettings: (body) => request('/app/v1/settings', { method: 'PUT', body, timeout: 8000 }),
+  // The household's admin PIN is checked by the hub, never compared on this page: `settings.lock.enabled`
+  // says a PIN is wanted, and this route is the only one that can say whether the number is right.
+  unlockSettings: (pin) => request('/app/v1/settings/unlock', { method: 'POST', body: { pin }, timeout: 6000 }),
   unlockProfile: (id, pin) => request(`/app/v1/profiles/${encodeURIComponent(id)}/unlock`, { method: 'POST', body: { pin }, timeout: 6000 }),
   createProfile: (body) => request('/app/v1/profiles', { method: 'POST', body, timeout: 6000 }),
   updateProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body, timeout: 6000 }),

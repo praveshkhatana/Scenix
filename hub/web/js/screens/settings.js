@@ -41,7 +41,7 @@ import { backendName } from '/ui/js/player.js';
 import { session, isLocked } from '/ui/js/state.js';
 import { langList } from '/ui/js/format.js';
 import { withAdultProof } from '/ui/js/profileedit.js';
-import { pushHandler, popHandler } from '/ui/js/input.js';
+import { pushHandler, popHandler, setDigitSink } from '/ui/js/input.js';
 
 export function screen(ctx) {
   const root = el('div', { class: 'screen settings' });
@@ -1118,6 +1118,118 @@ export function screen(ctx) {
     return d;
   }
 
+  /* ------------------------------------------------------------------ the gate */
+
+  /**
+   * The household admin PIN, asked once before this page draws anything.
+   *
+   * The lock is a property of the hub, not of the person watching: when `/app/v1/settings` says
+   * `settings.lock.enabled`, every section and action on this page belongs behind it, so the gate is
+   * drawn before the rail exists rather than in front of each row. The hub checks the number — this page
+   * never holds the PIN — and a refusal shakes the pad and clears it. Back, Cancel and ✕ leave the page
+   * as they always would; the caller reads `false` as "do not stay here".
+   *
+   * Resolves true when the hub accepts the number, false when the viewer walked away.
+   */
+  function askAdminPin() {
+    return new Promise((resolve) => {
+      let got = '';
+      let busy = false;
+      let answered = false;
+      const shown = el('div', {
+        class: 'field',
+        style: 'margin-bottom: calc(18px * var(--s)); justify-content: center;',
+      }, el('div', { class: 'q empty', text: '4 to 8 digits' }));
+      const err = el('div', { class: 'err' });
+      const pad = el('div', { class: 'p9' });
+      const box = el('div', { class: 'mbox pin' });
+      const draw = () => {
+        const q = shown.querySelector('.q');
+        q.textContent = got ? '•'.repeat(got.length) : '4 to 8 digits';
+        q.classList.toggle('empty', !got);
+      };
+      const finish = (ok) => {
+        if (answered) return;
+        answered = true;
+        setDigitSink(null);
+        ctx.closeModals();
+        resolve(ok);
+      };
+      const refuse = (message) => {
+        got = '';
+        draw();
+        err.textContent = message;
+        box.classList.remove('shake');
+        void box.offsetWidth;            // the shake is a one-shot animation, so it has to be restarted
+        box.classList.add('shake');
+        focus.focusDefault(pad.querySelector('.key'));
+      };
+      const submit = async () => {
+        if (busy) return;
+        if (got.length < 4) { refuse('Enter at least 4 digits'); return; }
+        busy = true;
+        err.textContent = '';
+        try {
+          const out = await api.unlockSettings(got);
+          if (out && out.ok !== false) { finish(true); return; }
+          refuse('That PIN is not right');
+        } catch (e) {
+          if (e && e.status === 429) refuse('Too many attempts — wait a moment and try again');
+          else if (e && e.status === 403) refuse('That PIN is not right');
+          else refuse('The hub would not check that PIN');
+        }
+        busy = false;
+      };
+      const press = (k) => {
+        if (busy) return;
+        if (k === 'clear') { got = ''; err.textContent = ''; draw(); return; }
+        if (k === 'ok') { submit(); return; }
+        if (got.length >= 8) return;
+        got += k;
+        err.textContent = '';
+        draw();
+      };
+      for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'ok']) {
+        const btn = el('button', {
+          class: `key${k.length > 1 ? ' sm' : ''}`, type: 'button',
+          text: k === 'clear' ? 'Clear' : k === 'ok' ? 'OK' : k,
+          onclick: () => press(k),
+        });
+        focus.focusable(btn);
+        pad.appendChild(btn);
+      }
+      const leave = () => finish(false);
+      box.appendChild(el('button', {
+        class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Back', title: 'Back', onclick: leave,
+      }));
+      box.appendChild(el('div', { class: 'pmark' }, el('span', { text: 'Scenix' })));
+      box.appendChild(el('h2', { text: 'Admin PIN required' }));
+      box.appendChild(el('p', { text: 'This settings page is locked. Enter the household PIN to open it.' }));
+      box.appendChild(shown);
+      box.appendChild(pad);
+      box.appendChild(err);
+      box.appendChild(el('div', { class: 'mfoot' },
+        el('button', { class: 'btn line', type: 'button', text: 'Back', onclick: leave })));
+      // The pad owns the keys before the screen behind it does: digits go to the buffer, Enter submits,
+      // Backspace deletes a digit. Escape is left to the modal, which closes it and answers "no".
+      const lane = (e, key) => {
+        if (key === 'Enter' || key === 'NumpadEnter' || key === ' ') { submit(); return true; }
+        if (key === 'Backspace') { got = got.slice(0, -1); err.textContent = ''; draw(); return true; }
+        return false;
+      };
+      focus.focusable(box.querySelector('.mclose'));
+      for (const b of box.querySelectorAll('.mfoot .btn')) focus.focusable(b);
+      ctx.mountModal(box, () => {
+        setDigitSink(null);
+        popHandler(lane);
+        if (!answered) { answered = true; resolve(false); }
+      });
+      pushHandler(lane);
+      setDigitSink(press);
+      focus.focusDefault(pad.querySelector('.key'));
+    });
+  }
+
   /* --------------------------------------------------------------------- keys */
 
   // BACK unwinds this screen before the router unwinds the route: from any section but the first it
@@ -1179,6 +1291,17 @@ export function screen(ctx) {
     debridInfo = (s && s.debrid) || null;
     names = (s && s.languageNames) || {};
     prefs = p ? (p.prefs || p) : null;
+    // A slow hub answer must not paint, or raise a PIN dialog, over the screen the viewer already left.
+    if (!root.isConnected || (ctx.route() && ctx.route().name !== 'settings')) return;
+    // The admin lock is a property of the hub, not of whoever is watching: when it is on, the gate is
+    // drawn before any section exists, and a viewer without the number never sees one. A hub that does
+    // not know about `lock` (or has it off) answers nothing here and paints exactly as it always did.
+    if (setting && setting.lock && setting.lock.enabled === true) {
+      pane.textContent = '';
+      pane.appendChild(el('div', { class: 'row-err' }, el('span', { text: 'This settings page is locked.' })));
+      const open = await askAdminPin();
+      if (!open) { ctx.back(); return; }
+    }
     paint();
   })();
 
