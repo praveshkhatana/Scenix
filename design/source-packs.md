@@ -123,3 +123,31 @@ prints the mix note from `player.audioMix`.
 - **Native selection.** The player now maps the hub's `a:3` (global stream index) by the track's
   position in the answer's `audioTracks`, not by media3's group number. Spider-Man's Audio sheet
   shows Hindi checked on a Telugu/Tamil/Hindi file.
+## Donor fit: never dub the wrong cut (2026-10-29)
+
+A donor row only promises a language. The archive's Ransom Hindi rip measures 2 h 00 m for a 1 h 49 m
+film — mapped as-is, that is eleven minutes of drift mixed with total confidence. So the hub now reads
+the donor's own header before accepting it:
+
+- `probeDonorUrl` runs `ffmpeg -i <url> -t 0.01 -f null -`; the `Duration:` line is printed before the
+  body is read, so a short wait is enough. Cached per URL for 30 minutes, single-flight.
+- A host that answers in ~1.2 s is measured on the press itself; a slow CDN (archive.org needs 15 s+)
+  is measured in the background (`AUDIO DONOR MEASURED` in the hub log) and enforced on the next press.
+- The selection loop refuses a donor whose measured length differs from the title's runtime by more
+  than 4% (`DONOR_FIT_SLACK`) and logs `AUDIO DONOR SKIP ... runs X min against a Y min picture`.
+  An unmeasured donor or a title with no runtime is no opinion — it stays offered.
+- The same header read gives the audio codec, which overrides the plan claim: AAC/MP3 copy untouched,
+  anything else re-encodes to AAC.
+- The answer carries the evidence: `audioMix.donorDurationMs` and `audioMix.driftMs`.
+- The probe runs `FFMPEG_BIN` (the deployed hub's static ffmpeg is not on the login PATH). It reads the
+  **picture file's** own duration when the source was probed; a title's runtime is only the fallback for
+  a movie. For a series the show runtime is not the episode, so no runtime-only comparison is used.
+- On the merged tree the donor's probed track list (global stream indexes and codec) still decides the
+  audio map; this length check is added on top, and a donor with several tracks takes its plan from the
+  wanted track, not track 0.
+
+Verified on the feature branch (2026-10-29): an 8 s test donor and the 121 min archive rip were both
+skipped against a title whose runtime is 111 min (both logged with the minutes), the archive rip was
+accepted blind on the first press and measured in the background, and a donor generated to the exact
+6,660,000 ms runtime mixed with `driftMs: 0` and plan `copy`. The merged tree was not re-run against a
+real archive donor; the binary-path and duration-source differences above are the review changes.
