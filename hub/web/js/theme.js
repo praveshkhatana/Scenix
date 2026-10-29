@@ -70,6 +70,31 @@ function cssColor(v) {
 function setLen(name, px) { if (px !== undefined && px !== null) setVar(name, `calc(${px}px * var(--s))`); }
 function setNum(name, n) { if (n !== undefined && n !== null) setVar(name, String(n)); }
 
+/**
+ * The pack is the part of a theme that is not a token: which hero shape, rail shape, card treatment,
+ * focus language, motion and detail layout this theme uses. The DOM carries it as data attributes so
+ * packs.css can write real layout rules instead of pretending every theme is the same grid repainted.
+ */
+function applyPack() {
+  const p = T.pack || {};
+  const attr = (key, fallback) => {
+    const v = String(p[key] === undefined || p[key] === null ? fallback : p[key]).trim();
+    root.setAttribute('data-' + key, v || fallback);
+  };
+  attr('pack', 'classic');
+  attr('hero', 'split');
+  attr('heroAlign', 'left');
+  attr('rows', 'poster');
+  attr('card', 'overlay');
+  attr('focus', 'ring');
+  attr('motion', 'rise');
+  attr('detail', 'backdrop');
+  attr('nav', 'classic');
+  root.setAttribute('data-theme', String(T.id || 'scenix-dark'));
+  root.style.setProperty('--focus-color',
+    p.focusColor ? cssColor(p.focusColor) : 'var(--focus-ring)');
+}
+
 function applyTokens() {
   const c = T.colors || {};
   for (const [k, v] of Object.entries(COLOR_VARS)) if (c[k]) setVar(v, cssColor(c[k]));
@@ -171,6 +196,7 @@ export async function load() {
   const json = await fetchTheme();
   if (json) T = json;
   applyTokens();
+  applyPack();
   computeScale();
   window.addEventListener('resize', () => { computeScale(); });
   return T;

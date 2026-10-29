@@ -9,9 +9,11 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 /**
- * Theme = the tokens in `assets/theme.json`, nothing else. Colours, radii, spacing, the type
- * scale, the focus ring and animation timing all come from that file, so "focus animation /
- * spacing / light theme" is a theme.json edit (plugin-architecture.md §4).
+ * Theme = one complete pack from `assets/theme-*.json`: colour and type tokens plus the `pack`
+ * block that chooses the layout (full/split/centred hero), the rail shape (poster/landscape), the
+ * card treatment (overlay/frame/glass), the focus effect (ring/glow/lift), the motion language and
+ * the detail-page shape. The native screens ask [packString] rather than branching on a theme id, so
+ * a developer adds a pack by writing the JSON and one assets/themes.json row.
  *
  * The mockup is authored at 1920x1080 in pixels. Device pixels are those numbers times
  * `scale = min(screenW/1920, screenH/1080)`, which keeps the layout identical to the mockup on
@@ -29,6 +31,7 @@ class Theme private constructor(
     private val type: JSONObject,
     private val focus: JSONObject,
     private val player: JSONObject,
+    private val pack: JSONObject,
 ) {
     // ---- colours ---------------------------------------------------------------------------
     fun color(name: String, fallback: String = "#FFFFFF"): Int = parseColor(colors.optString(name, fallback))
@@ -41,6 +44,8 @@ class Theme private constructor(
     val ink2 get() = color("ink2", "#B3B3B3")
     val ink3 get() = color("ink3", "#7D7D7D")
     val brand get() = color("brand", "#E50914")
+    /** Text/icon colour that stays readable on the brand: Apple's white pill needs black lettering. */
+    val onBrand: Int get() = if (Color.luminance(brand) > 0.55f) Color.BLACK else Color.WHITE
 
     // ---- spacing / metrics, already in device pixels ---------------------------------------
     fun space(name: String, fallback: Float): Int = px(spacing.optDouble(name, fallback.toDouble()).toFloat())
@@ -58,6 +63,23 @@ class Theme private constructor(
     val focusScale get() = focus.optDouble("scale", 1.05).toFloat()
     val focusDurationMs get() = focus.optInt("durationMs", 200)
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
+
+    // ---- the pack: what this theme is allowed to change beyond tokens ------------------------
+    /** A pack choice, e.g. packString("hero", "full"). Unknown keys keep the classic behaviour. */
+    fun packString(key: String, fallback: String): String =
+        pack.optString(key, fallback).takeIf { it.isNotBlank() } ?: fallback
+    fun packInt(key: String, fallback: Int): Int = pack.optInt(key, fallback)
+
+    val heroStyle get() = packString("hero", "full")
+    val heroAlign get() = packString("heroAlign", "left")
+    val heroHeightPx get() = px(packInt("heroHeight", 540).toFloat())
+    val rowStyle get() = packString("rows", "poster")
+    val cardStyle get() = packString("card", "overlay")
+    val focusStyle get() = packString("focus", "ring")
+    val motionStyle get() = packString("motion", "rise")
+    val detailStyle get() = packString("detail", "backdrop")
+    val navStyle get() = packString("nav", "classic")
+    val focusGlowColor get() = parseColor(pack.optString("focusColor", "#FFFFFF"))
 
     // ---- player ceilings --------------------------------------------------------------------
     val playerMaxWidth get() = player.optInt("maxVideoWidth", 1280)
@@ -83,8 +105,8 @@ class Theme private constructor(
         private const val TAG = "ScenixTheme"
         const val ASSET = "theme.json"
 
-        /** One selectable theme from assets/themes.json. */
-        data class Choice(val id: String, val name: String, val asset: String)
+        /** One selectable theme from assets/themes.json. `pack` names its layout family. */
+        data class Choice(val id: String, val name: String, val asset: String, val pack: String = "")
 
         /** What the settings picker offers. A missing manifest keeps the built-in default only. */
         fun catalog(assets: AssetManager): List<Choice> {
@@ -97,7 +119,7 @@ class Theme private constructor(
                     val id = o.optString("id").trim()
                     val asset = o.optString("asset").trim()
                     if (id.isBlank() || asset.isBlank()) continue
-                    out.add(Choice(id, o.optString("name", id), asset))
+                    out.add(Choice(id, o.optString("name", id), asset, o.optString("pack", "")))
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "assets/themes.json missing or unreadable", t)
@@ -140,6 +162,7 @@ class Theme private constructor(
                 type = root.optJSONObject("type") ?: JSONObject(),
                 focus = root.optJSONObject("focus") ?: JSONObject(),
                 player = root.optJSONObject("player") ?: JSONObject(),
+                pack = root.optJSONObject("pack") ?: JSONObject(),
             )
         }
 

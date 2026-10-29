@@ -225,5 +225,17 @@
  "menu": {
   "width": 560,
   "radius": 10
+ },
+ "pack": {
+  "name": "Classic",
+  "hero": "full",
+  "heroAlign": "left",
+  "heroHeight": 540,
+  "rows": "poster",
+  "card": "overlay",
+  "focus": "ring",
+  "focusColor": "#FFFFFF",
+  "motion": "rise",
+  "detail": "backdrop"
  }
 }

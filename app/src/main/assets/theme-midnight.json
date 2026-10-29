@@ -225,5 +225,17 @@
  "menu": {
   "width": 560,
   "radius": 10
+ },
+ "pack": {
+  "name": "Cinema",
+  "hero": "centered",
+  "heroAlign": "center",
+  "heroHeight": 720,
+  "rows": "landscape",
+  "card": "glass",
+  "focus": "glow",
+  "focusColor": "#38BDF8",
+  "motion": "fade",
+  "detail": "backdrop"
  }
 }

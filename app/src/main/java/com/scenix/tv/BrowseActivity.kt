@@ -86,33 +86,63 @@ class BrowseActivity : Activity() {
     }
 
     private fun topBar(): View {
-        val bar = LinearLayout(this)
-        bar.orientation = LinearLayout.HORIZONTAL
-        bar.gravity = Gravity.CENTER_VERTICAL
-        bar.setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-        bar.setBackgroundColor(Color.rgb(20, 20, 20))
-        bar.addView(
-            Views.text(app, "logo", 30f, app.theme.brand, "SCENIX", bold = true),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(navButton("Profile") {
+        val theme = app.theme
+        val brand = Views.text(app, "logo", 30f, theme.brand, "SCENIX", bold = true)
+        val profile = navButton("Profile") {
             startActivity(
                 Intent(this@BrowseActivity, ProfilesActivity::class.java)
                     .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
             )
-        })
-        bar.addView(navButton("Search", app.theme.px(24f)) {
+        }
+        val search = navButton("Search", theme.px(24f)) {
             startActivity(
                 Intent(this@BrowseActivity, SearchActivity::class.java)
                     .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
             )
-        })
-        bar.addView(navButton("Settings", app.theme.px(28f)) {
+        }
+        val settings = navButton("Settings", theme.px(28f)) {
             startActivity(
                 Intent(this@BrowseActivity, SettingsActivity::class.java)
                     .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
             )
+        }
+        if (theme.navStyle == "pill") {
+            // Apple-style packs float one centred pill over the stage; the wordmark stays at the edge.
+            val bar = FrameLayout(this)
+            bar.setBackgroundColor(theme.bg)
+            bar.addView(brand, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                leftMargin = theme.gutter
+            })
+            val pill = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(theme.px(10f), theme.px(6f), theme.px(10f), theme.px(6f))
+                background = Views.rounded(theme.surface2, theme.px(999f), theme.px(1f), theme.line)
+            }
+            pill.addView(profile)
+            pill.addView(search)
+            pill.addView(settings)
+            bar.addView(pill, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER })
+            return bar
+        }
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(theme.gutter, 0, theme.gutter, 0)
+        bar.setBackgroundColor(theme.bg)
+        bar.addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        bar.addView(profile)
+        bar.addView(search, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginStart = theme.px(24f)
+        })
+        bar.addView(settings, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginStart = theme.px(28f)
         })
         return bar
     }
@@ -198,31 +228,63 @@ class BrowseActivity : Activity() {
             val theme = app.theme
             return if (viewType == TYPE_HERO) {
                 val slot = FrameLayout(this@BrowseActivity)
-                slot.layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(540f))
+                val heroStyle = theme.heroStyle
+                val split = heroStyle == "split"
+                val centred = heroStyle == "centred" || heroStyle == "centered" || theme.heroAlign == "center"
+                slot.layoutParams = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    if (split) theme.heroHeightPx else theme.heroHeightPx.coerceAtLeast(theme.px(540f))
+                )
                 val art = ImageView(this@BrowseActivity).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
                     setBackgroundColor(theme.surface2)
                 }
                 slot.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 val scrim = View(this@BrowseActivity).apply {
-                    background = GradientDrawable(
+                    background = if (split) GradientDrawable(
+                        GradientDrawable.Orientation.LEFT_RIGHT,
+                        intArrayOf(theme.bg, Color.TRANSPARENT)
+                    ) else GradientDrawable(
                         GradientDrawable.Orientation.BOTTOM_TOP,
                         intArrayOf(theme.bg, Color.TRANSPARENT)
                     )
                 }
                 slot.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                // Editorial packs put the poster in the frame and the words beside it; classic packs let
+                // the backdrop fill the screen and float the words over it. The poster view exists in
+                // both, hidden when the pack does not ask for it.
+                val poster = ImageView(this@BrowseActivity).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    setBackgroundColor(theme.surface2)
+                    visibility = if (split) View.VISIBLE else View.GONE
+                }
+                if (split) {
+                    slot.addView(poster, FrameLayout.LayoutParams(theme.px(300f), theme.px(450f)).apply {
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                        leftMargin = theme.gutter
+                    })
+                }
                 val words = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.BOTTOM or Gravity.START
-                    setPadding(theme.gutter, theme.px(32f), theme.gutter, theme.px(44f))
+                    gravity = when {
+                        centred -> Gravity.CENTER
+                        split -> Gravity.CENTER_VERTICAL or Gravity.START
+                        else -> Gravity.BOTTOM or Gravity.START
+                    }
+                    setPadding(
+                        if (split) theme.gutter + theme.px(340f) else theme.gutter,
+                        theme.px(32f), theme.gutter, theme.px(44f)
+                    )
                 }
-                val title = Views.text(app, "h1", 54f, theme.ink, "", bold = true)
+                val title = Views.text(app, "h1", 54f, theme.ink, "", bold = true,
+                    gravity = if (centred) Gravity.CENTER else Gravity.START)
                 val logo = ImageView(this@BrowseActivity).apply {
-                    scaleType = ImageView.ScaleType.FIT_START
+                    scaleType = if (centred) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.FIT_START
                     visibility = View.GONE
                 }
-                val meta = Views.text(app, "sub", 22f, theme.ink2, "")
-                val play = Views.text(app, "button", 22f, theme.ink, "Play", bold = true, gravity = Gravity.CENTER)
+                val meta = Views.text(app, "sub", 22f, theme.ink2, "",
+                    gravity = if (centred) Gravity.CENTER else Gravity.START)
+                val play = Views.text(app, "button", 22f, theme.onBrand, "Play", bold = true, gravity = Gravity.CENTER)
                 play.setPadding(theme.px(32f), theme.px(14f), theme.px(32f), theme.px(14f))
                 play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
                 play.isFocusable = true
@@ -230,16 +292,23 @@ class BrowseActivity : Activity() {
                 Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false)
                 words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(130f)).apply {
                     bottomMargin = theme.px(6f)
+                    if (centred) gravity = Gravity.CENTER_HORIZONTAL
                 })
-                words.addView(title)
-                words.addView(meta, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                words.addView(title, LinearLayout.LayoutParams(
+                    if (centred) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ))
+                words.addView(meta, LinearLayout.LayoutParams(
+                    if (centred) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
                     topMargin = theme.px(10f)
                 })
                 words.addView(play, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(22f)
                 })
                 slot.addView(words, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                HeroHolder(slot, art, title, logo, meta, play)
+                HeroHolder(slot, art, poster, title, logo, meta, play, split)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -276,7 +345,10 @@ class BrowseActivity : Activity() {
                 if (item.maturity.isNotBlank()) facts.add(item.maturity)
                 item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
                 holder.meta.text = facts.joinToString(" · ")
-                BrowseImages.load(holder.art, item.poster ?: item.backdrop, app.theme.px(1100f))
+                BrowseImages.load(holder.art,
+                    if (holder.split) item.backdrop ?: item.poster else item.poster ?: item.backdrop,
+                    app.theme.px(1100f))
+                if (holder.split) BrowseImages.load(holder.poster, item.poster ?: item.backdrop, app.theme.px(420f))
                 if (!item.logo.isNullOrBlank()) {
                     holder.logo.visibility = View.VISIBLE
                     BrowseImages.load(holder.logo, item.logo, app.theme.px(560f)) { ok ->
@@ -296,8 +368,8 @@ class BrowseActivity : Activity() {
     }
 
     private inner class HeroHolder(
-        view: View, val art: ImageView, val title: TextView, val logo: ImageView,
-        val meta: TextView, val play: TextView,
+        view: View, val art: ImageView, val poster: ImageView, val title: TextView, val logo: ImageView,
+        val meta: TextView, val play: TextView, val split: Boolean,
     ) : RecyclerView.ViewHolder(view)
 
     private inner class ShelfHolder(
@@ -307,19 +379,32 @@ class BrowseActivity : Activity() {
     private inner class CardAdapter(private val row: BrowseRow) : RecyclerView.Adapter<CardHolder>() {
         private val theme = app.theme
         private val style = row.card
-        private val poster = style == "poster" || style == "rank" || style == "hero"
+        // The pack owns the rail shape: Midnight turns ordinary poster shelves into wide 16:9 stills,
+        // Ember keeps portraits but frames them. Ranked rows keep their numeral geometry.
+        private val landscape = style == "poster" && theme.rowStyle == "landscape"
+        private val poster = if (landscape) false else style == "poster" || style == "rank" || style == "hero"
         private val ranked = style == "rank"
-        private val cardW = theme.px(if (poster) 280f else 320f)
-        private val cardH = theme.px(if (poster) 420f else 180f)
+        private val frame = theme.cardStyle == "frame"
+        private val glass = theme.cardStyle == "glass"
+        // Apple's scene cards keep the name under the art instead of over it.
+        private val below = theme.cardStyle == "below"
+        private val captionH = when {
+            below -> theme.px(62f)
+            frame -> theme.px(56f)
+            else -> 0
+        }
+        private val cardW = theme.px(if (landscape) 480f else if (poster) 280f else 320f)
+        private val cardH = theme.px(if (landscape) 270f else if (poster) 420f else 180f)
+        private val radius = theme.radius("card", 6f)
 
         override fun getItemCount(): Int = row.items.size
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             val card = FrameLayout(this@BrowseActivity)
-            card.layoutParams = RecyclerView.LayoutParams(cardW, cardH)
+            card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH)
             card.isFocusable = true
             card.isClickable = true
-            card.setBackgroundColor(Color.TRANSPARENT)
+            card.setBackgroundColor(if (frame) theme.surface else Color.TRANSPARENT)
             val art = ImageView(this@BrowseActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
@@ -330,28 +415,70 @@ class BrowseActivity : Activity() {
                     }
                 }
             }
-            card.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            val shade = View(this@BrowseActivity).apply {
-                background = GradientDrawable(
-                    GradientDrawable.Orientation.BOTTOM_TOP,
-                    intArrayOf(Color.argb(235, 0, 0, 0), Color.TRANSPARENT)
-                )
-            }
-            card.addView(shade, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
-                gravity = Gravity.BOTTOM
+            card.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
+                gravity = Gravity.TOP
             })
-            val name = Views.text(app, "caption", 19f, theme.ink, "", bold = true, maxLines = 2)
-            name.setPadding(theme.px(12f), 0, theme.px(12f), theme.px(10f))
+            if (!frame && !below) {
+                val shade = View(this@BrowseActivity).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.BOTTOM_TOP,
+                        intArrayOf(Color.argb(if (glass) 190 else 235, 0, 0, 0), Color.TRANSPARENT)
+                    )
+                }
+                card.addView(shade, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
+                    gravity = Gravity.BOTTOM
+                    bottomMargin = captionH
+                })
+            }
+            if (frame) {
+                // An editorial card is a printed plate: opaque caption bar, hairline border, art above.
+                card.addView(View(this@BrowseActivity).apply { setBackgroundColor(theme.surface) },
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, captionH).apply {
+                        gravity = Gravity.BOTTOM
+                    })
+                card.addView(View(this@BrowseActivity).apply {
+                    background = Views.ring(theme.line, radius, theme.px(1f))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            } else if (glass) {
+                card.addView(View(this@BrowseActivity).apply {
+                    background = Views.rounded(Color.argb(150, 8, 10, 14),
+                        theme.radius("card", 6f), theme.px(1f), Color.argb(90, 255, 255, 255))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(84f)).apply {
+                    gravity = Gravity.BOTTOM
+                    leftMargin = theme.px(8f); rightMargin = theme.px(8f); bottomMargin = theme.px(8f)
+                })
+            }
+            val name = Views.text(app, "caption", if (below) 18f else 19f, theme.ink, "", bold = true,
+                maxLines = if (below) 1 else 2)
+            name.setPadding(theme.px(if (below) 4f else 12f), 0,
+                theme.px(if (below) 4f else 12f), theme.px(if (below) 0f else 10f))
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
+                bottomMargin = when {
+                    below -> theme.px(26f)
+                    frame -> theme.px(8f)
+                    else -> 0
+                }
+            })
+            val sub = Views.text(app, "meta", 14f, theme.ink3, "", maxLines = 1)
+            sub.setPadding(theme.px(4f), 0, theme.px(4f), theme.px(4f))
+            sub.visibility = if (below) View.VISIBLE else View.GONE
+            card.addView(sub, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM
+                bottomMargin = theme.px(6f)
             })
             val logo = ImageView(this@BrowseActivity).apply {
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 visibility = View.GONE
             }
-            card.addView(logo, FrameLayout.LayoutParams(cardW - theme.px(28f), theme.px(76f)).apply {
+            card.addView(logo, FrameLayout.LayoutParams(cardW - theme.px(28f),
+                if (landscape) theme.px(64f) else theme.px(76f)).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                bottomMargin = theme.px(8f)
+                bottomMargin = when {
+                    below -> captionH + theme.px(10f)
+                    frame -> theme.px(10f)
+                    else -> theme.px(8f)
+                }
             })
             val badge = Views.text(app, "meta", 13f, Color.WHITE, "", bold = true, maxLines = 1)
             badge.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
@@ -375,33 +502,53 @@ class BrowseActivity : Activity() {
             }
             card.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(6f)).apply {
                 gravity = Gravity.BOTTOM
+                bottomMargin = captionH
             })
             Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
-            return CardHolder(card, art, name, logo, badge, num, progress)
+            return CardHolder(card, art, name, sub, logo, badge, num, progress)
         }
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val item = row.items[position]
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
+            holder.sub.visibility = if (below) View.VISIBLE else View.GONE
+            if (below) {
+                val sub = ArrayList<String>()
+                if (item.year > 0) sub.add(item.year.toString())
+                if (item.match > 0) sub.add("${item.match}% match")
+                item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { sub.add(it) }
+                holder.sub.text = sub.joinToString(" · ")
+            }
             holder.logo.visibility = View.GONE
             val facts = ArrayList<String>()
             if (item.isNew) facts.add("NEW")
             if (item.match > 0) facts.add("${item.match}% match")
             holder.badge.text = facts.joinToString(" · ")
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
-            BrowseImages.load(holder.art, item.poster ?: item.backdrop, cardW)
+            BrowseImages.load(holder.art,
+                if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop, cardW)
             if (!item.logo.isNullOrBlank()) {
                 holder.logo.visibility = View.VISIBLE
                 BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
-                    holder.name.visibility = if (ok) View.GONE else View.VISIBLE
+                    // A scene card keeps its name under the art even when the art carries a logo.
+                    holder.name.visibility = if (ok && !below) View.GONE else View.VISIBLE
                 }
             }
             if (ranked) {
                 holder.num.text = (position + 1).toString()
                 holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardH * 0.44f)
                 holder.num.setShadowLayer(theme.px(6f).toFloat(), 0f, 0f, Color.BLACK)
+                if (theme.packString("rank", "solid") == "outline") {
+                    // Apple's board numerals are hollow, not filled: the art stays visible through them.
+                    holder.num.setTextColor(Color.WHITE)
+                    holder.num.paint.style = android.graphics.Paint.Style.STROKE
+                    holder.num.paint.strokeWidth = theme.px(3f).toFloat()
+                } else {
+                    holder.num.setTextColor(Color.WHITE)
+                    holder.num.paint.style = android.graphics.Paint.Style.FILL
+                }
             }
             val p = item.progress
             if (p != null && p.watchedMs > 0L) {
@@ -415,7 +562,7 @@ class BrowseActivity : Activity() {
     }
 
     private inner class CardHolder(
-        view: View, val art: ImageView, val name: TextView, val logo: ImageView,
+        view: View, val art: ImageView, val name: TextView, val sub: TextView, val logo: ImageView,
         val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
     ) : RecyclerView.ViewHolder(view)
 

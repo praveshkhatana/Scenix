@@ -177,8 +177,12 @@ class SettingsActivity : Activity() {
         // A kids profile never sees the admin rows, lock or no lock. An authorised person uses an
         // adult profile and proves the admin PIN there.
         if (profileKind != "kids") {
-            val themeName = Theme.catalog(assets).firstOrNull { it.id == app.prefs.theme() }?.name
-                ?: app.prefs.theme()
+            val picked = Theme.catalog(assets).firstOrNull { it.id == app.prefs.theme() }
+            val themeName = when {
+                picked == null -> app.prefs.theme()
+                picked.pack.isBlank() -> picked.name
+                else -> picked.name + " · " + picked.pack
+            }
             addRow("Theme", themeName, "The look of the native screens and the web UI") {
                 requireAdmin { pickTheme() }
             }
@@ -621,7 +625,9 @@ class SettingsActivity : Activity() {
 
     private fun pickTheme() {
         val choices = Theme.catalog(assets)
-        showPicker("Theme", choices.map { it.id to it.name }, app.prefs.theme()) { id ->
+        showPicker("Theme", choices.map {
+            it.id to if (it.pack.isBlank()) it.name else it.name + " · " + it.pack
+        }, app.prefs.theme()) { id ->
             app.prefs.setTheme(id)
             (application as ScenixApp).reloadTheme()
             // Keep the browser chrome on the same theme as the television.

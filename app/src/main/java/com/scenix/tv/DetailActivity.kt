@@ -95,8 +95,10 @@ class DetailActivity : Activity() {
         val isNew = record.optBoolean("isNew", false)
         val logoUrl = s(record, "logo", "").takeIf { it.isNotBlank() }
 
+        val split = app.theme.detailStyle == "split"
+        val heroHeight = if (split) app.theme.heroHeightPx else theme.px(600f)
         val hero = FrameLayout(this).apply { setBackgroundColor(theme.surface2) }
-        body.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(600f)))
+        body.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, heroHeight))
         val art = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         hero.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         BrowseImages.load(art, backdrop.ifBlank { poster }, theme.px(1300f))
@@ -114,10 +116,25 @@ class DetailActivity : Activity() {
             leftMargin = theme.px(32f); topMargin = theme.px(24f)
         })
 
+        // An editorial pack puts the poster beside the words instead of hiding it behind the backdrop.
+        if (split) {
+            val posterView = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(theme.surface2)
+            }
+            hero.addView(posterView, FrameLayout.LayoutParams(theme.px(300f), theme.px(450f)).apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                leftMargin = theme.gutter
+            })
+            BrowseImages.load(posterView, poster.ifBlank { backdrop }, theme.px(420f))
+        }
         val words = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM or Gravity.START
-            setPadding(theme.gutter, theme.px(40f), theme.gutter, theme.px(36f))
+            gravity = if (split) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.BOTTOM or Gravity.START
+            setPadding(
+                if (split) theme.gutter + theme.px(340f) else theme.gutter,
+                theme.px(40f), theme.gutter, theme.px(36f)
+            )
         }
         // A long YouTube or file title must not fill the hero a line at a time. The web caps the
         // column at 1100 px; the same cap plus a smaller size for long names keeps the meta line and
@@ -193,7 +210,7 @@ class DetailActivity : Activity() {
         val playSeason = if (resumeSeason > 0) resumeSeason else first?.optInt("season", 0) ?: 0
         val playEpisode = if (resumeEpisode > 0) resumeEpisode else first?.optInt("episode", 0) ?: 0
         val playText = if ((progress?.optLong("positionMs", 0L) ?: 0L) > 0L) "Resume" else "Play"
-        val play = Views.text(app, "button", 23f, theme.ink, playText, bold = true, gravity = Gravity.CENTER)
+        val play = Views.text(app, "button", 23f, theme.onBrand, playText, bold = true, gravity = Gravity.CENTER)
         play.setPadding(theme.px(38f), theme.px(16f), theme.px(38f), theme.px(16f))
         play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
         play.isFocusable = true

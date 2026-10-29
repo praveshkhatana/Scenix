@@ -225,5 +225,17 @@
  "menu": {
   "width": 560,
   "radius": 10
+ },
+ "pack": {
+  "name": "Editorial",
+  "hero": "split",
+  "heroAlign": "left",
+  "heroHeight": 680,
+  "rows": "poster",
+  "card": "frame",
+  "focus": "lift",
+  "focusColor": "#F59E0B",
+  "motion": "rise",
+  "detail": "split"
  }
 }

@@ -60,6 +60,10 @@ export function screen(ctx, identity) {
     body.textContent = '';
     const bg = el('img', { class: 'bg', src: imageUrl(item.backdrop || item.poster || ''), alt: '', decoding: 'async' });
     hero.appendChild(bg);
+    // Editorial packs put the poster beside the words; the backdrop still fills the frame behind both.
+    if (token('pack', 'detail', 'backdrop') === 'split' && item.poster) {
+      hero.appendChild(el('img', { class: 'dh-poster', src: imageUrl(item.poster), alt: '', decoding: 'async' }));
+    }
     // The trailer plays inside the hero frame, behind the words, exactly as it does on the home billboard.
     const preview = el('div', { class: 'preview' });
     hero.appendChild(preview);

@@ -30,7 +30,14 @@ object Focus {
         onClick: (() -> Unit)? = null,
     ) {
         val theme = ctx.theme
-        val ring = Views.ring(theme.focusRingColor, ringRadiusPx, theme.focusRingPx)
+        // The pack chooses the focus language. `ring` is the classic white outline; `glow` thickens it
+        // in the pack's accent and lifts the card; `lift` removes the outline entirely and lets scale
+        // and shadow be the focus. One place, so every screen in the pack behaves the same.
+        val style = theme.focusStyle
+        val ringColor = if (style == "glow") theme.focusGlowColor else theme.focusRingColor
+        val ringWidth = if (style == "glow") theme.focusRingPx * 2 else theme.focusRingPx
+        val ring = if (style == "lift") Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
+            else Views.ring(ringColor, ringRadiusPx, ringWidth)
         val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
         val base = ringOn?.background
         // Foreground is the right layer for a container whose children reach its edges (a poster
@@ -87,9 +94,13 @@ object Focus {
         val ms = theme.focusDurationMs.toLong()
         focusable.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
             paintRing(has)
-            val target = if (has) theme.focusScale else 1f
+            val target = if (has) {
+                if (style == "lift") Math.max(theme.focusScale, 1.045f) else theme.focusScale
+            } else 1f
             val elev = if (has) theme.focusElevationPx.toFloat() else 0f
-            if (scale) {
+            // `lift` has no outline, so it must always scale — even a button that normally opts out of
+            // scale still has to show that it owns the ring.
+            if (scale || style == "lift") {
                 if (animateScale) {
                     // A 200 ms lift re-composites the whole 1080p surface for a dozen frames. On the
                     // Mali-G31 panel that is where the missed deadlines came from, so card shelves
@@ -103,7 +114,7 @@ object Focus {
             }
             // A translated Z animates a shadow pass every frame. On the 2 GB panel the cards get the
             // ring and scale, not an elevation animation; setup keeps it because it has one button.
-            if (elevate) {
+            if (elevate || style == "lift") {
                 v.animate().translationZ(elev).setDuration(ms)
                     .setInterpolator(AccelerateDecelerateInterpolator()).start()
             }

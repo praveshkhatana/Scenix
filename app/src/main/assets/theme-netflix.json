@@ -1,0 +1,242 @@
+{
+ "id": "scenix-netflix",
+ "brandMark": "N",
+ "_read": "Netflix: a complete pack. The pack block chooses layout, card, focus and nav; the tokens choose surface and type.",
+ "canvas": {
+  "width": 1920,
+  "height": 1080
+ },
+ "colors": {
+  "bg": "#000000",
+  "surface": "#141414",
+  "surface2": "#232323",
+  "line": "#2A2A2A",
+  "ink": "#FFFFFF",
+  "ink1": "#E5E5E5",
+  "ink2": "#B3B3B3",
+  "ink3": "#808080",
+  "brand": "#E50914",
+  "brandDeep": "#B00710",
+  "match": "#46D369",
+  "kids": "#F2C33A",
+  "kidsDeep": "#D9A22B",
+  "live": "#E50914",
+  "warn": "#F2C33A",
+  "focusRing": "#FFFFFF",
+  "scrim": "rgba(0,0,0,0.75)",
+  "scrimInk": "rgba(0,0,0,0.92)",
+  "scrimMid": "rgba(0,0,0,0.55)",
+  "modalScrim": "rgba(0,0,0,0.90)",
+  "btnGrey": "rgba(255,255,255,0.12)",
+  "lineStrong": "rgba(255,255,255,0.56)",
+  "track": "#2F2F2F",
+  "chipBg": "rgba(255,255,255,0.18)",
+  "surfHover": "#2F2F2F",
+  "keyBg": "rgba(0,0,0,0.42)",
+  "key": "#2A2A2A",
+  "navIdle": "rgba(255,255,255,0.80)",
+  "numeralFill": "#000000",
+  "numeralStroke": "#7C7C7C",
+  "panelScrim": "rgba(0,0,0,0.92)",
+  "panelRow": "rgba(255,255,255,0.12)",
+  "panelValue": "#F2C33A",
+  "surface3": "#2F2F2F",
+  "border": "rgba(255,255,255,0.12)",
+  "numeralFillRed": "#E50914",
+  "numeralStrokeRed": "#4A0007",
+  "matBorder": "rgba(255,255,255,0.35)",
+  "hdInk": "#E5E5E5"
+ },
+ "spacing": {
+  "gutter": 76,
+  "gap": 20,
+  "rowGap": 34,
+  "captionGap": 12,
+  "metaGap": 6,
+  "navHeight": 96,
+  "billboardHeight": 800,
+  "chipTop": 746,
+  "navGap": 40,
+  "chipGap": 14,
+  "buttonGap": 22,
+  "heroBottom": 110,
+  "panelPad": 28,
+  "panelPadV": 24,
+  "panelRowGap": 10,
+  "listItem": 14
+ },
+ "radii": {
+  "card": 4,
+  "badge": 4,
+  "chip": 4,
+  "button": 4,
+  "listItem": 4,
+  "field": 4,
+  "key": 4,
+  "modal": 8,
+  "avatar": 8,
+  "panel": 8,
+  "heroButton": 4
+ },
+ "type": {
+  "brand": 34,
+  "nav": 20,
+  "nmark": 40,
+  "h1": 104,
+  "h2": 56,
+  "h3": 34,
+  "sub": 24,
+  "matLine": 26,
+  "button": 26,
+  "chip": 20,
+  "rowTitle": 28,
+  "explore": 18,
+  "caption": 19,
+  "meta": 17,
+  "badge": 14,
+  "li": 22,
+  "liMeta": 20,
+  "readout": 20,
+  "searchField": 22,
+  "profileName": 32,
+  "avatarText": 64,
+  "key": 48,
+  "pinDot": 20,
+  "modalWidth": 780,
+  "keyWidth": 128,
+  "keyHeight": 128,
+  "avatar": 280,
+  "lockGlyph": 52,
+  "playerKey": 64,
+  "panelTitle": 26,
+  "panelRow": 23,
+  "panelNote": 18
+ },
+ "focus": {
+  "ringWidth": 4,
+  "scale": 1.05,
+  "durationMs": 170,
+  "shadowElevation": 14,
+  "glass": 1,
+  "glassPad": 6
+ },
+ "anim": {
+  "cardFadeInMs": 220,
+  "rowScrollMs": 240,
+  "screenFadeMs": 180,
+  "fadeUpMs": 600,
+  "fadeUpShift": 20,
+  "fadeUpStagger": 30,
+  "navFadeAt": 50,
+  "navFadeMs": 200
+ },
+ "cards": {
+  "poster": {
+   "width": 280,
+   "aspect": 1.5,
+   "caption": false,
+   "fullBleed": false
+  },
+  "channel": {
+   "width": 280,
+   "aspect": 1.5,
+   "caption": false,
+   "fullBleed": false
+  },
+  "continue": {
+   "width": 280,
+   "aspect": 1.5,
+   "caption": false,
+   "fullBleed": false
+  },
+  "hero": {
+   "width": 1920,
+   "aspect": 0.4385,
+   "caption": false,
+   "fullBleed": true
+  },
+  "_top10": "The giant numeral is sized off the art height, so it scales with whatever card size the row uses. Mockup: 210 px text on a 300 px tall art, -26 px overlap, 7 px outline.",
+  "numeralTextRatio": 0.495,
+  "numeralWidthRatio": 0.55,
+  "numeralOverlapRatio": 0.229,
+  "numeralStrokePx": 8,
+  "numeralTextPx": 208,
+  "numeralOverlapPx": 96,
+  "numeralRed": 0
+ },
+ "rows": {
+  "exploreThreshold": 6,
+  "maxRows": 30
+ },
+ "chips": {
+  "max": 8
+ },
+ "kids": {
+  "maxAge": 7,
+  "navHeight": 110,
+  "rowGap": 36
+ },
+ "pin": {
+  "length": 4,
+  "keysPerRow": 3
+ },
+ "player": {
+  "maxVideoWidth": 1920,
+  "maxVideoHeight": 1080,
+  "maxBitrateBps": 10000000,
+  "minVideoWidth": 320,
+  "minVideoHeight": 180,
+  "backBufferMs": 30000,
+  "forwardBufferMs": 120000,
+  "minBufferMs": 15000,
+  "playbackBufferMs": 5000,
+  "progressPostMs": 10000,
+  "seekBackMs": 10000,
+  "seekForwardMs": 30000,
+  "controlsHideMs": 6000,
+  "autoplayCountdownMs": 7000,
+  "torrentMaxBitrate": 4000000,
+  "stallFailoverMs": 6000
+ },
+ "panel": {
+  "width": 560,
+  "pad": 28,
+  "padV": 24,
+  "radius": 10,
+  "rowGap": 10,
+  "rowHeight": 68
+ },
+ "detail": {
+  "maxSources": 6.0,
+  "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
+ },
+ "preview": {
+  "enabled": 1.0,
+  "delayMs": 1500.0,
+  "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
+ },
+ "hero": {
+  "rotateMs": 6000,
+  "rotateFadeMs": 500,
+  "maxItems": 5,
+  "playWidth": 320,
+  "playHeight": 72
+ },
+ "menu": {
+  "width": 560,
+  "radius": 10
+ },
+ "pack": {
+  "name": "Classic",
+  "hero": "full",
+  "heroAlign": "left",
+  "heroHeight": 700,
+  "rows": "poster",
+  "card": "overlay",
+  "focus": "ring",
+  "focusColor": "#FFFFFF",
+  "motion": "rise",
+  "detail": "backdrop",
+  "nav": "classic"
+ }
+}
