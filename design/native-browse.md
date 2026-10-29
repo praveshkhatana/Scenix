@@ -94,12 +94,12 @@ reload.
   PIN and keeps `scope: adult` rows off a kids home.
 - **Admin PIN, separate from profile PINs.** `settings.lock` is an optional scrypt-hashed PIN for the
   *common* areas only — Source packs, Add-ons and Debrid. It is not a profile lock: an adult with no
-  profile PIN can set it, and anyone who knows it can open those areas from any profile, including a
-  child's. Without it, a kids profile does not show those rows at all; with it, the rows exist and the
-  PIN is the door (asked once per visit to Settings). The hash is never returned (`pinSet` only), the
-  current PIN is required to change or disable it, a settings PUT cannot overwrite it, and wrong PINs
-  are rate-limited. The row that sets/changes it is only drawn on an adult profile. The web settings
-  page does not read this lock yet; the gate is the television's.
+  profile PIN can set it. A **kids profile never draws those rows at all**, with or without the lock;
+  an authorised person uses an adult profile, where the areas exist and the admin PIN is the door
+  (asked once per visit to Settings). The hash is never returned (`pinSet` only), the current PIN is
+  required to change or disable it, a settings PUT cannot overwrite it, and wrong PINs are
+  rate-limited. The row that sets/changes it is only drawn on an adult profile. The web settings page
+  does not read this lock yet; the gate is the television's.
 - `TextEntryActivity` is the one native text field (add-on manifest, source URL, debrid token) and
   uses the platform IME with the whole screen, rather than a cramped dialog. Ranked rows draw their numeral over the poster;
   Continue Watching draws its position line; posters and landscape rows are sized from the card kind.

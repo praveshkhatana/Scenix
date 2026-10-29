@@ -170,8 +170,9 @@ class SettingsActivity : Activity() {
         // on, the rows exist for everyone and the admin PIN is what opens them — a person who knows it
         // can use them from any profile, exactly like an office's shared settings PIN.
         val adminOn = lockInfo?.optBoolean("enabled") == true
-        val showAdmin = profileKind != "kids" || adminOn
-        if (showAdmin) {
+        // A kids profile never sees the admin rows, lock or no lock. An authorised person uses an
+        // adult profile and proves the admin PIN there.
+        if (profileKind != "kids") {
             addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
                 requireAdmin { startActivity(Intent(this, SourcePacksActivity::class.java)) }
             }
