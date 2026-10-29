@@ -2316,9 +2316,19 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // The file we picked is the picture whose length matters; a title's runtime is a fallback for a
     // movie only. A series' `kept.durationMs` is the show, not the episode, and comparing an episode
     // donor against it would refuse every valid series mix.
-    const fileMs = Number(source.probe && source.probe.durationMs) || Number(out.probe && out.probe.durationMs) || 0;
-    const pictureMs = fileMs || ((type === 'movie' || kept.type === 'movie')
-      ? (Number(kept.durationMs) || Number(source.durationMs) || 0) : 0);
+    const fileMs = Number(source.durationMs) || Number(source.probe && source.probe.durationMs)
+      || Number(out.probe && out.probe.durationMs) || 0;
+    let pictureMs = fileMs || ((type === 'movie' || kept.type === 'movie')
+      ? (Number(kept.durationMs) || 0) : 0);
+    // A direct picture can be measured the same way as a donor: ffmpeg prints its duration from the
+    // header. This is what makes the fit check work for a series episode (where the title runtime is
+    // the show, not the episode) without ever comparing an episode to that show runtime.
+    if (!pictureMs && list.length && out && out.url && source.kind !== 'torrent'
+        && /^https?:/i.test(out.url) && deadline - Date.now() > 1400) {
+      const hit = donorPeek(out.url);
+      const p = hit || await probeDonorUrl(out.url, out.headers || {}, 1200);
+      if (p && Number(p.durationMs) > 0) pictureMs = Number(p.durationMs);
+    }
     for (const cand of list.slice(0, 6)) {
       if (Date.now() >= deadline) break;
       const target = await resolveAudioDonor(cand, kept.streamId || identity, opts, deadline);
