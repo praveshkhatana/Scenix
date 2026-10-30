@@ -1821,6 +1821,19 @@ function looksLikeAnotherTitle(candidate, title) {
   return !wanted.some((w) => clean.includes(w));
 }
 
+/** The URL itself is stronger evidence than a provider's label when it names the requested title. */
+function urlLooksLikeTitle(url, title) {
+  const wanted = labelWords(title);
+  if (!wanted.length) return false;
+  let text;
+  try {
+    text = decodeURIComponent(String(url || '')).toLowerCase();
+  } catch (e) {
+    text = String(url || '').toLowerCase();
+  }
+  return wanted.some((w) => text.includes(w));
+}
+
 /**
  * A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`.
  * Only trust it when the rest of the label also carries title-like words. `S01E01 (Pilot)` is an
@@ -2053,7 +2066,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // An HLS provider can mint a working stream for a different show and label it with that show's
     // name. The address is not a filename and the probe only proves bytes; this label is the last
     // cheap fact before the player draws the wrong programme under the right title.
-    if (labelNamesOtherTitle(labelOf(cand), kept.title)) {
+    if (!urlLooksLikeTitle(o.url, kept.title) && labelNamesOtherTitle(labelOf(cand), kept.title)) {
       tried.push(labelOf(cand) + ': names a different title');
       log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
       continue;
