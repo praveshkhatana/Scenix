@@ -176,13 +176,56 @@ class LocalHub private constructor(context: Context) {
             .put("note", note)
     }
 
-    /** Live settings and the parsed channel list, in the shape the web and native settings expect. */
+    /**
+     * Live settings and the owner's channel list, in the shape the web and native settings expect.
+     *
+     * This is the channel manager's list, not the row: every channel is here, including one the owner
+     * switched off, because a channel that is off still has to be seen to be switched back on. The
+     * fields are the hub's `channelList()` fields — `identity`, `enabled`, `number`, `quality`,
+     * `groups` — and the native manager ignores a tile without an `identity`, which is why this used
+     * to draw an empty wall.
+     */
     private fun liveEnvelope(): JSONObject {
         val live = settings().optJSONObject("live") ?: JSONObject()
+        val hidden = ids(live.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
         val channels = channelsJson()
+        val list = JSONArray()
+        for (i in 0 until channels.length()) {
+            val c = channels.optJSONObject(i) ?: continue
+            val identity = c.optString("identity", c.optString("id"))
+            if (identity.isBlank()) continue
+            val groups = jsonStrings(c.optJSONArray("groups"))
+            val enabled = identity !in hidden && groups.none { it in groupsHidden }
+            val number = liveHealth.numberFor(identity)
+            list.put(
+                JSONObject()
+                    .put("identity", identity)
+                    .put("name", c.optString("name"))
+                    .put("group", c.optString("group"))
+                    .put("groups", JSONArray(groups))
+                    .put("logo", c.optString("logo"))
+                    .put("quality", c.optString("quality"))
+                    .put("enabled", enabled)
+                    .put("number", if (number > 0) number else JSONObject.NULL)
+                    .put("health", liveHealth.healthOf(identity))
+                    .put("latencyMs", liveHealth.get(identity)?.optLong("latencyMs", 0L) ?: 0L)
+            )
+        }
         return JSONObject(live.toString())
-            .put("channels", channels)
+            .put("channels", list)
             .put("groups", liveGroups(channels))
+            .put("health", liveHealth.status())
+    }
+
+    private fun ids(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val v = arr.optString(i, "").trim()
+            if (v.isNotBlank() && v !in out) out.add(v)
+        }
+        return out
     }
 
     /** What a settings file that says nothing means: no addon, no language and no channel preselected. */
@@ -336,60 +379,165 @@ class LocalHub private constructor(context: Context) {
         return out
     }
 
-    /** Parse the owner's M3U. A playlist that cannot be read is an empty wall, never a failed home. */
+    /**
+     * Parse the owner's M3U into the same channel objects the hub's live row carries: one entry per
+     * channel NAME, every quality variant of that name kept as a source. A playlist that cannot be
+     * read is an empty wall, never a failed home.
+     *
+     * The identity is `norm:<slug(name)>`, the hub's fallback identity for a channel (a live channel
+     * has no year). Grouping by name rather than by URL is what makes "&TV" one tile whether the
+     * playlist lists it once or six times.
+     */
     fun channelsJson(): JSONArray = synchronized(lock) {
         val live = settings().optJSONObject("live") ?: JSONObject()
         val playlist = live.optString("playlist").trim()
         if (playlist.isBlank()) return JSONArray()
         val now = System.currentTimeMillis()
-        if (playlist == liveCacheKey && now - liveCacheAt < 5 * 60_000L) return liveCache
+        if (playlist == liveCacheKey && now - liveCacheAt < 5 * 60_000L) {
+            startLiveProbe()
+            return liveCache
+        }
         val text = fetchText(playlist, 9000)
         if (text.isNullOrBlank()) return liveCache
-        val out = JSONArray()
-        val urls = HashMap<String, String>()
-        val lines = text.split("\n")
+
+        data class Parsed(
+            val identity: String, val name: String, val groups: List<String>,
+            val logo: String, val url: String, val quality: String,
+        )
+
+        val parsed = ArrayList<Parsed>()
+        val seen = HashSet<String>()
         var pending: JSONObject? = null
-        for (raw in lines) {
+        for (raw in text.split("\n")) {
             val line = raw.trim()
             if (line.isEmpty()) continue
             if (line.startsWith("#EXTINF", true)) {
-                val meta = JSONObject()
-                val name = line.substringAfter(',', "").trim()
-                meta.put("name", name.ifBlank { "Channel" })
-                meta.put("group", attr(line, "group-title"))
-                meta.put("logo", attr(line, "tvg-logo"))
-                meta.put("tvgId", attr(line, "tvg-id"))
-                pending = meta
-            } else if (!line.startsWith("#") && pending != null) {
-                val name = pending.optString("name", "Channel")
-                val tvg = pending.optString("tvgId").trim()
-                val id = tvg.ifBlank { "live:" + Integer.toHexString(line.hashCode()) }
-                val channel = JSONObject()
-                    .put("id", id)
-                    .put("name", name)
-                    .put("group", pending.optString("group", "Live"))
-                    .put("logo", pending.optString("logo", ""))
-                    .put("url", line)
-                out.put(channel)
-                urls[id] = line
-                pending = null
+                pending = JSONObject()
+                    .put("name", line.substringAfter(',', "").trim())
+                    .put("group", attr(line, "group-title"))
+                    .put("logo", attr(line, "tvg-logo"))
+                continue
+            }
+            if (line.startsWith("#") || pending == null) continue
+            var name = pending.optString("name").trim()
+            var quality = ""
+            // A trailing "(1080p)" is the playlist's own quality label, not part of the channel name.
+            Regex("\\((\\d{3,4}p)\\)\\s*$", RegexOption.IGNORE_CASE).find(name)?.let { m ->
+                quality = m.groupValues[1].lowercase()
+                name = name.substring(0, m.range.first).trim()
+            }
+            val logo = pending.optString("logo").trim()
+            val groups = pending.optString("group").split(";")
+                .map { it.trim() }.filter { it.isNotBlank() }
+                .ifEmpty { listOf("Live") }
+            val identity = "norm:" + slugOf(name)
+            val key = name.lowercase() + "|" + quality
+            pending = null
+            if (name.isBlank() || identity == "norm:" || !seen.add(key)) continue
+            parsed.add(
+                Parsed(
+                    identity = identity,
+                    name = name,
+                    groups = groups,
+                    logo = logo,
+                    url = line,
+                    quality = quality,
+                ),
+            )
+        }
+        // Sort by name, then lightest variant first: a Wi-Fi dip should land on the 480p feed, not the
+        // 1080p one that stalls. qbits() keeps "1080p" numerically higher than "720p".
+        parsed.sortWith(compareBy({ it.name.lowercase() }, { qbits(it.quality) }))
+
+        val hidden = ids(live.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
+        val out = JSONArray()
+        val variants = HashMap<String, MutableList<LiveVariant>>()
+        val numbered = ArrayList<String>()
+        for (c in parsed) {
+            val kind = if (c.url.contains(".m3u8", true)) "hls" else "http"
+            variants.getOrPut(c.identity) { ArrayList() }.add(LiveVariant(c.url, c.quality, kind))
+            if (out.length() == 0 || lastIdentity(out) != c.identity) {
+                out.put(
+                    JSONObject()
+                        .put("id", c.identity)
+                        .put("identity", c.identity)
+                        .put("name", c.name)
+                        .put("group", c.groups.first())
+                        .put("groups", JSONArray(c.groups))
+                        .put("logo", c.logo)
+                        .put("quality", c.quality)
+                        .put("url", c.url),
+                )
+                if (c.identity !in hidden && c.groups.none { it in groupsHidden }) {
+                    numbered.add(c.identity)
+                }
             }
         }
         liveCache = out
-        liveUrls.clear()
-        liveUrls.putAll(urls)
+        liveVariants.clear()
+        liveVariants.putAll(variants)
+        liveNames.clear()
+        for (c in parsed) liveNames[c.identity] = c.name
         liveCacheAt = now
         liveCacheKey = playlist
+        liveHealth.assignNumbers(numbered)
+        startLiveProbe()
         out
+    }
+
+    private fun lastIdentity(arr: JSONArray): String =
+        (arr.optJSONObject(arr.length() - 1) ?: JSONObject()).optString("identity")
+
+    private fun qbits(quality: String): Int =
+        quality.filter { it.isDigit() }.toIntOrNull() ?: 0
+
+    /**
+     * Ask the prober to check the playlist in the background. It is rate-limited and never runs while
+     * a film is playing, so this is safe to call from the home path.
+     */
+    private fun startLiveProbe() {
+        if (liveVariants.isEmpty()) return
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val hidden = ids(live.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
+        val visible = HashSet<String>()
+        for (i in 0 until liveCache.length()) {
+            val c = liveCache.optJSONObject(i) ?: continue
+            val identity = c.optString("identity")
+            if (identity.isBlank() || identity in hidden) continue
+            if (jsonStrings(c.optJSONArray("groups")).any { it in groupsHidden }) continue
+            visible.add(identity)
+        }
+        val targets = liveVariants.asSequence()
+            .filter { it.key in visible }
+            // Never checked first, then the oldest evidence: repeated passes walk the whole wall
+            // instead of re-checking the same head of the alphabet.
+            .sortedBy { liveHealth.get(it.key)?.optLong("checkedAt", 0L) ?: 0L }
+            .take(MAX_PROBE_PER_PASS)
+            .map { (identity, list) ->
+                LiveTarget(identity, liveNames[identity].orEmpty(), list.toList())
+            }
+            .toList()
+        liveHealth.maybeProbe(targets)
     }
 
     private fun liveGroups(channels: JSONArray): JSONArray {
         val groups = LinkedHashSet<String>()
         for (i in 0 until channels.length()) {
-            val g = channels.optJSONObject(i)?.optString("group").orEmpty()
-            if (g.isNotBlank()) groups.add(g)
+            val c = channels.optJSONObject(i) ?: continue
+            val list = c.optJSONArray("groups")
+            if (list != null) {
+                for (j in 0 until list.length()) {
+                    val g = list.optString(j).trim()
+                    if (g.isNotBlank()) groups.add(g)
+                }
+            } else {
+                val g = c.optString("group").trim()
+                if (g.isNotBlank()) groups.add(g)
+            }
         }
-        return JSONArray(groups.toList())
+        return JSONArray(groups.sorted().toList())
     }
 
     private fun attr(line: String, key: String): String {
@@ -417,26 +565,75 @@ class LocalHub private constructor(context: Context) {
         }
     }
 
+    /**
+     * The live wall as §1 items: one tile per channel name, every variant as a source. The working
+     * variant leads, then the lightest; a channel the prober watched fail sorts behind one that
+     * answered, and one that was never checked sits between them (unknown is not dead).
+     */
     private fun channelItems(): List<Item> {
         val out = ArrayList<Item>()
         val channels = channelsJson()
+        val hidden = ids(settings().optJSONObject("live")?.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(settings().optJSONObject("live")?.optJSONArray("groupsHidden")).toSet()
         for (i in 0 until channels.length()) {
             val c = channels.optJSONObject(i) ?: continue
-            val id = c.optString("id")
+            val identity = c.optString("identity", c.optString("id"))
+            if (identity.isBlank() || identity in hidden) continue
+            val groups = jsonStrings(c.optJSONArray("groups")).ifEmpty {
+                listOf(c.optString("group", "Live")).filter { it.isNotBlank() }
+            }
+            if (groups.any { it in groupsHidden }) continue
             val name = c.optString("name", "Channel")
-            val group = c.optString("group", "Live")
-            val logo = c.optString("logo")
+            val variants = liveVariants[identity].orEmpty()
+            val working = liveHealth.workingUrl(identity)
+            val ordered = variants.sortedWith(compareBy(
+                { if (working != null && it.url == working) 0 else 1 },
+                { qbits(it.quality) },
+            ))
+            val sources = ordered.mapIndexed { index, v ->
+                Source(
+                    provider = "live",
+                    label = liveLabel(v, index, ordered.size),
+                    kind = v.kind,
+                    quality = v.quality,
+                    mode = "direct",
+                    score = if (working != null && v.url == working) 10.0 else 0.0,
+                    why = listOfNotNull(
+                        "live channel",
+                        v.quality.takeIf { it.isNotBlank() },
+                        liveHealth.healthOf(identity).takeIf { it == "working" }?.let { "this feed answered" },
+                    ),
+                )
+            }
+            val best = ordered.maxByOrNull { qbits(it.quality) }?.quality.orEmpty()
+            val h = liveHealth.get(identity)
             out.add(Item(
-                identity = id,
+                identity = identity,
                 type = "channel",
                 title = name,
-                poster = logo.takeIf { it.isNotBlank() },
-                genres = listOf(group).filter { it.isNotBlank() },
-                live = Live(now = group),
-                sources = listOf(Source(provider = "live", label = group, kind = "hls", mode = "direct")),
+                poster = c.optString("logo").takeIf { it.isNotBlank() },
+                genres = groups,
+                live = Live(
+                    now = groups.firstOrNull().orEmpty(),
+                    quality = best,
+                    number = liveHealth.numberFor(identity),
+                    health = liveHealth.healthOf(identity),
+                    checkedAt = h?.optLong("checkedAt", 0L) ?: 0L,
+                    latencyMs = h?.optLong("latencyMs", 0L) ?: 0L,
+                    error = h?.optString("error").orEmpty(),
+                ),
+                sources = sources,
             ))
         }
+        out.sortWith(compareBy({ liveHealth.rank(it.identity) }, { it.live?.number ?: Int.MAX_VALUE }, { it.title.lowercase() }))
         return out
+    }
+
+    /** "1080p · host" when a channel has several feeds, the plain quality when it has one. */
+    private fun liveLabel(v: LiveVariant, index: Int, total: Int): String {
+        val q = v.quality.ifBlank { "stream" }
+        val short = hostOf(v.url).ifBlank { "#" + (index + 1) }
+        return if (total <= 1) q else q + " · " + short
     }
 
     fun homeJson(profileId: String?): JSONObject =
@@ -542,23 +739,54 @@ class LocalHub private constructor(context: Context) {
         // A series is one tile with many addresses: the addon names an episode `<show>:<season>:<episode>`.
         val address = if (season > 0 && episode > 0) "$identity:$season:$episode" else identity
         val profileId = s(body, "profile", "").ifBlank { null }
-        if (type == "channel" || identity.startsWith("live:")) {
-            var url = liveUrls[identity].orEmpty()
-            if (url.isBlank()) {
-                val arr = channelsJson()
-                for (i in 0 until arr.length()) {
-                    val c = arr.optJSONObject(i) ?: continue
-                    if (c.optString("id") == identity) { url = c.optString("url"); break }
+        if (type == "channel" || liveVariants.containsKey(identity) || identity.startsWith("live:")) {
+            channelsJson()
+            val variants = liveVariants[identity].orEmpty()
+            if (variants.isNotEmpty()) {
+                val skip = exclusions(body.optJSONArray("exclude"))
+                val wanted = wantedSource(body)
+                val working = liveHealth.workingUrl(identity)
+                // The feed that answered is the first thing tried; inside equal health the lightest
+                // variant is, so a weak line lands on 480p instead of the 1080p feed that stalls.
+                val ordered = variants.sortedWith(compareBy(
+                    { if (working != null && it.url == working) 0 else 1 },
+                    { qbits(it.quality) },
+                ))
+                val asked = wanted?.let { w ->
+                    val label = s(w, "label", "").trim()
+                    val quality = s(w, "quality", "").trim()
+                    ordered.withIndex().firstOrNull { (index, v) ->
+                        (label.isNotBlank() &&
+                            (liveLabel(v, index, ordered.size).equals(label, true) || v.url == label)) ||
+                            (quality.isNotBlank() && v.quality.equals(quality, true))
+                    }?.value
                 }
-            }
-            if (url.isNotBlank()) {
+                val pick = asked ?: ordered.withIndex().firstOrNull { (index, v) ->
+                    v.url.lowercase() !in skip && liveLabel(v, index, ordered.size).lowercase() !in skip
+                }?.value
+                if (pick != null) {
+                    // A probe pass must not compete with the channel the viewer is watching.
+                    liveHealth.quietFor(15 * 60_000L)
+                    val alternatives = ordered.filter { it.url != pick.url }.map { v ->
+                        variantJson(identity, v, ordered)
+                    }
+                    return JSONObject()
+                        .put("url", pick.url)
+                        .put("kind", pick.kind)
+                        .put("mode", "direct")
+                        .put("live", true)
+                        .put("headers", liveHeaders(pick.url))
+                        .put("title", s(body, "title", "Live"))
+                        .put("sourceName", liveLabel(pick, 0, ordered.size))
+                        .put("health", liveHealth.healthOf(identity))
+                        .put("alternatives", JSONArray(alternatives))
+                        .put("episode", JSONObject.NULL)
+                        .put("nextEpisode", JSONObject.NULL)
+                }
                 return JSONObject()
-                    .put("url", url)
-                    .put("kind", if (url.contains(".m3u8", true)) "hls" else "http")
-                    .put("mode", "direct")
+                    .put("error", "every feed for this channel was already tried")
                     .put("live", true)
-                    .put("headers", JSONObject())
-                    .put("title", s(body, "title", "Live"))
+                    .put("sources", JSONArray(ordered.map { variantJson(identity, it, ordered) }))
                     .put("episode", JSONObject.NULL)
                     .put("nextEpisode", JSONObject.NULL)
             }
@@ -663,6 +891,46 @@ class LocalHub private constructor(context: Context) {
             .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
                 .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
     }
+
+    /** The `source` a client names: an object (native player) or a plain label string (older screens). */
+    private fun wantedSource(body: JSONObject): JSONObject? {
+        body.optJSONObject("source")?.let { return it }
+        val label = s(body, "source", "").trim().ifBlank { s(body, "provider", "").trim() }
+        return if (label.isBlank()) null else JSONObject().put("label", label)
+    }
+
+    /** Sources this client already tried, lowercased for a forgiving comparison. */
+    private fun exclusions(arr: JSONArray?): Set<String> {
+        if (arr == null) return emptySet()
+        val out = HashSet<String>()
+        for (i in 0 until arr.length()) {
+            val v = arr.optString(i, "").trim().lowercase()
+            if (v.isNotBlank()) out.add(v)
+        }
+        return out
+    }
+
+    private fun variantJson(identity: String, v: LiveVariant, all: List<LiveVariant>): JSONObject {
+        val index = all.indexOf(v)
+        val label = liveLabel(v, index, all.size)
+        return JSONObject()
+            .put("id", "live:" + Integer.toHexString((identity + "|" + v.url).hashCode()))
+            .put("provider", "live")
+            .put("label", label)
+            .put("kind", v.kind)
+            .put("quality", v.quality)
+            .put("mode", "direct")
+            .put("score", if (liveHealth.workingUrl(identity) == v.url) 10.0 else 0.0)
+    }
+
+    /**
+     * What a live host often demands before it answers: a browser-shaped user agent and a referer from
+     * its own origin. The hub sends the same pair; without them a great many feeds return 403 while
+     * the playlist still looks healthy.
+     */
+    private fun liveHeaders(url: String): JSONObject = JSONObject()
+        .put("User-Agent", LiveHealth.UA)
+        .put("Referer", LiveHealth.originOf(url) + "/")
 
     fun prefsJson(profileId: String?): JSONObject {
         val who = profileId ?: "default"
@@ -997,7 +1265,31 @@ class LocalHub private constructor(context: Context) {
         val library = libraryItems().filter { it.addedAt > 0 }.sortedByDescending { it.addedAt }.take(ROW_MAX)
         if (library.isNotEmpty()) out.add(LocalRow("justadded", "Recently added", "poster", 10, "all", library))
 
-        val liveChannels = channelItems()
+        // Live TV: the household's hidden channels and groups were already removed by channelItems();
+        // now the profile's own lineup and order, then health and the stable zap number. This is the
+        // same order the hub's rows/live.js applies, so the remote walks the same wall on either host.
+        val profileLive = readProfilePrefs(who).optJSONObject("live")
+        var liveChannels = channelItems().filter {
+            it.identity !in ids(profileLive?.optJSONArray("hidden")).toSet()
+        }
+        val only = ids(profileLive?.optJSONArray("only"))
+        if (only.isNotEmpty()) {
+            val allowed = only.toSet()
+            liveChannels = liveChannels.filter { it.identity in allowed }
+        }
+        val localOrder = ids(profileLive?.optJSONArray("order"))
+        val wanted = when {
+            localOrder.isNotEmpty() -> localOrder
+            only.isNotEmpty() -> only
+            else -> ids(settings().optJSONObject("live")?.optJSONArray("order"))
+        }
+        val liveRank = wanted.withIndex().associate { it.value to it.index }
+        liveChannels = liveChannels.sortedWith(compareBy(
+            { liveRank[it.identity] ?: Int.MAX_VALUE },
+            { liveHealth.rank(it.identity) },
+            { it.live?.number ?: Int.MAX_VALUE },
+            { it.title.lowercase() },
+        ))
         if (liveChannels.isNotEmpty()) out.add(LocalRow("live", "Live TV", "channel", 15, "all", liveChannels))
 
         val allLibrary = libraryItems()
@@ -1136,6 +1428,19 @@ class LocalHub private constructor(context: Context) {
                 .put("episode", p.episode?.let { JSONObject().put("season", it.season).put("episode", it.episode).put("title", it.title) } ?: JSONObject.NULL)
         } ?: JSONObject.NULL)
         .put("episodes", JSONArray(i.episodes.map { JSONObject().put("season", it.season).put("episode", it.episode).put("title", it.title) }))
+        // A channel's health and zap number live on `live`, not on the item: the player reads
+        // `item.live.number` for its station badge, and without this block every standalone channel
+        // showed a zero in place of its number.
+        .put("live", i.live?.let { l ->
+            JSONObject()
+                .put("now", l.now.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                .put("quality", l.quality.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                .put("number", if (l.number > 0) l.number else JSONObject.NULL)
+                .put("health", l.health.takeIf { it.isNotBlank() } ?: "unknown")
+                .put("checkedAt", if (l.checkedAt > 0) l.checkedAt else JSONObject.NULL)
+                .put("latencyMs", if (l.latencyMs > 0) l.latencyMs else JSONObject.NULL)
+                .put("error", l.error.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+        } ?: JSONObject.NULL)
         .put("sources", JSONArray(i.sources.map { sourceJson(it) }))
 
     private fun sourceJson(src: Source): JSONObject = JSONObject()
@@ -1199,10 +1504,17 @@ class LocalHub private constructor(context: Context) {
     // The owner pastes an M3U URL; this parses it into the same channel objects the hub's live row
     // carries. The URL stays in the app's settings, and the parsed list is cached so home does not
     // refetch a playlist on every shelf.
-    private val liveUrls = HashMap<String, String>()
+    // identity -> every quality variant of that channel name, in playlist order. A channel is ONE
+    // tile with several sources, exactly as a film is; this is what lets a dead feed fail over to the
+    // next variant of the same channel instead of to another channel.
+    private val liveVariants = HashMap<String, MutableList<LiveVariant>>()
+    private val liveNames = HashMap<String, String>()
     private var liveCacheAt = 0L
     private var liveCacheKey = ""
     private var liveCache: JSONArray = JSONArray()
+    private val liveHealth = LiveHealth(File(data, "live-health.json"))
+
+    private val MAX_PROBE_PER_PASS = 80
 
     private val MEDIA_EXT = Regex("\\.(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(\\?|#|$)", RegexOption.IGNORE_CASE)
 

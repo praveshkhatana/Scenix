@@ -23,19 +23,40 @@ internal fun sa(a: JSONArray, i: Int, def: String = ""): String =
  * backend that adds or drops a field cannot crash the app (forward compatibility).
  */
 
-/** `{ "now": "Match", "quality": "720p", "number": 12 }` */
+/**
+ * `{ "now": "Match", "quality": "720p", "number": 12, "health": "working" }`
+ *
+ * `health` is the same vocabulary a hub publishes: `working`, `dead`, or `unknown` when a feed has
+ * never been checked or the evidence is more than a day old. The player and the live wall read it to
+ * lead with a feed that answered, but an unknown feed is never hidden — it is the normal state of a
+ * channel nobody has tuned yet.
+ */
 data class Live(
     val now: String = "",
     val quality: String = "",
     // The channel's place in the operator's numbering ("12 · &TV"). The hub assigns it; 0 means the
     // hub did not number this one and the app falls back to its position in the row.
     val number: Int = 0,
+    val health: String = "",
+    val checkedAt: Long = 0,
+    val latencyMs: Long = 0,
+    val error: String = "",
 ) {
     companion object {
         fun from(o: JSONObject?): Live? {
             if (o == null) return null
-            val l = Live(s(o, "now", ""), s(o, "quality", ""), o.optInt("number", 0))
-            return if (l.now.isEmpty() && l.quality.isEmpty() && l.number <= 0) null else l
+            val l = Live(
+                now = s(o, "now", ""),
+                quality = s(o, "quality", ""),
+                number = o.optInt("number", 0),
+                health = s(o, "health", ""),
+                checkedAt = o.optLong("checkedAt", 0L),
+                latencyMs = o.optLong("latencyMs", 0L),
+                error = s(o, "error", ""),
+            )
+            return if (l.now.isEmpty() && l.quality.isEmpty() && l.number <= 0 &&
+                l.health.isEmpty() && l.checkedAt <= 0L
+            ) null else l
         }
     }
 }
