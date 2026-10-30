@@ -61,6 +61,7 @@ class BrowseActivity : Activity() {
     // from a tile up into it. One named anchor on the pill and one on the list make the route
     // explicit: UP from the featured tiles lands on the bar, DOWN from the bar returns to the top.
     private var navAnchor: View? = null
+    private var pillGroup: ViewGroup? = null
     private var shelfListId = View.NO_ID
     private val clock = Handler(Looper.getMainLooper())
     private var rotationPaused = false
@@ -90,8 +91,26 @@ class BrowseActivity : Activity() {
                 anchor.requestFocus()
                 return true
             }
+            // DOWN out of the pill lands on the Featured tile the billboard is showing, not blindly
+            // on the first one — the banner and its tiles are one object, and entering it should
+            // stand on the slide you can see.
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
+                slides.isNotEmpty() && isInside(pillGroup, currentFocus)) {
+                focusFeatured(heroPos.coerceIn(0, slides.size - 1))
+                return true
+            }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun isInside(container: ViewGroup?, v: View?): Boolean {
+        if (container == null || v == null) return false
+        var p: android.view.ViewParent? = v.parent
+        while (p != null) {
+            if (p === container) return true
+            p = p.parent
+        }
+        return false
     }
 
     private fun onTopRow(f: View?): Boolean {
@@ -245,10 +264,17 @@ class BrowseActivity : Activity() {
         }
 
         fun setRoaming(roam: Boolean) {
-            // A full-screen RenderEffect blurred on the GPU every scroll frame — that was the biggest
-            // single cost behind the "app is laggy" complaint. The veil alone reads the same on this
-            // panel: the art goes quiet, the ring stays the loudest thing on the screen.
+            // The room frosts while the viewer walks the shelves. The old cost was a blur that
+            // re-rendered every scroll frame; this one is set once per transition, on the two art
+            // layers only, and it stays applied as a static shader between changes.
             veil.animate().alpha(if (roam) 1f else 0.84f).setDuration(350).start()
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                val rad = app.theme.px(14f).toFloat()
+                val fx = if (roam) android.graphics.RenderEffect.createBlurEffect(
+                    rad, rad, android.graphics.Shader.TileMode.CLAMP) else null
+                a.setRenderEffect(fx)
+                b.setRenderEffect(fx)
+            }
         }
     }
 
@@ -419,9 +445,12 @@ class BrowseActivity : Activity() {
                 background = Views.rounded(theme.surface2, theme.px(999f), theme.px(1f), theme.line)
             }
             pill.addView(profileDisc())
-            pill.addView(navTab("Home", active = section.isBlank()) { goTab("") })
-            pill.addView(navTab("Movies", active = section == "movies") { goTab("movies") })
-            pill.addView(navTab("Series", active = section == "series") { goTab("series") })
+            val homeTab = navTab("Home", active = section.isBlank()) { goTab("") }
+            val moviesTab = navTab("Movies", active = section == "movies") { goTab("movies") }
+            val seriesTab = navTab("Series", active = section == "series") { goTab("series") }
+            pill.addView(homeTab)
+            pill.addView(moviesTab)
+            pill.addView(seriesTab)
             val live = navTab("Live TV") {
                 startActivity(
                     Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
@@ -452,7 +481,14 @@ class BrowseActivity : Activity() {
                 )
             }
             gear.id = View.generateViewId()
-            navAnchor = gear
+            // UP from the top row reaches the pill at the tab you are standing on, not at the far
+            // end of the bar — walking in should land where you already are.
+            navAnchor = when (section) {
+                "movies" -> moviesTab
+                "series" -> seriesTab
+                else -> homeTab
+            }
+            pillGroup = pill
             pill.addView(gear)
             bar.addView(pill, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -497,10 +533,27 @@ class BrowseActivity : Activity() {
         b.isClickable = true
         b.setOnClickListener { action() }
         // Whatever identity the tab wears — the pill of the section you stand on — goes on before
-        // Focus.attach captures the base, so walking focus over the tab and away never erases it.
+        // the focus paint below, so walking focus over the tab and away never erases it.
         preAttach?.invoke(b)
-        Focus.attach(b, b, app, app.theme.radius("button", 6f), scale = false, elevate = false,
-            onFocus = { if (it) onChromeFocused() })
+        val plain = b.background
+        val active = preAttach != null
+        // A soft halo band around a 27 px line of text is invisible on a TV panel: the viewer could
+        // not tell which tab in the bar held the ring. Chrome items get an explicit outline instead,
+        // and the white-faced active tab turns silver while focused so its ring still reads.
+        fun paintChrome(focused: Boolean) {
+            b.background = when {
+                !focused -> plain
+                active -> Views.rounded(
+                    Color.argb(255, 198, 200, 206), app.theme.px(999f),
+                    app.theme.px(3f), Color.argb(235, 255, 255, 255))
+                else -> Views.rounded(
+                    Color.argb(36, 255, 255, 255), app.theme.px(999f),
+                    app.theme.px(2f), Color.argb(235, 255, 255, 255))
+            }
+        }
+        paintChrome(false)
+        Focus.attach(b, null, app, app.theme.radius("button", 6f), scale = false, elevate = false,
+            onFocus = { f -> if (f) onChromeFocused(); paintChrome(f) })
         val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         lp.marginStart = left
         b.layoutParams = lp
@@ -529,8 +582,16 @@ class BrowseActivity : Activity() {
         iv.isFocusable = true
         iv.isClickable = true
         iv.setOnClickListener { action() }
-        Focus.attach(iv, iv, app, theme.px(9f), scale = false, elevate = false,
-            onFocus = { if (it) onChromeFocused() })
+        // The icon gets the same explicit ring as the tabs: on a 30 px glyph a soft halo band is
+        // invisible, and "is the ring here or not" has to answer at a glance.
+        fun paintChrome(focused: Boolean) {
+            iv.background = if (focused) Views.rounded(
+                Color.argb(36, 255, 255, 255), theme.px(999f),
+                theme.px(2f), Color.argb(235, 255, 255, 255)) else null
+        }
+        paintChrome(false)
+        Focus.attach(iv, null, app, theme.px(9f), scale = false, elevate = false,
+            onFocus = { f -> if (f) onChromeFocused(); paintChrome(f) })
         iv.layoutParams = LinearLayout.LayoutParams(theme.px(30f), theme.px(30f)).apply {
             marginStart = theme.px(10f); marginEnd = theme.px(10f)
         }

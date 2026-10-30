@@ -100,6 +100,11 @@ class PlayerActivity : Activity() {
     private var subsInItem = 0
     private var alternatives = JSONArray()
     private var nextEpisode: JSONObject? = null
+    /** Full episode list for the series in play, read from meta the first time Episodes is opened. */
+    private var episodesList: JSONArray? = null
+    private var episodesFetching = false
+    /** Season the Episodes menu is showing; 0 means "follow whatever episode is playing". */
+    private var epSeason = 0
     private var selectedAudioId: String? = null
     private var selectedSubId: String? = null
     private var audioChosen = false
@@ -181,6 +186,7 @@ class PlayerActivity : Activity() {
     private lateinit var subButton: GlyphView
     private lateinit var speedButton: GlyphView
     private lateinit var qualityButton: GlyphView
+    private var episodesButton: GlyphView? = null
     private lateinit var centerBox: LinearLayout
     private lateinit var centerSpinner: ProgressBar
     private lateinit var centerText: TextView
@@ -473,6 +479,7 @@ class PlayerActivity : Activity() {
         embeddedSubs = JSONArray()
         alternatives = JSONArray()
         nextEpisode = null
+        epSeason = 0
         currentSourceLabel = ""
         durationMs = 0L
         seekLine.fraction = 0f
@@ -1105,6 +1112,13 @@ class PlayerActivity : Activity() {
         subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
         speedButton = icon(GLYPH_SPEED, "Speed", flat = true) { openMenu(MenuKind.SPEED, speedButton) }
         qualityButton = icon(GLYPH_QUALITY, "Quality", flat = true) { openMenu(MenuKind.QUALITY, qualityButton) }
+        // A series gets a fifth affordance: the episode list, so a viewer mid-season can jump
+        // anywhere without leaving the player (the Apple TV way). Movies and live channels don't.
+        if (intent?.getStringExtra(EXTRA_TYPE).orEmpty() == "series") {
+            episodesButton = icon(GLYPH_EPISODES, "Episodes", flat = true) {
+                episodesButton?.let { openMenu(MenuKind.EPISODES, it) }
+            }
+        }
 
         buttonRow.addView(playButton, wrap().withStart(theme.px(12f)))
         buttonRow.addView(rewindButton, wrap().withStart(theme.px(10f)))
@@ -1122,6 +1136,7 @@ class PlayerActivity : Activity() {
         options.addView(subButton, wrap().withStart(theme.px(4f)))
         options.addView(speedButton, wrap().withStart(theme.px(4f)))
         options.addView(qualityButton, wrap().withStart(theme.px(4f)))
+        episodesButton?.let { options.addView(it, wrap().withStart(theme.px(4f))) }
         buttonRow.addView(options, wrap())
 
         bottomBar.addView(buttonRow, LinearLayout.LayoutParams(
@@ -1134,8 +1149,8 @@ class PlayerActivity : Activity() {
 
         barFocusable = listOf(
             backButton, playButton, rewindButton, forwardButton,
-            audioButton, subButton, speedButton, qualityButton, seekLine,
-        )
+            audioButton, subButton, speedButton, qualityButton,
+        ) + listOfNotNull(episodesButton) + listOf(seekLine)
     }
 
     private fun buildCenter() {
@@ -1213,7 +1228,7 @@ class PlayerActivity : Activity() {
     // menus
     // =========================================================================================
 
-    private enum class MenuKind { AUDIO, SUBTITLES, SPEED, QUALITY }
+    private enum class MenuKind { AUDIO, SUBTITLES, SPEED, QUALITY, EPISODES }
 
     private fun openMenu(kind: MenuKind, anchor: View) {
         if (panelKind == kind) {
@@ -1252,6 +1267,7 @@ class PlayerActivity : Activity() {
             MenuKind.SUBTITLES -> "Subtitles"
             MenuKind.SPEED -> "Speed"
             MenuKind.QUALITY -> "Quality" + qualityWord(currentSourceLabel).let { if (it.isBlank()) "" else " · $it" }
+            MenuKind.EPISODES -> "Episodes"
         }
         box.addView(Views.text(app, "panelTitle", 26f, theme.ink, heading, bold = true),
             LinearLayout.LayoutParams(
@@ -1264,6 +1280,7 @@ class PlayerActivity : Activity() {
             MenuKind.SUBTITLES -> subtitleRows(rows)
             MenuKind.SPEED -> speedRows(rows)
             MenuKind.QUALITY -> qualityRows(rows)
+            MenuKind.EPISODES -> episodesRows(rows)
         }
         if (rows.childCount > 8) {
             val scroll = ScrollView(this).apply {
@@ -1470,6 +1487,90 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /** The season currently visible in the Episodes menu, as a plain list of episode objects. */
+    private fun episodesForSeason(): List<JSONObject> {
+        val eps = episodesList ?: return emptyList()
+        val out = ArrayList<JSONObject>()
+        for (i in 0 until eps.length()) {
+            val ep = eps.optJSONObject(i) ?: continue
+            if (ep.optInt("season", 1) == epSeason) out.add(ep)
+        }
+        return out
+    }
+
+    /**
+     * The episode jump list — Apple TV's core series affordance, drawn inside the player so a viewer
+     * never has to leave playback to change episode. The list is read from the hub's meta record on
+     * first open; while it arrives the panel says so instead of showing an empty box.
+     */
+    private fun episodesRows(parent: LinearLayout) {
+        val s = spec ?: return
+        val eps = episodesList
+        if (eps == null) {
+            parent.addView(noteRow("Reading the episode list…"))
+            if (!episodesFetching) {
+                episodesFetching = true
+                api.meta(s.identity, profileId) { record, _ ->
+                    episodesFetching = false
+                    if (isFinishing) return@meta
+                    val list = record?.optJSONArray("episodes")
+                    episodesList = if (list == null || list.length() == 0) JSONArray() else list
+                    // The viewer may have closed the panel in the meantime; only redraw a live one.
+                    if (panelKind == MenuKind.EPISODES) rebuildMenu(MenuKind.EPISODES)
+                }
+            }
+            return
+        }
+        val seasons = ArrayList<Int>()
+        for (i in 0 until eps.length()) {
+            val se = eps.optJSONObject(i)?.optInt("season", 1) ?: continue
+            if (se !in seasons) seasons.add(se)
+        }
+        seasons.sort()
+        if (epSeason == 0)
+            epSeason = if (seasons.contains(s.season)) s.season else seasons.firstOrNull() ?: 0
+        if (seasons.size > 1) {
+            val chips = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            for (se in seasons) {
+                chips.addView(chip("Season $se", compact = true) {
+                    if (epSeason != se) {
+                        epSeason = se
+                        rebuildMenu(MenuKind.EPISODES)
+                    }
+                }, wrap().withStart(if (chips.childCount == 0) 0 else theme.px(8f)))
+            }
+            parent.addView(chips, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = theme.px(10f) })
+        }
+        var shown = 0
+        for (i in 0 until eps.length()) {
+            val ep = eps.optJSONObject(i) ?: continue
+            if (ep.optInt("season", 1) != epSeason) continue
+            if (shown >= 40) break
+            shown++
+            val se = ep.optInt("season", 1)
+            val number = ep.optInt("episode", shown)
+            val title = str(ep, "title")
+            val here = se == s.season && number == s.episode
+            parent.addView(menuRow(
+                "E%02d".format(number) + if (title.isNotBlank()) " · $title" else "",
+                "", here,
+            ) {
+                if (here) {
+                    closeMenu()
+                    return@menuRow
+                }
+                closeMenu(restore = false)
+                open(PlaySpec(s.identity, s.type, se, number, title.ifBlank { s.title }), 0L)
+            })
+        }
+        if (shown == 0) parent.addView(noteRow("The hub listed no episodes for this season"))
+    }
+
     private fun selectedRowIndex(kind: MenuKind): Int = when (kind) {
         MenuKind.AUDIO -> when {
             selectedAudioId == null -> 0
@@ -1486,6 +1587,13 @@ class PlayerActivity : Activity() {
         }
         MenuKind.SPEED -> SPEEDS.indexOfFirst { kotlin.math.abs(speed - it) < 0.01f }.coerceAtLeast(0)
         MenuKind.QUALITY -> 0
+        MenuKind.EPISODES -> {
+            val s = spec
+            val eps = episodesForSeason()
+            if (s == null) 0 else eps.indexOfFirst {
+                it.optInt("season", 1) == s.season && it.optInt("episode", 0) == s.episode
+            }.coerceAtLeast(0)
+        }
     }
 
     /** `s:2` / `a:3` → 1, the row's offset after the leading Default/Off row. */
@@ -2122,6 +2230,7 @@ class PlayerActivity : Activity() {
         embeddedSubs = JSONArray()
         alternatives = JSONArray()
         nextEpisode = null
+        epSeason = 0
         currentSourceLabel = ""
         durationMs = 0L
         seekLine.fraction = 0f
@@ -2473,6 +2582,18 @@ class PlayerActivity : Activity() {
                     canvas.drawLine(cx, cy + 5 * u, cx, cy + 9.5f * u, stroke)
                     canvas.drawLine(cx - 5 * u, cy + 9.5f * u, cx + 5 * u, cy + 9.5f * u, stroke)
                 }
+                GLYPH_EPISODES -> {
+                    // A stacked episode list: three still-thumb blocks with a title line beside each,
+                    // the same language the episode rows themselves use.
+                    for (i in 0..2) {
+                        val y = cy + (i - 1) * 7.4f * u
+                        canvas.drawRoundRect(
+                            RectF(cx - 12 * u, y - 3.2f * u, cx - 4.2f * u, y + 3.2f * u),
+                            1f * u, 1f * u, stroke,
+                        )
+                        canvas.drawLine(cx - 1 * u, y, cx + 12 * u, y, stroke)
+                    }
+                }
             }
             if (badge) {
                 canvas.drawCircle(width - 11 * theme2.scale, 11 * theme2.scale, 3.4f * theme2.scale, solid)
@@ -2642,6 +2763,7 @@ class PlayerActivity : Activity() {
         private const val GLYPH_SPEED = 5
         private const val GLYPH_QUALITY = 6
         private const val GLYPH_BACK = 7
+        private const val GLYPH_EPISODES = 8
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)

@@ -52,14 +52,11 @@ object Focus {
                 val r = android.graphics.Color.red(c)
                 val g = android.graphics.Color.green(c)
                 val b = android.graphics.Color.blue(c)
-                val spread = theme.px(18f)
-                val mid = theme.px(9f)
-                val halo = if (glowInset > 0) LayerDrawable(arrayOf(
-                    Views.ring(Color.argb(34, r, g, b), ringRadiusPx + spread, spread),
-                    Views.ring(Color.argb(72, r, g, b), ringRadiusPx + mid, mid),
-                )) else LayerDrawable(arrayOf(
-                    Views.ring(Color.argb(34, r, g, b), ringRadiusPx + spread, spread),
-                    Views.ring(Color.argb(72, r, g, b), ringRadiusPx + mid, mid),
+                val spread = theme.px(20f)
+                val mid = theme.px(10f)
+                val halo = LayerDrawable(arrayOf(
+                    Views.ring(Color.argb(46, r, g, b), ringRadiusPx + spread, spread),
+                    Views.ring(Color.argb(120, r, g, b), ringRadiusPx + mid, mid),
                 ))
                 if (glowInset > 0) {
                     halo.setLayerInset(0, glowInset - spread, glowInset - spread, glowInset - spread, glowInset - spread)

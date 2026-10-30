@@ -80,8 +80,47 @@ class DetailActivity : Activity() {
     }
 
     private fun loading() {
-        val wait = Views.text(app, "sub", 24f, app.theme.ink2, "Reading this title…", gravity = Gravity.CENTER)
-        body.addView(wait, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(400f)))
+        // A word alone reads as a dead page on a TV. The shape of the title page — its hero, its
+        // lines, its buttons, the shelf below — pulses in place of the real thing until meta lands.
+        val theme = app.theme
+        fun pulse(v: View): View {
+            v.startAnimation(android.view.animation.AlphaAnimation(0.45f, 1f).apply {
+                duration = 900
+                repeatCount = android.view.animation.Animation.INFINITE
+                repeatMode = android.view.animation.Animation.REVERSE
+            })
+            return v
+        }
+        fun block(w: Int, h: Int, radius: Int = theme.radius("card", 6f)): View =
+            pulse(View(this).apply { background = Views.rounded(theme.surface2, radius) })
+                .also { it.layoutParams = LinearLayout.LayoutParams(w, h) }
+        body.addView(block(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(560f), 0),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(560f)))
+        body.addView(block(theme.px(680.0f), theme.px(46f)),
+            LinearLayout.LayoutParams(theme.px(680.0f), theme.px(46f)).apply {
+                topMargin = theme.px(26f); leftMargin = theme.gutter
+            })
+        body.addView(block(theme.px(420.0f), theme.px(22f)),
+            LinearLayout.LayoutParams(theme.px(420.0f), theme.px(22f)).apply {
+                topMargin = theme.px(14f); leftMargin = theme.gutter
+            })
+        body.addView(block(theme.px(190.0f), theme.px(56f), theme.radius("button", 6f)),
+            LinearLayout.LayoutParams(theme.px(190.0f), theme.px(56f)).apply {
+                topMargin = theme.px(24f); leftMargin = theme.gutter
+            })
+        body.addView(block(theme.px(300.0f), theme.px(26f)),
+            LinearLayout.LayoutParams(theme.px(300.0f), theme.px(26f)).apply {
+                topMargin = theme.px(34f); leftMargin = theme.gutter
+            })
+        val rail = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (i in 0 until 6) rail.addView(block(theme.px(230.0f), theme.px(330f)),
+            LinearLayout.LayoutParams(theme.px(230.0f), theme.px(330f)).apply {
+                if (i > 0) marginStart = theme.px(14f)
+            })
+        body.addView(rail, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(330f)).apply {
+            topMargin = theme.px(14f); leftMargin = theme.gutter; rightMargin = theme.gutter
+        })
     }
 
     private fun paint(record: JSONObject) {
