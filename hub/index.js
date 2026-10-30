@@ -1797,26 +1797,45 @@ const LABEL_NOISE = new Set([
   'limited', 'international', 'original', 'classic', 'cut',
 ]);
 
-function looksLikeAnotherTitle(candidate, title) {
-  const clean = String(candidate || '').toLowerCase()
+const LABEL_STOPWORDS = new Set(['the', 'and', 'of', 'for', 'with']);
+
+/** The words in a label that could name a film, with quality, language and edition tags removed. */
+function labelWords(text) {
+  const clean = String(text || '').toLowerCase()
     .replace(/\b(19|20)\d{2}\b/g, ' ')
     .replace(/\bs\d{1,2}e\d{1,3}\b/g, ' ')
     .replace(/\b\d{1,2}x\d{1,3}\b/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
-  const words = clean.split(/\s+/).filter((w) => w.length >= 3 && !LABEL_NOISE.has(w)
+  return clean.split(/\s+/).filter((w) => w.length >= 3 && !/^\d+$/.test(w)
+    && !LABEL_NOISE.has(w) && !LABEL_STOPWORDS.has(w)
     && !/^(?:aac|ac3|eac3|ddp|dd|h26[45]|x26[45]|hevc|avc|av1|hdr|uhd|1080|720|480|2160|1440)/.test(w));
+}
+
+function looksLikeAnotherTitle(candidate, title) {
+  const words = labelWords(candidate);
   if (!words.length) return false;
-  const wanted = String(title || '').toLowerCase().split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 3 && !['the', 'and', 'of', 'for', 'with'].includes(w));
+  const wanted = labelWords(title);
   if (!wanted.length) return false;
+  const clean = String(candidate || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ');
   return !wanted.some((w) => clean.includes(w));
 }
 
-/** A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`. */
+/**
+ * A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`.
+ * Only trust it when the rest of the label also carries title-like words. `S01E01 (Pilot)` is an
+ * episode reference, not a claim about a different show.
+ */
 function labelNamesOtherTitle(label, title) {
   const text = String(label || '');
   const parens = [...text.matchAll(/\(([^)]{3,80})\)/g)].map((m) => m[1]);
+  if (!parens.length) return false;
+  const outside = labelWords(text.replace(/\([^)]*\)/g, ' '));
+  if (!outside.length) return false;
+  const wanted = labelWords(title);
+  // The label already names the requested show outside the parentheses; the parenthetical is then
+  // an episode, edition or language (`The Office (Pilot)`), not a claim about a different film.
+  if (wanted.length && outside.some((w) => wanted.includes(w))) return false;
   return parens.some((part) => looksLikeAnotherTitle(part, title));
 }
 
