@@ -41,6 +41,7 @@ import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.scenix.tv.core.HubEndpoint
@@ -112,6 +113,13 @@ class PlayerActivity : Activity() {
     private var subChosen = false
     private var speed = 1f
     private var durationMs = 0L
+    /**
+     * A ladder starts on a high rung on this household's LAN instead of waiting four seconds on
+     * 480p to measure the link. The override is cleared on the first rendered frame, so adaptive
+     * selection takes over before the viewer can notice it was ever fixed.
+     */
+    private var startRungPending = false
+    private var startRungLocked = false
     /**
      * Film time where the current HLS ladder begins. An adaptive resume is transcoded from the saved
      * playhead, so the player's own timeline starts at zero while the viewer still expects 12:34.
@@ -324,8 +332,18 @@ class PlayerActivity : Activity() {
                 dataSpec
             }
         }
+        // An adaptive ladder begins on the rung the player's starting bandwidth estimate allows. With
+        // no estimate media3 conservatively opens the lowest rung, so a 720p film visibly starts at
+        // 480p and upshifts four seconds later. The hub is on this household's LAN, where even a weak
+        // Wi-Fi link carries more than 9 Mbps; seeding that figure selects 720p at once for a 720/480
+        // ladder, and 720p first (then 1080p by measurement) for a 1080 ladder. A remote hub keeps
+        // media3's own cautious start: the LAN assumption does not hold beyond the router.
+        val meterBuilder = DefaultBandwidthMeter.Builder(this)
+        if (isLocalHub(hubOrigin.host)) meterBuilder.setInitialBitrateEstimate(9_000L)
+        val meter = meterBuilder.build()
         val builder = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
+            .setBandwidthMeter(meter)
             .setLoadControl(Ceilings.loadControl(ctx))
         Ceilings.seekIncrements(builder, ctx)
         val p = builder.build()
@@ -337,6 +355,7 @@ class PlayerActivity : Activity() {
         p.addAnalyticsListener(object : AnalyticsListener {
             override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
                 Log.i(TAG, "first video frame on screen")
+                releaseStartRung()
             }
 
             override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: androidx.media3.common.VideoSize) {
@@ -394,6 +413,7 @@ class PlayerActivity : Activity() {
         }
 
         override fun onTracksChanged(tracks: Tracks) {
+            startOnHighRung(tracks)
             applyPendingTracks()
             refreshTrackMenus()
         }
@@ -501,6 +521,8 @@ class PlayerActivity : Activity() {
         currentSourceLabel = ""
         durationMs = 0L
         timelineOffsetMs = 0L
+        startRungPending = false
+        startRungLocked = false
         seekLine.fraction = 0f
         seekLine.buffered = 0f
         seekLine.invalidate()
@@ -582,6 +604,9 @@ class PlayerActivity : Activity() {
         // player's own timeline is relative; `startMs` is the film time to add back everywhere.
         timelineOffsetMs = (reply.optJSONObject("ladder")?.optLong("startMs", 0L) ?: 0L)
             .coerceAtLeast(0L)
+        startRungPending = reply.optJSONObject("ladder") != null &&
+            isLocalHub(Uri.parse(HubEndpoint.base(this)).host)
+        startRungLocked = false
         val mix = reply.optJSONObject("audioMix")
         if (mix != null) {
             mixHint = mix
@@ -707,6 +732,71 @@ class PlayerActivity : Activity() {
         fun port(u: Uri): Int =
             if (u.port > 0) u.port else if ((u.scheme ?: "").equals("https", true)) 443 else 80
         return port(uri) == port(hub)
+    }
+
+    /**
+     * A ladder's first chunk is chosen before adaptive selection has measured anything, and media3
+     * starts that first selection at the lowest variant. Pinning the 720 rung for the first frame
+     * turns "480p for four seconds, then 720p" into "720p immediately"; [releaseStartRung] hands the
+     * decision back to the adaptive selector before the second segment. A 1080/2160 rung is left to
+     * that selector, because starting there before measuring a weak link is how a startup stalls.
+     */
+    private fun startOnHighRung(tracks: Tracks) {
+        if (!startRungPending) return
+        val p = player ?: return
+        var group: Tracks.Group? = null
+        var index = -1
+        var height = -1
+        for (g in tracks.groups) {
+            if (g.type != C.TRACK_TYPE_VIDEO) continue
+            for (i in 0 until g.length) {
+                if (!g.isTrackSupported(i)) continue
+                val h = g.getTrackFormat(i).height
+                if (h in 1..720 && h > height) {
+                    group = g
+                    index = i
+                    height = h
+                }
+            }
+        }
+        if (group == null || index < 0) {
+            startRungPending = false
+            return
+        }
+        val params = p.trackSelectionParameters.buildUpon()
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(index)))
+            .build()
+        p.trackSelectionParameters = params
+        startRungPending = false
+        startRungLocked = true
+        Log.i(TAG, "starting ladder on ${height}p")
+    }
+
+    private fun releaseStartRung() {
+        if (!startRungLocked) return
+        startRungLocked = false
+        val p = player ?: return
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .build()
+        Log.i(TAG, "start rung released to adaptive selection")
+    }
+
+    /**
+     * Whether the hub address names this household's own network: loopback, the three private IPv4
+     * ranges, link-local IPv6, or a `.local` name. Only there is it safe to start a ladder on a high
+     * rung before measuring the link.
+     */
+    private fun isLocalHub(host: String?): Boolean {
+        val h = host?.trim()?.lowercase() ?: return false
+        if (h.isEmpty()) return false
+        if (h == "localhost" || h == "::1" || h.endsWith(".local")) return true
+        if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true
+        val parts = h.split('.')
+        if (parts.size != 4) return false
+        val a = parts[0].toIntOrNull() ?: return false
+        val b = parts[1].toIntOrNull() ?: return false
+        return a == 10 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 169 && b == 254)
     }
 
     /** A hub-relative subtitle path becomes an address the decoder can open. */
@@ -2343,6 +2433,8 @@ class PlayerActivity : Activity() {
         currentSourceLabel = ""
         durationMs = 0L
         timelineOffsetMs = 0L
+        startRungPending = false
+        startRungLocked = false
         seekLine.fraction = 0f
         seekLine.buffered = 0f
         hideNextCard()

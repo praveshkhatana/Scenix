@@ -55,8 +55,16 @@ v720/index.m3u8
   durations, so Media3 can switch variants at a boundary.
 - Serves `master.m3u8`, the variant playlists and segments from `data/ladder/<id>/`.
 - Waits for every video playlist and every audio playlist before answering ready.
+- Segment responses support HTTP `Range` and are marked immutable for ten minutes; playlists stay
+  `no-cache` because an EVENT playlist grows while the transcode runs. A retried segment therefore
+  resumes instead of downloading from zero.
 - Runs **one ladder job at a time**; opening another title evicts the old job. Finished/idle jobs stay
   for five minutes after the last request, then are swept.
+- On a hub in the household's own network, the native player starts the first chunk on 720p rather
+  than waiting on 480p to measure the link. It seeds media3's bandwidth estimate at 9 Mbps and pins
+  the 720 rung for the first frame; adaptive selection takes over as soon as that frame is drawn. A
+  remote hub keeps media3's cautious start, because the LAN assumption does not hold beyond the
+  router.
 - Reuses a warming job when the URL, rung set and audio set all match. A repeat Play waits on the job
   that already exists instead of killing it.
 
@@ -95,8 +103,7 @@ remux-only installs.
   ladder.
 - The high rung is transcoded, not copied; a future version can copy the top rendition and solve
   keyframe alignment separately.
-- Segments are generated and served, but not prefetched ahead of the player or cached beyond the
-  five-minute idle window.
-- The HLS player may begin on the lowest rung. Raising the initial rendition without rebuffering on a
-  slow link is still open.
+- The hub does not prefetch segments beyond what ffmpeg has already produced, and the TV does not
+  keep a segment cache of its own. A pause longer than the idle window drops the job; a later Play
+  starts a fresh ladder at the saved playhead instead of reusing the old bytes.
 - Bitrates are ceilings: 1080 9 Mbps, 720 4.5, 480 1.5, 1440 11, 2160 16.

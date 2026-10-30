@@ -392,9 +392,9 @@ async function serve(req, res, cors, id, rel) {
   if (rel === 'master.m3u8') {
     const ready = await waitForFirstPlaylists(job, Date.now() + FIRST_PLAYLIST_WAIT_MS);
     if (!ready) return send(res, 503, 'ladder warming');
-    return file(res, job, 'master.m3u8', cors);
+    return file(req, res, job, 'master.m3u8', cors);
   }
-  return file(res, job, rel, cors);
+  return file(req, res, job, rel, cors);
 }
 
 function send(res, status, text) {
@@ -402,16 +402,52 @@ function send(res, status, text) {
   res.end(text);
 }
 
-function file(res, job, rel, cors) {
+/**
+ * A segment is immutable once ffmpeg has written it, so it can be cached by anything between the hub
+ * and the player. A playlist is not: it is an EVENT list that grows for as long as the transcode runs.
+ * Range support matters most for a retried segment on a flaky Wi-Fi link — without it the player has
+ * to fetch the whole four seconds again.
+ */
+function file(req, res, job, rel, cors) {
   const full = fileFor(job, rel);
   if (!full || !fs.existsSync(full) || !fs.statSync(full).isFile()) return send(res, 404, 'not found');
-  const body = fs.readFileSync(full);
-  res.writeHead(200, Object.assign({
+  const stat = fs.statSync(full);
+  const playlist = full.endsWith('.m3u8');
+  const headers = Object.assign({
     'Content-Type': contentType(full),
-    'Content-Length': body.length,
-    'Cache-Control': 'no-cache',
-  }, cors || {}));
-  res.end(body);
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': playlist ? 'no-cache' : 'public, max-age=600',
+  }, cors || {});
+  const range = req && req.headers && req.headers.range;
+  if (!playlist && range) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
+    if (m) {
+      let start = m[1] === '' ? null : Number(m[1]);
+      let end = m[2] === '' ? null : Number(m[2]);
+      if (start === null && end === null) return send(res, 416, 'bad range');
+      if (start === null) {
+        // A suffix range asks for the last N bytes. A segment is small enough that this is rare, but
+        // answering it correctly costs nothing.
+        start = Math.max(0, stat.size - end);
+        end = stat.size - 1;
+      } else if (end === null || end >= stat.size) {
+        end = stat.size - 1;
+      }
+      if (start > end || start >= stat.size) {
+        res.writeHead(416, Object.assign({ 'Content-Range': 'bytes */' + stat.size }, headers));
+        return res.end();
+      }
+      headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + stat.size;
+      headers['Content-Length'] = end - start + 1;
+      res.writeHead(206, headers);
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(full, { start, end }).pipe(res);
+    }
+  }
+  headers['Content-Length'] = stat.size;
+  res.writeHead(200, headers);
+  if (req && req.method === 'HEAD') return res.end();
+  return fs.createReadStream(full).pipe(res);
 }
 
 function status() {
