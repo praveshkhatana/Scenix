@@ -54,8 +54,14 @@ class ProfilesActivity : Activity() {
                 topMargin = app.theme.px(38f)
             })
 
-        row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val scroller = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val scroller = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+        }
         scroller.addView(row)
         root.addView(scroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = app.theme.px(34f)
@@ -84,25 +90,29 @@ class ProfilesActivity : Activity() {
     }
 
     private fun profileTile(p: ProfileInfo): View {
+        val theme = app.theme
+        val faceSize = theme.px(260f)
         val tile = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(app.theme.px(18f), app.theme.px(8f), app.theme.px(18f), app.theme.px(8f))
+            setPadding(theme.px(30f), theme.px(10f), theme.px(30f), theme.px(10f))
+            clipChildren = false
             isFocusable = true
             isClickable = true
         }
+        // Apple's household is a circle of faces, not a wall of posters.
         val face = FrameLayout(this).apply {
-            setBackgroundColor(app.theme.surface2)
+            setBackgroundColor(theme.surface2)
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, outline: android.graphics.Outline) {
-                    outline.setRoundRect(0, 0, v.width, v.height, app.theme.px(32f).toFloat())
+                    outline.setRoundRect(0, 0, v.width, v.height, faceSize / 2f)
                 }
             }
         }
         val img = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(app.theme.surface2)
+            setBackgroundColor(theme.surface2)
         }
         face.addView(img, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         if (p.kids) {
@@ -111,22 +121,22 @@ class ProfilesActivity : Activity() {
                     intArrayOf(Color.TRANSPARENT, Color.argb(80, 242, 195, 58)))
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        tile.addView(face, LinearLayout.LayoutParams(app.theme.px(240f), app.theme.px(360f)))
-        BrowseImages.load(img, api.absolute(p.avatar), app.theme.px(240f))
-        tile.addView(Views.text(app, "li", 24f, app.theme.ink, p.name, bold = true, gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(viewWidth(), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(12f)
+        tile.addView(face, LinearLayout.LayoutParams(faceSize, faceSize))
+        BrowseImages.load(img, api.absolute(p.avatar), faceSize)
+        tile.addView(Views.text(app, "li", 24f, theme.ink, p.name, bold = true, gravity = Gravity.CENTER),
+            LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(16f)
             })
         if (p.locked) {
-            tile.addView(Views.text(app, "meta", 17f, app.theme.ink3, "PIN", gravity = Gravity.CENTER),
-                LinearLayout.LayoutParams(viewWidth(), ViewGroup.LayoutParams.WRAP_CONTENT))
+            tile.addView(Views.text(app, "meta", 17f, theme.ink3, "PIN", gravity = Gravity.CENTER),
+                LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        Focus.attach(tile, tile, app, app.theme.px(32f), elevate = false)
+        // The ring of light rides the face itself, glowing outward into the padding around it.
+        Focus.attach(tile, face, app, faceSize / 2, scale = false, elevate = false,
+            glowInset = theme.px(30f))
         tile.setOnClickListener { choose(p) }
         return tile
     }
-
-    private fun viewWidth(): Int = app.theme.px(270f)
 
     private fun choose(p: ProfileInfo) {
         if (p.locked) {

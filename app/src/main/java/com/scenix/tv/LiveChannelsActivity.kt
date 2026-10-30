@@ -7,11 +7,14 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
@@ -19,19 +22,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * One profile's Live TV lineup. With no lineup the wall shows every channel the rules allow; adding
- * channels turns it into a personal wall in the order they were added. This is per-profile: one person
- * can keep a news/music lineup while another keeps cartoons.
+ * Live TV, acting as live TV: a wall of channel tiles the moment you open the tab, and a press of OK
+ * tunes one — the same Player the Home Live row uses. Holding OK on a tile opens the lineup editor,
+ * where the profile adds the channels it wants, removes them, and puts them in its own order.
  *
  * The channel catalog comes from /app/v1/settings (`live.channels`), the same list the web's channel
  * manager uses; the lineup is written to the profile's prefs (`live.only` / `live.order`), never to the
- * household's settings.
+ * household's settings. With no lineup the wall shows every channel the rules allow, so the tab is
+ * never an empty room.
  */
 class LiveChannelsActivity : Activity() {
 
     private lateinit var app: AppContext
     private lateinit var profileId: String
-    private lateinit var rows: LinearLayout
+    private lateinit var grid: RecyclerView
     private lateinit var status: TextView
     private var channels: JSONArray? = null
     private var only: MutableList<String> = ArrayList()
@@ -46,48 +50,54 @@ class LiveChannelsActivity : Activity() {
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         if (profileId.isBlank()) { finish(); return }
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
+        val theme = app.theme
+        val root = FrameLayout(this).apply { setBackgroundColor(theme.bg) }
+        grid = RecyclerView(this).apply {
+            layoutManager = GridLayoutManager(this@LiveChannelsActivity, 6)
+            setHasFixedSize(true)
+            setItemViewCacheSize(32)
+            itemAnimator = null
+            clipToPadding = false
+            clipChildren = false
+            setPadding(theme.gutter, theme.px(112f), theme.gutter, theme.px(56f))
+            setBackgroundColor(Color.TRANSPARENT)
         }
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(Color.rgb(20, 20, 20))
-        }
-        val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
-        back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
-        back.isFocusable = true
-        back.isClickable = true
-        back.setOnClickListener { finish() }
-        Focus.attach(back, back, app, app.theme.px(10f), scale = false, elevate = false)
-        bar.addView(back, LinearLayout.LayoutParams(app.theme.px(56f), app.theme.px(50f)))
-        bar.addView(Views.text(app, "li", 26f, app.theme.ink, "Live TV channels", bold = true).apply {
-            setPadding(app.theme.px(20f), 0, 0, 0)
-        })
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        status = Views.text(app, "meta", 19f, app.theme.ink2, "", maxLines = 1)
-        bar.addView(status)
-        root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
-
-        val scroll = ScrollView(this).apply {
-            isFocusable = false
-            isFocusableInTouchMode = false
-        }
-        rows = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(app.theme.gutter, app.theme.px(10f), app.theme.gutter, app.theme.px(40f))
-        }
-        scroll.addView(rows)
-        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(grid, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        root.addView(topBar(), FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(96f)
+        ))
+        status = Views.text(app, "sub", 21f, theme.ink2, "Reading channels…", gravity = Gravity.CENTER)
+        root.addView(status, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
+        ).apply { gravity = Gravity.BOTTOM })
         setContentView(root)
         load()
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (channels != null) paint()
+    /** A floating bar over the wall: a feather chevron home, and the tab's name. */
+    private fun topBar(): View {
+        val theme = app.theme
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(theme.gutter, theme.px(10f), theme.gutter, 0)
+        }
+        val back = ImageView(this).apply {
+            setImageResource(R.drawable.ic_chevron_left)
+            setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            isFocusable = true
+            isClickable = true
+            setOnClickListener { finish() }
+        }
+        Focus.attach(back, back, app, theme.px(9f), scale = false, elevate = false)
+        bar.addView(back, LinearLayout.LayoutParams(theme.px(34f), theme.px(34f)))
+        bar.addView(Views.text(app, "rowTitle", 26f, theme.ink, "Live TV", bold = true).apply {
+            setPadding(theme.px(18f), 0, 0, 0)
+        })
+        return bar
     }
 
     private fun load() {
@@ -123,56 +133,167 @@ class LiveChannelsActivity : Activity() {
     }
 
     private fun paint() {
-        rows.removeAllViews()
-        val list = channels ?: return
-        rows.addView(Views.text(app, "meta", 18f, app.theme.ink3,
-            if (only.isEmpty()) "No personal lineup yet: the wall shows every channel the profile may watch. Add a channel to make it this profile's own wall."
-            else "${only.size} channel${if (only.size == 1) "" else "s"} in this profile's lineup, in the order below.",
-            maxLines = 3),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = app.theme.px(10f)
-            })
-        for (i in 0 until list.length()) {
-            val ch = list.optJSONObject(i) ?: continue
-            val id = ch.optString("identity")
-            if (id.isBlank()) continue
+        val src = channels ?: return
+        val list = ArrayList<JSONObject>()
+        for (i in 0 until src.length()) {
+            val ch = src.optJSONObject(i) ?: continue
+            if (ch.optString("identity").isBlank()) continue
             if (ch.optBoolean("enabled", true).not()) continue
-            val name = ch.optString("name").ifBlank { id }
-            val group = ch.optString("group")
+            list.add(ch)
+        }
+        if (list.isEmpty()) {
+            status.text = "No channels are available to this profile"
+            return
+        }
+        // A personal lineup leads the wall, in its own order; the rest follow so the tab is never empty.
+        val chosen = ArrayList<JSONObject>()
+        val rest = ArrayList<JSONObject>()
+        val byId = list.associateBy { it.optString("identity") }
+        for (id in order) if (id in only) byId[id]?.let { chosen.add(it) }
+        for (ch in list) if (ch.optString("identity") !in only) rest.add(ch)
+        grid.adapter = WallAdapter(chosen + rest)
+        if (only.isEmpty()) {
+            status.text = "Every channel this profile may watch · hold OK on a tile for the lineup"
+        }
+        grid.postDelayed({
+            (grid.findViewHolderForAdapterPosition(0)?.itemView ?: grid.getChildAt(0))?.requestFocus()
+        }, 150)
+    }
+
+    private fun tune(ch: JSONObject) {
+        startActivity(
+            Intent(this, PlayerActivity::class.java)
+                .putExtra(PlayerActivity.EXTRA_PROFILE, profileId)
+                .putExtra(PlayerActivity.EXTRA_IDENTITY, ch.optString("identity"))
+                .putExtra(PlayerActivity.EXTRA_TYPE, "channel")
+                .putExtra(PlayerActivity.EXTRA_TITLE, ch.optString("name"))
+                .putExtra(PlayerActivity.EXTRA_POSTER, ch.optString("logo"))
+        )
+    }
+
+    /** The wall: one tile per channel, logo above the name, OK tunes it, hold OK edits the lineup. */
+    private inner class WallAdapter(val items: List<JSONObject>) : RecyclerView.Adapter<WallHolder>() {
+        private val theme = app.theme
+        private val artH = theme.px(190f)
+        private val captionH = theme.px(86f)
+        private val radius = theme.radius("card", 6f)
+
+        override fun getItemCount(): Int = items.size
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): WallHolder {
+            val card = FrameLayout(this@LiveChannelsActivity)
+            card.layoutParams = RecyclerView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH + captionH
+            ).apply {
+                leftMargin = theme.px(13f); rightMargin = theme.px(13f)
+                bottomMargin = theme.px(30f)
+            }
+            card.isFocusable = true
+            card.isClickable = true
+            val plate = FrameLayout(this@LiveChannelsActivity).apply {
+                background = Views.rounded(theme.surface, radius, theme.px(1f), theme.line)
+            }
+            card.addView(plate, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH
+            ).apply { gravity = Gravity.TOP })
+            val logo = ImageView(this@LiveChannelsActivity).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setPadding(theme.px(22f), theme.px(22f), theme.px(22f), theme.px(22f))
+            }
+            plate.addView(logo, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH
+            ))
+            val mark = Views.text(app, "h1", 34f, theme.ink2, "", bold = true, gravity = Gravity.CENTER)
+            plate.addView(mark, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH
+            ).apply { gravity = Gravity.CENTER })
+            val num = Views.text(app, "meta", 13f, theme.ink3, "", bold = true, maxLines = 1)
+            num.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+            num.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            plate.addView(num, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = theme.px(10f); topMargin = theme.px(10f)
+            })
+            val name = Views.text(app, "caption", 18f, theme.ink, "", bold = true, maxLines = 1)
+            name.setPadding(theme.px(4f), theme.px(12f), theme.px(4f), 0)
+            card.addView(name, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, captionH
+            ).apply { gravity = Gravity.BOTTOM })
+            val sub = Views.text(app, "meta", 14f, theme.ink3, "", maxLines = 1)
+            sub.setPadding(theme.px(4f), 0, theme.px(4f), theme.px(4f))
+            card.addView(sub, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.BOTTOM; bottomMargin = theme.px(4f) })
+            val glowPad = theme.px(26f)
+            val ringOn = View(this@LiveChannelsActivity)
+            card.addView(ringOn, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH + glowPad * 2
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                topMargin = -glowPad
+            })
+            card.clipChildren = false
+            val holder = WallHolder(card, plate, logo, mark, num, name, sub)
+            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
+                glowInset = glowPad,
+                onClick = { holder.item?.let { tune(it) } })
+            card.setOnLongClickListener {
+                holder.item?.let { showActions(it) }
+                true
+            }
+            return holder
+        }
+
+        override fun onBindViewHolder(holder: WallHolder, position: Int) {
+            val ch = items[position]
+            holder.item = ch
+            val name = ch.optString("name")
+            holder.name.text = name
             val number = ch.optInt("number", 0)
-            val added = id in only
-            val label = (if (number > 0) "$number  ·  " else "") + name
-            val note = listOf(group, if (added) "In lineup" else "").filter { it.isNotBlank() }.joinToString(" · ")
-            addRow(label, note, if (added) "In lineup" else "Add") { showActions(ch, id, name, added) }
+            holder.num.text = if (number > 0) number.toString() else ""
+            holder.num.visibility = if (number > 0) View.VISIBLE else View.GONE
+            val group = ch.optString("group")
+            val inLineup = ch.optString("identity") in only
+            holder.sub.text = listOf(group, if (inLineup) "In lineup" else "").filter { it.isNotBlank() }
+                .joinToString(" · ")
+            val logoUrl = ch.optString("logo")
+            if (logoUrl.isNotBlank()) {
+                holder.mark.visibility = View.GONE
+                holder.logo.visibility = View.VISIBLE
+                BrowseImages.load(holder.logo, api.absolute(logoUrl), theme.px(320f)) { ok ->
+                    if (isFinishing || isDestroyed) return@load
+                    holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
+                    if (!ok) {
+                        holder.mark.visibility = View.VISIBLE
+                        holder.mark.text = initials(name)
+                    }
+                }
+            } else {
+                holder.logo.visibility = View.GONE
+                holder.mark.visibility = View.VISIBLE
+                holder.mark.text = initials(name)
+            }
         }
+
+        private fun initials(name: String): String =
+            name.split(" ").filter { it.isNotBlank() }.take(2).map { it.first().uppercaseChar() }.joinToString("")
     }
 
-    private fun addRow(label: String, note: String, value: String, action: () -> Unit) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.px(18f), 0, app.theme.px(18f), 0)
-            background = Views.rounded(app.theme.surface, app.theme.px(8f))
-            isFocusable = true
-            isClickable = true
-            setOnClickListener { action() }
-        }
-        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        words.addView(Views.text(app, "li", 21f, app.theme.ink, label, bold = true, maxLines = 1))
-        if (note.isNotBlank()) {
-            words.addView(Views.text(app, "meta", 15f, app.theme.ink3, note, maxLines = 1),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        row.addView(words, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(Views.text(app, "meta", 17f, app.theme.ink2, value, maxLines = 1, gravity = Gravity.END))
-        Focus.attach(row, row, app, app.theme.px(8f), scale = false, elevate = false)
-        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(66f)).apply {
-            bottomMargin = app.theme.px(4f)
-        })
+    private inner class WallHolder(
+        view: View, val plate: FrameLayout, val logo: ImageView, val mark: TextView,
+        val num: TextView, val name: TextView, val sub: TextView,
+    ) : RecyclerView.ViewHolder(view) {
+        var item: JSONObject? = null
     }
 
-    private fun showActions(ch: JSONObject, id: String, name: String, added: Boolean) {
+    private fun showActions(ch: JSONObject) {
+        val id = ch.optString("identity")
+        val name = ch.optString("name").ifBlank { id }
+        val added = id in only
         val options = ArrayList<Pair<String, String>>()
+        options.add("tune" to "Watch $name")
         if (added) {
             options.add("remove" to "Remove $name from my lineup")
             val at = order.indexOf(id)
@@ -184,6 +305,7 @@ class LiveChannelsActivity : Activity() {
         options.add("back" to "Back")
         showPicker(name, options) { action ->
             when (action) {
+                "tune" -> tune(ch)
                 "add" -> {
                     if (id !in only) only.add(id)
                     if (id !in order) order.add(id)
@@ -231,21 +353,22 @@ class LiveChannelsActivity : Activity() {
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
         closePicker()
+        val theme = app.theme
         val layer = FrameLayout(this).apply { setBackgroundColor(Color.argb(190, 0, 0, 0)) }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(app.theme.px(26f), app.theme.px(20f), app.theme.px(26f), app.theme.px(20f))
-            background = Views.rounded(app.theme.color("panelScrim", "#E6000000"), app.theme.px(12f),
-                app.theme.px(1f), app.theme.line)
+            setPadding(theme.px(26f), theme.px(20f), theme.px(26f), theme.px(20f))
+            background = Views.rounded(theme.color("panelScrim", "#E6000000"), theme.px(12f),
+                theme.px(1f), theme.line)
         }
-        panel.addView(Views.text(app, "li", 24f, app.theme.ink, title, bold = true, maxLines = 2))
+        panel.addView(Views.text(app, "li", 24f, theme.ink, title, bold = true, maxLines = 2))
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         var first: View? = null
         for ((value, label) in options) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(app.theme.px(14f), 0, app.theme.px(14f), 0)
+                setPadding(theme.px(14f), 0, theme.px(14f), 0)
                 isFocusable = true
                 isClickable = true
                 setOnClickListener {
@@ -253,16 +376,16 @@ class LiveChannelsActivity : Activity() {
                     onPick(value)
                 }
             }
-            row.addView(Views.text(app, "li", 20f, app.theme.ink, label, maxLines = 1),
+            row.addView(Views.text(app, "li", 20f, theme.ink, label, maxLines = 1),
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Focus.attach(row, row, app, app.theme.px(8f), scale = false, elevate = false)
-            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(56f)))
+            Focus.attach(row, row, app, theme.px(8f), scale = false, elevate = false)
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(56f)))
             if (first == null) first = row
         }
         panel.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = app.theme.px(8f)
+            topMargin = theme.px(8f)
         })
-        layer.addView(panel, FrameLayout.LayoutParams(app.theme.px(640f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        layer.addView(panel, FrameLayout.LayoutParams(theme.px(640f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER
         })
         addContentView(layer, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))

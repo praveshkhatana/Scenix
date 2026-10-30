@@ -3,7 +3,6 @@ package com.scenix.tv
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -26,7 +25,8 @@ import com.scenix.tv.core.Views
  *
  * The library and the decision about what belongs in each section stay on the backend. This screen
  * exists so the television never has to open a WebView for a catalogue page; a tile opens the native
- * Detail page exactly as a Home card does.
+ * Detail page exactly as a Home card does. The tiles wear the same clothes as the Home shelves —
+ * art first, the name and its quiet sub-line underneath, and a ring of light when focused.
  */
 class SectionActivity : Activity() {
 
@@ -50,50 +50,54 @@ class SectionActivity : Activity() {
             return
         }
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
-        }
-        root.addView(topBar(), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)
-        ))
+        val theme = app.theme
+        val root = FrameLayout(this).apply { setBackgroundColor(theme.bg) }
         grid = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@SectionActivity, 6)
             setHasFixedSize(true)
             setItemViewCacheSize(24)
             itemAnimator = null
             clipToPadding = false
-            setPadding(app.theme.gutter, app.theme.px(16f), app.theme.gutter, app.theme.px(56f))
-            setBackgroundColor(app.theme.bg)
+            clipChildren = false
+            setPadding(theme.gutter, theme.px(112f), theme.gutter, theme.px(56f))
+            setBackgroundColor(Color.TRANSPARENT)
         }
-        root.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        status = Views.text(app, "sub", 23f, app.theme.ink2, "Reading the library…", gravity = Gravity.CENTER)
-        root.addView(status, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(64f)
+        root.addView(grid, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
+        root.addView(topBar(), FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(96f)
+        ))
+        status = Views.text(app, "sub", 23f, theme.ink2, "Reading the library…", gravity = Gravity.CENTER)
+        root.addView(status, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
+        ).apply { gravity = Gravity.BOTTOM })
         setContentView(root)
         load()
     }
 
+    /** A floating bar over the grid: a feather chevron home, and the section's name beside it. */
     private fun topBar(): View {
         val theme = app.theme
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(theme.gutter, 0, theme.gutter, 0)
-            setBackgroundColor(theme.bg)
+            setPadding(theme.gutter, theme.px(10f), theme.gutter, 0)
         }
-        val back = Views.text(app, "li", 28f, theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
-        back.setPadding(theme.px(16f), theme.px(6f), theme.px(16f), theme.px(6f))
-        back.isFocusable = true
-        back.isClickable = true
-        back.setOnClickListener { finish() }
-        Focus.attach(back, back, app, theme.radius("button", 6f), scale = false, elevate = false)
-        bar.addView(back, LinearLayout.LayoutParams(theme.px(56f), theme.px(50f)))
-        title = Views.text(app, "rowTitle", 28f, theme.ink, if (section == "series") "Series" else "Movies", bold = true)
-        title.setPadding(theme.px(20f), 0, 0, 0)
+        val back = ImageView(this).apply {
+            setImageResource(R.drawable.ic_chevron_left)
+            setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            isFocusable = true
+            isClickable = true
+            setOnClickListener { finish() }
+        }
+        Focus.attach(back, back, app, theme.px(9f), scale = false, elevate = false)
+        bar.addView(back, LinearLayout.LayoutParams(theme.px(34f), theme.px(34f)))
+        title = Views.text(app, "rowTitle", 26f, theme.ink,
+            if (section == "series") "Series" else "Movies", bold = true)
+        title.setPadding(theme.px(26f), 0, 0, 0)
         bar.addView(title)
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         return bar
     }
 
@@ -121,17 +125,20 @@ class SectionActivity : Activity() {
 
     private inner class CardAdapter(private val items: List<Item>) : RecyclerView.Adapter<CardHolder>() {
         private val theme = app.theme
+        private val artH = theme.px(400f)
+        private val captionH = theme.px(74f)
+        private val radius = theme.radius("card", 6f)
 
         override fun getItemCount(): Int = items.size
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             val card = FrameLayout(this@SectionActivity)
             card.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(420f)
+                ViewGroup.LayoutParams.MATCH_PARENT, artH + captionH
             ).apply {
-                marginStart = theme.px(6f)
-                marginEnd = theme.px(6f)
-                bottomMargin = theme.px(18f)
+                // Apple's shelves breathe; tiles never touch each other.
+                leftMargin = theme.px(13f); rightMargin = theme.px(13f)
+                bottomMargin = theme.px(30f)
             }
             card.isFocusable = true
             card.isClickable = true
@@ -141,35 +148,34 @@ class SectionActivity : Activity() {
                 clipToOutline = true
                 outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) {
-                        outline.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 6f).toFloat())
+                        outline.setRoundRect(0, 0, v.width, v.height, radius.toFloat())
                     }
                 }
             }
             card.addView(art, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-            card.addView(View(this@SectionActivity).apply {
-                background = GradientDrawable(
-                    GradientDrawable.Orientation.BOTTOM_TOP,
-                    intArrayOf(Color.argb(235, 0, 0, 0), Color.TRANSPARENT)
-                )
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(130f)).apply {
-                gravity = Gravity.BOTTOM
-            })
-            val name = Views.text(app, "caption", 19f, theme.ink, "", bold = true, maxLines = 2)
-            name.setPadding(theme.px(12f), 0, theme.px(12f), theme.px(10f))
+                ViewGroup.LayoutParams.MATCH_PARENT, artH
+            ).apply { gravity = Gravity.TOP })
+            // The name and its quiet sub-line sit UNDER the art, the way the Home shelves draw them.
+            val name = Views.text(app, "caption", 18f, theme.ink, "", bold = true, maxLines = 1)
+            name.setPadding(theme.px(4f), theme.px(12f), theme.px(4f), 0)
             card.addView(name, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.MATCH_PARENT, captionH
             ).apply { gravity = Gravity.BOTTOM })
+            val sub = Views.text(app, "meta", 14f, theme.ink3, "", maxLines = 1)
+            sub.setPadding(theme.px(4f), 0, theme.px(4f), theme.px(4f))
+            card.addView(sub, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.BOTTOM; bottomMargin = theme.px(4f) })
             val logo = ImageView(this@SectionActivity).apply {
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 visibility = View.GONE
             }
             card.addView(logo, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)
+                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
             ).apply {
-                gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                marginStart = theme.px(14f); marginEnd = theme.px(14f); bottomMargin = theme.px(8f)
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                topMargin = theme.px(150f)
+                marginStart = theme.px(14f); marginEnd = theme.px(14f)
             })
             val badge = Views.text(app, "meta", 13f, Color.WHITE, "", bold = true, maxLines = 1)
             badge.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
@@ -180,26 +186,41 @@ class SectionActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(10f); topMargin = theme.px(10f)
             })
-            Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
-            return CardHolder(card, art, name, logo, badge)
+            // The focus ring belongs to the ART, not to the caption under it: the ring view is an
+            // oversized transparent pad around the image, and the glow bands spill into that pad.
+            val glowPad = theme.px(26f)
+            val ringOn = View(this@SectionActivity)
+            card.addView(ringOn, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH + glowPad * 2
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                topMargin = -glowPad
+            })
+            card.clipChildren = false
+            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
+                glowInset = glowPad)
+            return CardHolder(card, art, name, sub, logo, badge)
         }
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
             val item = items[position]
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
+            val facts = ArrayList<String>()
+            if (item.year > 0) facts.add(item.year.toString())
+            if (item.match > 0) facts.add("${item.match}% match")
+            item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
+            holder.sub.text = facts.joinToString(" · ")
             holder.logo.visibility = View.GONE
             val bits = ArrayList<String>()
             if (item.isNew) bits.add("NEW")
-            if (item.match > 0) bits.add("${item.match}% match")
             holder.badge.text = bits.joinToString(" · ")
             holder.badge.visibility = if (bits.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art, item.poster ?: item.backdrop, theme.px(400f))
             if (!item.logo.isNullOrBlank()) {
                 holder.logo.visibility = View.VISIBLE
-                BrowseImages.load(holder.logo, item.logo, theme.px(280f)) { ok ->
+                BrowseImages.load(holder.logo, item.logo, theme.px(240f)) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
-                    holder.name.visibility = if (ok) View.GONE else View.VISIBLE
                 }
             }
             holder.itemView.setOnClickListener {
@@ -213,7 +234,7 @@ class SectionActivity : Activity() {
     }
 
     private inner class CardHolder(
-        view: View, val art: ImageView, val name: TextView,
+        view: View, val art: ImageView, val name: TextView, val sub: TextView,
         val logo: ImageView, val badge: TextView,
     ) : RecyclerView.ViewHolder(view)
 
