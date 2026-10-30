@@ -2651,10 +2651,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       && Number(opts.positionMs || 0) <= 1000
       && out && out.url && !out.live && !out.remuxed && !out.audioMix && out.kind !== 'hls') {
     try {
+      const chosen = Array.isArray(out.audioTracks)
+        ? out.audioTracks.find((t) => t && t.id === out.selectedAudio) || out.audioTracks[0]
+        : null;
       const built = await ladder.create({
         url: out.url,
         headers: out.headers || {},
         quality: out.picked && out.picked.quality,
+        audio: chosen ? { streamIndex: chosen.streamIndex, language: chosen.language } : null,
       });
       if (built && built.ready) {
         const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);

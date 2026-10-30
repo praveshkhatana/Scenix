@@ -53,14 +53,19 @@ function headerArgs(headers) {
   return ['-headers', text];
 }
 
-function spawnVariant(job, v, url, headers) {
+function spawnVariant(job, v, url, headers, audio) {
   const dir = path.join(job.dir, v.id);
   fs.mkdirSync(dir, { recursive: true });
   const args = [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
     ...headerArgs(headers),
     '-i', url,
-    '-map', '0:v:0', '-map', '0:a:0?',
+    '-map', '0:v:0',
+    // The track the player selected, not whatever happens to be first in the container. A ladder that
+    // silently drops the viewer back to the original audio is a worse trade than no ladder.
+    '-map', audio && audio.streamIndex != null ? ('0:' + audio.streamIndex + '?') : '0:a:0?',
+    ...(audio && audio.language && audio.language !== 'und'
+      ? ['-metadata:s:a:0', 'language=' + audio.language] : []),
     '-sn', '-dn',
     '-vf', 'scale=-2:' + v.height,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', v.height >= 1080 ? '20' : '22',
@@ -99,7 +104,7 @@ function spawnVariant(job, v, url, headers) {
 function ensure(job, url, headers) {
   if (job.started || job.failed) return;
   job.started = true;
-  for (const v of job.variants) spawnVariant(job, v, url, headers);
+  for (const v of job.variants) spawnVariant(job, v, url, headers, job.audio);
 }
 
 function waitForFirstPlaylists(job, deadline) {
@@ -113,7 +118,7 @@ function waitForFirstPlaylists(job, deadline) {
   });
 }
 
-async function create({ url, headers, quality }) {
+async function create({ url, headers, quality, audio }) {
   if (!url || !/^https?:/i.test(String(url))) return null;
   // One ladder at a time. Three transcode processes are already a real load; leaving yesterday's
   // title running while a new one is opened is how a hub becomes a space heater.
@@ -136,7 +141,8 @@ async function create({ url, headers, quality }) {
   const dir = path.join(LADDER_DIR, id);
   fs.mkdirSync(dir, { recursive: true });
   const job = {
-    id, dir, url: String(url), headers: headers || {}, variants, started: false, failed: false,
+    id, dir, url: String(url), headers: headers || {}, variants, audio: audio || null,
+    started: false, failed: false,
     children: [], done: 0, at: Date.now(), lastSeen: Date.now(),
   };
   jobs.set(id, job);
