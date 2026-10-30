@@ -268,15 +268,21 @@ function status() {
   };
 }
 
-/** Kill a job when its parent title is abandoned or the process has been idle. */
+/**
+ * Kill a job when its parent title is abandoned or the process has been idle.
+ *
+ * `done` is not a reason to delete: a transcode can finish minutes before a two-hour film ends, and
+ * the player is still requesting those segments. Only idle time decides, so a finished job stays
+ * readable through the rest of the title and is swept five minutes after the last request.
+ */
 function sweep(now = Date.now()) {
   for (const [id, job] of jobs) {
-    if (job.done >= job.variants.length || now - job.lastSeen > IDLE_MS) {
-      for (const c of job.children) { try { c.kill('SIGKILL'); } catch (e) { /* gone */ } }
-      try { fs.rmSync(job.dir, { recursive: true, force: true }); } catch (e) { /* best effort */ }
-      jobs.delete(id);
-      log('LADDER CLEAN', id, job.done >= job.variants.length ? 'finished' : 'idle');
-    }
+    if (now - job.lastSeen <= IDLE_MS) continue;
+    const finished = job.done >= job.variants.length;
+    for (const c of job.children) { try { c.kill('SIGKILL'); } catch (e) { /* gone */ } }
+    try { fs.rmSync(job.dir, { recursive: true, force: true }); } catch (e) { /* best effort */ }
+    jobs.delete(id);
+    log('LADDER CLEAN', id, finished ? 'finished' : 'idle');
   }
 }
 setInterval(() => sweep(), 60000).unref();
