@@ -996,6 +996,9 @@ async function healthBody() {
     // requests were refused because the box is already remuxing.
     remux: remux.status(),
     introdb: introdb.status(),
+    // Opt-in transcoded ladder: whether jobs are running, their variants and binary. Empty jobs is the
+    // normal state when the setting is off or a title is played copy-only.
+    ladder: ladder.status(),
     // The cushion in front of the player: what is buffered, how fast the swarm is actually feeding it,
     // and which copies this hub has watched fail to carry a film. This is the block to read when the
     // question is "why did the picture stop".
