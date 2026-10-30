@@ -1717,7 +1717,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // The id is the exact handle the picker sent. Label/provider are only fallbacks: several copies
     // can share a provider, and choosing the first of them is how "try this 1080p copy" became a
     // different file.
-    const match = candidates.find((s) => (wanted.id && s.id === wanted.id)
+    const match = candidates.find((s) => (wanted.id && String(s.id) === String(wanted.id))
       || (wanted.label && s.label === wanted.label)
       || (wanted.provider && (s._addon === wanted.provider || s.provider === wanted.provider)));
     if (match) source = match;
@@ -1780,6 +1780,12 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     return need <= gatewayMbps * fitCeiling ? 0 : need;
   };
   queue.sort((a, b) => fitRank(a) - fitRank(b));
+  // An explicit copy stays at the head even when the automatic fit order would move a smaller torrent
+  // ahead of it: "try this copy" is a person's decision, and the walk below still moves on if it fails.
+  if (wanted && source) {
+    const at = queue.indexOf(source);
+    if (at > 0) queue.unshift(queue.splice(at, 1)[0]);
+  }
   // Copies past the first seats, in the same measured order: woken only when a minted link is refused.
   const spare = ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
   const labelOf = (s) => (s && (s.label || s.provider || s.id)) || 'source';

@@ -835,6 +835,7 @@ class PlayerActivity : Activity() {
     private fun handlePlaybackError(error: PlaybackException) {
         if (isFinishing || isDestroyed) return
         val name = error.errorCodeName
+        Log.w(TAG, "playback error " + name + " / " + error.errorCode + " / " + error.message)
         val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
             name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
         val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
