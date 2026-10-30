@@ -791,12 +791,17 @@ class PlayerActivity : Activity() {
         val h = host?.trim()?.lowercase() ?: return false
         if (h.isEmpty()) return false
         if (h == "localhost" || h == "::1" || h.endsWith(".local")) return true
-        if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true
+        // A URI host is a name or an address. Only a colon proves the latter, so a domain that happens
+        // to start with "fc" is not mistaken for a unique-local IPv6 address.
+        if (h.contains(':') && (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd"))) {
+            return true
+        }
         val parts = h.split('.')
         if (parts.size != 4) return false
         val a = parts[0].toIntOrNull() ?: return false
         val b = parts[1].toIntOrNull() ?: return false
-        return a == 10 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 169 && b == 254)
+        return a == 127 || a == 10 || (a == 172 && b in 16..31) ||
+            (a == 192 && b == 168) || (a == 169 && b == 254)
     }
 
     /** A hub-relative subtitle path becomes an address the decoder can open. */
