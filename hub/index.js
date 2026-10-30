@@ -1791,6 +1791,10 @@ const LABEL_NOISE = new Set([
   'eng', 'hin', 'tam', 'tel', 'mal', 'kan', 'ben', 'mar', 'pan', 'urd', 'guj', 'spa', 'fre',
   'fra', 'ger', 'deu', 'jpn', 'kor', 'chi', 'zho', 'ara', 'rus', 'por', 'ita', 'dut', 'nld',
   'tur', 'tha', 'vie', 'ind', 'ddp', 'ddp5', 'aac2', 'ac3', 'eac3', 'truehd', 'flac', 'opus',
+  // Edition words sit in parentheses as often as titles do: `(Unrated)`, `(Theatrical)`.
+  'unrated', 'rated', 'theatrical', 'directors', 'collectors', 'edition', 'version', 'dubbed',
+  'dub', 'subbed', 'remastered', 'restored', 'anniversary', 'criterion', 'ultimate', 'final',
+  'limited', 'international', 'original', 'classic',
 ]);
 
 function looksLikeAnotherTitle(candidate, title) {
