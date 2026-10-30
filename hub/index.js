@@ -1081,9 +1081,102 @@ function upstreamGet(target, headers, timeoutMs, depth = 0) {
   });
 }
 
+/**
+ * A local file, served with the same Range semantics as the network proxy so a browser <video> or an
+ * ExoPlayer can seek it. This is the other half of `providers/local-files.js`: that provider hands
+ * out `/app/v1/proxy?u=file://…`, and without this branch the proxy refused its own provider's URL.
+ *
+ * Only a path inside a directory a provider declared in `rootDirs` is readable. The query is a path,
+ * not a capability, so the check has to be done after resolving `..` and symlinks; comparing the
+ * requested string would let `/media/../../etc/passwd` through.
+ */
+const FILE_MIME = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm',
+  '.mov': 'video/quicktime', '.avi': 'video/x-msvideo', '.ts': 'video/mp2t', '.m2ts': 'video/mp2t',
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.opus': 'audio/ogg', '.flac': 'audio/flac',
+};
+
+function localRoots() {
+  const roots = [];
+  for (const mod of Object.values(registry.byId || {})) {
+    for (const dir of (mod && mod.rootDirs) || []) {
+      try { roots.push(fs.realpathSync(dir)); } catch (e) { /* a missing root grants nothing */ }
+    }
+  }
+  return [...new Set(roots)];
+}
+
+function parseRange(header, total) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!m) return null;
+  let start;
+  let end;
+  if (m[1] === '') {
+    const suffix = Number(m[2]);
+    if (!Number.isFinite(suffix) || suffix <= 0) return { invalid: true };
+    start = Math.max(0, total - suffix);
+    end = total - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === '' ? total - 1 : Number(m[2]);
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return { invalid: true };
+  if (start >= total) return { invalid: true };
+  return { start, end: Math.min(end, total - 1) };
+}
+
+async function serveLocalFile(req, res, target) {
+  let filePath;
+  try {
+    filePath = decodeURIComponent(new URL(target).pathname);
+  } catch (e) {
+    return send(res, 400, { error: 'u is not a file url' });
+  }
+  let real;
+  try {
+    real = await fs.promises.realpath(filePath);
+  } catch (e) {
+    return send(res, 404, { error: 'no such file' });
+  }
+  const inside = localRoots().some((root) => real === root || real.startsWith(root + path.sep));
+  if (!inside) return send(res, 403, { error: 'this file is outside every media root' });
+  let stat;
+  try {
+    stat = await fs.promises.stat(real);
+  } catch (e) {
+    return send(res, 404, { error: 'no such file' });
+  }
+  if (!stat.isFile()) return send(res, 404, { error: 'not a file' });
+  const total = stat.size;
+  const type = FILE_MIME[path.extname(real).toLowerCase()] || 'application/octet-stream';
+  const base = {
+    'Content-Type': type,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-cache',
+    ...corsHeaders(),
+  };
+  const asked = parseRange(req.headers.range, total);
+  if (asked && asked.invalid) {
+    res.writeHead(416, { ...base, 'Content-Range': 'bytes */' + total });
+    return res.end();
+  }
+  const start = asked ? asked.start : 0;
+  const end = asked ? asked.end : total - 1;
+  const status = asked ? 206 : 200;
+  const headers = { ...base, 'Content-Length': String(end - start + 1) };
+  if (asked) headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + total;
+  if (process.env.LOG_REQUESTS === '1') log('REQ', req.method, req.url, '->', status, '(local file)');
+  res.writeHead(status, headers);
+  if (req.method === 'HEAD') return res.end();
+  const stream = fs.createReadStream(real, { start, end });
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+}
+
 async function proxyStream(req, res, u) {
   const target = u.searchParams.get('u');
-  if (!target || !/^https?:\/\//i.test(target)) return send(res, 400, { error: 'u must be an http(s) url' });
+  if (target && /^file:\/\//i.test(target)) return serveLocalFile(req, res, target);
+  if (!target || !/^https?:\/\//i.test(target)) return send(res, 400, { error: 'u must be an http(s) or file url' });
   const headers = { 'User-Agent': UPSTREAM_UA };
   for (const pair of String(u.searchParams.get('h') || '').split('||')) {
     const at = pair.indexOf(':');
