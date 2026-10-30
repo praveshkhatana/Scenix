@@ -45,8 +45,9 @@ it can draw.
 | Configuration | the Hub UI, in any browser | the same UI, hosted in the app |
 | Torrent playback | one gateway reader shared by the household | a local libtorrent engine; downloads to the TV cache and is limited by free space |
 | Debrid | one account shared by the household | one account on the TV |
-| Live TV | playlist + health + per-profile lineup | playlist + per-profile lineup, no health probing |
-| Local files, shared cache | yes | no |
+| Live TV | playlist + health + per-profile lineup | playlist + on-TV health + per-profile lineup |
+| Local files | a folder on the hub's disk | a folder chosen on the TV (MediaStore fallback) |
+| Shared cache | yes | no |
 
 Both speak the same `/app/v1` contract, so the interface is identical and the app only branches on
 capabilities the backend advertises. See [design/deployment-modes.md](design/deployment-modes.md).
@@ -130,7 +131,13 @@ and use **Type an address** in the TV setup.
 
 Standalone mode hosts the same web UI and contract inside the TV app. It can play direct HTTP links,
 add-on catalogues and torrents through the TV's own engine, can use a Real-Debrid account, and can
-draw an M3U live wall. It has no household cache, no local-file browser and no server-side remuxing.
+draw an M3U live wall with the same health ordering and stable zap numbers a hub gives.
+
+**Local files** are chosen once in **Settings → Local files**. The app keeps the folder grant (SAF)
+and indexes video and audio up to four levels deep; a television whose image has no system folder
+picker falls back to the platform's media library with one read permission. The player receives a
+loopback HTTP URL with Range support, so seeking behaves like any other copy. It has no household
+cache and no server-side remuxing.
 
 ## Running it
 
