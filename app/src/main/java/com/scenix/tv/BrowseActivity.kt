@@ -74,7 +74,7 @@ class BrowseActivity : Activity() {
             // A preview that is running is the viewer paying attention: rotation waits for it.
             val watching = browseAdapter?.heroVideo()?.visibility == View.VISIBLE
             val idleFor = android.os.SystemClock.elapsedRealtime() - lastKeyAt
-            if (slides.size > 1 && !watching && idleFor > 9_000L)
+            if (!rotationPaused && slides.size > 1 && !watching && idleFor > 9_000L)
                 setHero((heroPos + 1) % slides.size)
             clock.postDelayed(this, app.theme.token("hero", "rotateMs", 6000.0).toLong())
         }
@@ -98,8 +98,105 @@ class BrowseActivity : Activity() {
                 focusFeatured(heroPos.coerceIn(0, slides.size - 1))
                 return true
             }
+            // Vertical movement between shelves is routed by shelf position, not left to geometric
+            // focus search. A row below the viewport is not laid out yet, so search could not find
+            // it and fell back to the hero; after walking back up, DOWN was trapped on the billboard.
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN ||
+                event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+                val focus = currentFocus
+                val adapter = browseAdapter
+                if (focus != null && adapter != null && isInside(list, focus)) {
+                    val down = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                    val from = outerPositionOf(focus)
+                    if (focus === adapter.heroPlay || focus === adapter.heroRoot) {
+                        moveVertical(if (down) 1 else -1, focus)
+                        return true
+                    }
+                    if (from >= 0) {
+                        moveVertical(if (down) 1 else -1, focus)
+                        return true
+                    }
+                }
+            }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /** The outer-list position whose row contains [v], or -1 when it is not on a shelf. */
+    private fun outerPositionOf(v: View?): Int {
+        var cur: View? = v
+        while (cur != null) {
+            val parent = cur.parent
+            if (parent === list) return list.getChildAdapterPosition(cur)
+            cur = parent as? View
+        }
+        return -1
+    }
+
+    /**
+     * One row per press, skipping rows that carry no focusable card. The target row is scrolled into
+     * view first; [focusShelfAt] retries until the rail has laid out, so a press cannot be swallowed.
+     */
+    private fun moveVertical(direction: Int, from: View) {
+        val adapter = browseAdapter ?: return
+        val current = outerPositionOf(from)
+        val x = screenCenterX(from)
+        var target = current + direction
+        if (current < 0) return
+        // Hero and Featured are one section: moving down out of the hero lands on its Featured row.
+        if (current == 0 && direction > 0) target = 1
+        val total = list.adapter?.itemCount ?: 0
+        while (target in 0 until total) {
+            if (target == 0) {
+                // Up from the first shelf does not need the hero's Play row; it lands on Featured.
+                target += direction
+                continue
+            }
+            if (focusShelfAt(target, x, 0)) return
+            target += direction
+        }
+    }
+
+    /** The x centre of a view on screen, used to land on the tile in the same column below. */
+    private fun screenCenterX(v: View?): Int {
+        if (v == null) return 0
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        return loc[0] + v.width / 2
+    }
+
+    /**
+     * Focus the card nearest [x] on the row at [position]. The row may not be attached yet, so scroll
+     * to it and retry for a few frames instead of consuming the keypress with nothing focused.
+     */
+    private fun focusShelfAt(position: Int, x: Int, tries: Int): Boolean {
+        val holder = list.findViewHolderForAdapterPosition(position)
+        if (holder is ShelfHolder) {
+            val target = nearestCard(holder.rail, x) ?: holder.rail.getChildAt(0)
+            if (target?.requestFocus() == true) return true
+            // The rail exists but its children are not measured yet; wait for the next frame.
+        } else if (holder is HeroHolder) {
+            if (holder.play.requestFocus()) return true
+        } else {
+            list.scrollToPosition(position)
+        }
+        if (tries < 8) list.postDelayed({ focusShelfAt(position, x, tries + 1) }, 45L)
+        return true
+    }
+
+    private fun nearestCard(rail: RecyclerView, x: Int): View? {
+        var best: View? = null
+        var bestDistance = Int.MAX_VALUE
+        for (i in 0 until rail.childCount) {
+            val card = rail.getChildAt(i) ?: continue
+            if (!card.isFocusable || card.visibility != View.VISIBLE) continue
+            val distance = kotlin.math.abs(screenCenterX(card) - x)
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = card
+            }
+        }
+        return best
     }
 
     private fun isInside(container: ViewGroup?, v: View?): Boolean {
@@ -289,6 +386,10 @@ class BrowseActivity : Activity() {
     }
 
     private fun onCardFocused(card: View, item: Item) {
+        // The billboard is a header, not a carousel running under the viewer's hands. Once a shelf
+        // tile has focus, the rotation timer must not rebind the featured row or re-render the
+        // stage while the viewer is walking the rows.
+        rotationPaused = true
         // Walking away from the billboard takes its preview with you — but releasing the media
         // player blocks the main thread for a beat, and doing it inside the keypress dropped half
         // a second of frames between the hero and the shelves. The surface comes down now, which
@@ -310,8 +411,9 @@ class BrowseActivity : Activity() {
     private fun onSlideFocused(pos: Int) {
         rotationPaused = true
         // Entering the hero's group always shows the whole hero: the banner and its tiles are one
-        // section, and a banner scrolled off the top breaks that.
-        list.smoothScrollToPosition(0)
+        // section, and a banner scrolled off the top breaks that. Snap rather than animate: a
+        // smooth scroll still running when the next DOWN arrives is one way the hero trapped focus.
+        if (list.computeVerticalScrollOffset() > 0) list.scrollToPosition(0)
         setHero(pos)
         scheduleTrailer()
         val s = stage ?: return
@@ -321,16 +423,23 @@ class BrowseActivity : Activity() {
 
     private fun setHero(pos: Int) {
         if (slides.isEmpty()) return
+        val next = pos.coerceIn(0, slides.size - 1)
+        val item = slides[next]
+        // Re-focusing the tile already on the billboard must not tear the trailer down and start it
+        // again; that loop is a visible stutter every time the ring lands on the same slide.
+        if (next == heroPos && heroItem === item) return
         val prev = heroPos
-        heroPos = pos.coerceIn(0, slides.size - 1)
-        val item = slides[heroPos]
+        heroPos = next
         heroItem = item
         browseAdapter?.showSlide(heroPos)
         browseAdapter?.syncFeaturedSlide(prev, heroPos)
         stage?.show(item.backdrop ?: item.poster ?: item.logo)
-        // The trailer belongs to one slide at a time; moving the billboard moves or stops it.
+        // The trailer belongs to one slide at a time. Take the surface down now and let the decoder
+        // release after the step has drawn, as a card step does; stopping it inline blocks the frame.
         clock.removeCallbacks(trailerTick)
-        stopTrailer()
+        clock.removeCallbacks(trailerRelease)
+        hideTrailerNow()
+        clock.postDelayed(trailerRelease, 250L)
     }
 
     private val trailerTick = Runnable { loadTrailer() }
@@ -769,11 +878,11 @@ class BrowseActivity : Activity() {
         val adapter = BrowseAdapter(heroItem, shelves)
         browseAdapter = adapter
         list.adapter = adapter
+        // The billboard follows the Featured tile under the ring. It does not run by itself: a
+        // timer that rotated the hero while the viewer walked the shelves re-rendered the stage and
+        // rebounded the featured tiles mid-step, which read as lag and fought focus.
         clock.removeCallbacks(rotateHero)
-        rotationPaused = false
-        if (slides.size > 1) {
-            clock.postDelayed(rotateHero, app.theme.token("hero", "rotateMs", 6000.0).toLong())
-        }
+        rotationPaused = true
         // The first tile takes initial focus, but only once the rails have actually laid out
         // their children — on a cold load that can be well after the data lands, so retry.
         list.postDelayed(object : Runnable {
@@ -885,7 +994,16 @@ class BrowseActivity : Activity() {
             )
             return
         }
-        if (id.startsWith("genre:") || id.startsWith("lang:")) {
+        if (id.startsWith("genre:")) {
+            startActivity(
+                Intent(this, SectionActivity::class.java)
+                    .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
+                    .putExtra(SectionActivity.EXTRA_GENRE, row.title)
+                    .putExtra(SectionActivity.EXTRA_TITLE, row.title)
+            )
+            return
+        }
+        if (id.startsWith("lang:")) {
             startActivity(
                 Intent(this, SectionActivity::class.java)
                     .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
@@ -1556,14 +1674,20 @@ class BrowseActivity : Activity() {
             holder.num.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, cardH
             ).apply { gravity = Gravity.TOP }
-            // A genre tile opens the genre's own full list, not a detail page for "genre:drama".
+            // A genre tile opens the genre's own full list, not a title-word search for "crime".
+            // A catalogue tile (from the Browse addons row) opens that addon's catalogue instead.
             holder.itemView.setOnClickListener {
-                startActivity(
-                    Intent(this@BrowseActivity, SectionActivity::class.java)
-                        .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
-                        .putExtra(SectionActivity.EXTRA_QUERY, item.identity.substringAfter(':'))
-                        .putExtra(SectionActivity.EXTRA_TITLE, item.title)
-                )
+                val intent = Intent(this@BrowseActivity, SectionActivity::class.java)
+                    .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
+                    .putExtra(SectionActivity.EXTRA_TITLE, item.title)
+                if (item.identity.startsWith("catalog:")) {
+                    val rest = item.identity.removePrefix("catalog:")
+                    intent.putExtra(SectionActivity.EXTRA_ADDON, rest.substringBefore(':'))
+                    intent.putExtra(SectionActivity.EXTRA_CATALOG, rest.substringAfter(':', ""))
+                } else {
+                    intent.putExtra(SectionActivity.EXTRA_GENRE, item.title)
+                }
+                startActivity(intent)
             }
         }
     }

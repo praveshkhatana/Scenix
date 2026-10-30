@@ -104,22 +104,28 @@ class SectionActivity : Activity() {
     private fun load() {
         status.visibility = View.VISIBLE
         status.text = "Reading the library…"
-        // A derived shelf (a genre, a language) has no hub row of its own; its full list is the
-        // search the hub already answers for that word.
+        val addon = intent?.getStringExtra(EXTRA_ADDON).orEmpty()
+        val catalog = intent?.getStringExtra(EXTRA_CATALOG).orEmpty()
+        if (addon.isNotBlank() && catalog.isNotBlank()) {
+            title.text = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { catalog }
+            loadCatalog(addon, catalog, false)
+            return
+        }
+        // A genre is a genre query over the catalogues that declare it, not a title-word search.
+        val genre = intent?.getStringExtra(EXTRA_GENRE).orEmpty()
+        if (genre.isNotBlank()) {
+            title.text = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { genre }
+            loadGenre(genre, false)
+            return
+        }
+        // A derived language shelf still answers from the hub's search; there is no language catalogue
+        // to ask for, only a word every provider already understands.
         val query = intent?.getStringExtra(EXTRA_QUERY).orEmpty()
         if (query.isNotBlank()) {
             title.text = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { query }
             api.search(profileId, query) { items, error ->
                 if (isFinishing || isDestroyed) return@search
-                if (items.isNullOrEmpty()) {
-                    status.text = error ?: "Nothing under this name yet"
-                    return@search
-                }
-                status.visibility = View.GONE
-                grid.adapter = CardAdapter(items)
-                grid.postDelayed({
-                    (grid.findViewHolderForAdapterPosition(0)?.itemView ?: grid.getChildAt(0))?.requestFocus()
-                }, 120)
+                show(items, error, "Nothing under this name yet")
             }
             return
         }
@@ -130,16 +136,47 @@ class SectionActivity : Activity() {
                 return@row
             }
             title.text = name
-            if (items.isEmpty()) {
-                status.text = "Nothing in this section yet"
-                return@row
-            }
-            status.visibility = View.GONE
-            grid.adapter = CardAdapter(items)
-            grid.postDelayed({
-                (grid.findViewHolderForAdapterPosition(0)?.itemView ?: grid.getChildAt(0))?.requestFocus()
-            }, 120)
+            show(items, null, "Nothing in this section yet")
         }
+    }
+
+    /**
+     * A cold hub answers the first genre/catalogue request before its addon catalogues have warmed.
+     * One quiet retry a second later turns "Nothing in this genre yet" into the real shelf.
+     */
+    private fun loadGenre(genre: String, retried: Boolean) {
+        api.genre(profileId, genre) { items, error ->
+            if (isFinishing || isDestroyed) return@genre
+            if (items.isNullOrEmpty() && error == null && !retried) {
+                grid.postDelayed({ if (!isFinishing) loadGenre(genre, true) }, 900L)
+                return@genre
+            }
+            show(items, error, "Nothing in this genre yet")
+        }
+    }
+
+    private fun loadCatalog(addon: String, catalog: String, retried: Boolean) {
+        api.addonCatalog(profileId, addon, catalog) { items, error ->
+            if (isFinishing || isDestroyed) return@addonCatalog
+            if (items.isNullOrEmpty() && error == null && !retried) {
+                grid.postDelayed({ if (!isFinishing) loadCatalog(addon, catalog, true) }, 900L)
+                return@addonCatalog
+            }
+            show(items, error, "This addon has nothing in that catalogue yet")
+        }
+    }
+
+    private fun show(items: List<Item>?, error: String?, emptyText: String) {
+        if (isFinishing || isDestroyed) return
+        if (items.isNullOrEmpty()) {
+            status.text = error ?: emptyText
+            return
+        }
+        status.visibility = View.GONE
+        grid.adapter = CardAdapter(items)
+        grid.postDelayed({
+            (grid.findViewHolderForAdapterPosition(0)?.itemView ?: grid.getChildAt(0))?.requestFocus()
+        }, 120)
     }
 
     private inner class CardAdapter(private val items: List<Item>) : RecyclerView.Adapter<CardHolder>() {
@@ -261,6 +298,9 @@ class SectionActivity : Activity() {
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_SECTION = "section"
         const val EXTRA_QUERY = "query"
+        const val EXTRA_GENRE = "genre"
+        const val EXTRA_ADDON = "addon"
+        const val EXTRA_CATALOG = "catalog"
         const val EXTRA_TITLE = "title"
     }
 }

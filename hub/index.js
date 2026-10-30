@@ -77,6 +77,7 @@ const HUB_VERSION = process.env.HUB_VERSION || '0.1.0';
 const registry = require('./core/registry').load(ROOT);
 const store = require('./core/store').create(ROOT);
 const merge = require('./core/merge');
+const shelves = require('./core/catalogs');
 const taste = require('./core/taste');
 const prefs = require('./core/prefs');
 const gateway = require('./core/gateway');
@@ -112,7 +113,11 @@ const ranking = require('./rules/source_ranking');
 
 
 // Home must answer from cache: /app/v1 never waits on the network for more than ~1.5 s.
-const HOME_BUDGET_MS = Number(process.env.HOME_BUDGET_MS || 1500);
+// A cold hub used to answer Home inside 1.5 s and drop every row whose addon was still waking up:
+// the first screen after a restart was missing Continue, the installed-addon shelf or the billboard.
+// Three seconds is the point where those rows are in the answer on a cold cache; after that the
+// addon caches make Home fast again. The client shows its skeleton, not a half-empty page.
+const HOME_BUDGET_MS = Number(process.env.HOME_BUDGET_MS || 3000);
 const ROW_BUDGET_MS = Number(process.env.ROW_BUDGET_MS || 1200);
 const CATALOG_BUDGET_MS = Number(process.env.CATALOG_BUDGET_MS || 800);
 const META_BUDGET_MS = Number(process.env.META_BUDGET_MS || 3000); // a detail page may take a round trip
@@ -545,6 +550,25 @@ function makeCtx(profile, metaBudget) {
         }
         item.sources = merge.rankSources(item.sources, registry.priorities);
       }
+      return item;
+    },
+
+    /**
+     * Metadata only, for a card that is not about to be played. The full resolve below also asks every
+     * streams addon and warms every play link, which is right for a detail page and far too much for
+     * Continue Watching: twenty of those in a row is how the row missed its budget and disappeared.
+     */
+    async metaOnly(identity, hint, budget = 400) {
+      const parts = [];
+      for (const p of registry.providers) {
+        if (typeof p.meta !== 'function') continue;
+        const it = await withBudget(
+          Promise.resolve().then(() => p.meta(identity, hint)), budget, null, 'meta ' + p.id,
+        );
+        if (it) parts.push(it);
+      }
+      const item = merge.mergeItems(parts, registry.priorities);
+      if (item) item.progress = store.progressFor(ctx.profile.id, item.identity);
       return item;
     },
   };
@@ -3451,6 +3475,50 @@ async function handle(req, res) {
       const items = generalItems('search', await pipeline(all, ctx)).slice(0, SEARCH_MAX);
       await taste.decorate(ctx, items);
       return send(res, 200, { q, items });
+    }
+
+    if (path === '/app/v1/genre') {
+      const genre = (u.searchParams.get('name') || u.searchParams.get('genre') || '').trim();
+      if (!genre) return send(res, 400, { error: 'genre name required' });
+      const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
+      const ctx = makeCtx(profile, SEARCH_BUDGET_MS);
+      // A category is a genre query, not a title-word search: "Crime" must bring crime films, not
+      // films whose name happens to contain Crime. The library the hub already holds is the first
+      // answer; only when it has nothing do we wait on the addons' own genre catalogues.
+      const local = await Promise.race([
+        ctx.library().catch(() => []),
+        new Promise((resolve) => {
+          const t = setTimeout(() => resolve([]), 1500);
+          if (t.unref) t.unref();
+        }),
+      ]);
+      const want = genre.toLowerCase();
+      const held = (local || []).filter((it) => (it.genres || [])
+        .some((g) => String(g).toLowerCase() === want)).slice(0, SEARCH_MAX * 2);
+      const raw = held.length ? held
+        : await shelves.genreTitles(genre, { limit: SEARCH_MAX * 2, budget: SEARCH_BUDGET_MS });
+      const items = generalItems('genre', await pipeline(raw || [], ctx)).slice(0, SEARCH_MAX);
+      await taste.decorate(ctx, items);
+      return send(res, 200, { genre, items });
+    }
+
+    if (path === '/app/v1/addon-catalog') {
+      const addonId = (u.searchParams.get('addon') || '').trim();
+      const catalogId = (u.searchParams.get('catalog') || '').trim();
+      const provider = registry.byId[addonId];
+      if (!provider || typeof provider.catalog !== 'function' || !catalogId) {
+        return send(res, 404, { error: 'no such addon catalog' });
+      }
+      const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
+      const ctx = makeCtx(profile, SEARCH_BUDGET_MS);
+      const raw = await withBudget(
+        Promise.resolve().then(() => provider.catalog(catalogId, {})),
+        SEARCH_BUDGET_MS, [], 'catalog ' + addonId + '/' + catalogId,
+      );
+      const items = generalItems('addon-catalog:' + addonId,
+        await pipeline(raw || [], ctx)).slice(0, 120);
+      await taste.decorate(ctx, items);
+      return send(res, 200, { addon: addonId, catalog: catalogId, items });
     }
 
     m = /^\/app\/v1\/meta\/(.+)$/.exec(path);

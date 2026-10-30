@@ -153,6 +153,35 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** A real genre shelf: crime films, not titles whose name contains the word "crime". */
+    fun genre(profileId: String, genre: String, done: (items: List<Item>?, error: String?) -> Unit) {
+        request(
+            "/app/v1/genre",
+            "name=" + enc(genre) + "&profile=" + enc(profileId),
+            "GET", null, 30000,
+        ) { root, _, error ->
+            val arr = root?.optJSONArray("items")
+            if (arr == null) done(emptyList(), error) else done(Item.list(arr), null)
+        }
+    }
+
+    /** One catalogue an installed addon publishes, opened from the Browse addons row. */
+    fun addonCatalog(
+        profileId: String,
+        addonId: String,
+        catalogId: String,
+        done: (items: List<Item>?, error: String?) -> Unit,
+    ) {
+        request(
+            "/app/v1/addon-catalog",
+            "addon=" + enc(addonId) + "&catalog=" + enc(catalogId) + "&profile=" + enc(profileId),
+            "GET", null, 30000,
+        ) { root, _, error ->
+            val arr = root?.optJSONArray("items")
+            if (arr == null) done(emptyList(), error) else done(Item.list(arr), null)
+        }
+    }
+
     /** The household, for the native profile gate. PINs are checked by `unlock` below. */
     fun profiles(done: (profiles: List<ProfileInfo>?, error: String?) -> Unit) {
         request("/app/v1/profiles", "", "GET", null, 15000) { root, _, error ->
