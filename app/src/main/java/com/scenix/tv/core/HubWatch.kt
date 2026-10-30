@@ -112,8 +112,10 @@ class HubWatch(context: Context, private val ctx: AppContext) {
             return
         }
         unpaired = false
-        val first = list.indexOfFirst { it == ctx.prefs.hubLastWorking() }.let { if (it >= 0) it else 0 }
-        tryAt(list, first, tried = 0, done = done)
+        // [Prefs.hubUrlCandidates] already orders the explicit choice first and the last working hub
+        // second. Starting at the last-working index here would silently override a hub the viewer
+        // just chose — two hubs on one LAN share the same default name, so that is not theoretical.
+        tryAt(list, 0, tried = 0, done = done)
     }
 
     /** Try candidate `i`; on a miss move to the next one. A miss is normal, not an error. */
@@ -123,13 +125,13 @@ class HubWatch(context: Context, private val ctx: AppContext) {
             return
         }
         val url = list[i]
-        // The probe re-reads this candidate directly; remembering it is what makes the next boot try
-        // the hub that actually answered first.
-        if (url != ctx.prefs.hubUrl("")) ctx.prefs.setHubUrl(url)
+        // Do not write a candidate into the explicit-hub slot before it has answered: a failed first
+        // candidate would otherwise become the remembered choice and mask the address the viewer set.
         Thread({
             val ok = HubProbe.healthy(url)
             if (ok) {
                 ctx.prefs.setHubLastWorking(url)
+                if (url != ctx.prefs.hubUrl("")) ctx.prefs.setHubUrl(url)
                 Log.i(TAG, "hub answering at $url")
                 main.post {
                     apply(true)
