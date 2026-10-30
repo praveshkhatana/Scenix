@@ -112,6 +112,12 @@ class PlayerActivity : Activity() {
     private var subChosen = false
     private var speed = 1f
     private var durationMs = 0L
+    /**
+     * Film time where the current HLS ladder begins. An adaptive resume is transcoded from the saved
+     * playhead, so the player's own timeline starts at zero while the viewer still expects 12:34.
+     * Every readout, seek and saved progress adds this back; zero for a direct copy.
+     */
+    private var timelineOffsetMs = 0L
     private var maxPosition = 0L
     private var lastSavedPosition = -1L
     private var nextProgressAt = 0L
@@ -132,7 +138,7 @@ class PlayerActivity : Activity() {
             bufferingSince = 0L
             return@Runnable
         }
-        val pos = p.currentPosition.coerceAtLeast(0L)
+        val pos = filmPosition(p)
         if (sameCopyRetries < 2) {
             sameCopyRetries++
             showCenter("Still loading this copy…", true)
@@ -360,7 +366,11 @@ class PlayerActivity : Activity() {
                     bufferingSince = 0L
                     handler.removeCallbacks(stallCheck)
                     hideCenter()
-                    durationMs = player?.duration?.takeIf { it > 0 } ?: durationMs
+                    durationMs = player?.duration?.takeIf { it > 0 }?.let { d ->
+                        // A resume ladder's duration is only the part after the offset; the film's
+                        // full length is what the viewer should see on the bar.
+                        if (timelineOffsetMs > 0) maxOf(durationMs, d + timelineOffsetMs) else d
+                    } ?: durationMs
                     speed = player?.playbackParameters?.speed ?: speed
                     updatePosition()
                     updatePlayLabel()
@@ -490,6 +500,7 @@ class PlayerActivity : Activity() {
         epSeason = 0
         currentSourceLabel = ""
         durationMs = 0L
+        timelineOffsetMs = 0L
         seekLine.fraction = 0f
         seekLine.buffered = 0f
         seekLine.invalidate()
@@ -567,6 +578,10 @@ class PlayerActivity : Activity() {
         introStartMs = reply.optLong("introStartMs", 0L)
         introEndMs = reply.optLong("introEndMs", 0L)
         if (introEndMs <= 0L) skipChip?.visibility = View.GONE
+        // A resume ladder is transcoded from the saved playhead. Its playlist starts at zero, so the
+        // player's own timeline is relative; `startMs` is the film time to add back everywhere.
+        timelineOffsetMs = (reply.optJSONObject("ladder")?.optLong("startMs", 0L) ?: 0L)
+            .coerceAtLeast(0L)
         val mix = reply.optJSONObject("audioMix")
         if (mix != null) {
             mixHint = mix
@@ -616,7 +631,10 @@ class PlayerActivity : Activity() {
         loadedSpec = current
         loadedTitle = displayTitle
         loadedAnswer = reply
-        p.setMediaItem(item, positionMs.coerceAtLeast(0L))
+        // Seek the item to the same film position in the ladder's own relative timeline. For a direct
+        // copy the offset is zero, so this is the original setMediaItem(item, positionMs).
+        val mediaStart = (positionMs - timelineOffsetMs).coerceAtLeast(0L)
+        p.setMediaItem(item, mediaStart)
         pendingAudio = selectedAudioId
         pendingSub = selectedSubId
         audioApplied = false
@@ -649,7 +667,10 @@ class PlayerActivity : Activity() {
             }
         }
         val configs = ArrayList<MediaItem.SubtitleConfiguration>()
-        for (i in 0 until hubSubs.length()) {
+        // An offset ladder's media timeline starts at the resume point, while an external subtitle
+        // file is timed from the beginning of the film. Loading it unchanged would show every line
+        // minutes early; the menu says subtitles are off rather than pretending they are in sync.
+        if (timelineOffsetMs <= 0L) for (i in 0 until hubSubs.length()) {
             val s = hubSubs.optJSONObject(i) ?: continue
             val subUrl = str(s, "url").ifBlank { str(s, "src") }
             if (subUrl.isBlank()) continue
@@ -814,14 +835,14 @@ class PlayerActivity : Activity() {
     private fun reloadWithSubs(subId: String) {
         val reply = answer ?: return
         val p = player ?: return
-        val pos = p.currentPosition.coerceAtLeast(0L)
+        val pos = filmPosition(p)
         val playing = p.playWhenReady
         pendingSub = subId
         pendingAudio = selectedAudioId
         audioApplied = false
         subApplied = false
         subsInItem = hubSubs.length()
-        p.setMediaItem(buildItem(reply), pos)
+        p.setMediaItem(buildItem(reply), mediaPosition(pos))
         p.prepare()
         p.playWhenReady = playing
         showCenter("Loading subtitles…", true)
@@ -853,7 +874,7 @@ class PlayerActivity : Activity() {
         Log.w(TAG, "playback error " + name + " / " + error.errorCode + " / " + error.message)
         val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
             name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
-        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val pos = player?.let { filmPosition(it) } ?: 0L
         if (waiting && sameCopyRetries < 2) {
             // A cold copy is not a broken file. Two silent reloads at the same playhead, with a little
             // more room each time, are cheaper than throwing away a copy that is still filling.
@@ -885,7 +906,7 @@ class PlayerActivity : Activity() {
 
     private fun failoverToNext(preferLower: Boolean = false) {
         val spec = spec ?: return
-        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val pos = player?.let { filmPosition(it) } ?: 0L
         clearError()
         if (preferLower) {
             val lower = lowerAlternative()
@@ -1386,7 +1407,7 @@ class PlayerActivity : Activity() {
 
     private fun reloadAudio(mix: Boolean) {
         val spec = spec ?: return
-        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val pos = player?.let { filmPosition(it) } ?: 0L
         mixDisabled = !mix
         audioChosen = false
         selectedAudioId = null
@@ -1407,6 +1428,10 @@ class PlayerActivity : Activity() {
     }
 
     private fun subtitleRows(parent: LinearLayout) {
+        if (timelineOffsetMs > 0L) {
+            parent.addView(noteRow("Subtitles are off on a resumed ladder"))
+            return
+        }
         if (embeddedSubs.length() == 0 && hubSubs.length() == 0) {
             val actual = actualTracks(C.TRACK_TYPE_TEXT, "s")
             parent.addView(menuRow(
@@ -1752,7 +1777,7 @@ class PlayerActivity : Activity() {
 
     private fun switchTo(src: JSONObject?) {
         val spec = spec ?: return
-        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val pos = player?.let { filmPosition(it) } ?: 0L
         val playing = player?.playWhenReady ?: true
         closeMenu()
         val exclude = tried.toMutableSet()
@@ -1793,21 +1818,41 @@ class PlayerActivity : Activity() {
     private fun seekBy(deltaMs: Long) {
         if (live) return
         val p = player ?: return
-        val dur = p.duration
-        val limit = if (dur > 0) dur else Long.MAX_VALUE
-        p.seekTo((p.currentPosition + deltaMs).coerceIn(0L, limit))
+        val lower = timelineOffsetMs
+        val upper = if (durationMs > 0) maxOf(durationMs, lower) else Long.MAX_VALUE
+        val target = (filmPosition(p) + deltaMs).coerceIn(lower, upper)
+        p.seekTo(mediaPosition(target))
         updatePosition()
         armHide()
     }
 
+    /** The viewer's playhead in film time, including the start of a resume ladder. */
+    private fun filmPosition(p: Player): Long = (p.currentPosition + timelineOffsetMs).coerceAtLeast(0L)
+
+    /** The same moment in the media's own timeline, which starts at zero for a ladder. */
+    private fun mediaPosition(filmMs: Long): Long = (filmMs - timelineOffsetMs).coerceAtLeast(0L)
+
+    /** Full runtime, not just the part after a resume offset. */
+    private fun fullDuration(p: Player): Long {
+        val media = if (p.duration > 0) p.duration + timelineOffsetMs else 0L
+        return when {
+            // An EVENT playlist grows while the transcoder works. Its own duration is relative to the
+            // resume point, so keep the larger of that and the film length the hub stated.
+            timelineOffsetMs > 0 -> maxOf(durationMs, media)
+            durationMs > 0 -> durationMs
+            else -> media
+        }
+    }
+
     private fun updatePosition() {
         val p = player ?: return
-        val dur = p.duration.takeIf { it > 0 } ?: durationMs
-        val pos = p.currentPosition.coerceAtLeast(0L)
+        val dur = fullDuration(p)
+        val pos = filmPosition(p)
         maxPosition = maxOf(maxPosition, pos)
         if (!live && dur > 0) {
             seekLine.fraction = (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
-            seekLine.buffered = (p.bufferedPosition.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+            seekLine.buffered = ((p.bufferedPosition + timelineOffsetMs).toFloat() / dur.toFloat())
+                .coerceIn(0f, 1f)
             elapsed.text = clock(pos)
             remaining.text = "-" + clock((dur - pos).coerceAtLeast(0L))
         }
@@ -2042,7 +2087,7 @@ class PlayerActivity : Activity() {
         clearError()
         hideNextCard()
         val spec = spec ?: return
-        val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val pos = player?.let { filmPosition(it) } ?: 0L
         tried.clear()
         failovers = 0
         sameCopyRetries = 0
@@ -2297,6 +2342,7 @@ class PlayerActivity : Activity() {
         epSeason = 0
         currentSourceLabel = ""
         durationMs = 0L
+        timelineOffsetMs = 0L
         seekLine.fraction = 0f
         seekLine.buffered = 0f
         hideNextCard()
@@ -2351,7 +2397,7 @@ class PlayerActivity : Activity() {
             if (chip.visibility == View.VISIBLE) hideSkip()
             return
         }
-        val pos = p.currentPosition
+        val pos = filmPosition(p)
         val start = if (introStartMs > 0L) introStartMs else (introEndMs - 90_000L).coerceAtLeast(0L)
         val inside = pos >= start && pos < introEndMs
         if (inside && chip.visibility != View.VISIBLE) {
@@ -2368,7 +2414,7 @@ class PlayerActivity : Activity() {
 
     private fun skipIntro() {
         if (introEndMs <= 0L) return
-        player?.seekTo(introEndMs)
+        player?.seekTo(mediaPosition(introEndMs))
         hideSkip()
         updatePosition()
     }
@@ -2390,10 +2436,10 @@ class PlayerActivity : Activity() {
         val spec = loadedSpec ?: return
         if (live || (loadedAnswer?.optBoolean("live", false) == true)) return
         val p = player ?: return
-        val pos = p.currentPosition.coerceAtLeast(0L)
+        val pos = filmPosition(p)
         if (pos <= 0L) return
         if (!force && pos == lastSavedPosition) return
-        val dur = p.duration.takeIf { it > 0 } ?: durationMs
+        val dur = fullDuration(p)
         maxPosition = maxOf(maxPosition, pos)
         lastSavedPosition = pos
         val body = JSONObject()

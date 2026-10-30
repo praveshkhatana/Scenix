@@ -20,6 +20,11 @@ their packets produces a different cut or a broken decode. A real ladder is made
   - below 480 → no ladder; the direct copy plays
 - Uses the **probed** height when the filename has no quality, or when the addon mints its URL at
   play time. The filename's `720p` is only a fallback when nothing measured the file.
+- **Resumes with the ladder.** A play request that carries `positionMs` above one second starts the
+  transcoder at that playhead (`-ss` before the input). The playlist's own timeline begins at zero;
+  `ladder.startMs` tells the player where that zero sits in film time. The native player adds it back
+  for the clock, seek bar, intro chip and saved progress, so a resume at 12:34 still reads 12:34.
+  The returned duration remains the full film length.
 
 ### Audio
 
@@ -82,9 +87,12 @@ remux-only installs.
 
 ## Limits / next steps
 
-- Resume keeps the direct copy. A ladder generated from zero would make the viewer wait for the
-  transcoders to reach their playhead. A future resume-offset ladder needs the player to carry a
-  timeline offset so seek, progress and subtitles stay in film time.
+- A resumed ladder cannot seek before its own start point: the transcoder began at the resume
+  playhead, so seeking earlier would need a second ladder from zero or a fall back to the direct copy.
+- External subtitle files are timed from the beginning of the film, while an offset ladder's media
+  timeline starts at the resume point. The native player therefore leaves subtitles off for a resumed
+  ladder rather than showing lines minutes early. Embedded subtitle tracks are already absent from a
+  ladder.
 - The high rung is transcoded, not copied; a future version can copy the top rendition and solve
   keyframe alignment separately.
 - Segments are generated and served, but not prefetched ahead of the player or cached beyond the

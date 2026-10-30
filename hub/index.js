@@ -2409,7 +2409,6 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const adaptiveWanted = opts.ladder === true
     && (settings.get().adaptive || {}).enabled === true
     && (settings.get().adaptive || {}).transcode !== false
-    && Number(opts.positionMs || 0) <= 1000
     && out.kind !== 'hls' && !out.remuxed && !out.audioMix;
   const tracks = playHash
     ? await media.tracksFor(out.torrent.hash, out.torrent.fileId, null,
@@ -2715,7 +2714,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // here, an ending that shows up minutes early is recognisable as a stall and gets healed instead.
   // The probe of the file we are about to play wins over the title's metadata: they disagree when the copy
   // is a different cut, and the file on disk is what the client will actually be watching.
-  out.durationMs = (out.probe && out.probe.durationMs) || kept.durationMs || null;
+  out.durationMs = (out.probe && out.probe.durationMs) || (picture && picture.durationMs)
+    || kept.durationMs || null;
   // The kind of thing this is, so a player that arrived by identity (a deep link, a zap) does not have to
   // guess whether it is holding a film or a channel.
   out.type = kept.type || (out.kind === 'hls' ? 'channel' : 'movie');
@@ -2793,6 +2793,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         // The owner's ceiling and the client's own display ceiling; the lower wins. A 4K source on a
         // 1080 panel must not spend CPU producing a 2160 rung the decoder will refuse.
         maxHeight: Math.min(Number(adaptive.maxHeight) || 1080, Number(opts.displayMaxHeight) || 1080),
+        // Resume keeps the ladder instead of falling back to the direct copy: the transcoder seeks to
+        // the playhead, and the player carries `startMs` so the timeline still reads in film time.
+        positionMs: Number(opts.positionMs || 0),
+        sourceDurationMs: picture && Number(picture.durationMs) > 0 ? Number(picture.durationMs) : 0,
       });
       if (built && built.ready) {
         const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
@@ -2818,11 +2822,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           id: built.id,
           variants: built.variants || [],
           audio: (built.audioTracks || []).length,
+          startMs: built.startMs || 0,
         };
         out.why = (out.why || []).concat('adaptive ladder: ' + (built.variants || []).join('/')
           + ((built.audioTracks || []).length > 1 ? ', ' + built.audioTracks.length + ' audio renditions' : '')
+          + (built.startMs > 0 ? ', from ' + Math.round(built.startMs / 1000) + ' s' : '')
           + ', aligned segments');
-        log('LADDER PLAY', identity, built.id, 'source=' + String(out.picked && out.picked.label || '').slice(0, 60));
+        log('LADDER PLAY', identity, built.id, 'from=' + (built.startMs || 0) + 'ms',
+          'source=' + String(out.picked && out.picked.label || '').slice(0, 60));
       } else if (built) {
         out.why = (out.why || []).concat('adaptive ladder warming; playing the chosen copy directly');
       }

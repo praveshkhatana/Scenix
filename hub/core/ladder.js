@@ -171,6 +171,10 @@ function spawnVariant(job, v, url, headers, audio, videoOnly) {
   const args = [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
     ...headerArgs(headers),
+    // A resume ladder begins where the viewer stopped. Input seeking lets ffmpeg jump the container
+    // index instead of decoding every earlier second; output timestamps still start at zero, which is
+    // the relative timeline the player maps back onto film time.
+    ...(job.startMs > 0 ? ['-ss', (job.startMs / 1000).toFixed(3)] : []),
     '-i', url,
     '-map', '0:v:0',
     ...audioArgs,
@@ -215,6 +219,7 @@ function spawnAudio(job, track, url, headers) {
   const args = [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
     ...headerArgs(headers),
+    ...(job.startMs > 0 ? ['-ss', (job.startMs / 1000).toFixed(3)] : []),
     '-i', url,
     '-map', '0:' + track.streamIndex,
     '-vn', '-sn', '-dn',
@@ -289,10 +294,13 @@ function result(job, ready) {
     variants: job.variants.map((v) => v.height + 'p'),
     audioTracks: tracks,
     selectedAudio: selected ? selected.id : null,
+    // Film time where this ladder begins. The player adds it to its own relative playhead, so a
+    // resume at 12:34 still reports 12:34 to the viewer, progress and the intro window.
+    startMs: job.startMs || 0,
   };
 }
 
-async function create({ url, headers, quality, sourceHeightPx, audio, audioTracks, maxHeight }) {
+async function create({ url, headers, quality, sourceHeightPx, audio, audioTracks, maxHeight, positionMs, sourceDurationMs }) {
   if (!url || !/^https?:/i.test(String(url))) return null;
   // The ladder follows the copy and the panel, not a fixed 720/480 assumption. A 1080 source on a
   // 1080 panel gets 1080/720/480; a 4K source on the same panel gets 1080/720/480 rather than a
@@ -300,16 +308,22 @@ async function create({ url, headers, quality, sourceHeightPx, audio, audioTrack
   const variants = variantsFor(quality, maxHeight, sourceHeightPx);
   if (variants.length < 2) return null; // one rendition is not a ladder
   const wanted = variants.map((v) => v.id).join(',');
+  // Where the ladder starts, in film time. A resume near the end must leave at least a few seconds to
+  // transcode; an impossible position falls back to the beginning rather than producing an empty job.
+  const durationMs = Number(sourceDurationMs) > 0 ? Number(sourceDurationMs) : 0;
+  let startMs = Math.max(0, Math.round(Number(positionMs) || 0));
+  if (durationMs > 0) startMs = Math.min(startMs, Math.max(0, durationMs - 5000));
   const tracks = audioTracksFor(audioTracks, audio);
   const audioKey = tracks.map((t) => t.streamIndex).join(',');
   const defaultIndex = audio && Number.isInteger(Number(audio.streamIndex))
     ? Number(audio.streamIndex)
     : (tracks[0] ? tracks[0].streamIndex : null);
-  // Same copy, same rungs and same audio set, still warming: wait on the job that already exists.
-  // Starting a new one would kill the ffmpeg that was seconds from producing the playlists.
+  // Same copy, same start, same rungs and same audio set, still warming: wait on the job that already
+  // exists. Starting a new one would kill the ffmpeg that was seconds from producing the playlists.
   for (const [existingId, existing] of jobs) {
     const sameRungs = existing.variants.map((v) => v.id).join(',') === wanted;
-    if (existing.url === String(url) && sameRungs && existing.audioKey === audioKey && !existing.failed
+    if (existing.url === String(url) && sameRungs && existing.audioKey === audioKey
+        && (existing.startMs || 0) === startMs && !existing.failed
         && Date.now() - existing.at < REUSE_WINDOW_MS) {
       existing.lastSeen = Date.now();
       const isReady = await waitForFirstPlaylists(existing, Date.now() + FIRST_PLAYLIST_WAIT_MS);
@@ -339,7 +353,7 @@ async function create({ url, headers, quality, sourceHeightPx, audio, audioTrack
     : [];
   const job = {
     id, dir, url: String(url), headers: headers || {}, variants, audio: audio || null,
-    audioTracks: tracks, audioRenditions, audioKey, defaultIndex, useAudioGroup,
+    startMs, audioTracks: tracks, audioRenditions, audioKey, defaultIndex, useAudioGroup,
     expected: variants.length + audioRenditions.length,
     started: false, failed: false,
     children: [], done: 0, at: Date.now(), lastSeen: Date.now(),
