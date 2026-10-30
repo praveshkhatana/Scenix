@@ -189,6 +189,7 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
     let req = null;
     let status = null;
     let contentType = null;
+    let fileName = null;
     let seekable = false;
     let bytes = 0;
     let head = '';
@@ -219,6 +220,7 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
         rateReliable,
         rateFloor,
         contentType,
+        fileName,
         seekable,
         sampleMs: rnd(transferMs), // how long the rate was measured over — honesty about the number
         checkedAt: Date.now(),
@@ -266,6 +268,16 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
         if (status < 200) return finish({ ok: false, error: 'HTTP ' + status });
 
         contentType = String(res.headers['content-type'] || '').toLowerCase() || null;
+        // The file's own name is the only cheap evidence about WHICH film answered. A provider can
+        // return a perfect MP4 for the wrong title; the filename is worth carrying to the picker.
+        const cd = String(res.headers['content-disposition'] || '');
+        const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+        const plain = /filename="?([^";]+)"?/i.exec(cd);
+        const rawName = star ? star[1] : (plain ? plain[1] : '');
+        if (rawName) {
+          try { fileName = decodeURIComponent(rawName).split(/[\\/]/).pop().slice(0, 180); }
+          catch (e) { fileName = rawName.split(/[\\/]/).pop().slice(0, 180); }
+        }
         seekable = status === 206 || /bytes/i.test(String(res.headers['accept-ranges'] || ''));
         res.on('data', (chunk) => {
           if (!firstByte) firstByte = process.hrtime.bigint();
@@ -493,6 +505,7 @@ function publicEntry(entry) {
     // faster than the timing window, so the divisor was clamped up instead of reporting rounding error.
     rateFloor: entry.rateFloor === true,
     contentType: entry.contentType || null,
+    fileName: entry.fileName || null,
     seekable: entry.seekable === true,
     error: entry.error || null,
     checkedAt: Number(entry.checkedAt) || null,

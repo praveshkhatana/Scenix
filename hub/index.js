@@ -1644,12 +1644,34 @@ async function mintedRefusal(o, deadline) {
     const v = await probe.check(o.url, headers, {
       timeoutMs: Math.max(300, Math.min(PLAY_VALIDATE_TIMEOUT_MS, left)),
     });
-    if (!v || v.ok !== false) return null;
+    if (!v) return null;
+    // Keep the measurement (including the filename) on the answer the picker is about to inspect.
+    o.probe = v;
+    if (v.ok !== false) return null;
     return v.reason || 'not a stream';
   } catch (e) {
     log('PLAY VALIDATE FAIL', e.message); // a check must never break a play
     return null;
   }
+}
+
+/**
+ * The filename behind a direct answer, compared with the title the viewer asked for.
+ *
+ * A provider can answer a perfect MP4 for a different film. The URL is opaque; the file's own name is
+ * the one cheap fact that says which film arrived. A generic name ("video.mp4", "stream", a bare hash)
+ * is no opinion; a name carrying a different title is enough to refuse the copy and walk on.
+ */
+function fileLooksLikeTitle(fileName, title) {
+  const file = String(fileName || '').toLowerCase().trim();
+  if (!file) return true;
+  const stem = file.replace(/\.[a-z0-9]{2,5}$/i, '');
+  if (/^(video|movie|stream|download|file|play|watch|media|index|master|chunk|source|untitled)$/i.test(stem)) return true;
+  if (stem.length < 3) return true;
+  const words = String(title || '').toLowerCase().split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !['the', 'and', 'of', 'for', 'with'].includes(w));
+  if (!words.length) return true;
+  return words.some((w) => stem.includes(w));
 }
 
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
@@ -1867,7 +1889,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // Debrid first: a magnet or a hoster link becomes ordinary HTTP and skips the swarm entirely. If it
     // says no, the torrent branch asks the gateway exactly as it did before this file existed.
     const viaDebrid = await tryDebrid(o, cand);
-    if (viaDebrid) { out = viaDebrid; source = cand; break; }
+    if (viaDebrid) {
+      if (!fileLooksLikeTitle(viaDebrid.fileName, kept.title)) {
+        tried.push(labelOf(cand) + ': file is named ' + viaDebrid.fileName);
+        log('PLAY TITLE MISMATCH', identity, labelOf(cand), viaDebrid.fileName);
+        continue;
+      }
+      out = viaDebrid; source = cand; break;
+    }
 
     if (cand.kind !== 'torrent') {
       // A service-page link — a Prime Video / Hotstar / Jio detail URL — is not media. It used to be
@@ -1902,6 +1931,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           }
           continue;
         }
+      }
+      if (!fileLooksLikeTitle((o.probe && o.probe.fileName) || (cand.probe && cand.probe.fileName), kept.title)) {
+        tried.push(labelOf(cand) + ': file is named ' + ((o.probe && o.probe.fileName) || ''));
+        log('PLAY TITLE MISMATCH', identity, labelOf(cand), (o.probe && o.probe.fileName) || '');
+        continue;
       }
       out = o; source = cand; break;
     }
