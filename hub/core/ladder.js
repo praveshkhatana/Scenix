@@ -61,6 +61,16 @@ function variantsFor(quality, maxHeight) {
 
 const jobs = new Map();
 
+// A hub restart leaves the previous process's directories behind. They are not part of any live job,
+// so remove them once at boot rather than letting a 1 GB transcode sit in data/ladder forever.
+try {
+  if (fs.existsSync(LADDER_DIR)) {
+    for (const name of fs.readdirSync(LADDER_DIR)) {
+      if (!jobs.has(name)) fs.rmSync(path.join(LADDER_DIR, name), { recursive: true, force: true });
+    }
+  }
+} catch (e) { /* best effort */ }
+
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
 function masterText(id, variants) {
