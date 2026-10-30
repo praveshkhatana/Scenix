@@ -23,6 +23,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -408,6 +409,9 @@ class PlayerActivity : Activity() {
             // What this decoder can actually draw. A hub that knows the codecs cannot hand over a
             // file whose video this panel will refuse after the first frame.
             .put("codecs", supportedCodecs())
+            // Opt-in at the hub: an owner may ask for the transcoded HLS ladder. The hub ignores this
+            // when the setting is off and returns the copy it would have returned anyway.
+            .put("ladder", true)
             .put("positionMs", positionMs.coerceAtLeast(0L))
         if (spec.season > 0 && spec.episode > 0) {
             body.put("season", spec.season).put("episode", spec.episode)
@@ -1290,7 +1294,8 @@ class PlayerActivity : Activity() {
             }
             scroll.addView(rows)
             box.addView(scroll, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(560f)
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                theme.px(if (kind == MenuKind.EPISODES) 620f else 560f)
             ))
         } else {
             box.addView(rows, LinearLayout.LayoutParams(
@@ -1298,7 +1303,8 @@ class PlayerActivity : Activity() {
             ))
         }
 
-        val width = theme.px(560f)
+        // Episode rows carry a still and two lines of copy, so the sheet is wider than a track list.
+        val width = theme.px(if (kind == MenuKind.EPISODES) 700f else 560f)
         val container = FrameLayout(this)
         container.addView(box, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT))
         val bottom = (bottomBar.height + theme.px(16f)).coerceAtLeast(theme.px(190f))
@@ -1554,21 +1560,75 @@ class PlayerActivity : Activity() {
             shown++
             val se = ep.optInt("season", 1)
             val number = ep.optInt("episode", shown)
-            val title = str(ep, "title")
             val here = se == s.season && number == s.episode
-            parent.addView(menuRow(
-                "E%02d".format(number) + if (title.isNotBlank()) " · $title" else "",
-                "", here,
-            ) {
+            parent.addView(episodeRow(ep, number, here) {
                 if (here) {
                     closeMenu()
-                    return@menuRow
+                    return@episodeRow
                 }
                 closeMenu(restore = false)
-                open(PlaySpec(s.identity, s.type, se, number, title.ifBlank { s.title }), 0L)
+                open(PlaySpec(s.identity, s.type, se, number,
+                    str(ep, "title").ifBlank { s.title }), 0L)
             })
         }
         if (shown == 0) parent.addView(noteRow("The hub listed no episodes for this season"))
+    }
+
+    /**
+     * One episode row of the Episodes menu: the episode's own still on the left, number and title
+     * bold beside it, the synopsis in one quiet line below. A plain text row reads as a settings
+     * option; the still makes it read as a list of things to watch, which is what it is.
+     */
+    private fun episodeRow(ep: JSONObject, number: Int, here: Boolean, action: () -> Unit): LinearLayout {
+        val title = str(ep, "title")
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(theme.px(10f), theme.px(9f), theme.px(14f), theme.px(9f))
+            background = Views.rounded(
+                if (here) theme.color("surface2", "#232323") else Color.TRANSPARENT,
+                theme.radius("listItem", 6f),
+            )
+            isFocusable = true
+            isClickable = true
+            setOnClickListener { action() }
+        }
+        val radius = theme.radius("card", 6f).toFloat()
+        val thumb = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(theme.surface2)
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, v.width, v.height, radius)
+                }
+            }
+        }
+        row.addView(thumb, LinearLayout.LayoutParams(theme.px(150f), theme.px(84f)))
+        BrowseImages.load(thumb, str(ep, "thumb"), theme.px(150f))
+        val copy = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(14f), 0, 0, 0)
+        }
+        copy.addView(Views.text(app, "panelRow", 22f,
+            if (here) theme.color("panelValue", "#F2C33A") else theme.ink,
+            (if (here) "✓  " else "") + "E%02d".format(number) +
+                if (title.isNotBlank()) " · $title" else "",
+            bold = true, maxLines = 1))
+        val synopsis = str(ep, "synopsis")
+        if (synopsis.isNotBlank()) {
+            copy.addView(Views.text(app, "panelNote", 17f, theme.ink3, synopsis, maxLines = 1),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = theme.px(5f) })
+        }
+        row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        Focus.attach(row, row, app, theme.radius("listItem", 6f), scale = false, elevate = false)
+        row.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(106f)
+        ).apply { topMargin = theme.space("panelRowGap", 10f) }
+        panelRows = panelRows + row
+        return row
     }
 
     private fun selectedRowIndex(kind: MenuKind): Int = when (kind) {

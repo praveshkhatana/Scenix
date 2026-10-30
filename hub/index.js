@@ -94,6 +94,8 @@ const { origin } = require('./core/origin');
 // Both are read-only against the engine's own stream URL and both report themselves in /healthz.
 const media = require('./core/media');
 const remux = require('./core/remux');
+const ladder = require('./core/ladder');
+const fingerprint = require('./core/fingerprint');
 const introdb = require('./core/introdb');
 // The hub's own read-ahead: one bounded cushion of torrent bytes per copy, shared by the player, the
 // remuxer and the Play press that measures the copy before promising it. See core/readahead.js.
@@ -253,6 +255,8 @@ function capabilities() {
   // A flag only when the resolver can actually do something. Off, unconfigured or missing a token means
   // the capability is absent, exactly like an uninstalled addon: the clients need no "debrid is off" state.
   if (d.ready === true) caps.debrid = true;
+  // The ladder exists only when this build has ffmpeg; the setting still decides whether a play uses it.
+  if (remux.status().binFound === true) caps.adaptive = true;
   return caps;
 }
 
@@ -1937,6 +1941,19 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         log('PLAY TITLE MISMATCH', identity, labelOf(cand), (o.probe && o.probe.fileName) || '');
         continue;
       }
+      // A file with the right name can still be a different cut. Its own duration is the cheapest
+      // content fingerprint available before the player opens it.
+      if (kept.type === 'movie' && Number(kept.durationMs) > 0) {
+        const fp = await fingerprint.duration(o.url, o.headers, 2600);
+        if (fp && fp.ok && !fingerprint.matches(kept.durationMs, fp.durationMs)) {
+          tried.push(labelOf(cand) + ': runs ' + Math.round(fp.durationMs / 60000)
+            + ' min against a ' + Math.round(Number(kept.durationMs) / 60000) + ' min film');
+          log('PLAY DURATION MISMATCH', identity, labelOf(cand),
+            'file=' + Math.round(fp.durationMs / 60000) + 'min',
+            'title=' + Math.round(Number(kept.durationMs) / 60000) + 'min');
+          continue;
+        }
+      }
       out = o; source = cand; break;
     }
 
@@ -2621,6 +2638,47 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       'intro: IntroDB marks the opening at ' + Math.round(intro.startMs / 1000) + '–'
       + Math.round(intro.endMs / 1000) + ' s',
     );
+  }
+  // Optional adaptive ladder. It is deliberately the last step: the picker has already chosen a
+  // copy, audio/subtitles have been settled, and a donor mix is not something a transcoder should
+  // silently replace. Only one source, transcoded into aligned variants, so the player switches
+  // between renditions of the same timeline rather than between unrelated files.
+  const adaptive = settings.get().adaptive || {};
+  if (opts.ladder === true && adaptive.enabled === true && adaptive.transcode !== false
+      // A ladder is generated from the beginning of the film. Resuming at 04:41 would make the
+      // player wait for three transcoders to reach that point before it could show a frame, so a
+      // resume keeps the direct copy; a fresh Play gets ABR.
+      && Number(opts.positionMs || 0) <= 1000
+      && out && out.url && !out.live && !out.remuxed && !out.audioMix && out.kind !== 'hls') {
+    try {
+      const built = await ladder.create({
+        url: out.url,
+        headers: out.headers || {},
+        quality: out.picked && out.picked.quality,
+      });
+      if (built && built.ready) {
+        const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
+        out.url = base + built.path;
+        out.kind = 'hls';
+        out.mode = 'ladder';
+        out.container = 'hls';
+        out.proxied = true;
+        out.remuxed = true;
+        // The ladder has one audio rendition (the first track). The player can still expose the
+        // tracks HLS carries, but the hub is not going to claim language selection it did not encode.
+        out.audioTracks = [];
+        out.selectedAudio = null;
+        out.subtitleTracks = [];
+        out.selectedSub = null;
+        out.ladder = { id: built.id, variants: built.variants || [] };
+        extraWhy.push('adaptive ladder: ' + (built.variants || []).join('/') + ', aligned segments');
+        log('LADDER PLAY', identity, built.id, 'source=' + String(out.picked && out.picked.label || '').slice(0, 60));
+      } else if (built) {
+        extraWhy.push('adaptive ladder warming; playing the chosen copy directly');
+      }
+    } catch (e) {
+      log('LADDER FAIL', identity, e.message);
+    }
   }
   return { status: 200, body: out };
 }
@@ -3475,6 +3533,9 @@ async function handle(req, res) {
     // indexes, which is what lets the same id drive a native track selection and an ffmpeg `-map`.
     if (path === '/app/v1/remux' && req.method === 'GET') return remux.serve(req, res, u, corsHeaders(), media.peek);
 
+    m = /^\/app\/v1\/ladder\/([a-f0-9]+)\/(.+)$/.exec(path);
+    if (m && req.method === 'GET') return ladder.serve(req, res, corsHeaders(), m[1], m[2]);
+
     m = /^\/app\/v1\/hls\/([^/]+)\/([^/]+)$/.exec(path);
     if (m && req.method === 'GET') return remux.hlsServe(req, res, u, corsHeaders(), m[1], m[2]);
 
@@ -3496,7 +3557,7 @@ async function handle(req, res) {
           positionMs: body.positionMs,
           // Which video codecs this device can draw. Not a preference and never inferred here: the client
           // states it, and it decides which copies are worth offering this screen at all.
-          codecs: body.codecs });
+          codecs: body.codecs, ladder: body.ladder === true });
       return send(res, picked.status, picked.body);
     }
 
@@ -3516,7 +3577,7 @@ async function handle(req, res) {
           // Where the viewer already is, so the hub measures and pre-buffers the part of the file they are
           // about to watch instead of the part they watched an hour ago.
           positionMs: body.positionMs,
-          codecs: body.codecs });
+          codecs: body.codecs, ladder: body.ladder === true });
       return send(res, picked.status, picked.body);
     }
 

@@ -44,7 +44,11 @@ cd ~/$DEST
 # login PATH; when the hub's own bin/ has them, pass the absolute paths so a deploy cannot silently turn
 # the feature off again.
 FF_ENV=""
-if [ -x "\$HOME/$DEST/bin/ffmpeg" ]; then
+if [ -x "\$HOME/$DEST/bin/ffmpeg-btb" ]; then
+  # The newer build is the one that can transcode HTTP for the opt-in ladder; the older static build
+  # remains the fallback for remux-only installs.
+  FF_ENV="FFMPEG_BIN=\$HOME/$DEST/bin/ffmpeg-btb FFPROBE_BIN=\$HOME/$DEST/bin/ffprobe-btb"
+elif [ -x "\$HOME/$DEST/bin/ffmpeg" ]; then
   FF_ENV="FFMPEG_BIN=\$HOME/$DEST/bin/ffmpeg FFPROBE_BIN=\$HOME/$DEST/bin/ffprobe"
 fi
 # Kill only OUR hub: the process whose working directory is ~/$DEST. This box runs other services and a

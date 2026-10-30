@@ -109,6 +109,10 @@ const DEFAULTS = {
     starvedHoldMs: 900000,   // how long a copy that starved a viewer stays out of favour
   },
 
+  // Optional adaptive ladder (core/ladder.js). Off: the hub normally copies the chosen video rather
+  // than transcoding it. When on, a Play press can return one HLS master with 1080/720/480 variants
+  // generated on this machine, so the player can change quality mid-film instead of rebuffering.
+  adaptive: { enabled: false, transcode: true },
   // Optional debrid/direct resolver (core/debrid.js). Off, with no provider and no token, because a
   // paid account is the owner's decision and must never be required for this hub to work. When it is
   // configured, a magnet or a file-hoster link can become an ordinary HTTP stream before the torrent
@@ -336,6 +340,10 @@ function normalize(s) {
         ? DEFAULTS.avatar.wikiApi : (s.avatar || {}).wikiApi).trim().slice(0, 300),
     },
     playback: normalizePlayback(s.playback),
+    adaptive: {
+      enabled: (s.adaptive || {}).enabled === true,
+      transcode: (s.adaptive || {}).transcode !== false,
+    },
     debrid: normalizeDebrid(s.debrid),
   };
   // Anything the owner put in the file that this build does not know about is kept, so an older hub

@@ -526,6 +526,11 @@ export function screen(ctx) {
       const pb = setting.playback;
       const g3 = group('Playback smoothness',
         'What the hub does with the bytes of a film so it does not stop halfway. Saved the moment it is changed.');
+      const ad = setting.adaptive || {};
+      toggle(g3, 'Build an adaptive quality ladder',
+        'On: a Play press may return one HLS master with 1080/720/480 variants transcoded on this hub, so the player can drop quality mid-film instead of rebuffering. Off keeps playback copy-only. This costs hub CPU and disk.',
+        !!ad.enabled,
+        canHubSetting() ? async (v) => { await writeSettings({ adaptive: Object.assign({}, ad, { enabled: v }) }); paint(); } : null);
       toggle(g3, 'Hold a window of the film in memory',
         pb.readAhead
           ? 'The hub reads ahead of the player into its own memory, so a torrent that bursts and pauses still plays like a file on a server.'
