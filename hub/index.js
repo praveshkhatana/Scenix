@@ -1714,7 +1714,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const prefAudio = (prefs.resolve(profile).audioLanguages || []).map((c) => media.langOf(c));
   let source = candidates[0];
   if (wanted) {
-    const match = candidates.find((s) => (wanted.label && s.label === wanted.label)
+    // The id is the exact handle the picker sent. Label/provider are only fallbacks: several copies
+    // can share a provider, and choosing the first of them is how "try this 1080p copy" became a
+    // different file.
+    const match = candidates.find((s) => (wanted.id && s.id === wanted.id)
+      || (wanted.label && s.label === wanted.label)
       || (wanted.provider && (s._addon === wanted.provider || s.provider === wanted.provider)));
     if (match) source = match;
   }
@@ -2532,6 +2536,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   out.type = kept.type || (out.kind === 'hls' ? 'channel' : 'movie');
   out.live = out.type === 'channel';
   out.title = kept.title || null;
+  // The identity this answer belongs to. A client can refuse a reply that names another title rather
+  // than putting a different film on screen because a provider answered the wrong address.
+  out.identity = identity;
   // A provider that returned a URL has already proved the copy exists somewhere reachable, so a source
   // row that said "down" because nobody was seeding it stops being the answer the player sees.
   out.status = out.debrid ? 'available' : (source.status || null);

@@ -42,12 +42,18 @@ object Ceilings {
     /** 30 s behind (rewind without re-requesting) and 120 s ahead, from config/theme. */
     fun loadControl(app: AppContext): DefaultLoadControl {
         val theme = app.theme
+        // Start after a short cushion, not a full five seconds: on a cold copy the first frame is the
+        // thing the viewer is waiting for. Keep a much larger forward buffer so a slower patch does
+        // not immediately drain it, and give a rebuffer a little more room than the first start.
+        val playback = theme.playerPlaybackBufferMs.coerceIn(1_500, 3_000)
+        val min = theme.playerMinBufferMs.coerceAtLeast(12_000)
+        val forward = theme.playerForwardBufferMs.coerceAtLeast(60_000)
         return DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                theme.playerMinBufferMs,
-                theme.playerForwardBufferMs,
-                theme.playerPlaybackBufferMs,
-                theme.playerPlaybackBufferMs * 2,
+                min,
+                forward,
+                playback,
+                (playback * 2).coerceAtLeast(3_000),
             )
             .setBackBuffer(theme.playerBackBufferMs, true)
             .setPrioritizeTimeOverSizeThresholds(true)

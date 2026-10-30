@@ -112,6 +112,7 @@ class LocalServer private constructor(
                 if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
                 else {
                     val answered = hub.playJson(o)
+                    if (!answered.has("identity")) answered.put("identity", o.optString("identity", ""))
                     // A local torrent answer is a path this server owns. Make it absolute for the page
                     // and the native player, which do not share this server's base URL otherwise.
                     val u = answered.optString("url", "")

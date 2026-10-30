@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.MediaCodecList
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -111,7 +112,36 @@ class PlayerActivity : Activity() {
     private var requestGen = 0
     private var subsGen = 0
     private var failovers = 0
-    private var sameCopyRetried = false
+    private var sameCopyRetries = 0
+    private var bufferingSince = 0L
+    private var recoveryScheduled = false
+    /**
+     * A copy that is still filling is not a copy that failed. The watchdog waits before spending the
+     * retry/failover budget; an ExoPlayer error still gets its own two soft reloads first.
+     */
+    private val stallCheck = Runnable {
+        if (isFinishing || isDestroyed) return@Runnable
+        val p = player ?: return@Runnable
+        if (p.playbackState != Player.STATE_BUFFERING) {
+            bufferingSince = 0L
+            return@Runnable
+        }
+        val pos = p.currentPosition.coerceAtLeast(0L)
+        if (sameCopyRetries < 2) {
+            sameCopyRetries++
+            showCenter("Still loading this copy…", true)
+            handler.postDelayed({
+                if (!isFinishing) answer?.let { start(it, pos, playWhenReady = true) }
+            }, 1200L)
+            bufferingSince = 0L
+            return@Runnable
+        }
+        if (!recoveryScheduled) {
+            recoveryScheduled = true
+            showCenter("This copy is taking too long — trying a lighter one…", true)
+            failoverToNext(preferLower = true)
+        }
+    }
     private val tried = LinkedHashSet<String>()
     private var liveChannels: List<Item> = emptyList()
     private var liveLoaded = false
@@ -259,8 +289,8 @@ class PlayerActivity : Activity() {
     private fun buildPlayer() {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Scenix/0.1")
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(60000)
+            .setConnectTimeoutMs(10000)
+            .setReadTimeoutMs(30000)
             .setAllowCrossProtocolRedirects(true)
         http = httpFactory
 
@@ -312,9 +342,16 @@ class PlayerActivity : Activity() {
             when (state) {
                 Player.STATE_BUFFERING -> {
                     if (!errorShowing) showCenter(if (live) "Tuning…" else "Buffering…", true)
+                    if (bufferingSince == 0L) {
+                        bufferingSince = System.currentTimeMillis()
+                        handler.removeCallbacks(stallCheck)
+                        handler.postDelayed(stallCheck, STALL_AFTER_MS)
+                    }
                     updatePlayLabel()
                 }
                 Player.STATE_READY -> {
+                    bufferingSince = 0L
+                    handler.removeCallbacks(stallCheck)
                     hideCenter()
                     durationMs = player?.duration?.takeIf { it > 0 } ?: durationMs
                     speed = player?.playbackParameters?.speed ?: speed
@@ -332,6 +369,10 @@ class PlayerActivity : Activity() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             updatePlayLabel()
+            if (isPlaying) {
+                bufferingSince = 0L
+                handler.removeCallbacks(stallCheck)
+            }
             if (!isPlaying) saveProgress(force = true) else armHide()
         }
 
@@ -358,6 +399,9 @@ class PlayerActivity : Activity() {
             // A television plays the copy's own container; asking for MP4/HLS would put a re-wrap on
             // the hub for no reason and throw away E-AC3/DTS passthrough.
             .put("container", "any")
+            // What this decoder can actually draw. A hub that knows the codecs cannot hand over a
+            // file whose video this panel will refuse after the first frame.
+            .put("codecs", supportedCodecs())
             .put("positionMs", positionMs.coerceAtLeast(0L))
         if (spec.season > 0 && spec.episode > 0) {
             body.put("season", spec.season).put("episode", spec.episode)
@@ -369,6 +413,42 @@ class PlayerActivity : Activity() {
         return body
     }
 
+    /** The video/audio families this decoder advertises, in the names the hub's ranking speaks. */
+    private fun supportedCodecs(): JSONArray {
+        val out = JSONArray()
+        val seen = LinkedHashSet<String>()
+        fun add(name: String) { if (name.isNotBlank() && seen.add(name)) out.put(name) }
+        try {
+            for (info in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
+                if (info.isEncoder) continue
+                for (mime in info.supportedTypes) {
+                    when (mime.lowercase()) {
+                        "video/avc" -> add("h264")
+                        "video/hevc", "video/dolby-vision" -> add("hevc")
+                        "video/av01" -> add("av1")
+                        "video/x-vnd.on2.vp9" -> add("vp9")
+                        "video/mp4v-es" -> add("mpeg4")
+                        "audio/mp4a-latm" -> add("aac")
+                        "audio/ac3" -> add("ac3")
+                        "audio/eac3" -> add("eac3")
+                        "audio/opus" -> add("opus")
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            // A codec table that cannot be read is not a reason to fail a play; it just means the
+            // hub filters nothing.
+        }
+        return out
+    }
+
+    private fun sameTitle(a: String, b: String): Boolean {
+        fun norm(x: String) = x.lowercase().replace(Regex("[^a-z0-9]+"), "").trim()
+        val na = norm(a)
+        val nb = norm(b)
+        return na.isNotEmpty() && nb.isNotEmpty() && na == nb
+    }
+
     private fun open(spec: PlaySpec, positionMs: Long) {
         saveProgress(force = true)
         this.spec = spec
@@ -377,7 +457,9 @@ class PlayerActivity : Activity() {
         displayTitle = spec.title
         tried.clear()
         failovers = 0
-        sameCopyRetried = false
+        sameCopyRetries = 0
+        bufferingSince = 0L
+        recoveryScheduled = false
         mixDisabled = false
         mixHint = null
         introStartMs = 0L
@@ -408,14 +490,14 @@ class PlayerActivity : Activity() {
         showChrome(focus = true)
         showCenter("Preparing this copy…", true)
         requestSubs(spec.identity)
-        resolvePlay(spec, positionMs, WARM_TRIES)
+        resolvePlay(spec, positionMs, WARM_TRIES, null)
         if (live) prefetchLiveChannels()
     }
 
     /** Ask the hub for the copy. Warming answers are retried; only a real refusal becomes an error. */
-    private fun resolvePlay(spec: PlaySpec, positionMs: Long, warmTries: Int) {
+    private fun resolvePlay(spec: PlaySpec, positionMs: Long, warmTries: Int, source: JSONObject?) {
         val gen = ++requestGen
-        api.play(bodyFor(spec, positionMs, null, emptySet())) { reply, status, transport ->
+        api.play(bodyFor(spec, positionMs, source, emptySet())) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@play
             val url = str(reply, "url")
             val warming = status == 503 || reply?.optBoolean("warming", false) == true
@@ -423,7 +505,7 @@ class PlayerActivity : Activity() {
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 showCenter("The hub is preparing this copy…", true)
                 handler.postDelayed({
-                    if (gen == requestGen && !isFinishing) resolvePlay(spec, positionMs, warmTries - 1)
+                    if (gen == requestGen && !isFinishing) resolvePlay(spec, positionMs, warmTries - 1, source)
                 }, wait)
                 return@play
             }
@@ -433,13 +515,31 @@ class PlayerActivity : Activity() {
                 showError(why)
                 return@play
             }
-            sameCopyRetried = false
+            sameCopyRetries = 0
+            recoveryScheduled = false
             start(reply!!, positionMs, playWhenReady = true)
         }
     }
 
     /** The answer is good: turn it into a MediaItem and start. Used for play, switch and retry. */
     private fun start(reply: JSONObject, positionMs: Long, playWhenReady: Boolean) {
+        bufferingSince = 0L
+        handler.removeCallbacks(stallCheck)
+        // A hub answer must belong to the title this screen opened. If a provider or a stale route
+        // answers another identity, refuse it instead of putting a different film on screen.
+        val expected = spec
+        val answerIdentity = str(reply, "identity")
+        if (expected != null && answerIdentity.isNotBlank() &&
+            expected.identity.isNotBlank() && answerIdentity != expected.identity) {
+            showError("The hub answered a different title. Nothing was started.")
+            return
+        }
+        val answerTitle = str(reply, "title")
+        if (expected != null && !live && answerTitle.isNotBlank() && expected.title.isNotBlank() &&
+            !sameTitle(answerTitle, expected.title)) {
+            showError("The hub answered a different title. Nothing was started.")
+            return
+        }
         clearError()
         answer = reply
         val type = str(reply, "type", spec?.type ?: "movie")
@@ -738,14 +838,15 @@ class PlayerActivity : Activity() {
         val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
             name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
         val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
-        if (waiting && !sameCopyRetried) {
-            // A cold copy is not a broken file. One silent reload at the same playhead is the cheapest
-            // correct answer, and it is what the web player does.
-            sameCopyRetried = true
+        if (waiting && sameCopyRetries < 2) {
+            // A cold copy is not a broken file. Two silent reloads at the same playhead, with a little
+            // more room each time, are cheaper than throwing away a copy that is still filling.
+            sameCopyRetries++
             showCenter(if (live) "Reconnecting to this channel…" else "Reconnecting to this copy…", true)
+            val wait = if (sameCopyRetries == 1) 1200L else 2600L
             handler.postDelayed({
                 if (!isFinishing) answer?.let { start(it, pos, playWhenReady = true) }
-            }, 1200L)
+            }, wait)
             return
         }
         answer?.optJSONObject("picked")?.let {
@@ -761,16 +862,66 @@ class PlayerActivity : Activity() {
         val exclude = tried.toMutableSet()
         val body = bodyFor(spec, pos, null, exclude)
         showCenter("This copy stopped — trying another…", true)
+        val lower = lowerAlternative()
+        if (preferLowerSource(lower, spec, pos)) return
         askSwitch(body, pos, playWhenReady = true, warmTries = 4, automatic = true)
     }
 
-    private fun failoverToNext() {
+    private fun failoverToNext(preferLower: Boolean = false) {
         val spec = spec ?: return
         val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
-        val exclude = tried.toMutableSet()
         clearError()
+        if (preferLower) {
+            val lower = lowerAlternative()
+            if (preferLowerSource(lower, spec, pos)) return
+        }
+        val exclude = tried.toMutableSet()
         showCenter("Trying another copy…", true)
         askSwitch(bodyFor(spec, pos, null, exclude), pos, playWhenReady = true, warmTries = 4, automatic = true)
+    }
+
+    /** The best untried copy that is lighter than the one we are on, or null. */
+    private fun lowerAlternative(): JSONObject? {
+        val current = answer?.optJSONObject("picked") ?: return null
+        val currentScore = qualityScore(str(current, "label"))
+        if (currentScore <= 0) return null
+        var best: JSONObject? = null
+        var bestScore = -1
+        for (i in 0 until alternatives.length()) {
+            val alt = alternatives.optJSONObject(i) ?: continue
+            val id = str(alt, "id")
+            val label = str(alt, "label")
+            if ((id.isNotBlank() && tried.contains(id)) || (label.isNotBlank() && tried.contains(label))) continue
+            val score = qualityScore(label)
+            if (score > 0 && score < currentScore && score > bestScore) {
+                best = alt
+                bestScore = score
+            }
+        }
+        return best
+    }
+
+    private fun preferLowerSource(source: JSONObject?, spec: PlaySpec, pos: Long): Boolean {
+        if (source == null) return false
+        val picked = JSONObject()
+            .put("id", str(source, "id"))
+            .put("label", str(source, "label"))
+            .put("provider", str(source, "provider"))
+        showCenter("Trying a lighter copy…", true)
+        askSwitch(bodyFor(spec, pos, picked, tried.toMutableSet()), pos,
+            playWhenReady = true, warmTries = 3, automatic = true)
+        return true
+    }
+
+    private fun qualityScore(label: String): Int {
+        val l = label.lowercase()
+        return when {
+            l.contains("2160") || l.contains("4k") -> 4
+            l.contains("1080") -> 3
+            l.contains("720") -> 2
+            l.contains("480") -> 1
+            else -> 0
+        }
     }
 
     private fun askSwitch(
@@ -808,7 +959,8 @@ class PlayerActivity : Activity() {
                 }
                 return@switchSource
             }
-            sameCopyRetried = false
+            sameCopyRetries = 0
+            recoveryScheduled = false
             start(reply!!, positionMs, playWhenReady)
             if (!automatic) setStatus("Switched to ${currentSourceLabel.ifBlank { "another copy" }}")
         }
@@ -1214,7 +1366,16 @@ class PlayerActivity : Activity() {
         audioApplied = false
         closeMenu()
         showCenter(if (mix) "Loading the mixed audio…" else "Loading the original audio…", true)
-        resolvePlay(spec, pos, WARM_TRIES)
+        // Keep the copy the viewer is already watching: a language toggle must not re-open the whole
+        // title and land on a different provider's file.
+        val picked = answer?.optJSONObject("picked")
+        val source = picked?.let {
+            JSONObject()
+                .put("id", str(it, "id"))
+                .put("label", str(it, "label"))
+                .put("provider", str(it, "provider"))
+        }
+        resolvePlay(spec, pos, WARM_TRIES, source)
     }
 
     private fun subtitleRows(parent: LinearLayout) {
@@ -1711,9 +1872,10 @@ class PlayerActivity : Activity() {
         val pos = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
         tried.clear()
         failovers = 0
-        sameCopyRetried = false
+        sameCopyRetries = 0
+        recoveryScheduled = false
         showCenter("Preparing this copy…", true)
-        resolvePlay(spec, pos, WARM_TRIES)
+        resolvePlay(spec, pos, WARM_TRIES, null)
     }
 
     private fun clearError() {
@@ -1943,7 +2105,9 @@ class PlayerActivity : Activity() {
         answer = null
         tried.clear()
         failovers = 0
-        sameCopyRetried = false
+        sameCopyRetries = 0
+        bufferingSince = 0L
+        recoveryScheduled = false
         mixDisabled = false
         mixHint = null
         introStartMs = 0L
@@ -1971,7 +2135,7 @@ class PlayerActivity : Activity() {
         showChrome(focus = true)
         showCenter("Tuning…", true)
         requestSubs(spec.identity)
-        resolvePlay(spec, 0L, WARM_TRIES)
+        resolvePlay(spec, 0L, WARM_TRIES, null)
     }
 
     private fun showZapBadge(item: Item) {
@@ -2468,6 +2632,7 @@ class PlayerActivity : Activity() {
         const val EXTRA_ADVISORIES = "advisories"
 
         private const val TAG = "ScenixPlayer"
+        private const val STALL_AFTER_MS = 12_000L
         private const val GLYPH_PLAY = 0
         private const val GLYPH_BACK10 = 1
         private const val GLYPH_FORWARD30 = 2
