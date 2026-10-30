@@ -1787,6 +1787,10 @@ const LABEL_NOISE = new Set([
   'uncut', 'director', 'imax', 'cam', 'hdrip', 'x264', 'x265', 'h264', 'h265', 'hevc', 'avc', 'av1',
   '10bit', '8bit', 'mb', 'gb', 'kb', 'fps', 'hls', 'dash', 'stream', 'direct', 'auto', 'best',
   'source', 'season', 'episode', 'series', 'movie', 'special', 'complete',
+  // Three-letter language codes are common in parentheses: `(Eng)`, `(Hin)`, `(Tam)`.
+  'eng', 'hin', 'tam', 'tel', 'mal', 'kan', 'ben', 'mar', 'pan', 'urd', 'guj', 'spa', 'fre',
+  'fra', 'ger', 'deu', 'jpn', 'kor', 'chi', 'zho', 'ara', 'rus', 'por', 'ita', 'dut', 'nld',
+  'tur', 'tha', 'vie', 'ind', 'ddp', 'ddp5', 'aac2', 'ac3', 'eac3', 'truehd', 'flac', 'opus',
 ]);
 
 function looksLikeAnotherTitle(candidate, title) {
@@ -1796,7 +1800,8 @@ function looksLikeAnotherTitle(candidate, title) {
     .replace(/\b\d{1,2}x\d{1,3}\b/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
-  const words = clean.split(/\s+/).filter((w) => w.length >= 3 && !LABEL_NOISE.has(w));
+  const words = clean.split(/\s+/).filter((w) => w.length >= 3 && !LABEL_NOISE.has(w)
+    && !/^(?:aac|ac3|eac3|ddp|dd|h26[45]|x26[45]|hevc|avc|av1|hdr|uhd|1080|720|480|2160|1440)/.test(w));
   if (!words.length) return false;
   const wanted = String(title || '').toLowerCase().split(/[^a-z0-9]+/)
     .filter((w) => w.length >= 3 && !['the', 'and', 'of', 'for', 'with'].includes(w));
