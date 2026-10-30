@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.net.Uri
 import android.os.Bundle
@@ -97,6 +98,8 @@ class PlayerActivity : Activity() {
     private var displayTitle = ""
     private var currentSourceLabel = ""
     private var audioTracks = JSONArray()
+    /** Languages this title can play, including donors the hub can mix into the picture. */
+    private var audioOptions = JSONArray()
     private var embeddedSubs = JSONArray()
     private var hubSubs = JSONArray()
     private var subsInItem = 0
@@ -486,7 +489,20 @@ class PlayerActivity : Activity() {
                 for (mime in info.supportedTypes) {
                     when (mime.lowercase()) {
                         "video/avc" -> add("h264")
-                        "video/hevc", "video/dolby-vision" -> add("hevc")
+                        "video/hevc", "video/dolby-vision" -> {
+                            // A decoder that lists HEVC but only the 8-bit Main profile will open a
+                            // 10-bit source and then fail with NO_EXCEEDS_CAPABILITIES, which is the
+                            // black-screen-with-sound failure. Only advertise HEVC when Main10 is
+                            // actually in its profile list, and stop advertising it after a decode
+                            // failure taught this panel that the list was optimistic.
+                            if (!app.prefs.hevcBlocked()) {
+                                val caps = runCatching { info.getCapabilitiesForType(mime) }.getOrNull()
+                                val main10 = caps?.profileLevels?.any {
+                                    it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10
+                                } == true
+                                if (main10) add("hevc")
+                            }
+                        }
                         "video/av01" -> add("av1")
                         "video/x-vnd.on2.vp9" -> add("vp9")
                         "video/mp4v-es" -> add("mpeg4")
@@ -562,9 +578,17 @@ class PlayerActivity : Activity() {
     }
 
     /** Ask the hub for the copy. Warming answers are retried; only a real refusal becomes an error. */
-    private fun resolvePlay(spec: PlaySpec, positionMs: Long, warmTries: Int, source: JSONObject?) {
+    private fun resolvePlay(
+        spec: PlaySpec,
+        positionMs: Long,
+        warmTries: Int,
+        source: JSONObject?,
+        extra: JSONObject? = null,
+    ) {
         val gen = ++requestGen
-        api.play(bodyFor(spec, positionMs, source, emptySet())) { reply, status, transport ->
+        val body = bodyFor(spec, positionMs, source, emptySet())
+        extra?.let { for (key in it.keys()) body.put(key, it.get(key)) }
+        api.play(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@play
             val url = str(reply, "url")
             val warming = status == 503 || reply?.optBoolean("warming", false) == true
@@ -572,7 +596,9 @@ class PlayerActivity : Activity() {
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 showCenter("The hub is preparing this copy…", true)
                 handler.postDelayed({
-                    if (gen == requestGen && !isFinishing) resolvePlay(spec, positionMs, warmTries - 1, source)
+                    if (gen == requestGen && !isFinishing) {
+                        resolvePlay(spec, positionMs, warmTries - 1, source, extra)
+                    }
                 }, wait)
                 return@play
             }
@@ -608,6 +634,9 @@ class PlayerActivity : Activity() {
             return
         }
         clearError()
+        // A failed source pick writes a status line; the new copy starting is the moment that line
+        // stops being true. Leaving it up is how "not available" sat on screen over a playing film.
+        setStatus("")
         answer = reply
         val type = str(reply, "type", spec?.type ?: "movie")
         live = reply.optBoolean("live", false) || type == "channel" || type == "live"
@@ -616,6 +645,7 @@ class PlayerActivity : Activity() {
         nextEpisode = reply.optJSONObject("nextEpisode")
         alternatives = reply.optJSONArray("alternatives") ?: JSONArray()
         audioTracks = reply.optJSONArray("audioTracks") ?: JSONArray()
+        audioOptions = reply.optJSONArray("audioOptions") ?: JSONArray()
         introStartMs = reply.optLong("introStartMs", 0L)
         introEndMs = reply.optLong("introEndMs", 0L)
         if (introEndMs <= 0L) skipChip?.visibility = View.GONE
@@ -988,6 +1018,13 @@ class PlayerActivity : Activity() {
         if (isFinishing || isDestroyed) return
         val name = error.errorCodeName
         Log.w(TAG, "playback error " + name + " / " + error.errorCode + " / " + error.message)
+        val detail = (error.message ?: "").lowercase()
+        if (!app.prefs.hevcBlocked() && (detail.contains("hevc") || detail.contains("hvc1"))) {
+            // The file reached the decoder; the decoder is the part that could not draw it. Remember
+            // that for this panel, then let the normal failover ask the hub for an H.264 copy.
+            app.prefs.setHevcBlocked(true)
+            Log.w(TAG, "HEVC disabled for this panel after a decode failure")
+        }
         val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
             name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
         val pos = player?.let { filmPosition(it) } ?: 0L
@@ -1107,7 +1144,8 @@ class PlayerActivity : Activity() {
                         }
                     )
                 } else {
-                    setStatus(str(reply, "error").ifBlank { "No other copy would open" })
+                    val staying = currentSourceLabel.ifBlank { "the current copy" }
+                    setStatus("Couldn't switch to that copy — still playing " + staying, "warn")
                     player?.playWhenReady = playWhenReady
                 }
                 return@switchSource
@@ -1473,6 +1511,36 @@ class PlayerActivity : Activity() {
     }
 
     private fun audioRows(parent: LinearLayout) {
+        if (audioOptions.length() > 0) {
+            parent.addView(menuRow(
+                "Default", "picked by your languages",
+                selectedAudioId == null && (mixHint == null || mixDisabled),
+            ) { chooseAudio(null) })
+            for (i in 0 until audioOptions.length()) {
+                val o = audioOptions.optJSONObject(i) ?: continue
+                val kind = str(o, "kind")
+                val lang = str(o, "language")
+                if (lang.isBlank()) continue
+                val name = str(o, "languageName").ifBlank { langName(lang) }
+                val source = str(o, "source")
+                val mixed = kind == "mix"
+                val selected = if (mixed) {
+                    !mixDisabled && str(mixHint, "language").equals(lang, true)
+                } else {
+                    selectedAudioId != null && selectedAudioId == str(o, "id")
+                }
+                parent.addView(menuRow(
+                    name,
+                    if (mixed) "mix from " + source.ifBlank { "another copy" } else "in this copy",
+                    selected,
+                ) {
+                    if (mixed) reloadAudio(mix = true, language = lang, from = source)
+                    else chooseAudio(str(o, "id"))
+                })
+            }
+            addMixToggle(parent)
+            return
+        }
         if (audioTracks.length() == 0) {
             val actual = actualTracks(C.TRACK_TYPE_AUDIO, "a")
             parent.addView(menuRow(
@@ -1521,7 +1589,7 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun reloadAudio(mix: Boolean) {
+    private fun reloadAudio(mix: Boolean, language: String? = null, from: String? = null) {
         val spec = spec ?: return
         val pos = player?.let { filmPosition(it) } ?: 0L
         mixDisabled = !mix
@@ -1530,9 +1598,14 @@ class PlayerActivity : Activity() {
         pendingAudio = null
         audioApplied = false
         closeMenu()
-        showCenter(if (mix) "Loading the mixed audio…" else "Loading the original audio…", true)
-        // Keep the copy the viewer is already watching: a language toggle must not re-open the whole
-        // title and land on a different provider's file.
+        showCenter(
+            if (mix) "Loading " + (language?.let { langName(it) } ?: "mixed") + " audio…"
+            else "Loading the original audio…",
+            true,
+        )
+        // Keep the copy the viewer is already watching: a language change must not re-open the whole
+        // title and land on a different provider's file. The hub mixes the requested language into
+        // that same picture; `from` names the donor copy when the menu already knows it.
         val picked = answer?.optJSONObject("picked")
         val source = picked?.let {
             JSONObject()
@@ -1540,7 +1613,21 @@ class PlayerActivity : Activity() {
                 .put("label", str(it, "label"))
                 .put("provider", str(it, "provider"))
         }
-        resolvePlay(spec, pos, WARM_TRIES, source)
+        val extra = JSONObject()
+        if (mix) {
+            val body = JSONObject().put("language", language ?: "")
+            if (!from.isNullOrBlank()) body.put("source", from)
+            // A menu choice is a request, not a guess: even when the picture's filename claims the
+            // language, mix the donor the viewer picked. An unmeasured claim is not proof enough.
+            if (!language.isNullOrBlank()) body.put("force", true)
+            extra.put("audioMix", body)
+            // Ask for that same language as the selected track when the picture already carries it;
+            // otherwise the hub would keep its profile-first track after doing the mix.
+            if (!language.isNullOrBlank()) extra.put("audio", language)
+        } else {
+            extra.put("audioMix", JSONObject().put("enabled", false))
+        }
+        resolvePlay(spec, pos, WARM_TRIES, source, extra)
     }
 
     private fun subtitleRows(parent: LinearLayout) {

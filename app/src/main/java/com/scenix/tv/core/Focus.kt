@@ -154,7 +154,7 @@ object Focus {
             }
             // A translated Z animates a shadow pass every frame. On the 2 GB panel the cards get the
             // ring and scale, not an elevation animation; setup keeps it because it has one button.
-            if (elevate || style == "lift") {
+            if (elevate) {
                 v.animate().translationZ(elev).setDuration(ms)
                     .setInterpolator(AccelerateDecelerateInterpolator()).start()
             }

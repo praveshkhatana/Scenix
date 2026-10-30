@@ -63,6 +63,14 @@ the native Quality menu pins a rung of that same HLS stream and `Auto` returns t
 so the hub is never asked for another copy to satisfy a quality change. The copy list stays available
 below an `Other copies` heading, because choosing a different source is a separate, explicit act.
 
+**Audio is a language list, not a property of one file.** `/play` returns `audioOptions` gathered
+from the chosen picture and every candidate donor: a confirmed track first, the picture's own release
+name next, then donor copies the hub can mix in. Choosing another language re-asks `/play` with the
+same picture source and `audioMix: { language, source, force }`; the hub re-wraps the picture with
+that donor track. The source id wins over label and label wins over provider, so an audio change
+cannot silently select another film. A decoder that fails a 10-bit HEVC stream is remembered locally
+and stops being advertised, so the next `/play` asks for an H.264 copy.
+
 **Layer 1 — prefer sources that are already streams.** Community addons that return direct
 HTTP/HLS (WatchHub-style scrapers, our live playlists, curated YouTube) *are* adaptive and
 *are* what makes playback feel like Scenix. Torrents are the fallback that widens the library.

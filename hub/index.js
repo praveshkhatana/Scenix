@@ -1555,8 +1555,23 @@ function audioEvidence(source, lang) {
   const fromTracks = tracks.some((t) => media.langOf(t.language) === lang);
   const claims = Array.isArray(source.audioLangs) ? source.audioLangs
     : (Array.isArray(source._langs) ? source._langs : []);
-  const fromClaims = claims.some((l) => media.langOf(l) === lang);
+  // A direct provider often states the languages in the release name rather than in a track list.
+  // "…Hindi.Line-English.x264…" is exactly the fact a donor search needs.
+  const named = languageClaimsFromText((source.probe && source.probe.fileName) || source.label || '');
+  const fromClaims = claims.some((l) => media.langOf(l) === lang)
+    || named.some((l) => media.langOf(l) === lang);
   return { fromTracks, fromClaims };
+}
+
+/** Languages a release name or label states, e.g. "Hindi.Line-English" -> hin, eng. */
+function languageClaimsFromText(text) {
+  const lower = String(text || '').toLowerCase();
+  if (!lower) return [];
+  const out = [];
+  for (const [code, name] of Object.entries(ranking.LANG_NAMES || {})) {
+    if (name && lower.includes(String(name).toLowerCase()) && !out.includes(code)) out.push(code);
+  }
+  return out;
 }
 
 function hasAudioLanguage(source, lang) {
@@ -1602,7 +1617,10 @@ const donorProbe = new Map(); // url -> { at, durationMs, audioCodec }
 const DONOR_PROBE_TTL_MS = 30 * 60 * 1000;
 // A dub that runs within this fraction of the film's length is treated as the same cut. Real rips
 // differ by a few seconds of logo and credit padding, not by minutes.
-const DONOR_FIT_SLACK = 0.04;
+// An audio donor only has to line up with the picture, not be the same release. Five minutes of
+// credits or a 105-minute cut against a 110-minute catalogue runtime is still the same film; a
+// 20-minute gap is not. Video copies keep the stricter 4% fingerprint above.
+const DONOR_FIT_SLACK = 0.06;
 
 function probeDonorUrl(url, headers, timeoutMs) {
   const hit = donorProbe.get(url);
@@ -1801,6 +1819,16 @@ function fileLooksLikeTitle(fileName, title) {
 // Words that describe a release rather than name a film. A source label is often the only clue an
 // HLS provider gives before the player opens it: `480p · Hindi · Bowler XVIII (Citadel)` is a
 // perfectly valid stream, and the wrong title for the row that asked for The Office.
+/** The codec a release name states, when no probe measured the container. */
+function codecFromName(name) {
+  const n = String(name || '').toLowerCase();
+  if (/\b(hevc|x265|h265)\b/.test(n)) return 'hevc';
+  if (/\bav1\b/.test(n)) return 'av1';
+  if (/\b(vp9)\b/.test(n)) return 'vp9';
+  if (/\b(x264|h264|avc)\b/.test(n)) return 'h264';
+  return null;
+}
+
 const LABEL_NOISE = new Set([
   '480p', '720p', '1080p', '1440p', '2160p', '4k', 'uhd', 'hdr', 'hdr10', 'sdr', 'dv', 'dolby',
   'vision', 'atmos', 'hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali',
@@ -1941,9 +1969,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // The id is the exact handle the picker sent. Label/provider are only fallbacks: several copies
     // can share a provider, and choosing the first of them is how "try this 1080p copy" became a
     // different file.
-    const match = candidates.find((s) => (wanted.id && String(s.id) === String(wanted.id))
-      || (wanted.label && s.label === wanted.label)
-      || (wanted.provider && (s._addon === wanted.provider || s.provider === wanted.provider)));
+    // Precedence matters: the id is the exact copy, the label is the next-closest identity, and a
+    // provider is only a family. Using one OR chain let a missing id fall through to the first copy
+    // from the same provider, which is how choosing an audio language quietly changed the film.
+    let match = wanted.id
+      ? candidates.find((s) => String(s.id) === String(wanted.id)) : null;
+    if (!match && wanted.label) match = candidates.find((s) => s.label === wanted.label);
+    if (!match && !wanted.id && !wanted.label && wanted.provider) {
+      match = candidates.find((s) => s._addon === wanted.provider || s.provider === wanted.provider);
+    }
     if (match) source = match;
   }
   const addonOf = (s) => registry.byId[s && s._addon];
@@ -1976,6 +2010,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // Three kinds of known-bad are held back rather than dropped: a link the prober watched die, a torrent
   // the addon says nobody is sharing, and a copy this device has no decoder for. Held back, not deleted —
   // when every copy of a title is H.265 a browser still deserves an answer, and an honest one.
+  // A direct source is probed for bytes, not always for codecs. Its release name still says
+  // "x265"/"HEVC" often enough to keep an unplayable 10-bit copy from taking a seat.
+  for (const s of sources) {
+    if (!s || s.videoCodec) continue;
+    const name = (s.probe && s.probe.fileName) || s.label || '';
+    const codec = codecFromName(name);
+    if (codec) s.videoCodec = codec;
+  }
   const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
     + (decodable.length && s && s.videoCodec
       && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0);
@@ -2597,6 +2639,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const primaryHas = desiredLang ? hasAudioLanguage(source, desiredLang) : false;
   const forcedMix = !!(mixOpt && mixOpt.force === true);
   let donor = null;
+  // The picture's own runtime, needed again by the mix metadata after the donor block closes.
+  let pictureMs = 0;
   if (desiredLang && mixRequested && (forcedMix || !primaryHas)) {
     const donorPool = (allExcluded ? sources : pool).filter((s) => s !== source && !isExcluded(s, skip));
     let list = donorPool.filter((s) =>
@@ -2619,7 +2663,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // donor against it would refuse every valid series mix.
     const fileMs = Number(source.durationMs) || Number(source.probe && source.probe.durationMs)
       || Number(out.probe && out.probe.durationMs) || 0;
-    let pictureMs = fileMs || ((type === 'movie' || kept.type === 'movie')
+    pictureMs = fileMs || ((type === 'movie' || kept.type === 'movie')
       ? (Number(kept.durationMs) || 0) : 0);
     // A direct picture can be measured the same way as a donor: ffmpeg prints its duration from the
     // header. This is what makes the fit check work for a series episode (where the title runtime is
@@ -2699,6 +2743,53 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       + ' from ' + (donor.source.label || donor.source.provider || 'a donor')
       + ' while keeping the picture copy');
   }
+
+  // Every language this title can actually offer, not just the one track the chosen file happens
+  // to carry. A mixed output replaces the file's audio with one donor; this list is what lets the
+  // Quality/Audio menu ask for another language without changing the picture copy.
+  const audioOptions = [];
+  const optionByLang = new Map();
+  const optionScore = (o) => (o.kind === 'track' ? 4 : 0) + (o.confirmed ? 2 : 0)
+    + (o.provider !== 'torrent' ? 1 : 0);
+  const addAudioOption = (raw, kind, sourceLabel, confirmed, trackId) => {
+    const lang = media.langOf(raw);
+    if (!lang || lang === 'und' || lang === 'mis') return;
+    const next = {
+      id: (kind === 'track' && trackId ? trackId : 'mix:' + lang),
+      language: lang,
+      languageName: ranking.LANG_NAMES[lang] || lang,
+      kind,
+      source: sourceLabel || null,
+      confirmed: confirmed === true,
+      title: kind === 'track'
+        ? (ranking.LANG_NAMES[lang] || lang) + ' · in this copy'
+        : (ranking.LANG_NAMES[lang] || lang) + (sourceLabel ? ' · from ' + sourceLabel : ''),
+    };
+    const before = optionByLang.get(lang);
+    if (!before || optionScore(next) > optionScore(before)) optionByLang.set(lang, next);
+  };
+  const pickedLabel = (out.picked && out.picked.label) || source.label || null;
+  // When a donor is active the output carries only that track; the picture's original language is
+  // the "Original audio" toggle, not a second track in this list.
+  for (const t of out.audioTracks || []) {
+    const mixed = t.kind === 'audio-mix';
+    addAudioOption(t.language, mixed ? 'mix' : 'track',
+      mixed ? (donor && donor.source.label) : pickedLabel, true, mixed ? null : t.id);
+  }
+  const donorCandidates = (allExcluded ? sources : pool).filter((s) => s !== source);
+  for (const cand of donorCandidates) {
+    const provider = cand.kind === 'torrent' ? 'torrent' : (cand.provider || cand._addon || null);
+    for (const t of (cand.audioTracks || [])) {
+      addAudioOption(t.language, 'mix', cand.label || provider, true, null);
+    }
+    const claims = new Set([
+      ...(Array.isArray(cand._langs) ? cand._langs : []),
+      ...(Array.isArray(cand.audioLangs) ? cand.audioLangs : []),
+      ...languageClaimsFromText((cand.probe && cand.probe.fileName) || cand.label || ''),
+    ]);
+    for (const l of claims) addAudioOption(l, 'mix', cand.label || provider, false, null);
+  }
+  out.audioOptions = [...optionByLang.values()].slice(0, 12);
 
   const remuxNeeded = !!donor || (out.mode === 'gateway' && out.torrent
     && (out.container === 'mp4' || out.container === 'hls'));

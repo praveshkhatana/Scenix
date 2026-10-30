@@ -21,6 +21,14 @@ class Prefs(context: Context) {
     fun theme(): String = sp.getString(KEY_THEME, "scenix-dark") ?: "scenix-dark"
     fun setTheme(id: String) = sp.edit().putString(KEY_THEME, id.trim()).apply()
 
+    /**
+     * A decoder that says it supports HEVC but fails on the first 10-bit file is a fact about this
+     * panel, learned the hard way. Once set, the player stops advertising HEVC to the hub and asks
+     * for an H.264 copy instead of offering the same black screen again.
+     */
+    fun hevcBlocked(): Boolean = sp.getBoolean(KEY_HEVC_BLOCKED, false)
+    fun setHevcBlocked(blocked: Boolean) = sp.edit().putBoolean(KEY_HEVC_BLOCKED, blocked).apply()
+
     // ---- hub -----------------------------------------------------------------------------
     fun hubUrl(fallback: String): String = sp.getString(KEY_HUB, null)?.takeIf { it.isNotBlank() } ?: fallback
     fun setHubUrl(url: String) = sp.edit().putString(KEY_HUB, url.trim()).apply()
@@ -158,6 +166,7 @@ class Prefs(context: Context) {
         private const val KEY_BACKEND = "backend_choice"
         private const val KEY_DISCOVERED = "discovered_hubs"
         private const val KEY_THEME = "theme"
+        private const val KEY_HEVC_BLOCKED = "hevc_blocked"
         private const val KEY_TOKEN = "hub_token"
         private const val KEY_PROFILE_UNLOCKED = "profile_unlocked"
         private const val KEY_PROFILE_UNLOCKED_AT = "profile_unlocked_at"

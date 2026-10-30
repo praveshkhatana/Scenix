@@ -233,7 +233,7 @@
   "heroHeight": 720,
   "rows": "landscape",
   "card": "below",
-  "focus": "glow",
+  "focus": "lift",
   "focusColor": "#FFFFFF",
   "motion": "fade",
   "detail": "backdrop",

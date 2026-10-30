@@ -74,6 +74,10 @@ const DEFAULTS = {
   // empty for the whole catalogue. They are virtual rows on /app/v1/home — no file is written under
   // rows/ — and they follow `rows.hidden`/`rows.order` like every plugin row once their id is known.
   categories: [],
+  // Owner-given names for the addon catalogue tiles on Home, keyed `addonId:catalogId`. The tile is
+  // generated from the addon's manifest, which often names it "Movies - DesiFlix"; this lets the
+  // household call it what it actually is without editing the addon.
+  addonCatalogNames: {},
   // Generated profile faces. Empty means this hub does not proxy any avatar service and a client draws
   // its own; pointing it at one (self-hosted or public) makes the hub fetch and cache through it, so the
   // TV still only ever talks to this box.

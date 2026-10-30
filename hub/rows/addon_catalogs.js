@@ -1,4 +1,6 @@
 'use strict';
+
+const settings = require('../core/settings');
 /*
  * rows/addon_catalogs.js — the catalogues the owner's own addons brought.
  *
@@ -17,6 +19,7 @@ module.exports = {
 
   async build(ctx) {
     const out = [];
+    const overrides = settings.get().addonCatalogNames || {};
     const providers = Object.values(ctx.providers || {})
       // Only addons the household installed. Native rows already have a home of their own, and a
       // channel playlist is Live TV's job, not a film shelf.
@@ -39,10 +42,12 @@ module.exports = {
           const escaped = String(p.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           name = name.replace(new RegExp('\\s*[-–—]\\s*' + escaped + '\\s*$', 'i'), '').trim();
         }
+        const key = p.id + ':' + c.id;
+        const custom = typeof overrides[key] === 'string' ? overrides[key].trim() : '';
         out.push({
           identity: 'catalog:' + p.id + ':' + c.id,
           type: 'genre',
-          title: [p.name || p.id, name].filter(Boolean).join(' · '),
+          title: custom || [p.name || p.id, name].filter(Boolean).join(' · '),
           poster: null,
           backdrop: null,
           logo: null,

@@ -67,7 +67,11 @@ reload.
   card needs art and a title, not twenty stream lists. Live-channel zaps are left out of the row.
 - A genre tile calls `/app/v1/genre` (a real genre filter over the library and the addons' genre
   catalogues), not the free-text search. The Browse addons row exposes each installed addon's own
-  catalogues through `/app/v1/addon-catalog`.
+  catalogues through `/app/v1/addon-catalog`; a catalogue tile's label can be overridden by the
+  owner (`addonCatalogNames[addonId:catalogId]`) from the Add-ons screen.
+- Language tastes become shelves, not keywords: a Hindi-first profile gets **Bollywood Movies** and
+  **Hindi Web Series** built from the mixed library (including DesiFlix), alongside the existing
+  Dubbed-in-Hindi row. Other profiles simply do not see rows for languages they do not watch.
 
 ## Rendering
 

@@ -25,6 +25,8 @@ class AddonsActivity : Activity() {
     private lateinit var status: TextView
     private var installed: JSONArray? = null
     private var picker: View? = null
+    private var renameAddon: String? = null
+    private var renameCatalog: String? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -134,7 +136,11 @@ class AddonsActivity : Activity() {
     private fun showActions(ad: JSONObject, name: String, on: Boolean, native: Boolean) {
         val options = ArrayList<Pair<String, String>>()
         options.add("toggle" to (if (on) "Turn $name off" else "Turn $name on"))
-        if (!native) options.add("remove" to "Remove $name")
+        if (!native) {
+            val cats = ad.optJSONArray("catalogs")
+            if (cats != null && cats.length() > 0) options.add("rename" to "Rename catalogue tiles")
+            options.add("remove" to "Remove $name")
+        }
         options.add("back" to "Back")
         showPicker(name, options) { action ->
             when (action) {
@@ -144,6 +150,29 @@ class AddonsActivity : Activity() {
                     api.setAddon(id, !on) { _, error ->
                         if (isFinishing || isDestroyed) return@setAddon
                         if (error != null) status.text = error else load()
+                    }
+                }
+                "rename" -> {
+                    val cats = ad.optJSONArray("catalogs") ?: return@showPicker
+                    val choices = ArrayList<Pair<String, String>>()
+                    for (i in 0 until cats.length()) {
+                        val c = cats.optJSONObject(i) ?: continue
+                        val id = c.optString("id")
+                        if (id.isBlank()) continue
+                        choices.add(id to c.optString("name", id))
+                    }
+                    if (choices.isEmpty()) return@showPicker
+                    showPicker("Rename which shelf?", choices) { catalogId ->
+                        val current = choices.firstOrNull { it.first == catalogId }?.second.orEmpty()
+                        renameAddon = ad.optString("id")
+                        renameCatalog = catalogId
+                        startActivityForResult(
+                            Intent(this, TextEntryActivity::class.java)
+                                .putExtra(TextEntryActivity.EXTRA_TITLE, "Rename " + current)
+                                .putExtra(TextEntryActivity.EXTRA_VALUE, current)
+                                .putExtra(TextEntryActivity.EXTRA_HINT, "The name this shelf wears on Home"),
+                            REQ_CATALOG_NAME,
+                        )
                     }
                 }
                 "remove" -> {
@@ -209,6 +238,24 @@ class AddonsActivity : Activity() {
     @Deprecated("Activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CATALOG_NAME) {
+            if (resultCode != RESULT_OK) return
+            val name = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT).orEmpty().trim()
+            val addon = renameAddon ?: return
+            val catalog = renameCatalog ?: return
+            if (name.isBlank()) return
+            status.text = "Saving…"
+            val names = JSONObject().put("$addon:$catalog", name.take(60))
+            api.saveSettings(JSONObject().put("settings", JSONObject().put("addonCatalogNames", names))) { _, error ->
+                if (isFinishing || isDestroyed) return@saveSettings
+                if (error != null) {
+                    status.text = error
+                    return@saveSettings
+                }
+                status.text = "Renamed. It shows on Home next time."
+            }
+            return
+        }
         if (requestCode != REQ_URL || resultCode != RESULT_OK) return
         val url = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT).orEmpty().trim()
         if (url.isBlank()) return
@@ -231,5 +278,6 @@ class AddonsActivity : Activity() {
 
     companion object {
         private const val REQ_URL = 41
+        private const val REQ_CATALOG_NAME = 42
     }
 }
