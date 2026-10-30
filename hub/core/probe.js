@@ -27,7 +27,7 @@
  *
  * Cost control, because this sits in a request path:
  *   - results are cached in data/probe-cache.json keyed by a hash of url + the headers we replay;
- *     ok answers are trusted for PROBE_OK_TTL_MS (12 min), failures are re-tried after PROBE_FAIL_TTL_MS
+ *     ok answers are trusted for PROBE_OK_TTL_MS (4 min), failures are re-tried after PROBE_FAIL_TTL_MS
  *     (60 s) — a dead link coming back to life should not cost the household an evening;
  *   - concurrent lookups of the same URL are coalesced into one request;
  *   - a global cap (PROBE_CONCURRENCY, 4) means two people browsing at once never hammer one addon;
@@ -69,7 +69,9 @@ const SAMPLE_BYTES_MAX = PROBE_BYTES * Math.min(8, num(process.env.PROBE_SAMPLE_
 // Slightly under PROBE_BUDGET_MS on purpose: a source that is merely SLOW must still be measured inside
 // the request path, because "this one streams at 0.8 Mbps" is exactly the answer the viewer needs.
 const PROBE_TIMEOUT_MS = num(process.env.PROBE_TIMEOUT_MS, 1200);
-const OK_TTL_MS = num(process.env.PROBE_OK_TTL_MS, 12 * 60 * 1000); // a working link is believed for a while
+// Four minutes, not twelve: direct addon links are often signed and stop answering before an
+// evening ends. A stale "working" row is how a player was handed a URL that now returns 404.
+const OK_TTL_MS = num(process.env.PROBE_OK_TTL_MS, 4 * 60 * 1000);
 const FAIL_TTL_MS = num(process.env.PROBE_FAIL_TTL_MS, 60 * 1000); // a dead link is a rumour for a minute
 const CONCURRENCY = Math.min(16, Math.max(1, num(process.env.PROBE_CONCURRENCY, 4)));
 const BUDGET_MS = num(process.env.PROBE_BUDGET_MS, 1500); // a request never waits longer than this
