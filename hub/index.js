@@ -1774,6 +1774,43 @@ function fileLooksLikeTitle(fileName, title) {
   return words.some((w) => stem.includes(w));
 }
 
+// Words that describe a release rather than name a film. A source label is often the only clue an
+// HLS provider gives before the player opens it: `480p · Hindi · Bowler XVIII (Citadel)` is a
+// perfectly valid stream, and the wrong title for the row that asked for The Office.
+const LABEL_NOISE = new Set([
+  '480p', '720p', '1080p', '1440p', '2160p', '4k', 'uhd', 'hdr', 'hdr10', 'sdr', 'dv', 'dolby',
+  'vision', 'atmos', 'hindi', 'english', 'tamil', 'telugu', 'malayalam', 'kannada', 'bengali',
+  'marathi', 'punjabi', 'urdu', 'gujarati', 'spanish', 'french', 'german', 'japanese', 'korean',
+  'chinese', 'arabic', 'russian', 'portuguese', 'italian', 'dutch', 'turkish', 'thai', 'vietnamese',
+  'indonesian', 'multi', 'dual', 'audio', 'sub', 'subs', 'subtitle', 'subtitles', 'web', 'webrip',
+  'webdl', 'bluray', 'blu', 'ray', 'hdtv', 'dvdrip', 'dvd', 'remux', 'proper', 'repack', 'extended',
+  'uncut', 'director', 'imax', 'cam', 'hdrip', 'x264', 'x265', 'h264', 'h265', 'hevc', 'avc', 'av1',
+  '10bit', '8bit', 'mb', 'gb', 'kb', 'fps', 'hls', 'dash', 'stream', 'direct', 'auto', 'best',
+  'source', 'season', 'episode', 'series', 'movie', 'special', 'complete',
+]);
+
+function looksLikeAnotherTitle(candidate, title) {
+  const clean = String(candidate || '').toLowerCase()
+    .replace(/\b(19|20)\d{2}\b/g, ' ')
+    .replace(/\bs\d{1,2}e\d{1,3}\b/g, ' ')
+    .replace(/\b\d{1,2}x\d{1,3}\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  const words = clean.split(/\s+/).filter((w) => w.length >= 3 && !LABEL_NOISE.has(w));
+  if (!words.length) return false;
+  const wanted = String(title || '').toLowerCase().split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !['the', 'and', 'of', 'for', 'with'].includes(w));
+  if (!wanted.length) return false;
+  return !wanted.some((w) => clean.includes(w));
+}
+
+/** A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`. */
+function labelNamesOtherTitle(label, title) {
+  const text = String(label || '');
+  const parens = [...text.matchAll(/\(([^)]{3,80})\)/g)].map((m) => m[1]);
+  return parens.some((part) => looksLikeAnotherTitle(part, title));
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
   const item = await ctx.resolve(identity, type);
@@ -1985,6 +2022,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
     if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
+    // An HLS provider can mint a working stream for a different show and label it with that show's
+    // name. The address is not a filename and the probe only proves bytes; this label is the last
+    // cheap fact before the player draws the wrong programme under the right title.
+    if (labelNamesOtherTitle(labelOf(cand), kept.title)) {
+      tried.push(labelOf(cand) + ': names a different title');
+      log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
+      continue;
+    }
 
     // Debrid first: a magnet or a hoster link becomes ordinary HTTP and skips the swarm entirely. If it
     // says no, the torrent branch asks the gateway exactly as it did before this file existed.
