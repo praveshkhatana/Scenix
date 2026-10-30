@@ -68,9 +68,9 @@ merge key. On the interface side, a screen or card is a module under `hub/web/js
 registered renderer in `hub/web/js/plugins.js`, so a new shelf style does not edit the screens that
 already exist.
 
-The playback bridge is the same idea: the TV app draws its interface in a WebView and decodes video
-natively underneath it, so a 1080p HEVC torrent with E-AC3 audio and ASS subtitles plays exactly as it
-sits on disk. Browsers get a remuxed copy instead; the file is never transcoded.
+The playback bridge is the same idea: the television draws its screens natively and Media3 decodes
+the video underneath them, so a 1080p HEVC torrent with E-AC3 audio and ASS subtitles plays exactly
+as it sits on disk. Browsers get a remuxed copy instead; the file is never transcoded.
 
 ## Watching in your own language
 
@@ -159,7 +159,9 @@ Media3 can switch at a segment boundary), install a transcode-capable ffmpeg and
 `hub/bin/ffmpeg-btb` plus `hub/bin/ffprobe-btb`, then enable **Settings → Playback → Playback
 smoothness → Build an adaptive quality ladder**. The hub prefers those binaries, falls back to
 `hub/bin/ffmpeg` for remux-only installs, and keeps the ladder off by default because transcoding costs
-CPU and disk. See [design/adaptive-ladder.md](design/adaptive-ladder.md).
+CPU and disk. A resume continues through the ladder from the saved playhead, and the TV's Quality menu
+changes the rung of the same stream (not the copy), so a quality change cannot land on a different cut.
+See [design/adaptive-ladder.md](design/adaptive-ladder.md).
 
 The hub speaks HTTP by default. For HTTPS, either terminate TLS in a reverse proxy (it honours
 `X-Forwarded-Proto`/`X-Forwarded-Host` when building stream and subtitle URLs) or give it a certificate
@@ -167,8 +169,8 @@ with `TLS_CERT`/`TLS_KEY`. The certificate must be trusted by the television; Sc
 CA on the device.
 
 Set `HUB_TOKEN` to require a shared access token on the hub API and UI. A browser asks for HTTP Basic
-(any username, token as the password); the TV stores the token in setup and supplies it to the WebView
-automatically. `/healthz` stays public for pairing and exposes only the product name and version.
+(any username, token as the password); the TV stores the token in setup and supplies it to the native
+player automatically. `/healthz` stays public for pairing and exposes only the product name and version.
 
 **TV app** — Android 8+ / Android TV, `./gradlew assembleDebug` in `app/`. On first run it tries a
 hub it already remembers, then asks the LAN; one that answers is opened without a question. If none

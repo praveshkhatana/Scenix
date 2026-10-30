@@ -105,9 +105,9 @@ the web page the hub serves. The APK carries no WebView and no bundled page: `tv
 Setup and the profile gate remain the handoff: setup finds the backend, the profile gate produces a
 profile, and native Home opens against the same `/app/v1` contract.
 
-`tv://detail/<identity>` and `tv://play/<identity>` deep links open the web page at `#/detail/…` or
-`#/play/…`. The old per-device **Settings → Interface** switch and the old native Detail/Search/Player
-stack remain gone.
+`tv://detail/<identity>` and `tv://play/<identity>` deep links pass through the native profile gate to
+the native Detail and Player. The old per-device **Settings → Interface** switch and the old WebView
+shell remain gone.
 
 ## Rule 4 — pairing, not IP addresses
 
@@ -139,7 +139,7 @@ else:
   by the TV unless its CA is installed; Scenix does not install one.
 - **Optional shared access token.** Set `HUB_TOKEN` and every route except `/healthz` asks for HTTP
   Basic (any username, token as the password) or `Bearer <token>`. The TV stores the token in setup and
-  supplies it through the WebView auth handler; a browser gets the normal auth prompt. Without it the
+  supplies it through the native player's HTTP data source; a browser gets the normal auth prompt. Without it the
   hub keeps the trusted-LAN behaviour. There are no user accounts or per-profile sessions; for real
   multi-user access control put an authenticating proxy in front.
 - `/healthz` stays public for pairing and returns only the product name and version when the caller is
