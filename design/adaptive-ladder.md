@@ -64,7 +64,11 @@ v720/index.m3u8
   than waiting on 480p to measure the link. It seeds media3's bandwidth estimate at 9 Mbps and pins
   the 720 rung for the first frame; adaptive selection takes over as soon as that frame is drawn. A
   remote hub keeps media3's cautious start, because the LAN assumption does not hold beyond the
-  router.
+  router. The network-type callback is kept from replacing that seed with the country default.
+- The native Quality menu lists the ladder's own rungs, and `Auto` returns to adaptive selection.
+  Choosing a rung pins that rendition of the same HLS stream; it never asks the hub for another copy,
+  so a quality change cannot land on a different cut. Other copies remain below an `Other copies`
+  heading for an explicit source change.
 - Reuses a warming job when the URL, rung set and audio set all match. A repeat Play waits on the job
   that already exists instead of killing it.
 

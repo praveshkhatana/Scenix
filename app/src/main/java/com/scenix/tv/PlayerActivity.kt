@@ -120,6 +120,9 @@ class PlayerActivity : Activity() {
      */
     private var startRungPending = false
     private var startRungLocked = false
+    /** A rung the viewer pinned from the Quality menu, in pixels; 0 means adaptive selection. */
+    private var forcedRungHeight = 0
+    private var bandwidthMeter: DefaultBandwidthMeter? = null
     /**
      * Film time where the current HLS ladder begins. An adaptive resume is transcoded from the saved
      * playhead, so the player's own timeline starts at zero while the viewer still expects 12:34.
@@ -339,8 +342,12 @@ class PlayerActivity : Activity() {
         // ladder, and 720p first (then 1080p by measurement) for a 1080 ladder. A remote hub keeps
         // media3's own cautious start: the LAN assumption does not hold beyond the router.
         val meterBuilder = DefaultBandwidthMeter.Builder(this)
+            // A network-type callback at startup would otherwise replace the LAN seed with media3's
+            // country default (often 1 Mbps) before the first segment is measured.
+            .setResetOnNetworkTypeChange(false)
         if (isLocalHub(hubOrigin.host)) meterBuilder.setInitialBitrateEstimate(9_000L)
         val meter = meterBuilder.build()
+        bandwidthMeter = meter
         val builder = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
             .setBandwidthMeter(meter)
@@ -360,6 +367,16 @@ class PlayerActivity : Activity() {
 
             override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: androidx.media3.common.VideoSize) {
                 Log.i(TAG, "video size ${videoSize.width}x${videoSize.height} par=${videoSize.pixelWidthHeightRatio}")
+            }
+
+            override fun onBandwidthEstimate(
+                eventTime: AnalyticsListener.EventTime,
+                totalLoadTimeMs: Int,
+                totalBytesLoaded: Long,
+                bitrateEstimate: Long,
+            ) {
+                Log.i(TAG, "bandwidth estimate ${bitrateEstimate / 1000} kbps"
+                    + " (${totalBytesLoaded}B in ${totalLoadTimeMs}ms)")
             }
 
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
@@ -415,6 +432,7 @@ class PlayerActivity : Activity() {
         override fun onTracksChanged(tracks: Tracks) {
             startOnHighRung(tracks)
             applyPendingTracks()
+            paintChips()
             refreshTrackMenus()
         }
 
@@ -523,6 +541,7 @@ class PlayerActivity : Activity() {
         timelineOffsetMs = 0L
         startRungPending = false
         startRungLocked = false
+        forcedRungHeight = 0
         seekLine.fraction = 0f
         seekLine.buffered = 0f
         seekLine.invalidate()
@@ -607,6 +626,7 @@ class PlayerActivity : Activity() {
         startRungPending = reply.optJSONObject("ladder") != null &&
             isLocalHub(Uri.parse(HubEndpoint.base(this)).host)
         startRungLocked = false
+        forcedRungHeight = 0
         val mix = reply.optJSONObject("audioMix")
         if (mix != null) {
             mixHint = mix
@@ -779,7 +799,8 @@ class PlayerActivity : Activity() {
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
             .build()
-        Log.i(TAG, "start rung released to adaptive selection")
+        Log.i(TAG, "start rung released to adaptive selection, bandwidth "
+            + ((bandwidthMeter?.bitrateEstimate ?: 0L) / 1000) + " kbps")
     }
 
     /**
@@ -1603,18 +1624,105 @@ class PlayerActivity : Activity() {
     }
 
     private fun qualityRows(parent: LinearLayout) {
-        parent.addView(menuRow("Auto", "best copy the hub can feed", false) {
-            switchTo(null)
-        })
+        // A real ladder is one copy with several rungs. Choosing a rung must not ask the hub for
+        // another copy: that is how a "quality" change lands on a different cut. When the answer is
+        // a ladder, the top rows are its own rungs and the copy list moves below a heading.
+        val rungs = ladderRungs()
+        if (rungs.isNotEmpty()) {
+            val current = if (forcedRungHeight > 0) forcedRungHeight else selectedVideoHeight()
+            parent.addView(menuRow("Auto", "follow the link", forcedRungHeight == 0) {
+                chooseRung(0)
+            })
+            for (h in rungs) {
+                parent.addView(menuRow("${h}p", if (h == rungs.first()) "top rung" else "lighter", h == current && forcedRungHeight > 0) {
+                    chooseRung(h)
+                })
+            }
+            if (alternatives.length() > 0) parent.addView(noteRow("Other copies"))
+        } else {
+            parent.addView(menuRow("Auto", "best copy the hub can feed", false) {
+                switchTo(null)
+            })
+        }
+        if (rungs.isNotEmpty() && alternatives.length() > 0) {
+            parent.addView(menuRow("Best copy", "let the hub choose again", false) { switchTo(null) })
+        }
         for (i in 0 until alternatives.length()) {
             val src = alternatives.optJSONObject(i) ?: continue
             parent.addView(menuRow(sourceWords(src), sourceNote(src), false) {
                 switchTo(src)
             })
         }
-        if (alternatives.length() == 0) {
+        if (alternatives.length() == 0 && rungs.isEmpty()) {
             parent.addView(noteRow("The hub listed no other copies"))
         }
+    }
+
+    /** The rungs the hub says this ladder has, highest first, as pixels. */
+    private fun ladderRungs(): List<Int> {
+        val arr = answer?.optJSONObject("ladder")?.optJSONArray("variants") ?: return emptyList()
+        val out = ArrayList<Int>(arr.length())
+        for (i in 0 until arr.length()) {
+            val m = Regex("(\\d{3,4})").find(arr.optString(i)) ?: continue
+            val h = m.groupValues[1].toIntOrNull() ?: continue
+            if (h > 0 && !out.contains(h)) out.add(h)
+        }
+        return out.sortedDescending()
+    }
+
+    /**
+     * Pin one rung of the current ladder, or return to adaptive selection with [height] zero. The
+     * ladder stays the same copy and the same timeline, so this cannot show a different film.
+     */
+    private fun chooseRung(height: Int) {
+        val p = player ?: return
+        if (height <= 0) {
+            forcedRungHeight = 0
+            startRungPending = false
+            startRungLocked = false
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                .build()
+        } else {
+            var group: Tracks.Group? = null
+            var index = -1
+            for (g in p.currentTracks.groups) {
+                if (g.type != C.TRACK_TYPE_VIDEO) continue
+                for (i in 0 until g.length) {
+                    if (!g.isTrackSupported(i)) continue
+                    if (g.getTrackFormat(i).height == height) {
+                        group = g
+                        index = i
+                        break
+                    }
+                }
+                if (group != null) break
+            }
+            if (group == null || index < 0) {
+                showCenter("This copy has no ${height}p rung", false)
+                return
+            }
+            forcedRungHeight = height
+            startRungPending = false
+            startRungLocked = false
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(index)))
+                .build()
+        }
+        paintChips()
+        closeMenu()
+    }
+
+    /** Height of the video track the player is showing, or zero before the first tracks arrive. */
+    private fun selectedVideoHeight(): Int {
+        val p = player ?: return 0
+        for (g in p.currentTracks.groups) {
+            if (g.type != C.TRACK_TYPE_VIDEO) continue
+            for (i in 0 until g.length) {
+                if (g.isTrackSelected(i)) return g.getTrackFormat(i).height
+            }
+        }
+        return 0
     }
 
     /** The season currently visible in the Episodes menu, as a plain list of episode objects. */
@@ -1995,7 +2103,13 @@ class PlayerActivity : Activity() {
         audioButton.contentDescription = "Audio · " + audioValue()
         subButton.contentDescription = "Subtitles · " + subValue()
         speedButton.contentDescription = "Speed · " + formatSpeed(speed)
-        qualityButton.contentDescription = "Quality · " + currentSourceLabel.ifBlank { "Auto" }
+        val ladder = answer?.optJSONObject("ladder")
+        val qualityValue = when {
+            forcedRungHeight > 0 -> "${forcedRungHeight}p"
+            ladder != null -> selectedVideoHeight().let { if (it > 0) "${it}p · Auto" else "Auto" }
+            else -> currentSourceLabel.ifBlank { "Auto" }
+        }
+        qualityButton.contentDescription = "Quality · " + qualityValue
         // A tiny dot is the only "current value" a flat icon can carry without becoming a label:
         // audio when a specific track is chosen, CC when subtitles are on, speed when it is not 1×.
         audioButton.badge = selectedAudioId != null
@@ -2440,6 +2554,7 @@ class PlayerActivity : Activity() {
         timelineOffsetMs = 0L
         startRungPending = false
         startRungLocked = false
+        forcedRungHeight = 0
         seekLine.fraction = 0f
         seekLine.buffered = 0f
         hideNextCard()
