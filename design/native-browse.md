@@ -40,9 +40,9 @@ reload.
 ## Contract
 
 - `BrowseApi` is the only native API path. It calls `/app/v1/home`, `/app/v1/meta/<id>`,
-  `/app/v1/play`, `/app/v1/switch`, `/app/v1/subs/<id>`, `/app/v1/progress`, `/app/v1/search` and
-  `/app/v1/prefs`, with the same optional Basic token as the shell. No native screen parses or ranks
-  sources.
+  `/app/v1/play`, `/app/v1/switch`, `/app/v1/subs/<id>`, `/app/v1/progress`, `/app/v1/search`,
+  `/app/v1/genre`, `/app/v1/addon-catalog` and `/app/v1/prefs`, with the same optional Basic token as
+  the rest of the app. No native screen parses or ranks sources.
 - `ProfilesActivity` is the front door. It reads `/app/v1/profiles`, draws the same household faces
   the web gate does, and asks `PinActivity` for a 4-digit code on a locked profile; the hub checks
   the PIN (`POST /app/v1/profiles/<id>/unlock`), never the TV. A chosen profile opens
@@ -60,11 +60,14 @@ reload.
   answer is a wait and retry at the hub's `retryAfterMs`, never an error card.
 - Progress is posted every `player.progressPostMs` (default 10 s), on pause and on exit, attributed
   to the copy actually loaded while a new request is in flight.
-- The web page still calls `Scenix.openNativeBrowse(profile)` when it mounts Home, so a browser
-  session or a deep link can hand back to native; the native gate is the normal TV launch path.
-- The web Home action, or BACK at the page root, returns to the native activity underneath. Web
-  Search and Settings are unchanged. The WebShell player route remains for browser UI/deep links;
-  native Detail never opens it.
+- The television never opens a WebView. `tv://detail/<identity>` and `tv://play/<identity>` pass
+  through the native profile gate to the native Detail and Player; the gate is the normal TV launch
+  path.
+- Continue Watching resolves cards through `ctx.metaOnly`, never through the full play resolver: a
+  card needs art and a title, not twenty stream lists. Live-channel zaps are left out of the row.
+- A genre tile calls `/app/v1/genre` (a real genre filter over the library and the addons' genre
+  catalogues), not the free-text search. The Browse addons row exposes each installed addon's own
+  catalogues through `/app/v1/addon-catalog`.
 
 ## Rendering
 
@@ -150,14 +153,17 @@ reload.
 - Shelves take the lift in the frame the ring lands; animated lifts are capped at 100 ms because a
   1080p re-composite for a dozen frames is what missed deadlines on the Mali-G31.
 - The image loader returns early when a card already shows the URL, so a rebind does not clear and
-  re-upload a cached poster.
+  re-upload a cached poster. Stage backdrops are debounced while the D-pad walks; only the card the
+  ring settles on is decoded.
+- The billboard follows the Featured tile under the ring; it does not rotate on a timer. A timer
+  that re-rendered the featured row while the viewer walked the shelves was one source of the
+  freeze between the hero and the first shelf.
 
 ## What this does not solve
 
 - The remaining web-only admin pages are the Live TV playlist/group editor, the made-categories
-  builder, and household/profile/hub-name management. They are not reachable from the TV Settings;
-  the WebView is used only by browser deep links and the web player route, never from the native
-  menus, so it cannot appear behind a Back press.
+  builder, and household/profile/hub-name management. They are browser pages; the TV Settings does
+  not open a WebView for them.
 - Skip-intro now has a source: `core/introdb.js` asks IntroDB's keyless
   `GET /segments?imdb_id=&season=&episode=` for a series episode (cached, 1.2 s budget) and the play
   answer carries `introStartMs`/`introEndMs`. The native player shows its "Skip intro" chip exactly

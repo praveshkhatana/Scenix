@@ -349,10 +349,10 @@ class BrowseActivity : Activity() {
             val incoming = if (front === a) b else a
             incoming.animate().cancel()
             incoming.alpha = 0f
-            BrowseImages.load(incoming, clean, app.theme.px(1400f)) { ok ->
+            BrowseImages.load(incoming, clean, app.theme.px(1100f)) { ok ->
                 if (isFinishing || isDestroyed) return@load
                 if (!ok || current != clean) return@load
-                incoming.animate().alpha(1f).setDuration(650).withEndAction {
+                incoming.animate().alpha(1f).setDuration(320).withEndAction {
                     front.alpha = 0f
                     front = incoming
                 }.start()
@@ -399,7 +399,7 @@ class BrowseActivity : Activity() {
         hideTrailerNow()
         clock.postDelayed(trailerRelease, 250L)
         val s = stage ?: return
-        s.show(item.backdrop ?: item.poster ?: item.logo)
+        showStageSoon(item.backdrop ?: item.poster ?: item.logo)
         s.setRoaming(true)
         eachCard { it.alpha = if (it === card) 1f else 0.58f }
     }
@@ -443,11 +443,22 @@ class BrowseActivity : Activity() {
     }
 
     private val trailerTick = Runnable { loadTrailer() }
+    /** A fast D-pad walk crosses several cards; only the one that settles should load a backdrop. */
+    private var stageShow: Runnable? = null
+
+    private fun showStageSoon(url: String?) {
+        stageShow?.let { clock.removeCallbacks(it) }
+        val r = Runnable { stage?.show(url) }
+        stageShow = r
+        clock.postDelayed(r, 55L)
+    }
 
     /** A preview starts a beat after attention settles on a slide, not mid-step. */
     private fun scheduleTrailer() {
         clock.removeCallbacks(trailerTick)
-        clock.postDelayed(trailerTick, 1000L)
+        if (app.theme.token("preview", "enabled", 1.0) <= 0.0) return
+        val delay = app.theme.token("preview", "delayMs", 1500.0).toLong().coerceIn(300L, 5000L)
+        clock.postDelayed(trailerTick, delay)
     }
 
     /** The cheap half of stopping a preview: take the surface and its subtitles out of the frame. */
@@ -940,6 +951,7 @@ class BrowseActivity : Activity() {
 
     override fun onDestroy() {
         clock.removeCallbacks(rotateHero)
+        stageShow?.let { clock.removeCallbacks(it) }
         super.onDestroy()
     }
 
@@ -1279,7 +1291,7 @@ class BrowseActivity : Activity() {
             holder.meta.text = facts.joinToString(" · ")
             // The banner shows the wide card — the same picture the stage carries — never a portrait
             // poster stretched across the frame.
-            BrowseImages.load(holder.art, item.backdrop ?: item.poster, app.theme.px(1400f))
+            BrowseImages.load(holder.art, item.backdrop ?: item.poster, app.theme.px(1100f))
             if (holder.split) BrowseImages.load(holder.poster, item.poster ?: item.backdrop, app.theme.px(420f))
             if (!item.logo.isNullOrBlank()) {
                 holder.logo.visibility = View.VISIBLE

@@ -32,10 +32,17 @@ module.exports = {
       }
       for (const c of cats || []) {
         if (!c || !c.id) continue;
+        let name = String(c.name || c.id);
+        // DesiFlix names its shelves "Movies - DesiFlix". The tile already says "DesiFlix"; strip
+        // the repeated suffix so the label is "DesiFlix · Movies".
+        if (p.name) {
+          const escaped = String(p.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          name = name.replace(new RegExp('\\s*[-–—]\\s*' + escaped + '\\s*$', 'i'), '').trim();
+        }
         out.push({
           identity: 'catalog:' + p.id + ':' + c.id,
           type: 'genre',
-          title: [p.name || p.id, c.name || c.id].join(' · '),
+          title: [p.name || p.id, name].filter(Boolean).join(' · '),
           poster: null,
           backdrop: null,
           logo: null,
