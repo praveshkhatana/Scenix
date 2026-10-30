@@ -1794,7 +1794,7 @@ const LABEL_NOISE = new Set([
   // Edition words sit in parentheses as often as titles do: `(Unrated)`, `(Theatrical)`.
   'unrated', 'rated', 'theatrical', 'directors', 'collectors', 'edition', 'version', 'dubbed',
   'dub', 'subbed', 'remastered', 'restored', 'anniversary', 'criterion', 'ultimate', 'final',
-  'limited', 'international', 'original', 'classic',
+  'limited', 'international', 'original', 'classic', 'cut',
 ]);
 
 function looksLikeAnotherTitle(candidate, title) {
