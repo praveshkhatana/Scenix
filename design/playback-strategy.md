@@ -50,6 +50,19 @@ Torrents are never removed, but rank below an HTTP source of comparable quality,
 have no ladder. One tap = one play; the ranked array is the **Source** sheet in the player, not a
 second decision on the detail page.
 
+**Before a copy is accepted, it has to be the right title.** Three cheap checks run inside
+`pickAndPlay`, in increasing cost: the file's own name (when the provider gives one), the parenthetical
+title a provider puts in its label (`480p · Hindi · Bowler XVIII (Citadel)` is a working stream for the
+wrong row), and finally a duration fingerprint against the title's runtime. A copy that fails any
+check is skipped and the next ranked one is tried; a title with no honest copy says so instead of
+playing a different film under the right name. A language or codec tag in parentheses (`(Eng)`,
+`(DDP5.1)`) is not treated as a title.
+
+**Changing quality must not change the film.** An adaptive ladder is one copy with several rungs;
+the native Quality menu pins a rung of that same HLS stream and `Auto` returns to adaptive selection,
+so the hub is never asked for another copy to satisfy a quality change. The copy list stays available
+below an `Other copies` heading, because choosing a different source is a separate, explicit act.
+
 **Layer 1 — prefer sources that are already streams.** Community addons that return direct
 HTTP/HLS (WatchHub-style scrapers, our live playlists, curated YouTube) *are* adaptive and
 *are* what makes playback feel like Scenix. Torrents are the fallback that widens the library.
