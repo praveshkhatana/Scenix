@@ -1397,6 +1397,10 @@ class BrowseActivity : Activity() {
             }
             val item = row.items[position]
             holder.item = item
+            if (item.type == "genre") {
+                bindGenre(holder, item)
+                return
+            }
             holder.chevron.visibility = View.GONE
             if (featured) holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID
             holder.name.text = item.title
@@ -1434,6 +1438,7 @@ class BrowseActivity : Activity() {
             }
             if (ranked) {
                 // A recycled tile may have worn the See all lockup; the rank column rides the left edge.
+                holder.num.setPadding(0, 0, 0, 0)
                 holder.num.layoutParams = FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
                     gravity = Gravity.START
                 }
@@ -1480,6 +1485,7 @@ class BrowseActivity : Activity() {
             holder.progress.visibility = View.GONE
             holder.chevron.visibility = View.VISIBLE
             holder.num.visibility = View.VISIBLE
+            holder.num.setPadding(0, 0, 0, 0)
             holder.num.text = "See all"
             holder.num.setTextColor(theme.ink2)
             holder.num.gravity = Gravity.CENTER
@@ -1493,6 +1499,56 @@ class BrowseActivity : Activity() {
                 topMargin = (cardH - theme.px(78f)) / 2 + theme.px(64f)
             }
             holder.itemView.setOnClickListener { openRowFull(row) }
+        }
+
+        /**
+         * A genre has no poster of its own — the hub sends null art for these tiles, and an empty
+         * plate with a badge read as a broken card. So the tile IS the artwork: a diagonal colour
+         * wash keyed to the genre's name (every shelf shows the same tile in the same colours),
+         * with the name set large inside it, as Apple TV's category tiles are.
+         */
+        private fun bindGenre(holder: CardHolder, item: Item) {
+            var hash = 0
+            for (c in item.title.lowercase()) hash = (hash * 31 + c.code) % 360
+            val hue = hash.toFloat()
+            holder.art.setImageDrawable(null)
+            holder.art.setBackgroundColor(Color.TRANSPARENT)
+            holder.art.background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(
+                    Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.78f)),
+                    Color.HSVToColor(floatArrayOf((hue + 42f) % 360f, 0.80f, 0.42f)),
+                ),
+            )
+            holder.name.visibility = View.GONE
+            holder.sub.visibility = View.GONE
+            holder.logo.visibility = View.GONE
+            holder.badge.visibility = View.GONE
+            holder.corner.visibility = View.GONE
+            holder.progress.visibility = View.GONE
+            holder.slideRing?.visibility = View.GONE
+            holder.chevron.visibility = View.GONE
+            holder.num.visibility = View.VISIBLE
+            holder.num.text = item.title
+            holder.num.setTextColor(Color.WHITE)
+            holder.num.gravity = Gravity.CENTER
+            holder.num.maxLines = 2
+            holder.num.setPadding(theme.px(16f), 0, theme.px(16f), 0)
+            holder.num.paint.style = android.graphics.Paint.Style.FILL
+            holder.num.setShadowLayer(theme.px(10f).toFloat(), 0f, theme.px(2f).toFloat(), Color.argb(160, 0, 0, 0))
+            holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardH * 0.22f)
+            holder.num.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, cardH
+            ).apply { gravity = Gravity.TOP }
+            // A genre tile opens the genre's own full list, not a detail page for "genre:drama".
+            holder.itemView.setOnClickListener {
+                startActivity(
+                    Intent(this@BrowseActivity, SectionActivity::class.java)
+                        .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
+                        .putExtra(SectionActivity.EXTRA_QUERY, item.identity.substringAfter(':'))
+                        .putExtra(SectionActivity.EXTRA_TITLE, item.title)
+                )
+            }
         }
     }
 
