@@ -34,6 +34,9 @@ class DetailActivity : Activity() {
     private lateinit var app: AppContext
     private lateinit var profileId: String
     private lateinit var identity: String
+    private var expectedTitle = ""
+    private var askedFallback = false
+    private val preloading = ArrayList<View>()
     private lateinit var body: LinearLayout
     private lateinit var scroll: ScrollView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
@@ -46,6 +49,7 @@ class DetailActivity : Activity() {
         app = sc.ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         identity = intent?.getStringExtra(EXTRA_IDENTITY).orEmpty()
+        expectedTitle = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
         if (profileId.isBlank() || identity.isBlank()) {
             finish()
             return
@@ -68,15 +72,69 @@ class DetailActivity : Activity() {
             if (isFinishing || isDestroyed) return@meta
             // A cold hub sometimes answers with its error shape instead of a title. Painting that
             // leaves a wordless black page; say what happened instead.
-            if (record == null || record.optString("title").isBlank()) {
-                body.removeAllViews()
-                body.addView(Views.text(app, "sub", 24f, app.theme.ink2, error ?: "This title is not available", gravity = Gravity.CENTER),
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(240f)))
+            val got = record?.optString("title").orEmpty()
+            val mismatch = got.isBlank() ||
+                (expectedTitle.isNotBlank() && norm(got) != norm(expectedTitle))
+            if (mismatch && expectedTitle.isNotBlank() && !askedFallback) {
+                // The hub's shelves and its meta ids drift apart: the tile said "The Office", the
+                // id it carried answered "not found" or a different title entirely. The viewer
+                // clicked a name, not an id — ask for that name and follow what the hub's own
+                // search vouches for.
+                askedFallback = true
+                api.search(profileId, expectedTitle) { items, _ ->
+                    if (isFinishing || isDestroyed) return@search
+                    val hit = items?.firstOrNull { norm(it.title) == norm(expectedTitle) }
+                    if (hit != null && hit.identity != identity) {
+                        identity = hit.identity
+                        clearPreloader()
+                        loading()
+                        api.meta(identity, profileId) { record2, error2 ->
+                            if (isFinishing || isDestroyed) return@meta
+                            val got2 = record2?.optString("title").orEmpty()
+                            if (record2 == null || got2.isBlank()) {
+                                unavailable(error2 ?: error)
+                            } else {
+                                item = record2
+                                paint(record2)
+                            }
+                        }
+                    } else if (record != null && !got.isBlank()) {
+                        // Search could not vouch for a better id; the record we have still has a
+                        // title, so paint it rather than throw the page away.
+                        item = record
+                        paint(record)
+                    } else {
+                        unavailable(error)
+                    }
+                }
+                return@meta
+            }
+            if (record == null || got.isBlank()) {
+                unavailable(error)
             } else {
                 item = record
                 paint(record)
             }
         }
+    }
+
+    private fun unavailable(error: String?) {
+        clearPreloader()
+        body.addView(Views.text(app, "sub", 24f, app.theme.ink2, error ?: "This title is not available", gravity = Gravity.CENTER),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(240f)))
+    }
+
+    private fun norm(t: String): String = t.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+
+    /**
+     * The preloader blocks pulse forever; a detached view whose animation was never cancelled can
+     * keep painting its ghost over the real page long after it was detached. Stop the pulse before
+     * the blocks leave the tree.
+     */
+    private fun clearPreloader() {
+        for (v in preloading) v.clearAnimation()
+        preloading.clear()
+        body.removeAllViews()
     }
 
     private fun loading() {
@@ -93,7 +151,7 @@ class DetailActivity : Activity() {
         }
         fun block(w: Int, h: Int, radius: Int = theme.radius("card", 6f)): View =
             pulse(View(this).apply { background = Views.rounded(theme.surface2, radius) })
-                .also { it.layoutParams = LinearLayout.LayoutParams(w, h) }
+                .also { preloading.add(it); it.layoutParams = LinearLayout.LayoutParams(w, h) }
         body.addView(block(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(560f), 0),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(560f)))
         body.addView(block(theme.px(680.0f), theme.px(46f)),
@@ -124,7 +182,7 @@ class DetailActivity : Activity() {
     }
 
     private fun paint(record: JSONObject) {
-        body.removeAllViews()
+        clearPreloader()
         val theme = app.theme
         val title = s(record, "title", "")
         val backdrop = s(record, "backdrop", "").ifBlank { s(record, "poster", "") }
@@ -407,6 +465,7 @@ class DetailActivity : Activity() {
                     Intent(this@DetailActivity, DetailActivity::class.java)
                         .putExtra(EXTRA_PROFILE, profileId)
                         .putExtra(EXTRA_IDENTITY, item.identity)
+                        .putExtra(EXTRA_TITLE, item.title)
                 )
             }
         }
@@ -459,10 +518,23 @@ class DetailActivity : Activity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(24f); bottomMargin = theme.px(10f)
             })
-        for (i in 0 until minOf(episodes.length(), 24)) {
-            val ep = episodes.optJSONObject(i) ?: continue
+        // Season-based grouping: a long flat list of "S2 E7 · …" lines is a database dump, not a
+        // season picker. Sort by season and episode and open each block under its own header, so
+        // the page reads like the series actually has seasons.
+        val sorted = ArrayList<JSONObject>()
+        for (i in 0 until episodes.length()) episodes.optJSONObject(i)?.let { sorted.add(it) }
+        sorted.sortWith(compareBy({ it.optInt("season", 1) }, { it.optInt("episode", 1) }))
+        var lastSeason = -1
+        for (ep in sorted.take(120)) {
             val season = ep.optInt("season", 1)
-            val number = ep.optInt("episode", i + 1)
+            val number = ep.optInt("episode", 1)
+            if (season != lastSeason) {
+                lastSeason = season
+                parent.addView(Views.text(app, "rowTitle", 22f, theme.ink2, "Season $season", bold = true),
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        topMargin = theme.px(16f); bottomMargin = theme.px(2f)
+                    })
+            }
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -488,7 +560,7 @@ class DetailActivity : Activity() {
                 setPadding(theme.px(14f), 0, 0, 0)
             }
             copy.addView(Views.text(app, "li", 22f, theme.ink,
-                "S$season E$number · " + s(ep, "title", ""), bold = true, maxLines = 1))
+                "E%02d · %s".format(number, s(ep, "title", "")), bold = true, maxLines = 1))
             val synopsis = s(ep, "synopsis", "")
             if (synopsis.isNotBlank()) {
                 copy.addView(Views.text(app, "meta", 18f, theme.ink2, synopsis, maxLines = 2),
@@ -548,5 +620,6 @@ class DetailActivity : Activity() {
     companion object {
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_IDENTITY = "identity"
+        const val EXTRA_TITLE = "title"
     }
 }

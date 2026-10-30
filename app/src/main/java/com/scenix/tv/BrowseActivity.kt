@@ -3,7 +3,6 @@ package com.scenix.tv
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -264,17 +263,14 @@ class BrowseActivity : Activity() {
         }
 
         fun setRoaming(roam: Boolean) {
-            // The room frosts while the viewer walks the shelves. The old cost was a blur that
-            // re-rendered every scroll frame; this one is set once per transition, on the two art
-            // layers only, and it stays applied as a static shader between changes.
+            // The room dims while the viewer walks the shelves — the veil and the dimmed
+            // neighbours land instantly, which is what the eye reads as the change. A frosted
+            // blur over the backdrop (RenderEffect) was tried and removed: on the emulator's
+            // translated GL it kept the whole window re-rendering for a beat after every hop
+            // (62 composited frames per walk vs 16) and the first blurred frame stalled a second
+            // and a half mid-step — exactly the freeze between the hero and the shelves. Apple's
+            // own billboard keeps the art sharp while browsing too.
             veil.animate().alpha(if (roam) 1f else 0.84f).setDuration(350).start()
-            if (android.os.Build.VERSION.SDK_INT >= 31) {
-                val rad = app.theme.px(14f).toFloat()
-                val fx = if (roam) android.graphics.RenderEffect.createBlurEffect(
-                    rad, rad, android.graphics.Shader.TileMode.CLAMP) else null
-                a.setRenderEffect(fx)
-                b.setRenderEffect(fx)
-            }
         }
     }
 
@@ -293,8 +289,14 @@ class BrowseActivity : Activity() {
     }
 
     private fun onCardFocused(card: View, item: Item) {
-        // A viewer walking a deep shelf is not looking at the billboard: its preview stops with them.
-        stopTrailer()
+        // Walking away from the billboard takes its preview with you — but releasing the media
+        // player blocks the main thread for a beat, and doing it inside the keypress dropped half
+        // a second of frames between the hero and the shelves. The surface comes down now, which
+        // is all the eye sees; the release lands once the step has finished drawing.
+        clock.removeCallbacks(trailerTick)
+        clock.removeCallbacks(trailerRelease)
+        hideTrailerNow()
+        clock.postDelayed(trailerRelease, 250L)
         val s = stage ?: return
         s.show(item.backdrop ?: item.poster ?: item.logo)
         s.setRoaming(true)
@@ -339,15 +341,28 @@ class BrowseActivity : Activity() {
         clock.postDelayed(trailerTick, 1000L)
     }
 
-    private fun stopTrailer() {
+    /** The cheap half of stopping a preview: take the surface and its subtitles out of the frame. */
+    private fun hideTrailerNow() {
         browseAdapter?.heroVideo()?.let {
-            runCatching { it.stopPlayback() }
+            it.animate().cancel()
+            it.alpha = 0f
             it.visibility = View.GONE
         }
         browseAdapter?.heroSubs()?.let {
             it.text = ""
             it.visibility = View.GONE
         }
+    }
+
+    /** The expensive half: stopPlayback tears the decoder down on this thread. */
+    private val trailerRelease = Runnable {
+        browseAdapter?.heroVideo()?.let { runCatching { it.stopPlayback() } }
+    }
+
+    private fun stopTrailer() {
+        clock.removeCallbacks(trailerRelease)
+        hideTrailerNow()
+        browseAdapter?.heroVideo()?.let { runCatching { it.stopPlayback() } }
     }
 
     private fun loadTrailer() {
@@ -903,6 +918,7 @@ class BrowseActivity : Activity() {
             Intent(this, DetailActivity::class.java)
                 .putExtra(DetailActivity.EXTRA_PROFILE, profileId)
                 .putExtra(DetailActivity.EXTRA_IDENTITY, item.identity)
+                .putExtra(DetailActivity.EXTRA_TITLE, item.title)
         )
     }
 
@@ -1093,7 +1109,7 @@ class BrowseActivity : Activity() {
                 val head = Views.text(app, "rowTitle", 28f, theme.ink, "", bold = true)
                 head.setPadding(theme.gutter, 0, theme.gutter, theme.px(12f))
                 box.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                val rail = RecyclerView(this@BrowseActivity).apply {
+                val rail = RailView(this@BrowseActivity).apply {
                     layoutManager = LinearLayoutManager(this@BrowseActivity, LinearLayoutManager.HORIZONTAL, false)
                     setHasFixedSize(true)
                     setItemViewCacheSize(16)
@@ -1597,5 +1613,40 @@ class BrowseActivity : Activity() {
         internal var liveSeen = false
         private const val TYPE_HERO = 1
         private const val TYPE_SHELF = 2
+    }
+
+    /**
+     * A shelf rail that keeps its column when D-pad focus arrives from the row above or below.
+     * The framework hands focus to the rail container and its default descendant search takes the
+     * first tile — so every vertical hop dragged the viewer back to the left edge. Pick instead the
+     * tile whose horizontal span overlaps the incoming focus rectangle the most: pressing Down from
+     * the third card lands on the third card of the next shelf.
+     */
+    private class RailView(context: android.content.Context) : RecyclerView(context) {
+        override fun onRequestFocusInDescendants(
+            direction: Int,
+            previouslyFocusedRect: android.graphics.Rect?,
+        ): Boolean {
+            val prev = previouslyFocusedRect
+            if (prev != null && !prev.isEmpty && (direction and (FOCUS_UP or FOCUS_DOWN)) != 0) {
+                var best: View? = null
+                var bestOverlap = -1L
+                for (i in 0 until childCount) {
+                    val c = getChildAt(i) ?: continue
+                    if (!c.isFocusable) continue
+                    val r = android.graphics.Rect()
+                    c.getDrawingRect(r)
+                    offsetDescendantRectToMyCoords(c, r)
+                    val overlap = minOf(r.right.toLong(), prev.right.toLong()) -
+                        maxOf(r.left.toLong(), prev.left.toLong())
+                    if (overlap > bestOverlap) {
+                        bestOverlap = overlap
+                        best = c
+                    }
+                }
+                if (best != null && best.requestFocus(direction, prev)) return true
+            }
+            return super.onRequestFocusInDescendants(direction, previouslyFocusedRect)
+        }
     }
 }

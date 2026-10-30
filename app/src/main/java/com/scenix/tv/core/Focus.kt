@@ -45,22 +45,30 @@ object Focus {
             style == "glow" -> {
                 // Apple's focus is not a border at all: there is no hard line riding the art's edge.
                 // The tile lifts, the room dims, and the only drawn thing is a soft halo that starts
-                // at the art's own edge and fades outward into the space around the tile. Two bands,
-                // each as wide as its inset, so their inner edges land exactly on the art — never a
-                // rectangle floating away from it with a gap that reads like a frame.
+                // at the art's own edge and fades outward into the space around the tile. Two fat
+                // stroke bands still read as a plate — their inner and outer edges are hard lines.
+                // Four bands, stepping down in weight as they widen, give the light an actual
+                // falloff: brightest riding the art, gone before the tile's rounded silhouette is
+                // remembered as a box.
                 val c = theme.focusGlowColor
                 val r = android.graphics.Color.red(c)
                 val g = android.graphics.Color.green(c)
                 val b = android.graphics.Color.blue(c)
-                val spread = theme.px(20f)
-                val mid = theme.px(10f)
+                val b1 = theme.px(26f)
+                val b2 = theme.px(19f)
+                val b3 = theme.px(13f)
+                val b4 = theme.px(7f)
                 val halo = LayerDrawable(arrayOf(
-                    Views.ring(Color.argb(46, r, g, b), ringRadiusPx + spread, spread),
-                    Views.ring(Color.argb(120, r, g, b), ringRadiusPx + mid, mid),
+                    Views.ring(Color.argb(20, r, g, b), ringRadiusPx + b1, b1),
+                    Views.ring(Color.argb(34, r, g, b), ringRadiusPx + b2, b2),
+                    Views.ring(Color.argb(56, r, g, b), ringRadiusPx + b3, b3),
+                    Views.ring(Color.argb(88, r, g, b), ringRadiusPx + b4, b4),
                 ))
                 if (glowInset > 0) {
-                    halo.setLayerInset(0, glowInset - spread, glowInset - spread, glowInset - spread, glowInset - spread)
-                    halo.setLayerInset(1, glowInset - mid, glowInset - mid, glowInset - mid, glowInset - mid)
+                    halo.setLayerInset(0, glowInset - b1, glowInset - b1, glowInset - b1, glowInset - b1)
+                    halo.setLayerInset(1, glowInset - b2, glowInset - b2, glowInset - b2, glowInset - b2)
+                    halo.setLayerInset(2, glowInset - b3, glowInset - b3, glowInset - b3, glowInset - b3)
+                    halo.setLayerInset(3, glowInset - b4, glowInset - b4, glowInset - b4, glowInset - b4)
                 }
                 halo
             }

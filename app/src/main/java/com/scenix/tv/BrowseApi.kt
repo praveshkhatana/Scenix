@@ -237,7 +237,9 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
 
     fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
         val path = "/app/v1/meta/" + enc(identity)
-        request(path, "profile=" + enc(profileId), "GET", null, 20000) { root, _, error ->
+        // A cold hub resolving an eight-season series through its addons can sit well past the old
+        // 20 s; a timeout there strands the player's Episodes menu on an empty list.
+        request(path, "profile=" + enc(profileId), "GET", null, 45000) { root, _, error ->
             done(root?.optJSONObject("item") ?: root, error)
         }
     }

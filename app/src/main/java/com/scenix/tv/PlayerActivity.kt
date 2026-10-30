@@ -1752,8 +1752,10 @@ class PlayerActivity : Activity() {
                     episodesFetching = false
                     if (isFinishing) return@meta
                     val list = record?.optJSONArray("episodes")
-                    episodesList = if (list == null || list.length() == 0) JSONArray() else list
-                    // The viewer may have closed the panel in the meantime; only redraw a live one.
+                    if (list != null && list.length() > 0) episodesList = list
+                    // A cold hub can time out on a big series record (eight seasons of Game of
+                    // Thrones is a heavy read). Caching that miss as "no episodes" would strand the
+                    // menu on an empty list forever — leave it unset so the next open asks again.
                     if (panelKind == MenuKind.EPISODES) rebuildMenu(MenuKind.EPISODES)
                 }
             }
