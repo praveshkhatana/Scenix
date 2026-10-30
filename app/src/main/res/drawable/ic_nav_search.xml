@@ -5,12 +5,12 @@
     <path
         android:pathData="M11,3 a8,8 0 1,0 0,16 a8,8 0 1,0 0,-16 Z"
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="2"
+        android:strokeWidth="1.7"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
     <path
         android:pathData="M21,21 L16.65,16.65"
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="2"
+        android:strokeWidth="1.7"
         android:strokeLineCap="round" />
 </vector>

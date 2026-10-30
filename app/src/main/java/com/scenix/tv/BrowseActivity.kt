@@ -52,15 +52,54 @@ class BrowseActivity : Activity() {
     private var heroPos = 0
     private var browseAdapter: BrowseAdapter? = null
     private var liveTab: View? = null
+    // The pill floats over a full-bleed stage, so geometric focus search can't be trusted to walk
+    // from a tile up into it. One named anchor on the pill and one on the list make the route
+    // explicit: UP from the featured tiles lands on the bar, DOWN from the bar returns to the top.
+    private var navAnchor: View? = null
+    private var shelfListId = View.NO_ID
     private val clock = Handler(Looper.getMainLooper())
     private var rotationPaused = false
+    // Apple's billboard never moves under the viewer's hands: any key on the remote rewinds the
+    // idle clock, and the slide show only resumes once the room has been quiet for a while. This
+    // is what makes one press mean one step — the old free-running timer re-drew the featured
+    // row mid-walk, and the dropped focus read as a double press.
+    private var lastKeyAt = 0L
     private val rotateHero = object : Runnable {
         override fun run() {
             // A preview that is running is the viewer paying attention: rotation waits for it.
             val watching = browseAdapter?.heroVideo()?.visibility == View.VISIBLE
-            if (!rotationPaused && slides.size > 1 && !watching) setHero((heroPos + 1) % slides.size)
+            val idleFor = android.os.SystemClock.elapsedRealtime() - lastKeyAt
+            if (slides.size > 1 && !watching && idleFor > 9_000L)
+                setHero((heroPos + 1) % slides.size)
             clock.postDelayed(this, app.theme.token("hero", "rotateMs", 6000.0).toLong())
         }
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            lastKeyAt = android.os.SystemClock.elapsedRealtime()
+            // The top of the screen — the billboard or a Featured tile — answers UP with the nav pill,
+            // one press in, one press back down. Nested list geometry alone never routes there.
+            val anchor = navAnchor
+            if (anchor != null && event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(currentFocus)) {
+                anchor.requestFocus()
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun onTopRow(f: View?): Boolean {
+        if (f == null || f === navAnchor) return false
+        val adapter = browseAdapter ?: return false
+        if (f === adapter.heroPlay || f === adapter.heroRoot) return true
+        val rail = adapter.featuredRail ?: return false
+        var p: android.view.ViewParent? = f.parent
+        while (p != null) {
+            if (p === rail) return true
+            p = p.parent
+        }
+        return false
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -117,6 +156,8 @@ class BrowseActivity : Activity() {
             // must not be pushed down by a padding band — other packs keep their page padding.
             setPadding(0, if (stageMode) 0 else app.theme.px(16f), 0, app.theme.px(64f))
         }
+        shelfListId = View.generateViewId()
+        list.id = shelfListId
         status = Views.text(app, "sub", 24f, app.theme.ink2, "Loading the shelves…", gravity = Gravity.CENTER)
         if (stageMode) {
             // Apple's scene page has no layout row for the nav: the hero fills the screen from the
@@ -221,7 +262,6 @@ class BrowseActivity : Activity() {
     }
 
     private fun onCardFocused(card: View, item: Item) {
-        rotationPaused = false
         // A viewer walking a deep shelf is not looking at the billboard: its preview stops with them.
         stopTrailer()
         val s = stage ?: return
@@ -399,15 +439,20 @@ class BrowseActivity : Activity() {
                         .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
                 )
             })
-            pill.addView(navIcon(R.drawable.ic_nav_settings, "Settings") {
+            val gear = navIcon(R.drawable.ic_nav_settings, "Settings") {
                 startActivity(
                     Intent(this@BrowseActivity, SettingsActivity::class.java)
                         .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
                 )
-            })
+            }
+            gear.id = View.generateViewId()
+            navAnchor = gear
+            pill.addView(gear)
             bar.addView(pill, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.CENTER })
+            // DOWN from anywhere on the bar returns to the top of the shelves.
+            for (i in 0 until pill.childCount) pill.getChildAt(i).nextFocusDownId = shelfListId
             return bar
         }
         val bar = LinearLayout(this)
@@ -440,8 +485,8 @@ class BrowseActivity : Activity() {
     private fun navButton(
         label: String, left: Int = 0, preAttach: ((TextView) -> Unit)? = null, action: () -> Unit,
     ): View {
-        val b = Views.text(app, "li", 22f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
-        b.setPadding(app.theme.px(18f), app.theme.px(10f), app.theme.px(18f), app.theme.px(10f))
+        val b = Views.text(app, "li", 20f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
+        b.setPadding(app.theme.px(17f), app.theme.px(9f), app.theme.px(17f), app.theme.px(9f))
         b.isFocusable = true
         b.isClickable = true
         b.setOnClickListener { action() }
@@ -478,10 +523,10 @@ class BrowseActivity : Activity() {
         iv.isFocusable = true
         iv.isClickable = true
         iv.setOnClickListener { action() }
-        Focus.attach(iv, iv, app, theme.px(15f), scale = false, elevate = false,
+        Focus.attach(iv, iv, app, theme.px(9f), scale = false, elevate = false,
             onFocus = { if (it) onChromeFocused() })
-        iv.layoutParams = LinearLayout.LayoutParams(theme.px(40f), theme.px(40f)).apply {
-            marginStart = theme.px(6f)
+        iv.layoutParams = LinearLayout.LayoutParams(theme.px(30f), theme.px(30f)).apply {
+            marginStart = theme.px(10f); marginEnd = theme.px(10f)
         }
         return iv
     }
@@ -489,7 +534,7 @@ class BrowseActivity : Activity() {
     /** The household at the head of the pill: the profile's face when the hub has one, its initial otherwise. */
     private fun profileDisc(): View {
         val theme = app.theme
-        val size = theme.px(44f)
+        val size = theme.px(36f)
         val disc = FrameLayout(this).apply {
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
@@ -655,12 +700,15 @@ class BrowseActivity : Activity() {
 
         var heroPlay: View? = null
             private set
+        var heroRoot: View? = null
+            private set
         private var heroHolder: HeroHolder? = null
         // The rail whose tiles ARE the hero's slides; the hero follows its focused tile and the
         // current slide keeps a rim even when focus walks away, so the two never drift apart.
         var featuredCards: CardAdapter? = null
             private set
-        private var featuredRail: RecyclerView? = null
+        var featuredRail: RecyclerView? = null
+            private set
 
         /** There is no separate hero stop: a landing on Home stands on the Featured row, as Apple's does. */
         fun focusFirstSlide(): View? = featuredRail?.getChildAt(0)
@@ -853,6 +901,9 @@ class BrowseActivity : Activity() {
                 renderHero(holder)
                 val item = slides[heroPos]
                 heroPlay = holder.play
+                heroRoot = holder.itemView
+                holder.play.nextFocusUpId = navAnchor?.id ?: View.NO_ID
+                holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID
                 holder.play.setOnClickListener { openDetail(slides.getOrElse(heroPos) { item }) }
                 holder.itemView.setOnClickListener { openDetail(slides.getOrElse(heroPos) { item }) }
             } else if (holder is ShelfHolder) {
@@ -1036,6 +1087,19 @@ class BrowseActivity : Activity() {
             card.addView(num, FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
                 gravity = Gravity.START
             })
+            // The See all tile's badge: a feather chevron on a quiet disc, hidden on every other tile.
+            val chevron = ImageView(this@BrowseActivity).apply {
+                setImageResource(R.drawable.ic_chevron_right)
+                setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(theme.px(20f), theme.px(20f), theme.px(20f), theme.px(20f))
+                background = Views.rounded(theme.surface2, theme.px(999f))
+                visibility = View.GONE
+            }
+            card.addView(chevron, FrameLayout.LayoutParams(theme.px(78f), theme.px(78f)).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                topMargin = (cardH - theme.px(78f)) / 2 - theme.px(24f)
+            })
             // IMDb rating and the certificate ride the top-right corner, gold star and plain badge,
             // exactly as the pack's card design drew them.
             val imdb = Views.text(app, "meta", 13f, Color.parseColor("#F6C621"), "", bold = true, maxLines = 1)
@@ -1091,7 +1155,7 @@ class BrowseActivity : Activity() {
                 topMargin = -glowPad
             })
             card.clipChildren = false
-            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideRing, imdb, cert, corner)
+            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideRing, imdb, cert, corner, chevron)
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
                 glowInset = glowPad,
                 // The hero's rail is a loop, not a corridor: walking off either end lands on the
@@ -1120,6 +1184,8 @@ class BrowseActivity : Activity() {
             }
             val item = row.items[position]
             holder.item = item
+            holder.chevron.visibility = View.GONE
+            if (featured) holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
             holder.sub.visibility = if (below) View.VISIBLE else View.GONE
@@ -1154,6 +1220,10 @@ class BrowseActivity : Activity() {
                 }
             }
             if (ranked) {
+                // A recycled tile may have worn the See all lockup; the rank column rides the left edge.
+                holder.num.layoutParams = FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    gravity = Gravity.START
+                }
                 holder.num.text = (position + 1).toString()
                 holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardH * 0.44f)
                 holder.num.setShadowLayer(theme.px(6f).toFloat(), 0f, 0f, Color.BLACK)
@@ -1182,25 +1252,33 @@ class BrowseActivity : Activity() {
             }
         }
 
-        /** The shelf's last tile: an empty card with an arrow, promising the rest of the list. */
+        /** The shelf's last tile: a quiet bordered card with a chevron disc and the words "See all". */
         private fun bindSeeAll(holder: CardHolder) {
             holder.item = null
             holder.art.setImageDrawable(null)
-            holder.art.setBackgroundColor(theme.surface2)
-            holder.name.text = "See all"
+            holder.art.setBackgroundColor(Color.TRANSPARENT)
+            holder.art.background = Views.rounded(theme.surface, theme.radius("card", 6f), theme.px(1f), theme.line)
+            holder.name.text = row.title
             holder.name.visibility = View.VISIBLE
-            holder.sub.text = "All ${row.title.lowercase()}"
-            holder.sub.visibility = if (below) View.VISIBLE else View.GONE
+            holder.sub.visibility = View.GONE
             holder.logo.visibility = View.GONE
             holder.corner.visibility = View.GONE
             holder.badge.visibility = View.GONE
             holder.progress.visibility = View.GONE
+            holder.chevron.visibility = View.VISIBLE
             holder.num.visibility = View.VISIBLE
-            holder.num.text = "→"
-            holder.num.setTextColor(theme.ink)
+            holder.num.text = "See all"
+            holder.num.setTextColor(theme.ink2)
+            holder.num.gravity = Gravity.CENTER
             holder.num.paint.style = android.graphics.Paint.Style.FILL
             holder.num.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
-            holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardH * 0.34f)
+            holder.num.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, theme.px(21f).toFloat())
+            holder.num.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                topMargin = (cardH - theme.px(78f)) / 2 + theme.px(64f)
+            }
             holder.itemView.setOnClickListener { openSection(row.id) }
         }
     }
@@ -1209,6 +1287,7 @@ class BrowseActivity : Activity() {
         view: View, val art: ImageView, val name: TextView, val sub: TextView, val logo: ImageView,
         val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
         val slideRing: View?, val imdb: TextView, val cert: TextView, val corner: View,
+        val chevron: ImageView,
     ) : RecyclerView.ViewHolder(view) {
         var item: Item? = null
     }
