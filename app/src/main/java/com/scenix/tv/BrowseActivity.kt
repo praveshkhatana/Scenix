@@ -45,6 +45,11 @@ class BrowseActivity : Activity() {
     private var loaded = false
     private var stage: Stage? = null
     private var heroItem: Item? = null
+    // "" = Home; "movies"/"series" open the same surface filtered to a section. The pill stays on
+    // screen across those switches, so one LEFT/RIGHT walks whole sections without a trip back.
+    private var section = ""
+    private var skeleton: View? = null
+    private var contentRoot: ViewGroup? = null
 
     // The hero and the first shelf are ONE section, the way Apple's shelf-top works: the slides the
     // hero shows are the tiles of the Featured row, and whichever side moves, the other follows.
@@ -106,10 +111,10 @@ class BrowseActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val next = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
-        if (next.isNotBlank() && next != profileId) {
-            profileId = next
-            load()
-        }
+        if (next.isNotBlank()) profileId = next
+        // A pill tab switch lands back here with a different tab. Same activity, same pill — the
+        // page rebuilds around the new section and the pill shows where you now stand.
+        if (intent?.getStringExtra(EXTRA_TAB).orEmpty() != section) recreate() else load()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -118,6 +123,7 @@ class BrowseActivity : Activity() {
         val sc = application as ScenixApp
         app = sc.ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
+        section = intent?.getStringExtra(EXTRA_TAB).orEmpty()
         if (profileId.isBlank()) {
             // Never guess who is watching. The native profile gate is the one place a PIN is checked.
             startActivity(Intent(this, ProfilesActivity::class.java))
@@ -158,7 +164,8 @@ class BrowseActivity : Activity() {
         }
         shelfListId = View.generateViewId()
         list.id = shelfListId
-        status = Views.text(app, "sub", 24f, app.theme.ink2, "Loading the shelves…", gravity = Gravity.CENTER)
+        contentRoot = content
+        status = Views.text(app, "sub", 24f, app.theme.ink2, "", gravity = Gravity.CENTER)
         if (stageMode) {
             // Apple's scene page has no layout row for the nav: the hero fills the screen from the
             // top edge and the bar floats over its art — a stacked page would cut the banner off
@@ -238,11 +245,9 @@ class BrowseActivity : Activity() {
         }
 
         fun setRoaming(roam: Boolean) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val effect = if (roam) RenderEffect.createBlurEffect(24f, 24f, Shader.TileMode.CLAMP) else null
-                a.setRenderEffect(effect)
-                b.setRenderEffect(effect)
-            }
+            // A full-screen RenderEffect blurred on the GPU every scroll frame — that was the biggest
+            // single cost behind the "app is laggy" complaint. The veil alone reads the same on this
+            // panel: the art goes quiet, the ring stays the loudest thing on the screen.
             veil.animate().alpha(if (roam) 1f else 0.84f).setDuration(350).start()
         }
     }
@@ -414,9 +419,9 @@ class BrowseActivity : Activity() {
                 background = Views.rounded(theme.surface2, theme.px(999f), theme.px(1f), theme.line)
             }
             pill.addView(profileDisc())
-            pill.addView(navTab("Home", active = true) { list.smoothScrollToPosition(0) })
-            pill.addView(navTab("Movies") { openSection("movies") })
-            pill.addView(navTab("Series") { openSection("series") })
+            pill.addView(navTab("Home", active = section.isBlank()) { goTab("") })
+            pill.addView(navTab("Movies", active = section == "movies") { goTab("movies") })
+            pill.addView(navTab("Series", active = section == "series") { goTab("series") })
             val live = navTab("Live TV") {
                 startActivity(
                     Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
@@ -424,9 +429,10 @@ class BrowseActivity : Activity() {
                 )
             }
             // Live TV earns its place in the pill: it shows once the hub actually carries the live
-            // row, and stays out of the way of households that have not configured it.
+            // row, and stays out of the way of households that have not configured it. The answer
+            // outlives a tab switch so the bar never changes shape mid-walk.
             liveTab = live
-            live.visibility = View.GONE
+            live.visibility = if (liveSeen) View.VISIBLE else View.GONE
             pill.addView(live)
             pill.addView(View(this).apply { setBackgroundColor(theme.line) },
                 LinearLayout.LayoutParams(theme.px(1f), theme.px(26f)).apply {
@@ -462,11 +468,11 @@ class BrowseActivity : Activity() {
         bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
         bar.addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(navButton("Movies") { openSection("movies") },
+        bar.addView(navButton("Movies") { goTab("movies") },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = theme.px(22f)
             })
-        bar.addView(navButton("Series") { openSection("series") },
+        bar.addView(navButton("Series") { goTab("series") },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = theme.px(18f)
             })
@@ -577,28 +583,45 @@ class BrowseActivity : Activity() {
     }
 
     private fun load() {
-        status.visibility = View.VISIBLE
-        status.text = "Loading the shelves…"
+        showSkeleton(true)
+        if (section.isNotBlank()) {
+            api.row(profileId, section) { _, items, error ->
+                if (isFinishing || isDestroyed) return@row
+                if (items.isNullOrEmpty()) {
+                    showSkeleton(false)
+                    status.visibility = View.VISIBLE
+                    status.text = error ?: "Nothing in this section yet"
+                    return@row
+                }
+                loaded = true
+                present(deriveShelves(section, items))
+            }
+            return
+        }
         api.load(profileId) { rows, error ->
             if (isFinishing || isDestroyed) return@load
             if (rows == null) {
                 loaded = false
+                showSkeleton(false)
                 status.visibility = View.VISIBLE
                 status.text = error ?: "The hub is not answering"
                 return@load
             }
             loaded = true
-            status.visibility = View.GONE
             // The pill's Live TV tab appears only for households whose hub actually carries it.
-            liveTab?.visibility =
-                if (rows.any { it.id == "live" || it.card == "channel" }) View.VISIBLE else View.GONE
+            liveSeen = rows.any { it.id == "live" || it.card == "channel" }
+            liveTab?.visibility = if (liveSeen) View.VISIBLE else View.GONE
+            // Live has a whole tab and a wall of its own; the Home shelves are for films and shows,
+            // so the old live strip is no longer parked on the front page.
+            val others = rows.filter {
+                it.id != "hero" && it.items.isNotEmpty() && it.id != "live" && it.card != "channel"
+            }
             // The hub sometimes sends the hero as its own row and sometimes folds the featured
             // titles into the first shelf. Either way Home opens on a hero — the viewer's first
             // sight on this set is the featured title, never a bare shelf head — and the hero's
             // slides are exactly the tiles of the Featured row that sits under it.
-            val heroRow = rows.firstOrNull { it.id == "hero" }
-            val others = rows.filter { it.id != "hero" && it.items.isNotEmpty() }
             val maxSlides = app.theme.token("hero", "maxItems", 5.0).toInt().coerceAtLeast(1)
+            val heroRow = rows.firstOrNull { it.id == "hero" }
             val shelves: List<BrowseRow>
             if (heroRow != null && heroRow.items.isNotEmpty()) {
                 slides = heroRow.items.take(maxSlides)
@@ -614,29 +637,120 @@ class BrowseActivity : Activity() {
                         others.drop(1)
                 }
             }
-            heroPos = 0
-            heroItem = slides.firstOrNull()
-            stage?.show(heroItem?.backdrop ?: heroItem?.poster
-                ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
-            val adapter = BrowseAdapter(heroItem, shelves)
-            browseAdapter = adapter
-            list.adapter = adapter
-            clock.removeCallbacks(rotateHero)
-            rotationPaused = false
-            if (slides.size > 1) {
-                clock.postDelayed(rotateHero, app.theme.token("hero", "rotateMs", 6000.0).toLong())
-            }
-            // The first tile takes initial focus, but only once the rails have actually laid out
-            // their children — on a cold load that can be well after the data lands, so retry.
-            list.postDelayed(object : Runnable {
-                var tries = 0
-                override fun run() {
-                    val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list)
-                    if (first?.requestFocus() == true) return
-                    if (++tries < 20) list.postDelayed(this, 300)
-                }
-            }, 400)
+            present(shelves)
         }
+    }
+
+    /**
+     * A section arrives from the hub as one flat list, exactly as the web browse page finds it.
+     * The shelves are the hub's own tags read back — newest, best-matched, best-rated, the genres
+     * this section holds most, and the languages its titles actually carry. Nothing is invented:
+     * every rail is titles the hub delivered, ordered by fields each item already sends.
+     */
+    private fun deriveShelves(kind: String, raw: List<Item>): List<BrowseRow> {
+        val label = if (kind == "series") "Series" else "Movies"
+        val byId = LinkedHashMap<String, Item>()
+        for (it in raw) if (it.identity.isNotBlank() && !byId.containsKey(it.identity)) byId[it.identity] = it
+        val items = ArrayList(byId.values)
+        val maxSlides = app.theme.token("hero", "maxItems", 5.0).toInt().coerceAtLeast(1)
+        slides = items.filter { !it.backdrop.isNullOrBlank() }
+            .sortedByDescending { it.match + if (it.isNew) 20 else 0 }
+            .take(maxSlides)
+        val out = ArrayList<BrowseRow>()
+        if (slides.isNotEmpty()) out.add(BrowseRow("featured", "Featured on $label", "poster", slides))
+        // A rail shows eighteen tiles; `total` says what the shelf really holds, so See all appears
+        // exactly when titles are waiting off-rail — and opens them.
+        fun add(id: String, title: String, pool: List<Item>) {
+            if (pool.size < 6) return
+            out.add(BrowseRow(id, title, "poster", pool.take(18), pool.size))
+        }
+        add("trending", "Trending now", items.sortedByDescending { it.match })
+        val news = items.filter { it.isNew }.ifEmpty { items }.sortedByDescending { it.addedAt }
+        add("recent", "New on $label", news)
+        add("top-rated", "Top rated", items.filter { it.rating > 0 }.sortedByDescending { it.rating })
+        // The genres this section has the most depth in.
+        val counts = LinkedHashMap<String, Int>()
+        for (it in items) for (g in it.genres) if (g.isNotBlank()) counts[g] = (counts[g] ?: 0) + 1
+        for ((g, n) in counts.entries.sortedByDescending { it.value }.take(6)) {
+            if (n >= 8) add("genre:$g", g, items.filter { it.genres.contains(g) }.sortedByDescending { it.match })
+        }
+        // Indian households browse by language; the shelves come straight off each item's own tags.
+        for (lang in listOf("Hindi", "Telugu", "Tamil", "Malayalam", "Kannada", "Bengali", "Marathi")) {
+            val pool = items.filter { it.languages.any { l -> l.contains(lang, ignoreCase = true) } }
+            if (pool.size >= 8) add("lang:$lang", "Top $lang $label", pool.sortedByDescending { it.rating * 10 + it.match / 10 })
+        }
+        return out
+    }
+
+    /** Put a finished set of shelves on screen: hero, stage, rails, rotation and first focus. */
+    private fun present(shelves: List<BrowseRow>) {
+        showSkeleton(false)
+        status.visibility = View.GONE
+        heroPos = 0
+        heroItem = slides.firstOrNull()
+        stage?.show(heroItem?.backdrop ?: heroItem?.poster
+            ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
+        val adapter = BrowseAdapter(heroItem, shelves)
+        browseAdapter = adapter
+        list.adapter = adapter
+        clock.removeCallbacks(rotateHero)
+        rotationPaused = false
+        if (slides.size > 1) {
+            clock.postDelayed(rotateHero, app.theme.token("hero", "rotateMs", 6000.0).toLong())
+        }
+        // The first tile takes initial focus, but only once the rails have actually laid out
+        // their children — on a cold load that can be well after the data lands, so retry.
+        list.postDelayed(object : Runnable {
+            var tries = 0
+            override fun run() {
+                val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list)
+                if (first?.requestFocus() == true) return
+                if (++tries < 20) list.postDelayed(this, 300)
+            }
+        }, 400)
+    }
+
+    /** Quiet placeholder rails while the hub thinks, instead of a sentence on a black page. */
+    private fun showSkeleton(on: Boolean) {
+        val host = contentRoot ?: return
+        if (!on) {
+            skeleton?.let { host.removeView(it) }
+            skeleton = null
+            return
+        }
+        if (skeleton != null) return
+        val theme = app.theme
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(theme.gutter, theme.px(560f), theme.gutter, 0)
+        }
+        val cardW = theme.px(280f)
+        val artH = theme.px(420f)
+        for (r in 0 until 2) {
+            box.addView(View(this).apply { background = Views.rounded(theme.surface, theme.px(6f)) },
+                android.widget.LinearLayout.LayoutParams(theme.px(300f), theme.px(22f)).apply {
+                    bottomMargin = theme.px(18f)
+                })
+            val rail = android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+            }
+            for (c in 0 until 5) rail.addView(View(this).apply {
+                background = Views.rounded(theme.surface2, theme.radius("card", 6f))
+            }, android.widget.LinearLayout.LayoutParams(cardW, artH).apply { marginEnd = theme.px(26f) })
+            box.addView(rail, android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH
+            ).apply { bottomMargin = theme.px(40f) })
+        }
+        skeleton = box
+        host.addView(box, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        box.animate().alpha(0.45f).setDuration(900).withEndAction(object : Runnable {
+            override fun run() {
+                if (skeleton !== box || isFinishing || isDestroyed) return
+                box.animate().alpha(1f).setDuration(900).withEndAction(this).start()
+            }
+        }).start()
     }
 
     override fun onDestroy() {
@@ -664,12 +778,50 @@ class BrowseActivity : Activity() {
         }
     }
 
-    /** Movies/Series are native grids; the browser's `#/browse/…` route is no longer opened here. */
-    private fun openSection(section: String) {
+    /**
+     * A pill tab. Movies and Series are this same page filtered to one section — the bar stays on
+     * screen and one LEFT/RIGHT walks the whole app — so the tab re-enters Home rather than opening
+     * a separate grid screen.
+     */
+    private fun goTab(tab: String) {
+        if (tab == section) {
+            list.smoothScrollToPosition(0)
+            return
+        }
+        startActivity(
+            Intent(this, BrowseActivity::class.java)
+                .putExtra(EXTRA_PROFILE, profileId)
+                .putExtra(EXTRA_TAB, tab)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+    }
+
+    /** A full-list page for one shelf: the hub's row by id, or a search for a derived shelf's tag. */
+    private fun openRowFull(row: BrowseRow) {
+        val id = row.id
+        // Derived section shelves (trending, new, top-rated) are orderings of the whole section —
+        // their See all is the section's own full grid.
+        if (section.isNotBlank() && (id == "trending" || id == "recent" || id == "top-rated")) {
+            startActivity(
+                Intent(this, SectionActivity::class.java)
+                    .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
+                    .putExtra(SectionActivity.EXTRA_SECTION, section)
+            )
+            return
+        }
+        if (id.startsWith("genre:") || id.startsWith("lang:")) {
+            startActivity(
+                Intent(this, SectionActivity::class.java)
+                    .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
+                    .putExtra(SectionActivity.EXTRA_QUERY, id.substringAfter(':'))
+                    .putExtra(SectionActivity.EXTRA_TITLE, row.title)
+            )
+            return
+        }
         startActivity(
             Intent(this, SectionActivity::class.java)
                 .putExtra(SectionActivity.EXTRA_PROFILE, profileId)
-                .putExtra(SectionActivity.EXTRA_SECTION, section)
+                .putExtra(SectionActivity.EXTRA_SECTION, id)
         )
     }
 
@@ -1279,7 +1431,7 @@ class BrowseActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 topMargin = (cardH - theme.px(78f)) / 2 + theme.px(64f)
             }
-            holder.itemView.setOnClickListener { openSection(row.id) }
+            holder.itemView.setOnClickListener { openRowFull(row) }
         }
     }
 
@@ -1322,6 +1474,10 @@ class BrowseActivity : Activity() {
 
     companion object {
         const val EXTRA_PROFILE = "profile"
+        const val EXTRA_TAB = "tab"
+        // Whether this hub carries a Live TV row at all. The home load learns it once; a section
+        // page rebuilds the activity, and the pill must not change shape mid-session.
+        internal var liveSeen = false
         private const val TYPE_HERO = 1
         private const val TYPE_SHELF = 2
     }

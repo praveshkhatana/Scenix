@@ -121,6 +121,36 @@ class Prefs(context: Context) {
     fun fixture(): String? = sp.getString(KEY_FIXTURE, null)?.takeIf { it.isNotBlank() }
     fun setFixture(path: String?) = sp.edit().putString(KEY_FIXTURE, path ?: "").apply()
 
+    /**
+     * The viewer's own list. The web UI keeps it in localStorage; the television keeps the same
+     * per-profile set here, so the two stay honest about the same household without needing the
+     * hub to grow a new endpoint.
+     */
+    fun myList(profileId: String): MutableList<String> {
+        val raw = sp.getString("mylist_$profileId", "") ?: ""
+        if (raw.isBlank()) return ArrayList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            ArrayList((0 until arr.length()).mapNotNull { i -> arr.optString(i, "").takeIf { it.isNotBlank() } })
+        } catch (t: Throwable) {
+            ArrayList()
+        }
+    }
+
+    fun setMyList(profileId: String, ids: List<String>) {
+        val arr = org.json.JSONArray()
+        for (id in ids) arr.put(id)
+        sp.edit().putString("mylist_$profileId", arr.toString()).apply()
+    }
+
+    /**
+     * An accessibility zoom for bad eyes and far couches: one multiplier over the whole theme, so
+     * text, cards, gaps and the hero all grow together instead of the app just shouting in one
+     * place. Applied when the theme is next built — changing it offers an immediate relaunch.
+     */
+    fun uiZoom(): Float = sp.getFloat("ui_zoom", 1f)
+    fun setUiZoom(f: Float) = sp.edit().putFloat("ui_zoom", f).apply()
+
     companion object {
         private const val TAG = "ScenixPrefs"
         private const val KEY_HUB = "hub_url"

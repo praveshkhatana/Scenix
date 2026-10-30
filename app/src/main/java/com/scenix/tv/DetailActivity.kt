@@ -16,6 +16,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
 import com.scenix.tv.core.s
 import com.scenix.tv.core.sa
@@ -65,7 +66,9 @@ class DetailActivity : Activity() {
         loading()
         api.meta(identity, profileId) { record, error ->
             if (isFinishing || isDestroyed) return@meta
-            if (record == null) {
+            // A cold hub sometimes answers with its error shape instead of a title. Painting that
+            // leaves a wordless black page; say what happened instead.
+            if (record == null || record.optString("title").isBlank()) {
                 body.removeAllViews()
                 body.addView(Views.text(app, "sub", 24f, app.theme.ink2, error ?: "This title is not available", gravity = Gravity.CENTER),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(240f)))
@@ -218,6 +221,26 @@ class DetailActivity : Activity() {
         play.setOnClickListener { startPlay(playSeason, playEpisode) }
         Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false)
         actions.addView(play, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // My List: the same per-household set the web UI keeps, held on this TV's prefs. OK toggles
+        // it in place; the button says which side of the line the title is on.
+        var onList = app.prefs.myList(profileId).contains(identity)
+        val listBtn = Views.text(app, "button", 23f, theme.ink,
+            if (onList) "✓ In My List" else "+ My List", bold = true, gravity = Gravity.CENTER)
+        listBtn.setPadding(theme.px(28f), theme.px(16f), theme.px(28f), theme.px(16f))
+        listBtn.background = Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+        listBtn.isFocusable = true
+        listBtn.isClickable = true
+        listBtn.setOnClickListener {
+            val ids = app.prefs.myList(profileId)
+            if (!ids.remove(identity)) ids.add(identity)
+            app.prefs.setMyList(profileId, ids)
+            onList = ids.contains(identity)
+            listBtn.text = if (onList) "✓ In My List" else "+ My List"
+        }
+        Focus.attach(listBtn, listBtn, app, theme.radius("button", 6f), scale = false, elevate = false)
+        actions.addView(listBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            marginStart = theme.px(16f)
+        })
         words.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = theme.px(24f)
         })
@@ -228,12 +251,126 @@ class DetailActivity : Activity() {
             setPadding(theme.gutter, theme.px(12f), theme.gutter, 0)
         }
         body.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        contentSlot = content
 
         val cast = record.optJSONArray("cast")
         if (cast != null && cast.length() > 0) castRow(content, cast, theme)
 
         if (episodes != null && episodes.length() > 0) episodeList(content, episodes, theme)
+        relatedRow(record, theme)
         scroll.postDelayed({ play.requestFocus() }, 150L)
+    }
+
+    /**
+     * "More like this" — the same honest rule the web page follows: related titles come from this
+     * hub's own shelves, matched on the genres and the kind this very record carries. Nothing from
+     * some outside taste engine; if the hub holds nothing alike, the row says so.
+     */
+    private fun relatedRow(record: JSONObject, theme: com.scenix.tv.core.Theme) {
+        val type = s(record, "type", "movie")
+        if (type != "movie" && type != "series") return
+        val genres = ArrayList<String>()
+        record.optJSONArray("genres")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val g = sa(arr, i, "")
+                if (g.isNotBlank()) genres.add(g)
+            }
+        }
+        val rail = androidx.recyclerview.widget.RecyclerView(this).apply {
+            layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
+                this@DetailActivity, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false)
+            isNestedScrollingEnabled = false
+            itemAnimator = null
+            clipToPadding = false
+            setPadding(0, theme.px(6f), 0, theme.px(10f))
+        }
+        contentSlot?.addView(
+            Views.text(app, "rowTitle", 27f, theme.ink, "More like this", bold = true),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(24f); bottomMargin = theme.px(12f)
+            })
+        contentSlot?.addView(rail,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(390f)))
+        api.row(profileId, if (type == "series") "series" else "movies") { _, pool, _ ->
+            if (isFinishing || isDestroyed) return@row
+            val seen = HashSet<String>()
+            seen.add(identity)
+            val picks = (pool ?: emptyList()).filter {
+                it.identity.isNotBlank() && !seen.contains(it.identity) &&
+                    (it.type == type || it.genres.any { g -> genres.contains(g) })
+            }.sortedByDescending { it.genres.count { g -> genres.contains(g) } * 100 + it.match }
+                .take(14)
+            if (picks.isEmpty()) {
+                contentSlot?.addView(Views.text(app, "sub", 20f, theme.ink3,
+                    "This hub has not found anything similar yet."),
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                return@row
+            }
+            rail.adapter = RelatedAdapter(picks, theme)
+        }
+    }
+
+    private var contentSlot: LinearLayout? = null
+
+    private inner class RelatedAdapter(
+        private val items: List<Item>,
+        private val theme: com.scenix.tv.core.Theme,
+    ) : androidx.recyclerview.widget.RecyclerView.Adapter<androidx.recyclerview.widget.RecyclerView.ViewHolder>() {
+
+        override fun getItemCount(): Int = items.size
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): androidx.recyclerview.widget.RecyclerView.ViewHolder {
+            val cardW = theme.px(230f)
+            val artH = theme.px(330f)
+            val card = FrameLayout(this@DetailActivity)
+            card.layoutParams = androidx.recyclerview.widget.RecyclerView.LayoutParams(
+                cardW, artH + theme.px(40f)
+            ).apply { marginEnd = theme.px(22f) }
+            card.isFocusable = true
+            card.isClickable = true
+            val art = ImageView(this@DetailActivity).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(theme.surface2)
+                clipToOutline = true
+                outlineProvider = object : android.view.ViewOutlineProvider() {
+                    override fun getOutline(v: View, outline: android.graphics.Outline) {
+                        outline.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 6f).toFloat())
+                    }
+                }
+            }
+            card.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, artH))
+            val name = Views.text(app, "caption", 17f, theme.ink, "", bold = true, maxLines = 1)
+            name.setPadding(theme.px(4f), theme.px(8f), theme.px(4f), 0)
+            card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(34f)).apply {
+                gravity = Gravity.BOTTOM
+            })
+            val glowPad = theme.px(22f)
+            val ringOn = View(this@DetailActivity)
+            card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, artH + glowPad * 2).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = -glowPad; topMargin = -glowPad
+            })
+            card.clipChildren = false
+            Focus.attach(card, ringOn, app, theme.radius("card", 6f), animateScale = false,
+                elevate = false, glowInset = glowPad)
+            return object : androidx.recyclerview.widget.RecyclerView.ViewHolder(card) {}
+        }
+
+        override fun onBindViewHolder(holder: androidx.recyclerview.widget.RecyclerView.ViewHolder, position: Int) {
+            val item = items[position]
+            val card = holder.itemView as FrameLayout
+            (card.getChildAt(0) as ImageView).let { art ->
+                BrowseImages.load(art, item.poster ?: item.backdrop, theme.px(230f))
+            }
+            (card.getChildAt(1) as TextView).text = item.title
+            card.setOnClickListener {
+                startActivity(
+                    Intent(this@DetailActivity, DetailActivity::class.java)
+                        .putExtra(EXTRA_PROFILE, profileId)
+                        .putExtra(EXTRA_IDENTITY, item.identity)
+                )
+            }
+        }
     }
 
     private fun castRow(parent: LinearLayout, cast: JSONArray, theme: com.scenix.tv.core.Theme) {

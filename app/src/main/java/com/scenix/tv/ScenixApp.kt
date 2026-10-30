@@ -25,7 +25,7 @@ class ScenixApp : Application() {
         val h = metrics.heightPixels
 
         prefs = Prefs(this)
-        theme = Theme.load(assets, w, h, Theme.assetFor(assets, prefs.theme()))
+        theme = Theme.load(assets, w, h, Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
         ctx = AppContext(this, theme, prefs)
     }
 
@@ -33,7 +33,7 @@ class ScenixApp : Application() {
     fun reloadTheme() {
         val metrics = resources.displayMetrics
         val next = Theme.load(assets, metrics.widthPixels, metrics.heightPixels,
-            Theme.assetFor(assets, prefs.theme()))
+            Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
         theme = next
         ctx.theme = next
     }

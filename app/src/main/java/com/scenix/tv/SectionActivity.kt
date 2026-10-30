@@ -104,6 +104,25 @@ class SectionActivity : Activity() {
     private fun load() {
         status.visibility = View.VISIBLE
         status.text = "Reading the library…"
+        // A derived shelf (a genre, a language) has no hub row of its own; its full list is the
+        // search the hub already answers for that word.
+        val query = intent?.getStringExtra(EXTRA_QUERY).orEmpty()
+        if (query.isNotBlank()) {
+            title.text = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { query }
+            api.search(profileId, query) { items, error ->
+                if (isFinishing || isDestroyed) return@search
+                if (items.isNullOrEmpty()) {
+                    status.text = error ?: "Nothing under this name yet"
+                    return@search
+                }
+                status.visibility = View.GONE
+                grid.adapter = CardAdapter(items)
+                grid.postDelayed({
+                    (grid.findViewHolderForAdapterPosition(0)?.itemView ?: grid.getChildAt(0))?.requestFocus()
+                }, 120)
+            }
+            return
+        }
         api.row(profileId, section) { name, items, error ->
             if (isFinishing || isDestroyed) return@row
             if (items == null) {
@@ -241,5 +260,7 @@ class SectionActivity : Activity() {
     companion object {
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_SECTION = "section"
+        const val EXTRA_QUERY = "query"
+        const val EXTRA_TITLE = "title"
     }
 }

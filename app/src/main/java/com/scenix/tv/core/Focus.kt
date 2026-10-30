@@ -43,30 +43,27 @@ object Focus {
         val ring: android.graphics.drawable.Drawable = when {
             style == "lift" -> Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
             style == "glow" -> {
-                // Apple's focus is not one line but a soft halo in the pack colour: two fading
-                // bands behind the solid ring. `glowInset` pulls the solid ring to the art's own
-                // edge while the halo spills into the space around the tile — but the bands hug
-                // the art's edges, not the far corners of the pad, so a caption under the tile
-                // never sits inside a band of its own.
+                // Apple's focus is not a border at all: there is no hard line riding the art's edge.
+                // The tile lifts, the room dims, and the only drawn thing is a soft halo that starts
+                // at the art's own edge and fades outward into the space around the tile. Two bands,
+                // each as wide as its inset, so their inner edges land exactly on the art — never a
+                // rectangle floating away from it with a gap that reads like a frame.
                 val c = theme.focusGlowColor
                 val r = android.graphics.Color.red(c)
                 val g = android.graphics.Color.green(c)
                 val b = android.graphics.Color.blue(c)
-                val spread = theme.px(14f)
-                val mid = theme.px(6f)
+                val spread = theme.px(18f)
+                val mid = theme.px(9f)
                 val halo = if (glowInset > 0) LayerDrawable(arrayOf(
-                    Views.ring(Color.argb(26, r, g, b), ringRadiusPx + spread, theme.px(24f)),
-                    Views.ring(Color.argb(70, r, g, b), ringRadiusPx + mid, theme.px(12f)),
-                    Views.ring(c, ringRadiusPx, theme.focusRingPx),
+                    Views.ring(Color.argb(34, r, g, b), ringRadiusPx + spread, spread),
+                    Views.ring(Color.argb(72, r, g, b), ringRadiusPx + mid, mid),
                 )) else LayerDrawable(arrayOf(
-                    Views.ring(Color.argb(26, r, g, b), ringRadiusPx + 14, 24),
-                    Views.ring(Color.argb(70, r, g, b), ringRadiusPx + 8, 12),
-                    Views.ring(c, ringRadiusPx, theme.focusRingPx),
+                    Views.ring(Color.argb(34, r, g, b), ringRadiusPx + spread, spread),
+                    Views.ring(Color.argb(72, r, g, b), ringRadiusPx + mid, mid),
                 ))
                 if (glowInset > 0) {
                     halo.setLayerInset(0, glowInset - spread, glowInset - spread, glowInset - spread, glowInset - spread)
                     halo.setLayerInset(1, glowInset - mid, glowInset - mid, glowInset - mid, glowInset - mid)
-                    halo.setLayerInset(2, glowInset, glowInset, glowInset, glowInset)
                 }
                 halo
             }

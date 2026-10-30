@@ -131,7 +131,7 @@ class Theme private constructor(
         fun assetFor(assets: AssetManager, id: String): String =
             catalog(assets).firstOrNull { it.id == id }?.asset ?: ASSET
 
-        fun load(assets: AssetManager, screenW: Int, screenH: Int, asset: String = ASSET): Theme {
+        fun load(assets: AssetManager, screenW: Int, screenH: Int, asset: String = ASSET, zoom: Float = 1f): Theme {
             var root = JSONObject()
             try {
                 assets.open(asset).use { inp ->
@@ -148,7 +148,10 @@ class Theme private constructor(
             val canvas = root.optJSONObject("canvas")
             val cw = canvas?.optInt("width", 1920) ?: 1920
             val ch = canvas?.optInt("height", 1080) ?: 1080
-            val scale = minOf(screenW.toFloat() / cw.toFloat(), screenH.toFloat() / ch.toFloat())
+            // The household zoom multiplies the whole canvas, so text, tiles, gaps and the hero all
+            // grow together — a size option for far couches and weak eyes, not a font patch.
+            val scale = minOf(screenW.toFloat() / cw.toFloat(), screenH.toFloat() / ch.toFloat()) *
+                zoom.coerceIn(1f, 1.3f)
             Log.i(TAG, "theme ${root.optString("id", "?")} scale=$scale (${screenW}x$screenH)")
             return Theme(
                 id = root.optString("id", "scenix-dark"),

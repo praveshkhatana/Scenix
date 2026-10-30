@@ -47,7 +47,17 @@ class ProfilesActivity : Activity() {
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         head.addView(Views.text(app, "logo", 34f, app.theme.brand, "SCENIX", bold = true))
         head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        head.addView(Views.text(app, "sub", 22f, app.theme.ink2, "Manage profiles in Settings"))
+        // Managing the household belongs on the household's own door, not two screens away in
+        // Settings. The button opens the same editor, PIN gate included.
+        val manage = Views.text(app, "li", 20f, app.theme.ink2, "Edit profiles", bold = true, gravity = Gravity.CENTER)
+        manage.setPadding(app.theme.px(17f), app.theme.px(9f), app.theme.px(17f), app.theme.px(9f))
+        manage.isFocusable = true
+        manage.isClickable = true
+        manage.setOnClickListener {
+            startActivity(Intent(this, ManageProfilesActivity::class.java))
+        }
+        Focus.attach(manage, manage, app, app.theme.radius("button", 6f), scale = false, elevate = false)
+        head.addView(manage)
         root.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(Views.text(app, "h1", 52f, app.theme.ink, "Who's watching?", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -83,9 +93,19 @@ class ProfilesActivity : Activity() {
             status.text = ""
             row.removeAllViews()
             for (p in profiles) row.addView(profileTile(p))
+            row.addView(addTile())
+            // The gate wakes up, it doesn't snap into place: each face rises a hand-width behind the
+            // last. A dozen views, transform and alpha only — cheap even on the 2 GB panel.
+            val theme = app.theme
+            for (i in 0 until row.childCount) {
+                val c = row.getChildAt(i)
+                c.alpha = 0f
+                c.translationY = theme.px(26f).toFloat()
+                c.animate().alpha(1f).translationY(0f).setStartDelay(i * 90L).setDuration(240L).start()
+            }
             row.postDelayed({
                 firstFocus(row)?.requestFocus()
-            }, 180)
+            }, 420)
         }
     }
 
@@ -131,10 +151,42 @@ class ProfilesActivity : Activity() {
             tile.addView(Views.text(app, "meta", 17f, theme.ink3, "PIN", gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        // The ring of light rides the face itself, glowing outward into the padding around it.
-        Focus.attach(tile, face, app, faceSize / 2, scale = false, elevate = false,
-            glowInset = theme.px(30f))
+        // The ring of light rides the face itself, glowing outward into the padding around it,
+        // and the face lifts gently under the ring — the gate has motion, like the real thing.
+        Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
+            elevate = false, glowInset = theme.px(30f))
         tile.setOnClickListener { choose(p) }
+        return tile
+    }
+
+    /** The last face in the circle is the empty one: it opens the household editor. */
+    private fun addTile(): View {
+        val theme = app.theme
+        val faceSize = theme.px(260f)
+        val tile = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(theme.px(30f), theme.px(10f), theme.px(30f), theme.px(10f))
+            clipChildren = false
+            isFocusable = true
+            isClickable = true
+        }
+        val face = FrameLayout(this).apply {
+            background = Views.rounded(
+                Color.TRANSPARENT, faceSize / 2, theme.px(2f), theme.line)
+        }
+        face.addView(Views.text(app, "h1", 70f, theme.ink3, "+", bold = true, gravity = Gravity.CENTER),
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, faceSize))
+        tile.addView(face, LinearLayout.LayoutParams(faceSize, faceSize))
+        tile.addView(Views.text(app, "li", 24f, theme.ink2, "Add profile", bold = true, gravity = Gravity.CENTER),
+            LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(16f)
+            })
+        Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
+            elevate = false, glowInset = theme.px(30f))
+        tile.setOnClickListener {
+            startActivity(Intent(this, ManageProfilesActivity::class.java))
+        }
         return tile
     }
 

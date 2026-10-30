@@ -206,6 +206,22 @@ class SettingsActivity : Activity() {
             addRow("Theme", themeName, "The look of the native screens and the web UI") {
                 requireAdmin { pickTheme() }
             }
+            // Accessibility, not taste: one multiplier over the whole theme so text, tiles, gaps and
+            // the hero all grow together for far seats and weak eyes. No admin door on this one.
+            val zoomNames = listOf("Default", "Large", "Largest")
+            val zoomSteps = listOf(1f, 1.15f, 1.3f)
+            val z = app.prefs.uiZoom()
+            val zoomNow = if (z < 1.05f) 0 else if (z < 1.25f) 1 else 2
+            addRow("Text & tile size", zoomNames[zoomNow], "Everything on screen grows together — for far seats and weak eyes") {
+                app.prefs.setUiZoom(zoomSteps[(zoomNow + 1) % 3])
+                (application as ScenixApp).reloadTheme()
+                // The task rebuilds so every screen lays out at the new size, the way a real TV
+                // relaunches when its zoom changes.
+                startActivity(
+                    Intent(this, ProfilesActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                )
+            }
             addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks") {
                 requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
             }

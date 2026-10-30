@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The cold-start face: the brand mark on the page colour, up the instant the window is created,
+     so the launch never shows a bare black frame while the hub probe runs. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/bg" />
+    <item
+        android:width="220dp"
+        android:height="220dp"
+        android:drawable="@drawable/ic_launcher_foreground"
+        android:gravity="center" />
+</layer-list>
