@@ -145,6 +145,15 @@ ceiling, create profiles. Point an HTTP torrent engine at it (port 8090) and tor
 streams; `ffmpeg` on the machine enables the browser path. If you have a debrid account, configure it in
 Settings and the hub will try it before the engine; nothing breaks if you never do.
 
+### Adaptive quality (optional)
+
+Scenix normally copies the picture. If you want a real adaptive ladder (1080/720/480 variants that
+Media3 can switch at a segment boundary), install a transcode-capable ffmpeg and put it at
+`hub/bin/ffmpeg-btb` plus `hub/bin/ffprobe-btb`, then enable **Settings → Playback → Playback
+smoothness → Build an adaptive quality ladder**. The hub prefers those binaries, falls back to
+`hub/bin/ffmpeg` for remux-only installs, and keeps the ladder off by default because transcoding costs
+CPU and disk. See [design/adaptive-ladder.md](design/adaptive-ladder.md).
+
 The hub speaks HTTP by default. For HTTPS, either terminate TLS in a reverse proxy (it honours
 `X-Forwarded-Proto`/`X-Forwarded-Host` when building stream and subtitle URLs) or give it a certificate
 with `TLS_CERT`/`TLS_KEY`. The certificate must be trusted by the television; Scenix does not install a
