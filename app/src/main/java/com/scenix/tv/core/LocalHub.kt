@@ -823,6 +823,7 @@ class LocalHub private constructor(context: Context) {
     private fun localTree(): String = settings().optJSONObject("local")?.optString("tree").orEmpty()
 
     fun localPermissionName(): String = localLibrary.mediaPermissionName()
+    fun localPermissionNames(): Array<String> = localLibrary.mediaPermissionNames()
     fun localPermission(): Boolean = localLibrary.mediaPermission()
 
     fun localStatus(): JSONObject {

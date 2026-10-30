@@ -298,7 +298,7 @@ class SettingsActivity : Activity() {
     private fun pickLocalFromStore() {
         val hub = com.scenix.tv.core.LocalHub.get(this)
         if (!hub.localPermission()) {
-            requestPermissions(arrayOf(hub.localPermissionName()), REQ_LOCAL_PERMISSION)
+            requestPermissions(hub.localPermissionNames(), REQ_LOCAL_PERMISSION)
             return
         }
         saveLocalTree(com.scenix.tv.core.LocalLibrary.MEDIASTORE, "This TV's videos")

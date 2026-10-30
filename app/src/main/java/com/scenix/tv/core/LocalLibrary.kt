@@ -143,10 +143,19 @@ class LocalLibrary(private val context: Context, private val indexFile: File) {
 
     // ---- scanning -------------------------------------------------------------------------------
 
-    /** The permission this Android version asks for to read the TV's shared video and audio. */
-    fun mediaPermissionName(): String =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_VIDEO
-        else Manifest.permission.READ_EXTERNAL_STORAGE
+    /**
+     * The permissions this Android version asks for to read the TV's shared video and audio. Video is
+     * first: a viewer who allows only one collection can still see the shelf, and the audio query is
+     * skipped rather than allowed to blank it.
+     */
+    fun mediaPermissionNames(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+    fun mediaPermissionName(): String = mediaPermissionNames().first()
 
     fun mediaPermission(): Boolean =
         context.checkSelfPermission(mediaPermissionName()) == PackageManager.PERMISSION_GRANTED
@@ -253,10 +262,24 @@ class LocalLibrary(private val context: Context, private val indexFile: File) {
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.DATE_MODIFIED,
         )
+        // A downloader publishes a file through MediaStore with IS_PENDING=1 while it is still being
+        // written. That row is not playable yet: its length keeps changing and the provider may refuse
+        // an open. Skipping it means the shelf fills with the file one scan after it is complete
+        // instead of offering a tile that fails on the first press. Trashed rows are skipped for the
+        // same reason: the platform has already marked them as going away.
+        val selection = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
+                MediaStore.MediaColumns.IS_PENDING + "=0 AND " + MediaStore.MediaColumns.IS_TRASHED + "=0"
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+                MediaStore.MediaColumns.IS_PENDING + "=0"
+            else -> null
+        }
         fun read(base: Uri) {
             if (out.size >= MAX_FILES) return
-            context.contentResolver.query(base, cols, null, null, MediaStore.MediaColumns.DATE_MODIFIED + " DESC")
-                ?.use { c ->
+            try {
+                context.contentResolver.query(
+                    base, cols, selection, null, MediaStore.MediaColumns.DATE_MODIFIED + " DESC",
+                )?.use { c ->
                     while (c.moveToNext() && out.size < MAX_FILES) {
                         val id = c.getLong(0)
                         val name = c.getString(1) ?: continue
@@ -276,6 +299,11 @@ class LocalLibrary(private val context: Context, private val indexFile: File) {
                         )
                     }
                 }
+            } catch (t: SecurityException) {
+                // READ_MEDIA_VIDEO does not cover the audio collection on Android 13+. Videos are
+                // still usable, so one refused collection must not blank the whole shelf.
+                Log.w(TAG, "media query refused for " + base, t)
+            }
         }
         read(MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
         read(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI)
@@ -349,7 +377,10 @@ class LocalLibrary(private val context: Context, private val indexFile: File) {
         private const val TAG = "ScenixLocalFiles"
         private const val MAX_DEPTH = 4
         private const val MAX_FILES = 500
-        private const val RESCAN_MS = 10 * 60_000L
+        // A download that just finished should appear while the viewer is still on the shelf. The
+        // scan is a handful of MediaStore rows (or a tree walk), so a minute is cheap; ten minutes
+        // looked like "the TV never found my file".
+        private const val RESCAN_MS = 60_000L
         private val EXTENSIONS = setOf(
             "mp4", "mkv", "webm", "m4v", "mov", "ts", "m2ts", "avi", "mp3", "m4a", "opus", "flac",
         )
