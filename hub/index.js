@@ -2291,13 +2291,19 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     return { status: 404, body: { error: 'no playable source', identity, tried } };
   }
 
+  // A native provider may answer with a hub-relative address (`/app/v1/proxy?u=file://…` for a file
+  // on this box, for example). That is a real stream on this server, not a magnet, so it must not fall
+  // into the "still warming" branch below. Resolve it against the origin the client called from — a TV
+  // cannot read a path that does not name the hub.
+  const hubOrigin = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
+  const hubRelative = typeof out.url === 'string' && out.url.startsWith('/');
   // A magnet is not a stream. It is an invitation to run a BitTorrent client, and no client of this
   // route is one: the TV passes it to a media decoder that reports "unknown protocol: magnet", and a
   // browser tab cannot open it either. So when the gateway produced HTTP for nothing, say what is
   // actually true — the hub has no copy ready to serve yet, and here is how long to wait — instead of
   // answering 200 with something unopenable and letting the screen call it a broken file. The magnet is
   // still in the answer, for the sake of any client that can use one and for the log.
-  if (!/^https?:\/\//i.test(String(out.url || ''))) {
+  if (!hubRelative && !/^https?:\/\//i.test(String(out.url || ''))) {
     log('PLAY WARMING', identity, labelOf(source), String(out.url).slice(0, 42));
     return {
       status: 503,
@@ -2353,7 +2359,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     }
   }
 
-  if (/^https?:\/\//i.test(out.url)) {
+  if (hubRelative) {
+    // Already a hub route. Keep the relative form for callers that want it, and hand the player an
+    // absolute one: this is what makes a file on the hub's own disk play at all.
+    out.proxiedUrl = out.url;
+    out.url = hubOrigin + out.url;
+    out.proxied = true;
+  } else if (/^https?:\/\//i.test(out.url)) {
     const h = Object.entries(out.headers || {}).map(([k, v]) => k + ':' + v).join('||');
     out.proxiedUrl = '/app/v1/proxy?u=' + encodeURIComponent(out.url)
       + (h ? '&h=' + encodeURIComponent(h) : '')
@@ -2390,24 +2402,39 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
 
   // The tracks of the copy actually chosen. At play time this is a cache read, or at most the remainder
   // of a probe that was already running from the title page — never a new ffprobe, and never more than
-  // the time the play budget has left.
+  // the time the play budget has left. A non-torrent copy has no hash but may still hold several audio
+  // tracks; when the ladder is asked for, one short probe of its URL supplies the languages and the true
+  // picture height, so the ladder neither drops a language nor upscales a small file.
   const playHash = out.torrent && out.torrent.hash;
+  const adaptiveWanted = opts.ladder === true
+    && (settings.get().adaptive || {}).enabled === true
+    && (settings.get().adaptive || {}).transcode !== false
+    && Number(opts.positionMs || 0) <= 1000
+    && out.kind !== 'hls' && !out.remuxed && !out.audioMix;
   const tracks = playHash
     ? await media.tracksFor(out.torrent.hash, out.torrent.fileId, null,
       { waitMs: Math.max(0, Math.min(1200, deadline - Date.now())) })
     : null;
+  const probed = (!tracks && adaptiveWanted && /^https?:\/\//i.test(out.url))
+    ? await media.probeUrl(out.url, {
+      timeoutMs: Math.max(700, Math.min(3000, deadline - Date.now() - 300)),
+    })
+    : null;
+  const picture = tracks || probed;
+  const pictureHeight = picture && picture.video && Number(picture.video.height) > 0
+    ? Number(picture.video.height) : null;
   // Copies, not the cache's own objects: the TV needs absolute subtitle URLs and the browser needs the
   // relative ones, and both read the same cached entry.
   // The codec the picture is in, so the player can say "this browser cannot draw H.265" instead of
   // serving a black screen with sound. Entries written before the probe recorded video have nothing to
   // report, and are left unknown rather than guessed at.
-  out.videoCodec = (tracks && tracks.video && tracks.video.codec) || source.videoCodec || null;
+  out.videoCodec = (picture && picture.video && picture.video.codec) || source.videoCodec || null;
   if (decodable.length && out.videoCodec && !decodable.includes(ranking.codecFamily(out.videoCodec))) {
     extraWhy.push('this device cannot decode ' + ranking.codecFamily(out.videoCodec)
       + ', and no copy of this title it can play was found');
   }
-  out.audioTracks = ((tracks && tracks.audioTracks) || []).map((t) => ({ ...t }));
-  out.subtitleTracks = ((tracks && tracks.subtitleTracks) || []).map((t) => {
+  out.audioTracks = ((picture && picture.audioTracks) || []).map((t) => ({ ...t }));
+  out.subtitleTracks = ((picture && picture.subtitleTracks) || []).map((t) => {
     const c = { ...t };
     // A browser is same-origin with the hub, so the relative path the cache stores is enough; a TV is
     // not, and a subtitle URL it can open has to name this hub.
@@ -2422,6 +2449,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // The household's codes and the file's codes are not always spelled alike, so both sides go through the
   // same normalizer this hub uses for every other language claim it makes. `prefAudio` was resolved with
   // the profile before ranking, so the audio picker and the donor search use the same order.
+  // Preference order, not set membership: a profile that asked for Hindi then English must start in
+  // Hindi even when the file happens to list English first and flags it as the container default.
+  const byPref = prefAudio
+    .map((lang) => out.audioTracks.find((t) => media.langOf(t.language) === lang))
+    .find(Boolean) || null;
   const chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
     // Nothing asked for: name the track the hub would recommend. The profile's own language order comes
     // first, and only then whatever flag the packager stamped on the file — measured on a torrent whose
@@ -2429,7 +2461,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // the file over the household played a Hindi-first viewer an Italian film. The native player takes
     // this as its starting selection, so a Hindi copy starts in Hindi without the viewer knowing the word
     // "audio" exists.
-    || out.audioTracks.find((t) => prefAudio.includes(media.langOf(t.language)))
+    || byPref
     || out.audioTracks.find((t) => t.default)
     || out.audioTracks[0] || null;
   out.selectedAudio = chosenAudio ? chosenAudio.id : null;
@@ -2740,21 +2772,24 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // silently replace. Only one source, transcoded into aligned variants, so the player switches
   // between renditions of the same timeline rather than between unrelated files.
   const adaptive = settings.get().adaptive || {};
-  if (opts.ladder === true && adaptive.enabled === true && adaptive.transcode !== false
-      // A ladder is generated from the beginning of the film. Resuming at 04:41 would make the
-      // player wait for three transcoders to reach that point before it could show a frame, so a
-      // resume keeps the direct copy; a fresh Play gets ABR.
-      && Number(opts.positionMs || 0) <= 1000
-      && out && out.url && !out.live && !out.remuxed && !out.audioMix && out.kind !== 'hls') {
+  if (adaptiveWanted && out && out.url && !out.live
+      && !out.remuxed && !out.audioMix && out.kind !== 'hls') {
     try {
-      const chosen = Array.isArray(out.audioTracks)
-        ? out.audioTracks.find((t) => t && t.id === out.selectedAudio) || out.audioTracks[0]
-        : null;
+      const sourceTracks = Array.isArray(out.audioTracks)
+        ? out.audioTracks.filter((t) => t && t.streamIndex != null)
+        : [];
+      const chosen = sourceTracks.find((t) => t && t.id === out.selectedAudio) || sourceTracks[0] || null;
       const built = await ladder.create({
         url: out.url,
         headers: out.headers || {},
         quality: out.picked && out.picked.quality,
+        // The probed picture height, when there is one, decides the ladder's top rung. A 360p file
+        // must not get a 720p transcode, and a 1080p file named without a quality must still be 1080.
+        sourceHeightPx: pictureHeight,
         audio: chosen ? { streamIndex: chosen.streamIndex, language: chosen.language } : null,
+        // Every track the file states, so a language change is a rendition change at a segment
+        // boundary rather than a new /play that could land on a different copy.
+        audioTracks: sourceTracks,
         // The owner's ceiling and the client's own display ceiling; the lower wins. A 4K source on a
         // 1080 panel must not spend CPU producing a 2160 rung the decoder will refuse.
         maxHeight: Math.min(Number(adaptive.maxHeight) || 1080, Number(opts.displayMaxHeight) || 1080),
@@ -2767,14 +2802,26 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         out.container = 'hls';
         out.proxied = true;
         out.remuxed = true;
-        // The ladder has one audio rendition (the first track). The player can still expose the
-        // tracks HLS carries, but the hub is not going to claim language selection it did not encode.
-        out.audioTracks = [];
-        out.selectedAudio = null;
+        // A multi-audio ladder carries an EXT-X-MEDIA group; each entry is a real rendition of the
+        // same timeline, so the player can switch tracks without re-opening the copy. A single-audio
+        // ladder stays muxed and keeps the old empty list.
+        if ((built.audioTracks || []).length > 1) {
+          out.audioTracks = built.audioTracks;
+          out.selectedAudio = built.selectedAudio;
+        } else {
+          out.audioTracks = [];
+          out.selectedAudio = null;
+        }
         out.subtitleTracks = [];
         out.selectedSub = null;
-        out.ladder = { id: built.id, variants: built.variants || [] };
-        out.why = (out.why || []).concat('adaptive ladder: ' + (built.variants || []).join('/') + ', aligned segments');
+        out.ladder = {
+          id: built.id,
+          variants: built.variants || [],
+          audio: (built.audioTracks || []).length,
+        };
+        out.why = (out.why || []).concat('adaptive ladder: ' + (built.variants || []).join('/')
+          + ((built.audioTracks || []).length > 1 ? ', ' + built.audioTracks.length + ' audio renditions' : '')
+          + ', aligned segments');
         log('LADDER PLAY', identity, built.id, 'source=' + String(out.picked && out.picked.label || '').slice(0, 60));
       } else if (built) {
         out.why = (out.why || []).concat('adaptive ladder warming; playing the chosen copy directly');
