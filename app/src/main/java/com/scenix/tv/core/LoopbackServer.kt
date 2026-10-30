@@ -242,8 +242,10 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
             write(head.toByteArray(Charsets.UTF_8))
         }
 
-        fun write(bytes: ByteArray): Boolean = try {
-            stream.write(bytes)
+        fun write(bytes: ByteArray): Boolean = write(bytes, 0, bytes.size)
+
+        fun write(bytes: ByteArray, offset: Int, length: Int): Boolean = try {
+            stream.write(bytes, offset, length)
             stream.flush()
             true
         } catch (t: Throwable) {

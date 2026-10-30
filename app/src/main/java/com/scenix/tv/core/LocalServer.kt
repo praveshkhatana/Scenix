@@ -116,7 +116,7 @@ class LocalServer private constructor(
                     // A local torrent answer is a path this server owns. Make it absolute for the page
                     // and the native player, which do not share this server's base URL otherwise.
                     val u = answered.optString("url", "")
-                    if (u.startsWith("/app/v1/torrent/")) {
+                    if (u.startsWith("/app/v1/torrent/") || u.startsWith("/app/v1/local/")) {
                         answered.put("url", "http://127.0.0.1:$port$u")
                     }
                     val code = when {
@@ -156,8 +156,12 @@ class LocalServer private constructor(
                     (method == "PUT" || method == "POST") && o != null -> {
                         // `addonsResynced` is the one effect a TV can cause: new addon URLs mean the shelves
                         // are fetched again. There is no live tuner here to reload.
-                        val touchedAddons = o.has("addons")
-                        hub.setSettings(o)
+                        // A caller may send the patch itself or wrap it in `{settings: {...}}`, the shape
+                        // a hub's PUT accepts and every native settings screen sends. Unwrapping here is
+                        // what made a standalone save look successful while writing nothing.
+                        val patch = o.optJSONObject("settings") ?: o
+                        val touchedAddons = patch.has("addons")
+                        hub.setSettings(patch)
                         // The token is write-only: answer with the redacted settings envelope, never the
                         // object that was just stored.
                         res.json(
@@ -263,9 +267,70 @@ class LocalServer private constructor(
             path == "/app/v1/avatars/warm" && method == "POST" ->
                 res.json(200, JSONObject().put("ok", true).put("faces", 0))
 
+            path.startsWith("/app/v1/local/") -> localFile(res, method, path)
+
             path.startsWith("/app/v1/torrent/") -> torrent(res, method, path)
 
             else -> static(res, path)
+        }
+    }
+
+    /**
+     * One indexed local file with HTTP Range support. The player sees ordinary HTTP, so it seeks and
+     * retries through the same path it uses for every other copy; the opaque id is resolved through the
+     * index and never treated as a filesystem path.
+     */
+    private fun localFile(res: Res, method: String, path: String) {
+        val id = decode(path.removePrefix("/app/v1/local/"))
+        val opened = hub.localStream(id)
+            ?: return res.json(404, JSONObject().put("error", "no such local file").put("id", id))
+        opened.use { stream ->
+            val entry = stream.entry
+            val size = stream.size
+            if (size <= 0) return res.json(404, JSONObject().put("error", "this file is empty"))
+            var start = 0L
+            var end = size - 1
+            var partial = false
+            val range = res.headers["range"]?.trim().orEmpty()
+            if (range.startsWith("bytes=", ignoreCase = true)) {
+                val spec = range.substringAfter('=').substringBefore(',').trim()
+                val a = spec.substringBefore('-').trim()
+                val b = spec.substringAfter('-', "").trim()
+                start = when {
+                    a.isEmpty() && b.isNotEmpty() -> (size - (b.toLongOrNull() ?: 0L)).coerceAtLeast(0L)
+                    else -> a.toLongOrNull() ?: 0L
+                }
+                end = if (b.isEmpty()) size - 1 else b.toLongOrNull()?.coerceAtMost(size - 1) ?: (size - 1)
+                partial = true
+            }
+            if (start < 0 || start >= size || end < start) {
+                return res.json(416, JSONObject().put("error", "range not satisfiable"))
+            }
+            val length = end - start + 1
+            val type = TorrentEngine.mimeOf(entry.name)
+            val extra = LinkedHashMap<String, String>()
+            extra["Accept-Ranges"] = "bytes"
+            if (partial) extra["Content-Range"] = "bytes $start-$end/$size"
+            if (method == "HEAD") {
+                res.begin(if (partial) 206 else 200, type, length, extra)
+                return res.end()
+            }
+            try {
+                stream.input.channel.position(start)
+            } catch (t: Throwable) {
+                return res.json(416, JSONObject().put("error", "this provider cannot seek"))
+            }
+            res.begin(if (partial) 206 else 200, type, length, extra)
+            val buf = ByteArray(LOCAL_CHUNK)
+            var left = length
+            while (left > 0) {
+                val want = minOf(buf.size.toLong(), left).toInt()
+                val n = try { stream.input.read(buf, 0, want) } catch (t: Throwable) { -1 }
+                if (n <= 0) break
+                if (!res.write(buf, 0, n)) break
+                left -= n
+            }
+            res.end()
         }
     }
 
@@ -340,6 +405,7 @@ class LocalServer private constructor(
 
     companion object {
         private const val TORRENT_CHUNK = 256 * 1024
+        private const val LOCAL_CHUNK = 128 * 1024
         @Volatile private var instance: LocalServer? = null
 
         /**

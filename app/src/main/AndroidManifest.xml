@@ -4,6 +4,10 @@
     <!-- The app is a client of the hub: HTTP JSON only, plus one UDP announcement search
          (core/HubDiscovery.kt). No other network use. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Reading this TV's own media. SDK 30-32 uses the storage permission; 33+ splits it by type. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- The multicast lock is what lets a hub's LAN announcement reach this TV at all; without it
          most Wi-Fi firmwares drop group traffic. Held only for the length of one search. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />

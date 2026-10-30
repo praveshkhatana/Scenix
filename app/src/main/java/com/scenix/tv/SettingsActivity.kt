@@ -55,6 +55,8 @@ class SettingsActivity : Activity() {
     private var sessionPin = ""
     private var adminUnlocked = false
 
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -228,6 +230,22 @@ class SettingsActivity : Activity() {
             addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips") {
                 requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
             }
+            // Only standalone has files on this machine. Against a hub, this TV has no folder of its
+            // own and the row would be a lie, so it is absent rather than empty.
+            if (app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE) {
+                val local = com.scenix.tv.core.LocalHub.get(this).localStatus()
+                val files = local.optInt("files", 0)
+                val folder = local.optString("name", "").ifBlank { "no folder chosen" }
+                val value = when {
+                    !local.optBoolean("granted", false) -> "Choose a folder"
+                    files > 0 -> "$files files · $folder"
+                    else -> folder
+                }
+                addRow("Local files", value,
+                    "Play video and audio from a folder on this TV — no network and no addon") {
+                    requireAdmin { pickLocalFolder() }
+                }
+            }
             addRow("Categories", "Shelves built from your catalogues", "Name a catalogue or genre this hub carries as its own Home shelf") {
                 requireAdmin { startActivity(Intent(this, CategoriesActivity::class.java)) }
             }
@@ -255,6 +273,80 @@ class SettingsActivity : Activity() {
                 }
             }
         }
+    }
+
+    /**
+     * The system folder picker. A tree URI is the only portable way for this app to read a folder on a
+     * modern Android TV: it needs no broad storage permission, and the grant survives a reboot once it
+     * is persisted. The URI is stored in this backend's settings, so the same pick works after the
+     * process is gone.
+     */
+    private fun pickLocalFolder() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        try {
+            startActivityForResult(intent, REQ_LOCAL_TREE)
+        } catch (t: Throwable) {
+            // Many Android TV images ship without DocumentsUI. The platform's own media index is then
+            // the only folder this app can read, and one runtime permission is enough to use it.
+            status.text = "No folder picker on this TV"
+            pickLocalFromStore()
+        }
+    }
+
+    private fun pickLocalFromStore() {
+        val hub = com.scenix.tv.core.LocalHub.get(this)
+        if (!hub.localPermission()) {
+            requestPermissions(arrayOf(hub.localPermissionName()), REQ_LOCAL_PERMISSION)
+            return
+        }
+        saveLocalTree(com.scenix.tv.core.LocalLibrary.MEDIASTORE, "This TV's videos")
+    }
+
+    private fun saveLocalTree(tree: String, label: String) {
+        status.text = "Indexing…"
+        api.saveSettings(
+            JSONObject().put("settings", JSONObject().put("local",
+                JSONObject().put("tree", tree).put("name", label))),
+        ) { _, error ->
+            if (isFinishing || isDestroyed) return@saveSettings
+            if (error != null) {
+                status.text = error
+                return@saveSettings
+            }
+            status.text = "Library saved"
+            paint()
+            // The index is built behind the save; repaint once so the row can say how many files it
+            // found instead of leaving "This TV's videos" forever.
+            rows.postDelayed({ if (!isFinishing && !isDestroyed) paint() }, 1800)
+        }
+    }
+
+    @Deprecated("Activity result API")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_LOCAL_PERMISSION) return
+        if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            saveLocalTree(com.scenix.tv.core.LocalLibrary.MEDIASTORE, "This TV's videos")
+        } else {
+            status.text = "Without this permission this TV cannot read its own media"
+        }
+    }
+
+    @Deprecated("Activity result API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_LOCAL_TREE || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (t: Throwable) {
+            status.text = "The folder grant could not be kept"
+            return
+        }
+        val label = uri.lastPathSegment?.substringAfterLast(':')?.ifBlank { null } ?: "Local files"
+        saveLocalTree(uri.toString(), label)
     }
 
     private fun addRow(label: String, value: String, note: String, action: () -> Unit) {
@@ -820,6 +912,8 @@ class SettingsActivity : Activity() {
 
     companion object {
         const val EXTRA_PROFILE = "profile"
+        private const val REQ_LOCAL_TREE = 9001
+        private const val REQ_LOCAL_PERMISSION = 9002
         private val LANGUAGES = listOf(
             "hin" to "Hindi", "eng" to "English", "pan" to "Punjabi", "tam" to "Tamil",
             "tel" to "Telugu", "ben" to "Bengali", "mar" to "Marathi", "mal" to "Malayalam",

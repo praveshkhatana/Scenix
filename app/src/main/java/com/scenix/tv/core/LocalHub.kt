@@ -63,6 +63,9 @@ class LocalHub private constructor(context: Context) {
             .put("theme", o.optString("theme", "scenix-dark"))
             .put("debrid", o.optJSONObject("debrid") ?: defaultDebrid())
             .put("live", o.optJSONObject("live") ?: JSONObject())
+            // The folder this TV may read, as a SAF tree URI plus the words the owner sees. Empty is
+            // a normal state: there are no local files until someone picks a folder.
+            .put("local", o.optJSONObject("local") ?: JSONObject())
     }
 
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
@@ -88,6 +91,19 @@ class LocalHub private constructor(context: Context) {
             merged.put("debrid", out)
         }
         if (body.has("live")) merged.put("live", body.optJSONObject("live") ?: JSONObject())
+        if (body.has("local")) {
+            // A tree URI is a capability, not a preference: store it only if this app still holds the
+            // grant, so a restored settings file cannot point at a folder the OS will refuse.
+            val next = body.optJSONObject("local") ?: JSONObject()
+            val uri = next.optString("tree").trim()
+            val name = next.optString("name").trim()
+            val out = JSONObject()
+            if (uri.isNotBlank() && localLibrary.hasAccess(uri)) {
+                out.put("tree", uri).put("name", name.ifBlank { "Local files" })
+                localLibrary.refresh(uri)
+            }
+            merged.put("local", out)
+        }
         writeJson(settingsFile, merged)
         merged
     }
@@ -189,7 +205,7 @@ class LocalHub private constructor(context: Context) {
         val live = settings().optJSONObject("live") ?: JSONObject()
         val hidden = ids(live.optJSONArray("hidden")).toSet()
         val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
-        val channels = channelsJson()
+        val channels = channelsJson(waitForFirst = true)
         val list = JSONArray()
         for (i in 0 until channels.length()) {
             val c = channels.optJSONObject(i) ?: continue
@@ -238,6 +254,7 @@ class LocalHub private constructor(context: Context) {
         .put("theme", "scenix-dark")
         .put("debrid", defaultDebrid())
         .put("live", JSONObject())
+        .put("local", JSONObject())
 
     /**
      * Words for the codes this backend actually holds. There is no table of every language baked in here —
@@ -304,7 +321,9 @@ class LocalHub private constructor(context: Context) {
             .put("gateway", true)      // a local libtorrent engine streams torrents over loopback HTTP
             // An owner-supplied M3U is a channel list this TV can tune; there is no terrestrial tuner.
             .put("live", settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true)
-            .put("localFiles", false)  // no device file browser: sources come from addons
+            // True only while the owner's folder is still readable. A revoked grant says so rather
+            // than advertising a shelf of files the OS will not open.
+            .put("localFiles", localLibrary.hasAccess(localTree()))
             .put("remux", false)       // a file plays as it is, or not at all
             .put("tracks", false)      // languages are not read out of containers, only from addons
             .put("announce", false)    // a TV does not announce itself as a backend
@@ -380,31 +399,72 @@ class LocalHub private constructor(context: Context) {
     }
 
     /**
-     * Parse the owner's M3U into the same channel objects the hub's live row carries: one entry per
-     * channel NAME, every quality variant of that name kept as a source. A playlist that cannot be
-     * read is an empty wall, never a failed home.
+     * The live wall, cache-first.
      *
-     * The identity is `norm:<slug(name)>`, the hub's fallback identity for a channel (a live channel
-     * has no year). Grouping by name rather than by URL is what makes "&TV" one tile whether the
-     * playlist lists it once or six times.
+     * A playlist is a network resource the size of a book, and home must not wait for it. A cached
+     * list is answered immediately and refreshed behind the caller; a cold list answers empty on the
+     * home path and starts one background fetch. Only a screen that has nothing else to show —
+     * the settings channel manager, or a Play press for a channel — asks to wait.
      */
-    fun channelsJson(): JSONArray = synchronized(lock) {
+    fun channelsJson(waitForFirst: Boolean = false): JSONArray {
         val live = settings().optJSONObject("live") ?: JSONObject()
         val playlist = live.optString("playlist").trim()
         if (playlist.isBlank()) return JSONArray()
-        val now = System.currentTimeMillis()
-        if (playlist == liveCacheKey && now - liveCacheAt < 5 * 60_000L) {
-            startLiveProbe()
-            return liveCache
+        val cached = synchronized(lock) {
+            if (playlist != liveCacheKey) {
+                // A different address is a different wall. Do not show yesterday's channels under it.
+                liveCache = JSONArray()
+                liveVariants.clear()
+                liveNames.clear()
+                liveCacheKey = playlist
+                liveCacheAt = 0L
+            }
+            liveCache
         }
-        val text = fetchText(playlist, 9000)
-        if (text.isNullOrBlank()) return liveCache
+        val fresh = System.currentTimeMillis() - liveCacheAt < LIVE_TTL_MS
+        if (fresh) {
+            startLiveProbe()
+            return cached
+        }
+        if (cached.length() == 0 && !waitForFirst) {
+            refreshLiveAsync(playlist)
+            return cached
+        }
+        if (cached.length() == 0) {
+            val text = fetchText(playlist, 9000)
+            if (!text.isNullOrBlank()) applyPlaylist(playlist, text)
+        } else {
+            refreshLiveAsync(playlist)
+        }
+        startLiveProbe()
+        return synchronized(lock) { liveCache }
+    }
 
+    private fun refreshLiveAsync(playlist: String) {
+        if (liveLoading) return
+        liveLoading = true
+        Thread({
+            try {
+                val text = fetchText(playlist, 9000)
+                if (!text.isNullOrBlank()) {
+                    applyPlaylist(playlist, text)
+                    startLiveProbe()
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "live playlist refresh failed", t)
+            } finally {
+                liveLoading = false
+            }
+        }, "scenix-live-refresh").apply { isDaemon = true }.start()
+    }
+
+    private fun applyPlaylist(playlist: String, text: String) {
         data class Parsed(
             val identity: String, val name: String, val groups: List<String>,
             val logo: String, val url: String, val quality: String,
         )
 
+        val live = settings().optJSONObject("live") ?: JSONObject()
         val parsed = ArrayList<Parsed>()
         val seen = HashSet<String>()
         var pending: JSONObject? = null
@@ -434,18 +494,9 @@ class LocalHub private constructor(context: Context) {
             val key = name.lowercase() + "|" + quality
             pending = null
             if (name.isBlank() || identity == "norm:" || !seen.add(key)) continue
-            parsed.add(
-                Parsed(
-                    identity = identity,
-                    name = name,
-                    groups = groups,
-                    logo = logo,
-                    url = line,
-                    quality = quality,
-                ),
-            )
+            parsed.add(Parsed(identity, name, groups, logo, line, quality))
         }
-        // Sort by name, then lightest variant first: a Wi-Fi dip should land on the 480p feed, not the
+        // By name, then lightest variant first: a Wi-Fi dip should land on the 480p feed, not the
         // 1080p one that stalls. qbits() keeps "1080p" numerically higher than "720p".
         parsed.sortWith(compareBy({ it.name.lowercase() }, { qbits(it.quality) }))
 
@@ -453,10 +504,12 @@ class LocalHub private constructor(context: Context) {
         val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
         val out = JSONArray()
         val variants = HashMap<String, MutableList<LiveVariant>>()
+        val names = HashMap<String, String>()
         val numbered = ArrayList<String>()
         for (c in parsed) {
             val kind = if (c.url.contains(".m3u8", true)) "hls" else "http"
             variants.getOrPut(c.identity) { ArrayList() }.add(LiveVariant(c.url, c.quality, kind))
+            names[c.identity] = c.name
             if (out.length() == 0 || lastIdentity(out) != c.identity) {
                 out.put(
                     JSONObject()
@@ -474,16 +527,73 @@ class LocalHub private constructor(context: Context) {
                 }
             }
         }
-        liveCache = out
-        liveVariants.clear()
-        liveVariants.putAll(variants)
-        liveNames.clear()
-        for (c in parsed) liveNames[c.identity] = c.name
-        liveCacheAt = now
-        liveCacheKey = playlist
+        synchronized(lock) {
+            liveCache = out
+            liveVariants.clear()
+            liveVariants.putAll(variants)
+            liveNames.clear()
+            liveNames.putAll(names)
+            liveCacheKey = playlist
+            liveCacheAt = System.currentTimeMillis()
+        }
         liveHealth.assignNumbers(numbered)
-        startLiveProbe()
-        out
+        saveLiveCache()
+    }
+
+    /**
+     * The parsed list survives a restart. Without this, every cold start would show no live row until
+     * a playlist the size of a book had been fetched again — the exact wait this cache exists to avoid.
+     */
+    private fun saveLiveCache() {
+        try {
+            val (playlist, list) = synchronized(lock) { liveCacheKey to liveCache }
+            if (playlist.isBlank() || list.length() == 0) return
+            val root = JSONObject().put("playlist", playlist).put("at", System.currentTimeMillis())
+                .put("channels", list)
+            val tmp = File(data, "live-cache.json.tmp")
+            tmp.writeText(root.toString())
+            if (!tmp.renameTo(liveCacheFile)) {
+                liveCacheFile.writeText(tmp.readText())
+                tmp.delete()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "live cache write failed", t)
+        }
+    }
+
+    private fun loadLiveCache() {
+        try {
+            if (!liveCacheFile.exists()) return
+            val root = JSONObject(liveCacheFile.readText())
+            val playlist = root.optString("playlist")
+            val list = root.optJSONArray("channels") ?: return
+            val current = settings().optJSONObject("live")?.optString("playlist")?.trim().orEmpty()
+            if (playlist.isBlank() || playlist != current) return
+            val variants = HashMap<String, MutableList<LiveVariant>>()
+            val names = HashMap<String, String>()
+            for (i in 0 until list.length()) {
+                val c = list.optJSONObject(i) ?: continue
+                val identity = c.optString("identity")
+                if (identity.isBlank()) continue
+                val url = c.optString("url")
+                if (url.isBlank()) continue
+                val kind = if (url.contains(".m3u8", true)) "hls" else "http"
+                variants.getOrPut(identity) { ArrayList() }.add(LiveVariant(url, c.optString("quality"), kind))
+                names[identity] = c.optString("name")
+            }
+            synchronized(lock) {
+                liveCache = list
+                liveVariants.clear()
+                liveVariants.putAll(variants)
+                liveNames.clear()
+                liveNames.putAll(names)
+                liveCacheKey = playlist
+                // Deliberately old: the first home answers from disk and refreshes in the background.
+                liveCacheAt = 0L
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "live cache unreadable", t)
+        }
     }
 
     private fun lastIdentity(arr: JSONArray): String =
@@ -659,6 +769,7 @@ class LocalHub private constructor(context: Context) {
             // Whatever this TV already met is searchable with the network down, and it is the part that
             // answers at once: titles that have been on a shelf or played before.
             found.addAll(libraryItems().filter { it.title.contains(term, true) })
+            found.addAll(localItems().filter { it.title.contains(term, true) })
         }
         val ceiling = kidsCeiling(profileId)
         val items = dedupe(found)
@@ -704,7 +815,76 @@ class LocalHub private constructor(context: Context) {
         }
     }
 
+    // ---- local files -----------------------------------------------------------------------------
+    // The owner picks a folder once; LocalLibrary walks it and remembers the files. A local item is
+    // an ordinary §1 item of type "video" whose one source is this TV's own byte route, so the
+    // player receives a URL exactly as it does for a hub, and seeking is Range over loopback.
+
+    private fun localTree(): String = settings().optJSONObject("local")?.optString("tree").orEmpty()
+
+    fun localPermissionName(): String = localLibrary.mediaPermissionName()
+    fun localPermission(): Boolean = localLibrary.mediaPermission()
+
+    fun localStatus(): JSONObject {
+        val local = settings().optJSONObject("local") ?: JSONObject()
+        return localLibrary.status(localTree())
+            .put("name", local.optString("name", ""))
+    }
+
+    fun localEntry(id: String): LocalLibrary.Entry? =
+        if (id.startsWith("local:")) localLibrary.find(localTree(), id) else null
+
+    fun localStream(id: String): LocalLibrary.Stream? {
+        val entry = localEntry(id) ?: return null
+        return localLibrary.open(entry)
+    }
+
+    private fun localItems(): List<Item> {
+        val tree = localTree()
+        if (!localLibrary.hasAccess(tree)) return emptyList()
+        return localLibrary.entries(tree).map { e ->
+            val quality = e.quality
+            Item(
+                identity = e.id,
+                type = "video",
+                title = titleFromFile(e.name),
+                year = 0,
+                genres = listOfNotNull(e.path.substringBeforeLast('/', "").takeIf { it.isNotBlank() }),
+                addedAt = e.modifiedAt,
+                sources = listOf(
+                    Source(
+                        provider = "local",
+                        label = listOfNotNull(
+                            quality.takeIf { it.isNotBlank() },
+                            sizeLabel(e.sizeBytes).takeIf { e.sizeBytes > 0 },
+                        ).joinToString(" · ").ifBlank { "file" },
+                        kind = "file",
+                        quality = quality,
+                        sizeBytes = e.sizeBytes,
+                        mode = "direct",
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun sizeLabel(bytes: Long): String = when {
+        bytes <= 0L -> ""
+        bytes >= 1_000_000_000L -> String.format(java.util.Locale.US, "%.1f GB", bytes / 1e9)
+        bytes >= 1_000_000L -> Math.round(bytes / 1e6).toString() + " MB"
+        else -> Math.round(bytes / 1e3).toString() + " KB"
+    }
+
+    private fun titleFromFile(name: String): String =
+        name.substringBeforeLast('.').replace('.', ' ').replace('_', ' ').replace(Regex("\\s+"), " ").trim()
+            .ifBlank { name }
+
     fun metaJson(identity: String, type: String?): JSONObject? {
+        localEntry(identity)?.let { e ->
+            val item = localItems().firstOrNull { it.identity == e.id } ?: return null
+            rememberItem(item)
+            return itemJson(item)
+        }
         // A live channel is not a catalogue title: it has no addon meta and no sources lookup. Answer
         // from the parsed playlist so the native Detail/Play path can open it.
         channelItems().firstOrNull { it.identity == identity }?.let { return itemJson(it) }
@@ -733,6 +913,21 @@ class LocalHub private constructor(context: Context) {
     fun playJson(body: JSONObject): JSONObject {
         val identity = s(body, "identity", "")
         if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        if (identity.startsWith("local:")) {
+            val e = localEntry(identity)
+                ?: return JSONObject().put("error", "this file is no longer in the chosen folder")
+            return JSONObject()
+                .put("url", "/app/v1/local/" + identity)
+                .put("kind", "http")
+                .put("mode", "direct")
+                .put("headers", JSONObject())
+                .put("sizeBytes", e.sizeBytes)
+                .put("sourceName", e.name)
+                .put("title", titleFromFile(e.name))
+                .put("why", JSONArray(listOf("local file", "served from this TV by Range")))
+                .put("episode", JSONObject.NULL)
+                .put("nextEpisode", JSONObject.NULL)
+        }
         val type = s(body, "type", "").ifBlank { knownType(identity) ?: "movie" }
         val season = body.optInt("season", 0)
         val episode = body.optInt("episode", 0)
@@ -740,7 +935,7 @@ class LocalHub private constructor(context: Context) {
         val address = if (season > 0 && episode > 0) "$identity:$season:$episode" else identity
         val profileId = s(body, "profile", "").ifBlank { null }
         if (type == "channel" || liveVariants.containsKey(identity) || identity.startsWith("live:")) {
-            channelsJson()
+            channelsJson(waitForFirst = true)
             val variants = liveVariants[identity].orEmpty()
             if (variants.isNotEmpty()) {
                 val skip = exclusions(body.optJSONArray("exclude"))
@@ -1211,6 +1406,9 @@ class LocalHub private constructor(context: Context) {
         if (settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true) {
             out.add(LocalRow("live", "Live TV", "channel", 15, "all", emptyList()))
         }
+        if (localLibrary.hasAccess(localTree())) {
+            out.add(LocalRow("local", "Local files", "poster", 16, "all", emptyList()))
+        }
         // The two section tabs are rows like any other, even when empty: the native Movies/Series grid
         // asks /app/v1/row/movies or /series, and a fresh install should answer "nothing yet" rather
         // than 404.
@@ -1291,6 +1489,8 @@ class LocalHub private constructor(context: Context) {
             { it.title.lowercase() },
         ))
         if (liveChannels.isNotEmpty()) out.add(LocalRow("live", "Live TV", "channel", 15, "all", liveChannels))
+        val local = localItems()
+        if (local.isNotEmpty()) out.add(LocalRow("local", "Local files", "poster", 16, "all", local))
 
         val allLibrary = libraryItems()
         val movies = allLibrary.filter { it.type == "movie" }
@@ -1512,7 +1712,18 @@ class LocalHub private constructor(context: Context) {
     private var liveCacheAt = 0L
     private var liveCacheKey = ""
     private var liveCache: JSONArray = JSONArray()
+    private val liveCacheFile = File(data, "live-cache.json")
+
+    @Volatile
+    private var liveLoading = false
+
+    init {
+        // A settings read is cheap and does not touch the network; this is what makes the live row
+        // exist on the first frame after a restart.
+        loadLiveCache()
+    }
     private val liveHealth = LiveHealth(File(data, "live-health.json"))
+    private val localLibrary = LocalLibrary(appContext, File(data, "local-index.json"))
 
     private val MAX_PROBE_PER_PASS = 80
 
@@ -2060,6 +2271,7 @@ class LocalHub private constructor(context: Context) {
         // by this backend runs no rules of its own, so this is the one that protects a kids shelf.
         private const val KIDS_MAX_AGE = 7
         private const val URL_TAG = "url="
+        private const val LIVE_TTL_MS = 5 * 60_000L
 
         private val QUALITY_P = Regex("(\\d{3,4})p", RegexOption.IGNORE_CASE)
         private val FOUR_K = Regex("\\b4k\\b|\\buhd\\b|\\b2160\\b", RegexOption.IGNORE_CASE)
