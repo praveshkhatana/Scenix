@@ -112,7 +112,9 @@ const DEFAULTS = {
   // Optional adaptive ladder (core/ladder.js). Off: the hub normally copies the chosen video rather
   // than transcoding it. When on, a Play press can return one HLS master with 1080/720/480 variants
   // generated on this machine, so the player can change quality mid-film instead of rebuffering.
-  adaptive: { enabled: false, transcode: true },
+  // maxHeight is the highest rung a ladder may offer. The client also sends its own display ceiling;
+  // the lower of the two wins, so a 4K phone and a 1080 TV do not get the same ladder.
+  adaptive: { enabled: false, transcode: true, maxHeight: 1080 },
   // Optional debrid/direct resolver (core/debrid.js). Off, with no provider and no token, because a
   // paid account is the owner's decision and must never be required for this hub to work. When it is
   // configured, a magnet or a file-hoster link can become an ordinary HTTP stream before the torrent
@@ -343,6 +345,8 @@ function normalize(s) {
     adaptive: {
       enabled: (s.adaptive || {}).enabled === true,
       transcode: (s.adaptive || {}).transcode !== false,
+      maxHeight: Math.max(480, Math.min(2160,
+        Number((s.adaptive || {}).maxHeight) || DEFAULTS.adaptive.maxHeight)),
     },
     debrid: normalizeDebrid(s.debrid),
   };

@@ -412,6 +412,10 @@ class PlayerActivity : Activity() {
             // Opt-in at the hub: an owner may ask for the transcoded HLS ladder. The hub ignores this
             // when the setting is off and returns the copy it would have returned anyway.
             .put("ladder", true)
+            // The panel states its own ceiling; the hub takes the lower of this and the owner's ladder
+            // setting. A 4K file is not offered a 2160 rung on this display.
+            .put("displayMaxHeight", app.theme.playerMaxHeight)
+            .put("displayMaxWidth", app.theme.playerMaxWidth)
             .put("positionMs", positionMs.coerceAtLeast(0L))
         if (spec.season > 0 && spec.episode > 0) {
             body.put("season", spec.season).put("episode", spec.episode)

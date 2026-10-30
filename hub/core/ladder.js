@@ -27,11 +27,37 @@ const SEGMENT_SEC = Math.max(2, Number(process.env.LADDER_SEGMENT_SEC || 4));
 const FIRST_PLAYLIST_WAIT_MS = Math.max(3000, Number(process.env.LADDER_FIRST_WAIT_MS || 9000));
 const IDLE_MS = Math.max(120000, Number(process.env.LADDER_IDLE_MS || 5 * 60e3));
 
+// Highest first. These are ceilings for the transcode, not a statement that every client can decode
+// every one: the source quality and the client's own display ceiling choose the slice of this table.
 const ALL_VARIANTS = [
-  { id: 'v1080', width: 1920, height: 1080, bandwidth: 6200000, codecs: 'avc1.640028,mp4a.40.2', maxrate: '6000k', bufsize: '12000k', audio: '192k' },
-  { id: 'v720', width: 1280, height: 720, bandwidth: 3200000, codecs: 'avc1.64001f,mp4a.40.2', maxrate: '3000k', bufsize: '6000k', audio: '128k' },
-  { id: 'v480', width: 854, height: 480, bandwidth: 1200000, codecs: 'avc1.4d401e,mp4a.40.2', maxrate: '1100k', bufsize: '2200k', audio: '96k' },
+  { id: 'v2160', width: 3840, height: 2160, bandwidth: 16000000, codecs: 'avc1.640033,mp4a.40.2', maxrate: '16000k', bufsize: '32000k', audio: '192k' },
+  { id: 'v1440', width: 2560, height: 1440, bandwidth: 11000000, codecs: 'avc1.640032,mp4a.40.2', maxrate: '11000k', bufsize: '22000k', audio: '192k' },
+  { id: 'v1080', width: 1920, height: 1080, bandwidth: 9000000, codecs: 'avc1.640028,mp4a.40.2', maxrate: '9000k', bufsize: '18000k', audio: '192k' },
+  { id: 'v720', width: 1280, height: 720, bandwidth: 4500000, codecs: 'avc1.64001f,mp4a.40.2', maxrate: '4500k', bufsize: '9000k', audio: '128k' },
+  { id: 'v480', width: 854, height: 480, bandwidth: 1500000, codecs: 'avc1.4d401e,mp4a.40.2', maxrate: '1500k', bufsize: '3000k', audio: '96k' },
 ];
+
+function sourceHeight(quality) {
+  const q = String(quality || '').toLowerCase();
+  if (q.includes('2160') || q.includes('4k')) return 2160;
+  if (q.includes('1440')) return 1440;
+  if (q.includes('1080')) return 1080;
+  if (q.includes('720')) return 720;
+  if (q.includes('480')) return 480;
+  return 720;
+}
+
+function variantsFor(quality, maxHeight) {
+  const top = Math.max(480, Math.min(sourceHeight(quality), Number(maxHeight) || 1080));
+  // Three rungs at most. For a 1080 source that is 1080/720/480; for a 4K source on a 1080 panel the
+  // 2160 rung is not offered because this client cannot draw it. Never upscale.
+  const wanted = top >= 2160 ? [2160, 1080, 720]
+    : top >= 1440 ? [1440, 720, 480]
+      : top >= 1080 ? [1080, 720, 480]
+        : top >= 720 ? [720, 480]
+          : [480];
+  return ALL_VARIANTS.filter((v) => wanted.includes(v.height));
+}
 
 const jobs = new Map();
 
@@ -118,7 +144,7 @@ function waitForFirstPlaylists(job, deadline) {
   });
 }
 
-async function create({ url, headers, quality, audio }) {
+async function create({ url, headers, quality, audio, maxHeight }) {
   if (!url || !/^https?:/i.test(String(url))) return null;
   // One ladder at a time. Three transcode processes are already a real load; leaving yesterday's
   // title running while a new one is opened is how a hub becomes a space heater.
@@ -129,13 +155,10 @@ async function create({ url, headers, quality, audio }) {
     log('LADDER EVICT', oldId);
   }
   fs.mkdirSync(LADDER_DIR, { recursive: true });
-  const q = String(quality || '').toLowerCase();
-  // Do not upscale a 720p file to 1080: that spends CPU producing no more detail. The high variant
-  // follows the copy the picker actually chose; the rest are lower.
-  const variants = q.includes('2160') || q.includes('4k') ? ALL_VARIANTS.slice()
-    : q.includes('1080') ? ALL_VARIANTS.slice(0, 2)
-      : q.includes('720') ? ALL_VARIANTS.slice(1)
-        : ALL_VARIANTS.slice(2);
+  // The ladder follows the copy and the panel, not a fixed 720/480 assumption. A 1080 source on a
+  // 1080 panel gets 1080/720/480; a 4K source on the same panel gets 1080/720/480 rather than a
+  // useless 2160 rung; a 720 source gets 720/480 and is never upscaled.
+  const variants = variantsFor(quality, maxHeight);
   if (variants.length < 2) return null; // one rendition is not a ladder
   const id = crypto.randomBytes(6).toString('hex');
   const dir = path.join(LADDER_DIR, id);

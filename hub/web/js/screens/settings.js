@@ -528,9 +528,14 @@ export function screen(ctx) {
         'What the hub does with the bytes of a film so it does not stop halfway. Saved the moment it is changed.');
       const ad = setting.adaptive || {};
       toggle(g3, 'Build an adaptive quality ladder',
-        'On: a Play press may return one HLS master with 1080/720/480 variants transcoded on this hub, so the player can drop quality mid-film instead of rebuffering. Off keeps playback copy-only. This costs hub CPU and disk.',
+        'On: a Play press may return one HLS master with variants transcoded on this hub, so the player can change quality mid-film instead of rebuffering. Off keeps playback copy-only. This costs hub CPU and disk.',
         !!ad.enabled,
         canHubSetting() ? async (v) => { await writeSettings({ adaptive: Object.assign({}, ad, { enabled: v }) }); paint(); } : null);
+      pickRow(g3, 'Ladder top quality',
+        'The highest rung the ladder may offer. The client can lower it further from its own display ceiling; it is never upscaled above the source.',
+        [720, 1080, 1440, 2160], Number(ad.maxHeight || 1080),
+        (v) => (Number(v) >= 2160 ? '2160p / 4K' : v + 'p'),
+        canHubSetting() ? (v) => writeSettings({ adaptive: Object.assign({}, ad, { maxHeight: Number(v) }) }) : null);
       toggle(g3, 'Hold a window of the film in memory',
         pb.readAhead
           ? 'The hub reads ahead of the player into its own memory, so a torrent that bursts and pauses still plays like a file on a server.'

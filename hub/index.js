@@ -2659,6 +2659,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         headers: out.headers || {},
         quality: out.picked && out.picked.quality,
         audio: chosen ? { streamIndex: chosen.streamIndex, language: chosen.language } : null,
+        // The owner's ceiling and the client's own display ceiling; the lower wins. A 4K source on a
+        // 1080 panel must not spend CPU producing a 2160 rung the decoder will refuse.
+        maxHeight: Math.min(Number(adaptive.maxHeight) || 1080, Number(opts.displayMaxHeight) || 1080),
       });
       if (built && built.ready) {
         const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
