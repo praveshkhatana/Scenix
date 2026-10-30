@@ -2681,10 +2681,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         out.subtitleTracks = [];
         out.selectedSub = null;
         out.ladder = { id: built.id, variants: built.variants || [] };
-        extraWhy.push('adaptive ladder: ' + (built.variants || []).join('/') + ', aligned segments');
+        out.why = (out.why || []).concat('adaptive ladder: ' + (built.variants || []).join('/') + ', aligned segments');
         log('LADDER PLAY', identity, built.id, 'source=' + String(out.picked && out.picked.label || '').slice(0, 60));
       } else if (built) {
-        extraWhy.push('adaptive ladder warming; playing the chosen copy directly');
+        out.why = (out.why || []).concat('adaptive ladder warming; playing the chosen copy directly');
       }
     } catch (e) {
       log('LADDER FAIL', identity, e.message);

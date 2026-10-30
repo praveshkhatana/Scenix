@@ -24,7 +24,14 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const LADDER_DIR = process.env.LADDER_DIR || path.join(DATA_DIR, 'ladder');
 const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 const SEGMENT_SEC = Math.max(2, Number(process.env.LADDER_SEGMENT_SEC || 4));
-const FIRST_PLAYLIST_WAIT_MS = Math.max(3000, Number(process.env.LADDER_FIRST_WAIT_MS || 9000));
+// How long /play waits for every rendition's first playlist. A 720p source answers in ~5 s; a 1080p
+// transcode on a small box needs ~9.5 s, and the old 9 s window meant the API gave up just before the
+// ladder was ready and handed the player a direct copy it could not switch. The wait is a ceiling, not
+// a delay: a fast source returns as soon as its playlists exist.
+const FIRST_PLAYLIST_WAIT_MS = Math.max(3000, Number(process.env.LADDER_FIRST_WAIT_MS || 13000));
+// A warming job is reused rather than evicted: pressing Play again on the same copy must not restart
+// the transcode from zero, which is how a slow 1080p title could never reach a ready ladder.
+const REUSE_WINDOW_MS = Math.max(30000, Number(process.env.LADDER_REUSE_MS || 3 * 60e3));
 const IDLE_MS = Math.max(120000, Number(process.env.LADDER_IDLE_MS || 5 * 60e3));
 
 // Highest first. These are ceilings for the transcode, not a statement that every client can decode
@@ -156,6 +163,28 @@ function waitForFirstPlaylists(job, deadline) {
 
 async function create({ url, headers, quality, audio, maxHeight }) {
   if (!url || !/^https?:/i.test(String(url))) return null;
+  // The ladder follows the copy and the panel, not a fixed 720/480 assumption. A 1080 source on a
+  // 1080 panel gets 1080/720/480; a 4K source on the same panel gets 1080/720/480 rather than a
+  // useless 2160 rung; a 720 source gets 720/480 and is never upscaled.
+  const variants = variantsFor(quality, maxHeight);
+  if (variants.length < 2) return null; // one rendition is not a ladder
+  const wanted = variants.map((v) => v.id).join(',');
+  // Same copy, same rungs, still warming: wait on the job that already exists. Starting a new one
+  // would kill the ffmpeg that was seconds from producing the playlists.
+  for (const [existingId, existing] of jobs) {
+    const sameRungs = existing.variants.map((v) => v.id).join(',') === wanted;
+    if (existing.url === String(url) && sameRungs && !existing.failed
+        && Date.now() - existing.at < REUSE_WINDOW_MS) {
+      existing.lastSeen = Date.now();
+      const isReady = await waitForFirstPlaylists(existing, Date.now() + FIRST_PLAYLIST_WAIT_MS);
+      if (isReady) {
+        log('LADDER REUSE', existingId);
+        return { id: existingId, ready: true, path: '/app/v1/ladder/' + existingId + '/master.m3u8', variants: variants.map((v) => v.height + 'p') };
+      }
+      log('LADDER STILL WARMING', existingId);
+      return { id: existingId, ready: false, path: '/app/v1/ladder/' + existingId + '/master.m3u8', variants: variants.map((v) => v.height + 'p') };
+    }
+  }
   // One ladder at a time. Three transcode processes are already a real load; leaving yesterday's
   // title running while a new one is opened is how a hub becomes a space heater.
   for (const [oldId, old] of jobs) {
@@ -165,11 +194,6 @@ async function create({ url, headers, quality, audio, maxHeight }) {
     log('LADDER EVICT', oldId);
   }
   fs.mkdirSync(LADDER_DIR, { recursive: true });
-  // The ladder follows the copy and the panel, not a fixed 720/480 assumption. A 1080 source on a
-  // 1080 panel gets 1080/720/480; a 4K source on the same panel gets 1080/720/480 rather than a
-  // useless 2160 rung; a 720 source gets 720/480 and is never upscaled.
-  const variants = variantsFor(quality, maxHeight);
-  if (variants.length < 2) return null; // one rendition is not a ladder
   const id = crypto.randomBytes(6).toString('hex');
   const dir = path.join(LADDER_DIR, id);
   fs.mkdirSync(dir, { recursive: true });
