@@ -49,6 +49,8 @@ class BrowseActivity : Activity() {
     private var section = ""
     private var skeleton: View? = null
     private var contentRoot: ViewGroup? = null
+    /** The wordmark fades once the page scrolls, so a row heading never sits under it. */
+    private var brandMark: View? = null
 
     // The hero and the first shelf are ONE section, the way Apple's shelf-top works: the slides the
     // hero shows are the tiles of the Featured row, and whichever side moves, the other follows.
@@ -173,15 +175,40 @@ class BrowseActivity : Activity() {
         val holder = list.findViewHolderForAdapterPosition(position)
         if (holder is ShelfHolder) {
             val target = nearestCard(holder.rail, x) ?: holder.rail.getChildAt(0)
-            if (target?.requestFocus() == true) return true
+            if (target?.requestFocus() == true) {
+                keepRowBelowBar(position)
+                return true
+            }
             // The rail exists but its children are not measured yet; wait for the next frame.
         } else if (holder is HeroHolder) {
             if (holder.play.requestFocus()) return true
         } else {
-            list.scrollToPosition(position)
+            // Keep the row's heading below the floating pill/wordmark. Scrolling it flush to the top
+            // put "Browse by category" under "SCENIX", which read as two labels on top of each other.
+            val lm = list.layoutManager as? LinearLayoutManager
+            if (lm != null) {
+                lm.scrollToPositionWithOffset(position, if (position >= 2) app.theme.px(96f) else 0)
+            } else {
+                list.scrollToPosition(position)
+            }
         }
         if (tries < 8) list.postDelayed({ focusShelfAt(position, x, tries + 1) }, 45L)
         return true
+    }
+
+    /**
+     * A row scrolled to the very top puts its heading under the floating pill and wordmark. Nudge the
+     * list only when that actually happened; rows already clear of the bar are left where they are.
+     */
+    private fun keepRowBelowBar(position: Int) {
+        // After the focus request has had its own layout pass: scrolling in the same frame was
+        // undone by the RecyclerView bringing the card into view.
+        list.postDelayed({
+            val holder = list.findViewHolderForAdapterPosition(position) ?: return@postDelayed
+            val bar = app.theme.px(96f)
+            val top = holder.itemView.top
+            if (top < bar) list.scrollBy(0, top - bar)
+        }, 70L)
     }
 
     private fun nearestCard(rail: RecyclerView, x: Int): View? {
@@ -302,6 +329,12 @@ class BrowseActivity : Activity() {
             content.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)))
         }
         setContentView(root)
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy == 0) return
+                brandMark?.alpha = if (rv.computeVerticalScrollOffset() > 24) 0f else 1f
+            }
+        })
         load()
     }
 
@@ -379,7 +412,12 @@ class BrowseActivity : Activity() {
             for (j in 0 until shelf.childCount) {
                 val rail = shelf.getChildAt(j)
                 if (rail is RecyclerView) {
-                    for (k in 0 until rail.childCount) block(rail.getChildAt(k))
+                    for (k in 0 until rail.childCount) {
+                    val card = rail.getChildAt(k)
+                    // A category plate is already a wash; dimming it to 58% lets the stage show
+                    // through and reads as a poster behind the text. Keep plates opaque.
+                    if (card.tag == "genre") card.alpha = 1f else block(card)
+                }
                 }
             }
         }
@@ -543,6 +581,7 @@ class BrowseActivity : Activity() {
     private fun topBar(transparent: Boolean = false): View {
         val theme = app.theme
         val brand = Views.text(app, "logo", 30f, theme.brand, "SCENIX", bold = true)
+        if (transparent) brandMark = brand
         val profile = navButton("Profile") {
             startActivity(
                 Intent(this@BrowseActivity, ProfilesActivity::class.java)
@@ -1560,6 +1599,7 @@ class BrowseActivity : Activity() {
                 holder.sub.text = sub.joinToString(" · ")
             }
             holder.logo.visibility = View.GONE
+            holder.logo.tag = item.identity + ":logo"
             val imdbR = if (item.rating > 0) String.format(java.util.Locale.US, "★ %.1f", item.rating) else ""
             holder.imdb.text = imdbR
             holder.imdb.visibility = if (imdbR.isNotEmpty()) View.VISIBLE else View.GONE
@@ -1611,6 +1651,7 @@ class BrowseActivity : Activity() {
                 holder.progress.visibility = View.GONE
             }
             holder.slideRing?.visibility = if (position == heroPos) View.VISIBLE else View.GONE
+            holder.itemView.tag = null
             holder.itemView.setOnClickListener {
                 if (item.isLive()) openLive(item) else openDetail(item)
             }
@@ -1619,6 +1660,11 @@ class BrowseActivity : Activity() {
         /** The shelf's last tile: a quiet bordered card with a chevron disc and the words "See all". */
         private fun bindSeeAll(holder: CardHolder) {
             holder.item = null
+            holder.itemView.tag = "see-all"
+            // Cancel any in-flight poster/logo decode from the card this view used to hold; a
+            // callback that still matches the old URL would paint over the See all lockup.
+            holder.art.tag = "see-all:" + row.id
+            holder.logo.tag = "see-all:" + row.id
             holder.art.setImageDrawable(null)
             holder.art.setBackgroundColor(Color.TRANSPARENT)
             holder.art.background = Views.rounded(theme.surface, theme.radius("card", 6f), theme.px(1f), theme.line)
@@ -1654,9 +1700,14 @@ class BrowseActivity : Activity() {
          * with the name set large inside it, as Apple TV's category tiles are.
          */
         private fun bindGenre(holder: CardHolder, item: Item) {
+            holder.itemView.tag = "genre"
             var hash = 0
             for (c in item.title.lowercase()) hash = (hash * 31 + c.code) % 360
             val hue = hash.toFloat()
+            // The tile is a wash, not a poster. Retag the recycled views first so a late image
+            // callback for the card they used to hold cannot show through the colour plate.
+            holder.art.tag = "genre:" + item.identity
+            holder.logo.tag = "genre:" + item.identity
             holder.art.setImageDrawable(null)
             holder.art.setBackgroundColor(Color.TRANSPARENT)
             holder.art.background = GradientDrawable(
