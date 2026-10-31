@@ -245,11 +245,11 @@ class GameActivity : Activity() {
 
     // ── Carving to the game container ───────────────────────────────────────────────────────────
     // Portal pages (Poki and friends) wrap their game in thumbnails, nav pills and late-injected
-    // popups — content nobody asked for and not every parent wants a kid to see. The page's biggest
-    // visible iframe or canvas is taken as THE game (a portal's preview <video> is not): everything
-    // off the path from <body> down to it is hidden and the game itself pinned full-screen. Only
-    // display styles are touched, so the page's scripts and SDK keep running. The frame often exists
-    // only after the portal's own play button resolves, so the shears pass on a tick until one lands.
+    // promo popups — content nobody asked for and not every parent wants a kid to see. The page's
+    // biggest visible iframe/canvas/video is taken as THE game: everything off the path from <body>
+    // down to it is hidden and the stage pinned full-screen. Only display styles are touched, so the
+    // page's scripts and SDK keep running. Popups land at random times after load, so the sweep
+    // keeps re-running on a slow tick for the whole session, not just until one carve lands.
 
     private fun carve(view: WebView) {
         object : Runnable {
@@ -258,7 +258,7 @@ class GameActivity : Activity() {
             override fun run() {
                 if (++passes > 60) return
                 view.evaluateJavascript(CARVE_JS) { r ->
-                    if (r?.contains("carved") == true && ++carved >= 4) return@evaluateJavascript
+                    if (r?.contains("carved") == true) ++carved
                     main.postDelayed(this, if (carved > 0) 5000 else 3000)
                 }
             }
@@ -410,68 +410,84 @@ class GameActivity : Activity() {
         const val EXTRA_FALLBACK = "fallback"
 
         /**
-         * Keep only the path to the page's biggest visible game frame; hide portal chrome around it
-         * and pin its stage full-screen. A portal preview <video> is NOT a game frame. Every pass
-         * first restores whatever the last one hid, so when a portal swaps its DOM mid-session the
-         * page is never stranded black. Answers 'carved'/'none'. Idempotent.
+         * Keep only the path to the page's biggest visible game frame and pin its stage full-screen.
+         * Portal chrome, promo confetti and ad overlays are cut wherever they live — around the frame
+         * in the main document AND inside same-origin frames the portals wrap games in. A portal
+         * preview <video> is NOT a game frame. Every pass first restores whatever the last one hid,
+         * so when a portal swaps its DOM mid-session the page is never stranded black. Answers
+         * 'carved'/'none'. Idempotent.
          */
         const val CARVE_JS = """
 (function(){
  try{
-  var W=innerWidth||1,H=innerHeight||1;
   var hid=window.__scenixHid||(window.__scenixHid=[]);
-  while(hid.length){var h=hid.pop();try{h[0].style.removeProperty('display');}catch(x){}}
+  while(hid.length){try{hid.pop().style.removeProperty('display');}catch(x){}}
   var pin=window.__scenixPin||(window.__scenixPin=[]);
   while(pin.length){var p0=pin.pop();try{p0.style.removeProperty('position');p0.style.removeProperty('left');
     p0.style.removeProperty('top');p0.style.removeProperty('width');p0.style.removeProperty('height');
-    p0.style.removeProperty('z-index');p0.style.removeProperty('object-fit');}catch(x){}}
-  document.documentElement.removeAttribute('data-scn');
-  var all=document.querySelectorAll('[data-scn]');for(var r0=0;r0<all.length;r0++)all[r0].removeAttribute('data-scn');
-  function visArea(e){try{var r=e.getBoundingClientRect();
-    var x=Math.min(r.right,W)-Math.max(r.left,0),y=Math.min(r.bottom,H)-Math.max(r.top,0);
-    return x>0&&y>0?x*y:0;}catch(x){return 0;}}
-  var pick=null,best=0,nodes=document.querySelectorAll('iframe,canvas,video');
-  for(var i=0;i<nodes.length;i++){var n=nodes[i];
-    if(n.getAttribute&&n.getAttribute('aria-hidden')==='true')continue; // decorative art, not a game
-    var a=visArea(n)*(n.tagName==='IFRAME'?2:1);if(a>best){best=a;pick=n;}}
-  if(!pick||visArea(pick)<W*H*0.04)return 'none';
-  var node=pick,na=visArea(pick);
-  while(node.parentElement&&node.parentElement!==document.body){
-    var pa=visArea(node.parentElement);
-    if(pa>na*1.7)break;
-    node=node.parentElement;na=pa;
+    p0.style.removeProperty('z-index');}catch(x){}}
+  function carveDoc(doc,isMain){
+   var v=doc.defaultView||window,W=v.innerWidth||1,H=v.innerHeight||1;
+   var mark=doc.querySelectorAll('[data-scn]');for(var r=0;r<mark.length;r++)mark[r].removeAttribute('data-scn');
+   function area(e){try{var b=e.getBoundingClientRect();
+     var x=Math.min(b.right,W)-Math.max(b.left,0),y=Math.min(b.bottom,H)-Math.max(b.top,0);
+     return x>0&&y>0?x*y:0;}catch(x){return 0;}}
+   var pick=null,best=0,ns=doc.querySelectorAll('iframe,canvas,video');
+   for(var i=0;i<ns.length;i++){var n=ns[i];
+     if(n.getAttribute&&n.getAttribute('aria-hidden')==='true')continue; // decorative art, not a game
+     var a=area(n)*(n.tagName==='IFRAME'?2:1);if(a>best){best=a;pick=n;}}
+   if(!pick||area(pick)<W*H*0.04)return false;
+   var node=pick,na=area(pick);
+   while(node.parentElement&&node.parentElement!==doc.body){var pa=area(node.parentElement);
+     if(pa>na*1.7)break;node=node.parentElement;na=pa;}
+   var chain=[];for(var p=node;p;p=p.parentElement)chain.unshift(p);
+   doc.documentElement.setAttribute('data-scn','keep');
+   for(var j=0;j<chain.length;j++)chain[j].setAttribute('data-scn','keep');
+   function hideOff(parent,keep){var s=parent.children;
+     for(var k=0;k<s.length;k++)if(s[k]!==keep){s[k].style.setProperty('display','none','important');hid.push(s[k]);}}
+   hideOff(doc.body,chain[0]);
+   for(var l=0;l<chain.length-1;l++)hideOff(chain[l],chain[l+1]);
+   if(isMain){
+    doc.documentElement.style.setProperty('background','#000','important');
+    doc.body.style.setProperty('margin','0','important');
+    doc.body.style.setProperty('background','#000','important');
+    node.style.setProperty('position','fixed','important');
+    node.style.setProperty('left','0','important');
+    node.style.setProperty('top','0','important');
+    node.style.setProperty('width','100vw','important');
+    node.style.setProperty('height','100vh','important');
+    node.style.setProperty('z-index','2147483000','important');
+    pin.push(node);
+   }
+   // Anything that floats OVER the stage without being part of it: popups, promo confetti, ad panels.
+   // The keep-chain's own ancestors must stay visible (they hold the stage), so the test is
+   // containment against the stage node — not the [data-scn] marks.
+   function outsideStage(e){return e!==node&&!node.contains(e)&&!e.contains(node);}
+   var all=doc.getElementsByTagName('*');
+   for(var t=0;t<all.length;t++){var e=all[t];
+    if(!outsideStage(e))continue;
+    try{var cs=v.getComputedStyle(e);
+     if((cs.position==='fixed'||cs.position==='absolute')&&(area(e)>W*H*0.02||parseInt(cs.zIndex,10)>=9)){
+      e.style.setProperty('display','none','important');hid.push(e);}}catch(x){}}
+   if(!v.__scenixGuard){v.__scenixGuard=1;
+    new v.MutationObserver(function(ms){
+     for(var m=0;m<ms.length;m++){var add=ms[m].addedNodes||[];
+      for(var q=0;q<add.length;q++){var el=add[q];
+       if(el.nodeType!==1)continue;
+       if(el.tagName==='SCRIPT'||el.tagName==='STYLE')continue;
+       if(!outsideStage(el))continue;
+       var pos=false;try{var c2=v.getComputedStyle(el);pos=c2.position==='fixed'||c2.position==='absolute';}catch(x){}
+       if(pos){el.style.setProperty('display','none','important');hid.push(el);}
+      }}}).observe(doc.documentElement,{childList:true,subtree:true});
+   }
+   return true;
   }
-  var chain=[];for(var p=node;p;p=p.parentElement)chain.unshift(p);
-  document.documentElement.setAttribute('data-scn','keep');
-  for(var j=0;j<chain.length;j++)chain[j].setAttribute('data-scn','keep');
-  function hideOffPath(parent,keep){var s=parent.children;
-    for(var k=0;k<s.length;k++)if(s[k]!==keep){s[k].style.setProperty('display','none','important');hid.push([s[k]]);}}
-  hideOffPath(document.body,chain[0]);
-  for(var l=0;l<chain.length-1;l++)hideOffPath(chain[l],chain[l+1]);
-  document.documentElement.style.setProperty('background','#000','important');
-  document.body.style.setProperty('margin','0','important');
-  document.body.style.setProperty('background','#000','important');
-  node.style.setProperty('position','fixed','important');
-  node.style.setProperty('left','0','important');
-  node.style.setProperty('top','0','important');
-  node.style.setProperty('width','100vw','important');
-  node.style.setProperty('height','100vh','important');
-  node.style.setProperty('z-index','2147483000','important');
-  pin.push(node);
-  if(!window.__scenixGuard){
-    window.__scenixGuard=1;
-    new MutationObserver(function(ms){
-      for(var n=0;n<ms.length;n++){var add=ms[n].addedNodes||[];
-        for(var q=0;q<add.length;q++){var e=add[q];
-          if(e.nodeType!==1)continue;
-          if(e.tagName==='SCRIPT'||e.tagName==='STYLE')continue;
-          if(e.closest&&e.closest('[data-scn]'))continue;
-          var pos=false;try{var cs=getComputedStyle(e);pos=cs.position==='fixed'||cs.position==='absolute';}catch(x){}
-          if(pos)e.style.setProperty('display','none','important');
-        }}
-    }).observe(document.documentElement,{childList:true,subtree:true});
-  }
-  return 'carved';
+  var ok=carveDoc(document,true);
+  function dive(doc,d){if(d>2)return;var fs=doc.querySelectorAll('iframe');
+   for(var i=0;i<fs.length;i++){try{var cd=fs[i].contentDocument;
+    if(cd&&cd.body){if(carveDoc(cd,false))ok=true;dive(cd,d+1);}}catch(x){}}} // cross-origin frames: blocked, skipped
+  dive(document,0);
+  return ok?'carved':'none';
  }catch(e){}
 })()
 """
