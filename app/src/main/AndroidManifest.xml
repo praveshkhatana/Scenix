@@ -15,6 +15,9 @@
     <!-- TV-only: this app is never a phone app. -->
     <uses-feature android:name="android.software.leanback" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- Game mode wants a controller but never demands one: plenty of browser ports play with the
+         remote, and the TV may have no pad paired yet. -->
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
 
     <!-- A paired hub is usually http://&lt;hub-host&gt;:8788 on the same network, and standalone mode
          serves the same contract from this app. Android blocks cleartext by default, which would
@@ -85,6 +88,23 @@
             android:name=".AddonsActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".GamesActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- The game player keeps its own keyboard/navigation config contract: a pad pairing or a
+             controller arriving must not restart the WebView and drop the running game. -->
+        <activity
+            android:name=".GameActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:hardwareAccelerated="true"
             android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" />
 

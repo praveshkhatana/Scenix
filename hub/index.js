@@ -108,6 +108,7 @@ const settings = require('./core/settings');
 const langdb = require('./core/langdb');
 const avatars = require('./core/avatars');
 const discovery = require('./core/discovery');
+const gamesApi = require('./core/games');
 const maturityRule = require('./rules/maturity');
 const ranking = require('./rules/source_ranking');
 
@@ -3537,6 +3538,13 @@ async function handle(req, res) {
       // The fingerprint is built from data/progress.json only; no recommendation service is involved.
       await taste.decorate(ctx, filled.flatMap((r) => r.items));
       return send(res, 200, { rows: arrangeHome(filled) });
+    }
+
+    if (path === '/app/v1/games') {
+      // The Game mode catalogue: curated static sources, so no budget and no addon wait — it answers
+      // as fast as the shelves can be assembled. Games are not titles: they carry `playUrl` and a
+      // controller flag instead of sources, which is why they ride their own endpoint.
+      return send(res, 200, { rows: gamesApi.rows() });
     }
 
     m = /^\/app\/v1\/row\/([^/]+)$/.exec(path);

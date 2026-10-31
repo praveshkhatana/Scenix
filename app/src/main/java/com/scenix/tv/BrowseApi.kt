@@ -75,6 +75,17 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /**
+     * The Game mode shelves (`GET /app/v1/games`). A game is not a title — it carries a play address
+     * and a controller flag instead of sources — so this hands the raw rows over rather than forcing
+     * them through [Item].
+     */
+    fun games(done: (rows: JSONArray?, error: String?) -> Unit) {
+        request("/app/v1/games", "", "GET", null, 12000) { root, _, error ->
+            done(root?.optJSONArray("rows"), error)
+        }
+    }
+
     /** The household settings PIN: verify it, or change the lock (the current PIN is required). */
     fun unlockSettings(pin: String, done: (ok: Boolean, error: String?) -> Unit) {
         request("/app/v1/settings/unlock", "", "POST", JSONObject().put("pin", pin), 10000) { root, status, error ->

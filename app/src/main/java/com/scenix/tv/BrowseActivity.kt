@@ -679,7 +679,7 @@ class BrowseActivity : Activity() {
         if (theme.navStyle == "pill") {
             // Apple-style packs float one centred pill over the stage; the wordmark stays at the edge.
             // The pill carries the household and the sections this app can play, in the order the web
-            // bar teaches: face, Home, Movies, Series, Live TV, then the actions.
+            // bar teaches: face, Home, Movies, Series, Games, Live TV, then the actions.
             val bar = FrameLayout(this)
             bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
             bar.addView(brand, FrameLayout.LayoutParams(
@@ -701,6 +701,14 @@ class BrowseActivity : Activity() {
             pill.addView(homeTab)
             pill.addView(moviesTab)
             pill.addView(seriesTab)
+            // Games is its own mode, not another catalogue tab: the hub answers a games shelf set
+            // that has nothing in common with movie rows, so the tab opens its own screen.
+            pill.addView(navTab("Games") {
+                startActivity(
+                    Intent(this@BrowseActivity, GamesActivity::class.java)
+                        .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
+                )
+            })
             val live = navTab("Live TV") {
                 startActivity(
                     Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
