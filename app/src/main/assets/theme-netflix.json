@@ -1,7 +1,7 @@
 {
  "id": "scenix-netflix",
  "brandMark": "N",
- "_read": "Netflix: a complete pack. The pack block chooses layout, card, focus and nav; the tokens choose surface and type.",
+ "_read": "Cinema Row: a content-first, black-and-red pack inspired by modern streaming UIs. It uses only Scenix typography and controls; the pack block selects layout, card, focus and navigation treatment declaratively.",
  "canvas": {
   "width": 1920,
   "height": 1080
@@ -50,7 +50,7 @@
  "spacing": {
   "gutter": 76,
   "gap": 20,
-  "rowGap": 34,
+  "rowGap": 40,
   "captionGap": 12,
   "metaGap": 6,
   "navHeight": 96,
@@ -82,7 +82,7 @@
   "brand": 34,
   "nav": 20,
   "nmark": 40,
-  "h1": 104,
+  "h1": 92,
   "h2": 56,
   "h3": 34,
   "sub": 24,
@@ -113,10 +113,10 @@
   "panelNote": 18
  },
  "focus": {
-  "ringWidth": 4,
-  "scale": 1.05,
-  "durationMs": 170,
-  "shadowElevation": 14,
+  "ringWidth": 3,
+  "scale": 1.07,
+  "durationMs": 140,
+  "shadowElevation": 20,
   "glass": 1,
   "glassPad": 6
  },
@@ -132,19 +132,19 @@
  },
  "cards": {
   "poster": {
-   "width": 280,
+   "width": 336,
    "aspect": 1.5,
    "caption": false,
    "fullBleed": false
   },
   "channel": {
-   "width": 280,
+   "width": 320,
    "aspect": 1.5,
    "caption": false,
    "fullBleed": false
   },
   "continue": {
-   "width": 280,
+   "width": 320,
    "aspect": 1.5,
    "caption": false,
    "fullBleed": false
@@ -204,16 +204,17 @@
   "padV": 24,
   "radius": 10,
   "rowGap": 10,
-  "rowHeight": 68
+  "rowHeight": 68,
+  "dimAmount": 0.72
  },
  "detail": {
   "maxSources": 6.0,
   "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
  },
  "preview": {
-  "enabled": 1.0,
+  "enabled": 0.0,
   "delayMs": 1500.0,
-  "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
+  "_note": "The billboard remains sampled artwork. This avoids a live video surface competing with remote navigation or image decoding on lower-end TVs."
  },
  "hero": {
   "rotateMs": 6000,
@@ -227,16 +228,26 @@
   "radius": 10
  },
  "pack": {
-  "name": "Classic",
+  "name": "Cinema Row",
   "hero": "full",
   "heroAlign": "left",
-  "heroHeight": 700,
-  "rows": "poster",
+  "heroHeight": 650,
+  "heroCopy": "overlay",
+  "heroArtwork": "backdrop",
+  "heroPoster": "hide",
+  "heroDots": "none",
+  "heroTitleScale": 0.9,
+  "heroTitleLines": 2,
+  "rows": "landscape",
   "card": "overlay",
   "focus": "ring",
   "focusColor": "#FFFFFF",
   "motion": "rise",
   "detail": "backdrop",
-  "nav": "classic"
+  "nav": "classic",
+  "cardNewLabel": "badge",
+  "searchBadges": "show",
+  "stage": "off",
+  "rank": "compact"
  }
 }

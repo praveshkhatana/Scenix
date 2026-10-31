@@ -88,6 +88,9 @@ class PlayerActivity : Activity() {
         val title: String,
     )
 
+    /** A stable identity for a row in the episode sheet while its views are rebuilt per season. */
+    private data class EpisodeRowKey(val season: Int, val episode: Int)
+
     private var spec: PlaySpec? = null
     /** The spec the player is actually holding, which can trail [spec] while a new answer is in flight. */
     private var loadedSpec: PlaySpec? = null
@@ -110,6 +113,12 @@ class PlayerActivity : Activity() {
     private var episodesFetching = false
     /** Season the Episodes menu is showing; 0 means "follow whatever episode is playing". */
     private var epSeason = 0
+    /**
+     * A season switch rebuilds the sheet. Keep the episode number as data across that rebuild so
+     * there is one focus request, rather than a race between the default selection and a later
+     * attempt to restore the viewer's position.
+     */
+    private var pendingEpisodeFocus: EpisodeRowKey? = null
     private var selectedAudioId: String? = null
     private var selectedSubId: String? = null
     private var audioChosen = false
@@ -1334,6 +1343,36 @@ class PlayerActivity : Activity() {
             backButton, playButton, rewindButton, forwardButton,
             audioButton, subButton, speedButton, qualityButton,
         ) + listOfNotNull(episodesButton) + listOf(seekLine)
+        wireChromeFocus()
+    }
+
+    /**
+     * The transport controls are visually separated by a large flexible spacer. Geometric focus
+     * search therefore preferred the scrubber over the Audio/Episodes cluster on some TV panels.
+     * Give the remote an intentional left/right route so every icon is reachable without a
+     * diagonal hunt; hidden controls are omitted whenever transport state changes.
+     */
+    private fun wireChromeFocus() {
+        val controls = listOfNotNull(
+            playButton,
+            rewindButton.takeIf { it.visibility == View.VISIBLE },
+            forwardButton.takeIf { it.visibility == View.VISIBLE },
+            audioButton,
+            subButton,
+            speedButton.takeIf { it.visibility == View.VISIBLE },
+            qualityButton,
+            episodesButton,
+        )
+        if (controls.isEmpty()) return
+        controls.forEach { if (it.id == View.NO_ID) it.id = View.generateViewId() }
+        controls.forEachIndexed { index, control ->
+            control.nextFocusLeftId = controls[(index - 1).coerceAtLeast(0)].id
+            control.nextFocusRightId = controls[(index + 1).coerceAtMost(controls.lastIndex)].id
+        }
+        if (seekLine.id == View.NO_ID) seekLine.id = View.generateViewId()
+        // Down from the timeline returns to the transport rather than falling into an invisible
+        // player surface. Left/right remains the expected seek gesture.
+        seekLine.nextFocusDownId = controls.first().id
     }
 
     private fun buildCenter() {
@@ -1380,17 +1419,31 @@ class PlayerActivity : Activity() {
         return v
     }
 
-    private fun chip(label: String, compact: Boolean = false, action: () -> Unit): TextView {
+    private fun chip(
+        label: String,
+        compact: Boolean = false,
+        selected: Boolean = false,
+        arrow: ((Int) -> Boolean)? = null,
+        action: () -> Unit,
+    ): TextView {
         val b = Views.text(
-            app, "li", if (compact) 20f else 22f, theme.ink, label, bold = true,
+            app, "li", if (compact) 20f else 22f,
+            if (selected) theme.color("panelValue", "#F2C33A") else theme.ink,
+            label, bold = true,
             gravity = Gravity.CENTER,
         )
         b.setPadding(
             theme.px(if (compact) 18f else 22f), theme.px(10f),
             theme.px(if (compact) 18f else 22f), theme.px(10f),
         )
-        b.background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.radius("button", 6f))
-        Focus.attach(b, b, app, theme.radius("button", 6f), scale = false, elevate = false, onClick = action)
+        b.background = Views.rounded(
+            if (selected) theme.color("surface2", "#232323") else theme.color("btnGrey", "#1AFFFFFF"),
+            theme.radius("button", 6f),
+        )
+        Focus.attach(
+            b, b, app, theme.radius("button", 6f), scale = false, elevate = false,
+            onClick = action, arrow = arrow,
+        )
         return b
     }
 
@@ -1497,9 +1550,14 @@ class PlayerActivity : Activity() {
         panel = container
 
         trapFocus()
-        val target = if (keepFocus && focused != null && panelRows.contains(focused)) focused
-        else panelRows.getOrNull(selectedRowIndex(kind)) ?: panelRows.firstOrNull()
-        target?.post { if (panel != null) target.requestFocus() }
+        val preservedEpisode = if (kind == MenuKind.EPISODES) pendingEpisodeFocus else null
+        val target = when {
+            keepFocus && focused != null && panelRows.contains(focused) -> focused
+            preservedEpisode != null -> nearestEpisodeRow(preservedEpisode)
+            else -> panelRows.getOrNull(selectedRowIndex(kind)) ?: panelRows.firstOrNull()
+        }
+        if (kind == MenuKind.EPISODES) pendingEpisodeFocus = null
+        target?.post { focusMenuTarget(target, container) }
     }
 
     /** First/last rows point at themselves so the ring cannot fall out of an open menu. */
@@ -1508,6 +1566,17 @@ class PlayerActivity : Activity() {
         for (r in panelRows) r.id = View.generateViewId()
         panelRows.first().nextFocusUpId = panelRows.first().id
         panelRows.last().nextFocusDownId = panelRows.last().id
+    }
+
+    /**
+     * A panel is attached after its rows are built. Requesting focus one frame too early makes
+     * Android focus the first season chip instead of the episode row; retry the exact target until
+     * the sheet owns it, while ignoring an older sheet that has already been replaced.
+     */
+    private fun focusMenuTarget(target: View, owner: View, tries: Int = 0) {
+        if (panel !== owner) return
+        if (target.isShown && target.requestFocus()) return
+        if (tries < 8) target.postDelayed({ focusMenuTarget(target, owner, tries + 1) }, 80L)
     }
 
     private fun audioRows(parent: LinearLayout) {
@@ -1823,6 +1892,77 @@ class PlayerActivity : Activity() {
         return out
     }
 
+    /** Sorted, distinct seasons available to the player-side Episodes sheet. */
+    private fun episodeSeasons(): List<Int> {
+        val eps = episodesList ?: return emptyList()
+        val seasons = ArrayList<Int>()
+        for (i in 0 until eps.length()) {
+            val season = eps.optJSONObject(i)?.optInt("season", 1) ?: continue
+            if (season !in seasons) seasons.add(season)
+        }
+        seasons.sort()
+        return seasons
+    }
+
+    /** Find the episode row currently carrying D-pad focus, even if a child later becomes focusable. */
+    private fun focusedEpisodeRow(): EpisodeRowKey? {
+        var view: View? = currentFocus
+        while (view != null) {
+            (view.tag as? EpisodeRowKey)?.let { return it }
+            view = view.parent as? View
+        }
+        return null
+    }
+
+    /**
+     * Find the closest row in a freshly built season. A request for E10 in a shorter season lands
+     * on its last real episode instead of falling back to a non-interactive header.
+     */
+    private fun nearestEpisodeRow(preferred: EpisodeRowKey): View? {
+        var chosen: View? = null
+        var closest = Int.MAX_VALUE
+        for (row in panelRows) {
+            val key = row.tag as? EpisodeRowKey ?: continue
+            if (key.season != preferred.season) continue
+            val distance = kotlin.math.abs(key.episode - preferred.episode)
+            if (chosen == null || distance < closest) {
+                chosen = row
+                closest = distance
+            }
+        }
+        return chosen
+    }
+
+    /** Rebuild the sheet for [season] and retain the viewer's episode position when possible. */
+    private fun showEpisodeSeason(season: Int, preferredEpisode: Int? = focusedEpisodeRow()?.episode) {
+        if (epSeason == season || panelKind != MenuKind.EPISODES) return
+        pendingEpisodeFocus = EpisodeRowKey(
+            season,
+            preferredEpisode ?: spec?.episode?.takeIf { it > 0 } ?: 1,
+        )
+        epSeason = season
+        rebuildMenu(MenuKind.EPISODES, keepFocus = false)
+    }
+
+    /**
+     * LEFT/RIGHT belongs to the season rail while the episode list is open. Android's focus search
+     * otherwise only sees the vertical rows below it, which made the rail look interactive but
+     * impossible to use from a remote. Cycling also makes both ends of the rail useful on a TV.
+     */
+    private fun moveEpisodeSeason(delta: Int): Boolean {
+        if (panelKind != MenuKind.EPISODES) return false
+        val seasons = episodeSeasons()
+        if (seasons.size < 2) return false
+        val playingIndex = seasons.indexOf(spec?.season ?: 0)
+        val currentIndex = seasons.indexOf(epSeason).takeIf { it >= 0 }
+            ?: playingIndex.takeIf { it >= 0 }
+            ?: 0
+        val nextIndex = (currentIndex + delta + seasons.size) % seasons.size
+        val preferred = focusedEpisodeRow()?.episode ?: spec?.episode?.takeIf { it > 0 }
+        showEpisodeSeason(seasons[nextIndex], preferred)
+        return true
+    }
+
     /**
      * The episode jump list — Apple TV's core series affordance, drawn inside the player so a viewer
      * never has to leave playback to change episode. The list is read from the hub's meta record on
@@ -1848,12 +1988,7 @@ class PlayerActivity : Activity() {
             }
             return
         }
-        val seasons = ArrayList<Int>()
-        for (i in 0 until eps.length()) {
-            val se = eps.optJSONObject(i)?.optInt("season", 1) ?: continue
-            if (se !in seasons) seasons.add(se)
-        }
-        seasons.sort()
+        val seasons = episodeSeasons()
         if (epSeason == 0)
             epSeason = if (seasons.contains(s.season)) s.season else seasons.firstOrNull() ?: 0
         if (seasons.size > 1) {
@@ -1862,11 +1997,19 @@ class PlayerActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
             }
             for (se in seasons) {
-                chips.addView(chip("Season $se", compact = true) {
-                    if (epSeason != se) {
-                        epSeason = se
-                        rebuildMenu(MenuKind.EPISODES)
-                    }
+                chips.addView(chip(
+                    "Season $se",
+                    compact = true,
+                    selected = se == epSeason,
+                    arrow = { code ->
+                        when (code) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> moveEpisodeSeason(-1)
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> moveEpisodeSeason(1)
+                            else -> false
+                        }
+                    },
+                ) {
+                    showEpisodeSeason(se, spec?.episode?.takeIf { it > 0 })
                 }, wrap().withStart(if (chips.childCount == 0) 0 else theme.px(8f)))
             }
             parent.addView(chips, LinearLayout.LayoutParams(
@@ -1912,6 +2055,7 @@ class PlayerActivity : Activity() {
             )
             isFocusable = true
             isClickable = true
+            tag = EpisodeRowKey(ep.optInt("season", 1), number)
             setOnClickListener { action() }
         }
         val radius = theme.radius("card", 6f).toFloat()
@@ -1944,7 +2088,24 @@ class PlayerActivity : Activity() {
                 ).apply { topMargin = theme.px(5f) })
         }
         row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        Focus.attach(row, row, app, theme.radius("listItem", 6f), scale = false, elevate = false)
+        Focus.attach(
+            row,
+            row,
+            app,
+            theme.radius("listItem", 6f),
+            scale = false,
+            elevate = false,
+            // Activity-level routing handles the entire sheet, but keep the same rule on the
+            // focused row as a boundary fallback for TV firmware that dispatches D-pad keys
+            // straight to its focused child.
+            arrow = { code ->
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> moveEpisodeSeason(-1)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> moveEpisodeSeason(1)
+                    else -> false
+                }
+            },
+        )
         row.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(106f)
         ).apply { topMargin = theme.space("panelRowGap", 10f) }
@@ -2216,6 +2377,7 @@ class PlayerActivity : Activity() {
         speedButton.visibility = if (show) View.VISIBLE else View.GONE
         rewindButton.visibility = if (show) View.VISIBLE else View.GONE
         forwardButton.visibility = if (show) View.VISIBLE else View.GONE
+        if (::qualityButton.isInitialized) wireChromeFocus()
     }
 
     private fun audioValue(): String {
@@ -2837,6 +2999,10 @@ class PlayerActivity : Activity() {
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (panelKind == MenuKind.EPISODES) {
+                        val delta = if (code == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+                        if (moveEpisodeSeason(delta)) return true
+                    }
                     if (panel == null) {
                         val dir = if (code == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
                         // At rest (chrome hidden) the remote is a television remote: left/right zaps a
