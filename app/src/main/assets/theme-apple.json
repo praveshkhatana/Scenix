@@ -234,6 +234,10 @@
  },
  "pack": {
   "name": "Scene",
+  "homeLayout": "apple",
+  "homeNavigation": "pack",
+  "homeHero": "shared-slider",
+  "homeRails": "stacked",
   "hero": "full",
   "heroAlign": "left",
   "heroHeight": 720,

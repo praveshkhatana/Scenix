@@ -25,6 +25,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
 
@@ -93,9 +94,11 @@ class BrowseActivity : Activity() {
             lastKeyAt = android.os.SystemClock.elapsedRealtime()
             val adapter = browseAdapter
             val focus = currentFocus
+            val heroFamily = app.theme.homeLayout.hero
             // Preview tiles live inside the billboard: UP is the one explicit step from a slide
             // selector to its Play action, rather than a geometric jump to an unrelated shelf.
             if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP &&
+                heroFamily == HomeLayoutSpec.Hero.SHARED_SLIDER &&
                 adapter != null && isInside(adapter.heroSelector, focus)) {
                 adapter.heroPlay?.requestFocus()
                 return true
@@ -103,7 +106,8 @@ class BrowseActivity : Activity() {
             // UP once more from the billboard reaches the navigation pill.  This preserves a
             // simple, visible hierarchy: nav → hero action → featured slides → shelves.
             val anchor = navAnchor
-            if (anchor != null && event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(focus)) {
+            if (anchor != null && heroFamily != HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(focus)) {
                 anchor.requestFocus()
                 return true
             }
@@ -121,7 +125,7 @@ class BrowseActivity : Activity() {
             // lands focus on the matching tile, so subsequent remote presses remain predictable.
             if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
                 event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
-                if (slides.size > 1 && adapter != null &&
+                if (heroFamily == HomeLayoutSpec.Hero.SHARED_SLIDER && slides.size > 1 && adapter != null &&
                     isInside(adapter.heroRoot, focus) &&
                     // The embedded preview strip is a real slider: it owns LEFT/RIGHT so focus
                     // stays on its selected thumbnail. The Hero Play stop also supports arrows,
@@ -139,7 +143,15 @@ class BrowseActivity : Activity() {
                 if (focus != null && adapter != null && isInside(list, focus)) {
                     val down = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
                     val from = outerPositionOf(focus)
-                    if (isInside(adapter.heroSelector, focus)) {
+                    // The focused-hub surface owns the relationship between its system strip,
+                    // content tiles and Details action. Let its explicit next-focus graph answer
+                    // UP/DOWN rather than forcing the Apple carousel hierarchy onto it.
+                    if (heroFamily == HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                        isInside(adapter.heroRoot, focus)) {
+                        return super.dispatchKeyEvent(event)
+                    }
+                    if (heroFamily == HomeLayoutSpec.Hero.SHARED_SLIDER &&
+                        isInside(adapter.heroSelector, focus)) {
                         // A selector is the bottom edge of the one Hero component. DOWN leaves the
                         // slider for the first ordinary shelf; it must not re-enter itself.
                         if (down) {
@@ -150,6 +162,10 @@ class BrowseActivity : Activity() {
                         return true
                     }
                     if (isInside(adapter.heroRoot, focus)) {
+                        if (heroFamily == HomeLayoutSpec.Hero.CINEMA_BILLBOARD) {
+                            if (down) moveVertical(1, focus) else navAnchor?.requestFocus()
+                            return true
+                        }
                         if (down && slides.isNotEmpty()) {
                             focusFeatured(heroPos.coerceIn(0, slides.lastIndex))
                             return true
@@ -170,14 +186,15 @@ class BrowseActivity : Activity() {
     /** Advance the visible hero exactly one slide, wrapping like the Featured rail. */
     private fun stepHero(delta: Int) {
         if (slides.size < 2) return
+        // Direct-billboard packs deliberately use the CTA edges as their slider controls. Keep
+        // the remote on that same control after its title changes; snapping More Info back to Play
+        // would make Netflix navigation feel like a dropped or duplicated press.
+        val retainFocus = currentFocus
         val next = Math.floorMod(heroPos + delta, slides.size)
         // Do not move the outer shelf while the remote is changing a slide. A D-pad press should
         // only change the hero, never make the whole page visibly jump.
         onSlideFocused(next)
-        // Keep the remote on the hero after the change.  The old behaviour moved focus down to a
-        // tile after one press, so the next LEFT/RIGHT was handled by a different control and the
-        // carousel felt inconsistent. DOWN remains the explicit path to the matching tile.
-        browseAdapter?.heroPlay?.requestFocus()
+        if (retainFocus?.requestFocus() != true) browseAdapter?.heroPlay?.requestFocus()
     }
 
     /** The outer-list position whose row contains [v], or -1 when it is not on a shelf. */
@@ -206,9 +223,13 @@ class BrowseActivity : Activity() {
         val total = list.adapter?.itemCount ?: 0
         while (target in 0 until total) {
             if (target == 0) {
-                // Up from the first shelf does not need the hero's Play row; it lands on Featured.
-                target += direction
-                continue
+                // Each structural home defines its own re-entry point: Apple returns to its
+                // preview selector, Netflix to Play, and PS5 to the selected square tile.  The
+                // old code skipped position zero, which made UP from the first shelf feel dead.
+                val hero = list.findViewHolderForAdapterPosition(0) as? HeroHolder
+                if (hero?.surface?.focusEntry(heroPos) == true) return
+                if (hero == null) list.postDelayed({ moveVertical(direction, from) }, 45L)
+                return
             }
             if (focusShelfAt(target, x, 0)) return
             target += direction
@@ -237,7 +258,7 @@ class BrowseActivity : Activity() {
             }
             // The rail exists but its children are not measured yet; wait for the next frame.
         } else if (holder is HeroHolder) {
-            if (holder.component.playControl.requestFocus()) return true
+            if (holder.surface.primaryControl.requestFocus()) return true
         } else {
             // Keep the row's heading below the floating pill/wordmark. Scrolling it flush to the top
             // put "Browse by category" under "SCENIX", which read as two labels on top of each other.
@@ -324,9 +345,14 @@ class BrowseActivity : Activity() {
             return
         }
 
-        // Apple's scene pack puts one stage behind the whole screen: the shelves float on it, and the
-        // stage crossfades to whatever tile holds focus. Other packs keep the opaque page they had.
+        // An immersive scene uses a shared room behind the page. A PS5-style hub owns its own
+        // backdrop and compact utility strip instead, so it deliberately stays out of this host
+        // stage and does not inherit an Apple/Netflix application bar.
         val stageMode = app.theme.packString("stage", "off") == "focus"
+        val ownsHomeNavigation = app.theme.homeLayout.navigation in setOf(
+            HomeLayoutSpec.Navigation.UTILITY,
+            HomeLayoutSpec.Navigation.NONE,
+        )
         val content: ViewGroup = if (stageMode) FrameLayout(this) else LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
@@ -352,9 +378,9 @@ class BrowseActivity : Activity() {
             itemAnimator = null
             clipToPadding = false
             clipChildren = false
-            // Under a floating bar the billboard runs to the top edge of the screen, so the rows
-            // must not be pushed down by a padding band — other packs keep their page padding.
-            setPadding(0, if (stageMode) 0 else app.theme.px(16f), 0, app.theme.px(64f))
+            // A surface that owns its own top controls (the console hub) begins at the display
+            // edge, exactly like a stage. Other packs reserve their host bar.
+            setPadding(0, if (stageMode || ownsHomeNavigation) 0 else app.theme.px(16f), 0, app.theme.px(64f))
         }
         shelfListId = View.generateViewId()
         list.id = shelfListId
@@ -373,6 +399,11 @@ class BrowseActivity : Activity() {
             content.addView(status, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)
             ).apply { gravity = Gravity.BOTTOM })
+        } else if (ownsHomeNavigation) {
+            // Ps5HomeLayout contains its own compact context and utility controls. Rendering a
+            // host topBar here was the source of the incorrect Apple-like navbar in that theme.
+            content.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            content.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)))
         } else {
             content.addView(topBar(false), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)
@@ -1130,7 +1161,8 @@ class BrowseActivity : Activity() {
         list.postDelayed(object : Runnable {
             var tries = 0
             override fun run() {
-                val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list)
+                if (adapter.focusFirstSlide()) return
+                val first = adapter.heroPlay ?: firstFocusable(list)
                 if (first?.requestFocus() == true) return
                 if (++tries < 20) list.postDelayed(this, 300)
             }
@@ -1194,15 +1226,14 @@ class BrowseActivity : Activity() {
         return null
     }
 
-    /** Move focus to the Hero component's preview tile for a slide. */
+    /** Move focus to this structural Home surface's entry point for a slide. */
     private fun focusFeatured(pos: Int, tries: Int = 0) {
-        val component = browseAdapter?.heroComponent() ?: return
+        val component = browseAdapter?.homeSurface() ?: return
         // This route is normally fully laid out. Posting it unconditionally meant a rapid DOWN,
         // DOWN from the pill saw the pill twice and dropped the second intent. Take focus in this
         // frame whenever possible; only a cold/rebound hero needs the short layout retry.
-        val target = component.selectorAt(pos)
-        if (target?.requestFocus() == true) return
-        if (tries < 8) component.postDelayed({ focusFeatured(pos, tries + 1) }, 32L)
+        if (component.focusEntry(pos)) return
+        if (tries < 8) component.root.postDelayed({ focusFeatured(pos, tries + 1) }, 32L)
     }
 
     /**
@@ -1292,17 +1323,17 @@ class BrowseActivity : Activity() {
         var heroRoot: View? = null
             private set
         private var heroHolder: HeroHolder? = null
-        /** The preview strip is part of HeroComponent; it is not a separate Featured shelf. */
-        val heroSelector: View? get() = heroHolder?.component?.selectorRoot
+        /** Some surfaces expose an integrated selector rail; Netflix deliberately does not. */
+        val heroSelector: View? get() = heroHolder?.surface?.selectorRoot
 
-        fun heroComponent(): HeroComponent? = heroHolder?.component
+        fun homeSurface(): HomeSurface? = heroHolder?.surface
 
-        /** Home lands on the active hero preview; the Hero Play action remains one UP away. */
-        fun focusFirstSlide(): View? = heroHolder?.component?.selectorAt(heroPos)
+        /** Each composition chooses its own entry stop: Apple preview, Netflix Play or PS5 tile. */
+        fun focusFirstSlide(): Boolean = heroHolder?.surface?.focusEntry(heroPos) ?: false
 
-        fun heroVideo(): android.widget.VideoView? = heroHolder?.component?.videoView
+        fun heroVideo(): android.widget.VideoView? = heroHolder?.surface?.videoView
 
-        fun heroSubs(): TextView? = heroHolder?.component?.subtitleView
+        fun heroSubs(): TextView? = heroHolder?.surface?.subtitleView
 
         fun showSlide(pos: Int) {
             heroPos = pos.coerceIn(0, slides.size - 1)
@@ -1317,24 +1348,50 @@ class BrowseActivity : Activity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val theme = app.theme
             return if (viewType == TYPE_HERO) {
-                // The pack decides the hero's visual grammar. Browse only provides the two
-                // callbacks that are genuinely page-level concerns: navigation into Detail and
-                // pausing the carousel/stage when the remote reaches Play.
-                val component = HeroComponent(
+                // The typed pack contract selects a complete structural surface, not merely a
+                // paint treatment.  Its callbacks are the stable Browse responsibilities shared
+                // by every family: routes, the one active title index, and profile identity.
+                val surface = HomeSurfaceFactory.create(
                     this@BrowseActivity,
                     app,
-                    HeroComponent.Callbacks(
-                        onPlay = ::openDetail,
-                        onSlideSelected = ::onSlideFocused,
-                        onPlayFocused = ::onChromeFocused,
+                    HomeSurfaceCallbacks(
+                        onOpen = ::openDetail,
+                        onSelected = ::onSlideFocused,
+                        onStep = ::stepHero,
+                        onHeroFocused = ::onChromeFocused,
+                        onSection = { target ->
+                            if (target == "live") {
+                                startActivity(
+                                    Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
+                                        .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+                                )
+                            } else goTab(target)
+                        },
+                        onProfile = {
+                            startActivity(
+                                Intent(this@BrowseActivity, ProfilesActivity::class.java)
+                                    .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
+                            )
+                        },
+                        onSearch = {
+                            startActivity(
+                                Intent(this@BrowseActivity, SearchActivity::class.java)
+                                    .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
+                            )
+                        },
+                        onSettings = {
+                            startActivity(
+                                Intent(this@BrowseActivity, SettingsActivity::class.java)
+                                    .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
+                            )
+                        },
                     ),
-                ).apply {
-                    layoutParams = RecyclerView.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        preferredHeightPx,
-                    )
-                }
-                HeroHolder(component)
+                )
+                surface.root.layoutParams = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    surface.preferredHeightPx,
+                )
+                HeroHolder(surface)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -1366,9 +1423,14 @@ class BrowseActivity : Activity() {
                 if (slides.isEmpty()) return
                 heroHolder = holder
                 renderHero(holder)
-                heroPlay = holder.component.playControl
-                heroRoot = holder.component.root
-                holder.component.setNextFocusUp(navAnchor?.id ?: View.NO_ID)
+                heroPlay = holder.surface.primaryControl
+                heroRoot = holder.surface.root
+                // A PS5-style surface owns its compact context strip; it becomes the return
+                // anchor rather than receiving a hidden/legacy host navbar target.
+                holder.surface.navigationAnchor?.let { navAnchor = it }
+                holder.surface.setNextFocusUp(
+                    (holder.surface.navigationAnchor ?: navAnchor)?.id ?: View.NO_ID,
+                )
             } else if (holder is ShelfHolder) {
                 val row = shelves[position - (if (hero != null) 1 else 0)]
                 holder.head.text = row.title
@@ -1377,14 +1439,14 @@ class BrowseActivity : Activity() {
             }
         }
 
-        /** Render the slide inside the reusable component; Browse retains only page navigation. */
+        /** Render the active title inside the selected structural surface. */
         private fun renderHero(holder: HeroHolder) {
-            val item = slides.getOrNull(heroPos) ?: return
-            holder.component.render(item, slides, heroPos)
+            if (slides.isEmpty()) return
+            holder.surface.render(slides, heroPos)
         }
     }
 
-    private inner class HeroHolder(val component: HeroComponent) : RecyclerView.ViewHolder(component)
+    private inner class HeroHolder(val surface: HomeSurface) : RecyclerView.ViewHolder(surface.root)
 
     private inner class ShelfHolder(
         view: View, val head: TextView, val rail: RecyclerView,
