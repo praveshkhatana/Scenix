@@ -61,6 +61,7 @@ class ProfilesActivity : Activity() {
         // The same wordmark file the Home bar uses, so the front door and the shelves wear one brand.
         head.addView(ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
+            setColorFilter(app.theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }, LinearLayout.LayoutParams(app.theme.px(140f), app.theme.px(32f)))

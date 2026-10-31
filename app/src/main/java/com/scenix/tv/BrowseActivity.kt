@@ -718,6 +718,10 @@ class BrowseActivity : Activity() {
         // font the television happens to ship.
         val brand = ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
+            // The mark is drawn from the owner's SVG in its brand red, then tinted from the active
+            // pack: Apple's is off-white, Netflix's red, PS5's blue. A fixed red wordmark on a
+            // white/blue pack read as a borrowed Netflix logo.
+            setColorFilter(theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }
