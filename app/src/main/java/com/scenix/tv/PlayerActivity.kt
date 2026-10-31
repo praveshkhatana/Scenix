@@ -100,6 +100,13 @@ class PlayerActivity : Activity() {
     private var audioTracks = JSONArray()
     /** Languages this title can play, including donors the hub can mix into the picture. */
     private var audioOptions = JSONArray()
+    // The audio languages this TITLE offers, not just the copy on screen. A quality/source switch
+    // re-answers /play, and a different file (or a different donor pool) used to hand back a
+    // different language list: Hindi present at 480p, gone at 1080p, English only at 4K. A language
+    // belongs to the title, so entries are merged by language and never dropped while the same
+    // episode is playing.
+    private val audioCatalog = LinkedHashMap<String, JSONObject>()
+    private var audioCatalogKey = ""
     private var embeddedSubs = JSONArray()
     private var hubSubs = JSONArray()
     private var subsInItem = 0
@@ -655,7 +662,16 @@ class PlayerActivity : Activity() {
         nextEpisode = reply.optJSONObject("nextEpisode")
         alternatives = reply.optJSONArray("alternatives") ?: JSONArray()
         audioTracks = reply.optJSONArray("audioTracks") ?: JSONArray()
-        audioOptions = reply.optJSONArray("audioOptions") ?: JSONArray()
+        // Reset only when the title/episode changes; a source or rung switch keeps the same book.
+        val keySpec = spec
+        val catalogKey = (keySpec?.identity ?: str(reply, "identity")) + "|" +
+            (if (keySpec != null && keySpec.season > 0) "${keySpec.season}x${keySpec.episode}" else "")
+        if (catalogKey != audioCatalogKey) {
+            audioCatalog.clear()
+            audioCatalogKey = catalogKey
+        }
+        mergeAudioOptions(reply.optJSONArray("audioOptions") ?: JSONArray())
+        audioOptions = JSONArray(audioCatalog.values.toList())
         introStartMs = reply.optLong("introStartMs", 0L)
         introEndMs = reply.optLong("introEndMs", 0L)
         if (introEndMs <= 0L) skipChip?.visibility = View.GONE
@@ -1531,6 +1547,23 @@ class PlayerActivity : Activity() {
         panelRows.first().nextFocusUpId = panelRows.first().id
         panelRows.last().nextFocusDownId = panelRows.last().id
     }
+
+    /** Add every language the hub offered, keeping the best evidence for each one. */
+    private fun mergeAudioOptions(fresh: JSONArray) {
+        for (i in 0 until fresh.length()) {
+            val o = fresh.optJSONObject(i) ?: continue
+            val key = str(o, "language").lowercase()
+            if (key.isBlank()) continue
+            val had = audioCatalog[key]
+            if (had == null || audioOptionScore(o) > audioOptionScore(had)) audioCatalog[key] = o
+        }
+    }
+
+    /** A real track in the picture beats a claimed language; a confirmed donor beats a filename. */
+    private fun audioOptionScore(o: JSONObject): Int =
+        (if (str(o, "kind") == "track") 4 else 0) +
+            (if (o.optBoolean("confirmed")) 2 else 0) +
+            (if (str(o, "source").isNotBlank()) 1 else 0)
 
     private fun audioRows(parent: LinearLayout) {
         if (audioOptions.length() > 0) {

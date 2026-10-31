@@ -2776,7 +2776,12 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     addAudioOption(t.language, mixed ? 'mix' : 'track',
       mixed ? (donor && donor.source.label) : pickedLabel, true, mixed ? null : t.id);
   }
-  const donorCandidates = (allExcluded ? sources : pool).filter((s) => s !== source);
+  // The audio menu is a property of the TITLE, not of the copy the viewer happens to be watching.
+  // Deriving it from the playable pool meant the language list changed with the resolution: a copy
+  // switched to 4K hid the Hindi donor that only existed in a 480p file, and switching back brought
+  // it again. Every copy of the title is a possible donor; `exclude` names failed pictures, not
+  // failed audio tracks, so it does not apply here either.
+  const donorCandidates = sources.filter((s) => s !== source);
   for (const cand of donorCandidates) {
     const provider = cand.kind === 'torrent' ? 'torrent' : (cand.provider || cand._addon || null);
     for (const t of (cand.audioTracks || [])) {
@@ -2789,7 +2794,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     ]);
     for (const l of claims) addAudioOption(l, 'mix', cand.label || provider, false, null);
   }
-  out.audioOptions = [...optionByLang.values()].slice(0, 12);
+  // Deterministic order: the household's own languages first, then the rest alphabetically, so the
+  // menu reads the same after every quality/source switch.
+  const langRank = (o) => {
+    const i = prefAudio.indexOf(media.langOf(o.language));
+    return i < 0 ? 99 : i;
+  };
+  out.audioOptions = [...optionByLang.values()]
+    .sort((a, b) => langRank(a) - langRank(b) || String(a.languageName).localeCompare(String(b.languageName)))
+    .slice(0, 12);
 
   const remuxNeeded = !!donor || (out.mode === 'gateway' && out.torrent
     && (out.container === 'mp4' || out.container === 'hls'));
