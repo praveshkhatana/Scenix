@@ -141,8 +141,10 @@ class BrowseActivity : Activity() {
         val mark = brandMark ?: return
         val lm = list.layoutManager as? LinearLayoutManager
         val hero = lm?.findViewByPosition(0)
-        val heroLives = hero != null && hero.bottom > app.theme.px(96f)
-        mark.alpha = if (heroLives) 1f else 0f
+        // Before the list is laid out there is no hero frame to measure; the mark starts visible.
+        // Hiding it on "not measured yet" is how Home came up with no wordmark at all.
+        if (hero == null) return
+        mark.alpha = if (hero.bottom > app.theme.px(96f)) 1f else 0f
     }
 
     /** The Play button's focused face: the pack's pill, inset, inside a ring with a visible gap. */
@@ -1003,6 +1005,7 @@ class BrowseActivity : Activity() {
         browseAdapter = adapter
         list.adapter = adapter
         list.post { updateBrandFade() }
+        list.postDelayed({ updateBrandFade() }, 600)
         // The billboard follows the Featured tile under the ring. It does not run by itself: a
         // timer that rotated the hero while the viewer walked the shelves re-rendered the stage and
         // rebounded the featured tiles mid-step, which read as lag and fought focus.

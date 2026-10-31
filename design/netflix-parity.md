@@ -85,7 +85,7 @@ theme.json must be checked on both sides. WebView Home scrolling work is parked 
 - [x] Chrome hide reads `player.controlsHideMs` and the ring inside the chrome re-arms instead of being stranded (D1) — live timeline sampled: visible 13+ s while focused, faded ~6 s after blur
 - [x] Seek tokens + hold-repeat stepping (D2): buttons/keys read `seekBackMs`/`seekForwardMs`, labels say what they do, held key keeps stepping via raw repeat events — commit 448da60
 - [x] Scrub time ghost on every arrow/media seek, fading after 1.4 s (D4; thumbnails need a sprite endpoint the hub lacks) — commit ca6f215, live probe: pill showed "11:30" with three held presses advancing 600→690 s
-- [x] Audio menu "Default · picked by your languages" row above the track list, ticked when nothing is manually chosen (D5) — live probe: Default(off)+Hindi(on) rows in the open menu
+- [x] Audio menu "Auto · best match for your languages" row above the track list, ticked when nothing is manually chosen (D5) — live probe: Default(off)+Hindi(on) rows in the open menu
 - [x] Next-episode countdown from `autoplayCountdownMs`, auto-roll into S1 E2 with a focusable Undo chip back to the finished episode (D3) — verified stubbed end-to-end: "Starting in 7s" → roll at token expiry → Undo returned to S1 E1 with the chip gone
 - [x] Resume progress bar under the hero buttons plus the Resume tag that stopped saying "left" twice (E1) — commit 155b485
 - [x] Episodes as a vertical list — number, still, name, runtime and the synopsis the hub actually sends (E2) — commit 736ac3a, live screenshot on a 7-episode series: 8 rows with synopses and stills
