@@ -88,6 +88,13 @@ class BrowseActivity : Activity() {
             // The top of the screen — the billboard or a Featured tile — answers UP with the nav pill,
             // one press in, one press back down. Nested list geometry alone never routes there.
             val anchor = navAnchor
+            // UP leaves the hero in the order the eye reads it: a Featured tile steps up onto the
+            // billboard's Play button, and a second press reaches the pill. Without that middle
+            // stop the Play button — and the carousel it drives — could not be reached at all.
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onFeaturedRail(currentFocus)) {
+                val play = browseAdapter?.heroPlay
+                if (play != null && play.isShown && play.requestFocus()) return true
+            }
             if (anchor != null && event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(currentFocus)) {
                 anchor.requestFocus()
                 return true
@@ -122,6 +129,45 @@ class BrowseActivity : Activity() {
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * The wordmark belongs to the top of the page. It steps aside once the billboard has actually
+     * gone under the bar, so a shelf heading never sits beneath it — measured from the hero's own
+     * frame, because the RecyclerView's scroll offset is an estimate with variable-height rows and
+     * reported a scrolled page while the hero was still filling the screen.
+     */
+    private fun updateBrandFade() {
+        val mark = brandMark ?: return
+        val lm = list.layoutManager as? LinearLayoutManager
+        val hero = lm?.findViewByPosition(0)
+        val heroLives = hero != null && hero.bottom > app.theme.px(96f)
+        mark.alpha = if (heroLives) 1f else 0f
+    }
+
+    /** The Play button's focused face: the pack's pill, inset, inside a ring with a visible gap. */
+    private fun framedPill(): android.graphics.drawable.Drawable {
+        val theme = app.theme
+        val radius = theme.radius("button", 6f)
+        val gap = theme.px(5f)
+        val ring = Views.ring(theme.focusRingColor, radius, theme.px(3f))
+        return android.graphics.drawable.LayerDrawable(
+            arrayOf(Views.rounded(theme.brand, radius), ring)
+        ).apply { setLayerInset(0, gap, gap, gap, gap) }
+    }
+
+    /**
+     * The billboard's height. A pack may ask for a tall banner, but a banner that eats the whole
+     * page is a page with no shelves on it: at the household zoom a 720dp hero filled 1080p down to
+     * the last pixel and the Featured row was a sliver too short to lay out or focus. One shelf's
+     * heading and a strip of its tiles always stay in view.
+     */
+    private fun heroSlotHeight(split: Boolean): Int {
+        val theme = app.theme
+        val wanted = if (split) theme.heroHeightPx
+        else theme.heroHeightPx.coerceAtLeast(theme.px(540f))
+        val room = resources.displayMetrics.heightPixels - theme.px(200f)
+        return wanted.coerceAtMost(maxOf(room, theme.px(420f)))
     }
 
     /** The outer-list position whose row contains [v], or -1 when it is not on a shelf. */
@@ -236,6 +282,17 @@ class BrowseActivity : Activity() {
         return false
     }
 
+    private fun onFeaturedRail(f: View?): Boolean {
+        if (f == null) return false
+        val rail = browseAdapter?.featuredRail ?: return false
+        var p: android.view.ViewParent? = f.parent
+        while (p != null) {
+            if (p === rail) return true
+            p = p.parent
+        }
+        return false
+    }
+
     private fun onTopRow(f: View?): Boolean {
         if (f == null || f === navAnchor) return false
         val adapter = browseAdapter ?: return false
@@ -331,8 +388,7 @@ class BrowseActivity : Activity() {
         setContentView(root)
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (dy == 0) return
-                brandMark?.alpha = if (rv.computeVerticalScrollOffset() > 24) 0f else 1f
+                updateBrandFade()
             }
         })
         load()
@@ -459,6 +515,18 @@ class BrowseActivity : Activity() {
         eachCard { it.alpha = 1f }
     }
 
+    /**
+     * LEFT/RIGHT on the billboard's Play button walks the carousel. The hero is its own focus stop,
+     * so without this the remote asks the framework for a neighbour beside the button, finds none,
+     * and the slide show appears frozen.
+     */
+    private fun cycleHero(delta: Int) {
+        if (slides.size < 2) return
+        rotationPaused = true
+        lastKeyAt = android.os.SystemClock.elapsedRealtime()
+        setHero((heroPos + delta + slides.size) % slides.size)
+    }
+
     private fun setHero(pos: Int) {
         if (slides.isEmpty()) return
         val next = pos.coerceIn(0, slides.size - 1)
@@ -580,7 +648,13 @@ class BrowseActivity : Activity() {
 
     private fun topBar(transparent: Boolean = false): View {
         val theme = app.theme
-        val brand = Views.text(app, "logo", 30f, theme.brand, "SCENIX", bold = true)
+        // The owner's SCENIX-Logo.svg, not styled text: the letterforms must not change with the
+        // font the television happens to ship.
+        val brand = ImageView(this).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            scaleType = ImageView.ScaleType.FIT_START
+            contentDescription = "Scenix"
+        }
         if (transparent) brandMark = brand
         val profile = navButton("Profile") {
             startActivity(
@@ -607,7 +681,7 @@ class BrowseActivity : Activity() {
             val bar = FrameLayout(this)
             bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
             bar.addView(brand, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                theme.px(122f), theme.px(28f)
             ).apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 leftMargin = theme.gutter
@@ -676,7 +750,7 @@ class BrowseActivity : Activity() {
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setPadding(theme.gutter, 0, theme.gutter, 0)
         bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
-        bar.addView(brand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        bar.addView(brand, LinearLayout.LayoutParams(theme.px(122f), theme.px(28f)))
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         bar.addView(navButton("Movies") { goTab("movies") },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -928,19 +1002,34 @@ class BrowseActivity : Activity() {
         val adapter = BrowseAdapter(heroItem, shelves)
         browseAdapter = adapter
         list.adapter = adapter
+        list.post { updateBrandFade() }
         // The billboard follows the Featured tile under the ring. It does not run by itself: a
         // timer that rotated the hero while the viewer walked the shelves re-rendered the stage and
         // rebounded the featured tiles mid-step, which read as lag and fought focus.
         clock.removeCallbacks(rotateHero)
         rotationPaused = true
-        // The first tile takes initial focus, but only once the rails have actually laid out
-        // their children — on a cold load that can be well after the data lands, so retry.
+        // Home opens on the billboard's Play button, the way a streaming service does: it is always
+        // fully on screen, and LEFT/RIGHT on it walks the carousel. Landing on a Featured tile
+        // instead meant that on a zoomed stage pack the rail was not laid out yet and focus was lost
+        // altogether — no ring, no key handling, a "frozen" hero.
+        //
+        // The first attempt is not enough: the stage trailer binds a beat later and re-binds the
+        // hero, which drops the ring it had just been given. Keep re-asserting focus until the
+        // viewer touches the remote, and never fight a key they have already pressed.
+        val homeAt = android.os.SystemClock.elapsedRealtime()
         list.postDelayed(object : Runnable {
             var tries = 0
             override fun run() {
-                val first = adapter.focusFirstSlide() ?: adapter.heroPlay ?: firstFocusable(list)
-                if (first?.requestFocus() == true) return
-                if (++tries < 20) list.postDelayed(this, 300)
+                if (lastKeyAt > homeAt) return
+                val held = currentFocus
+                if (held == null || !isInside(list, held)) {
+                    val target = adapter.heroPlay ?: adapter.focusFirstSlide() ?: firstFocusable(list)
+                    if (target?.isInTouchMode == true && !target.isFocusableInTouchMode) {
+                        target.isFocusableInTouchMode = true
+                    }
+                    target?.requestFocus()
+                }
+                if (++tries < 10) list.postDelayed(this, 600)
             }
         }, 400)
     }
@@ -1120,6 +1209,11 @@ class BrowseActivity : Activity() {
         fun showSlide(pos: Int) {
             heroPos = pos.coerceIn(0, slides.size - 1)
             heroHolder?.let { renderHero(it) }
+            // Keep the Featured rail's rim on the slide the billboard is showing, even when the ring
+            // stays on Play. Without this the hero changes and the row below still shows the old tile.
+            featuredRail?.let { rail ->
+                if (rail.childCount > 0) rail.smoothScrollToPosition(heroPos)
+            }
         }
 
         fun syncFeaturedSlide(prev: Int, next: Int) {
@@ -1145,7 +1239,7 @@ class BrowseActivity : Activity() {
                 val centred = heroStyle == "centred" || heroStyle == "centered" || theme.heroAlign == "center"
                 slot.layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    if (split) theme.heroHeightPx else theme.heroHeightPx.coerceAtLeast(theme.px(540f))
+                    heroSlotHeight(split)
                 )
                 val art = ImageView(this@BrowseActivity).apply {
                     scaleType = ImageView.ScaleType.CENTER_CROP
@@ -1227,10 +1321,36 @@ class BrowseActivity : Activity() {
                 play.setPadding(theme.px(32f), theme.px(14f), theme.px(32f), theme.px(14f))
                 play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
                 play.isFocusable = true
+                // The profile gate is a touch target, so the TV can still be in touch mode when
+                // Home draws. A merely focusable view refuses focus in that mode, which is exactly
+                // how Home used to come up with no ring and a hero that ignored LEFT/RIGHT.
+                play.isFocusableInTouchMode = true
                 play.isClickable = true
-                Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false,
-                    onFocus = { if (it) onChromeFocused() })
-                words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(130f)).apply {
+                Focus.attach(play, play, app, theme.radius("button", 6f), scale = true, elevate = true,
+                    onFocus = { if (it) onChromeFocused() },
+                    // The billboard is a carousel: left/right on its Play button changes the slide
+                    // instead of searching for a focus target that does not exist beside it.
+                    arrow = { code ->
+                        when (code) {
+                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { cycleHero(-1); true }
+                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleHero(1); true }
+                            else -> false
+                        }
+                    })
+                // Focus.attach deliberately keeps TV targets out of touch mode. The landing target
+                // is the exception: the profile gate is a tap, so Home opens in touch mode, and a
+                // view that refuses focus then would leave the remote with nothing to move from.
+                play.isFocusableInTouchMode = true
+                // The pack's focus language is a scale, and a white pill on a dark banner barely
+                // shows it. Give the one control that owns the carousel an outline as well, with a
+                // gap so it reads as a ring rather than a thicker edge.
+                val restingPill = play.background
+                val packFocus = play.onFocusChangeListener
+                play.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
+                    packFocus?.onFocusChange(v, has)
+                    v.background = if (has) framedPill() else restingPill
+                }
+                words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(112f)).apply {
                     bottomMargin = theme.px(6f)
                     if (centred) gravity = Gravity.CENTER_HORIZONTAL
                 })
@@ -1396,6 +1516,7 @@ class BrowseActivity : Activity() {
                 marginEnd = theme.px(26f)
             }
             card.isFocusable = true
+            card.isFocusableInTouchMode = true
             card.isClickable = true
             card.setBackgroundColor(if (frame) theme.surface else Color.TRANSPARENT)
             val art = ImageView(this@BrowseActivity).apply {

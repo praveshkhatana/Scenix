@@ -365,6 +365,11 @@ class PlayerActivity : Activity() {
         p.addAnalyticsListener(object : AnalyticsListener {
             override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
                 Log.i(TAG, "first video frame on screen")
+                // The picture is visibly playing; whatever was covering it was a state that has
+                // now ended on its own.
+                hasPicture = true
+                if (errorShowing) clearError()
+                hideCenter()
                 releaseStartRung()
             }
 
@@ -428,6 +433,10 @@ class PlayerActivity : Activity() {
             if (isPlaying) {
                 bufferingSince = 0L
                 handler.removeCallbacks(stallCheck)
+                // A frame is moving: no loading card and no failure card may sit on top of it. This
+                // is the one place that guarantees the rule, whichever path started the picture.
+                if (errorShowing) clearError()
+                hideCenter()
             }
             if (!isPlaying) saveProgress(force = true) else armHide()
         }
@@ -591,7 +600,8 @@ class PlayerActivity : Activity() {
         api.play(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@play
             val url = str(reply, "url")
-            val warming = status == 503 || reply?.optBoolean("warming", false) == true
+            val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
+                str(reply, "error").contains("prepar", ignoreCase = true)
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 showCenter("The hub is preparing this copy…", true)
@@ -1051,10 +1061,10 @@ class PlayerActivity : Activity() {
         val spec = spec ?: return
         val exclude = tried.toMutableSet()
         val body = bodyFor(spec, pos, null, exclude)
-        showCenter("This copy stopped — trying another…", true)
+        quietOrCenter("This copy stopped — trying another…")
         val lower = lowerAlternative()
         if (preferLowerSource(lower, spec, pos)) return
-        askSwitch(body, pos, playWhenReady = true, warmTries = 4, automatic = true)
+        askSwitch(body, pos, playWhenReady = true, warmTries = 10, automatic = true)
     }
 
     private fun failoverToNext(preferLower: Boolean = false) {
@@ -1066,8 +1076,8 @@ class PlayerActivity : Activity() {
             if (preferLowerSource(lower, spec, pos)) return
         }
         val exclude = tried.toMutableSet()
-        showCenter("Trying another copy…", true)
-        askSwitch(bodyFor(spec, pos, null, exclude), pos, playWhenReady = true, warmTries = 4, automatic = true)
+        quietOrCenter("Trying another copy…")
+        askSwitch(bodyFor(spec, pos, null, exclude), pos, playWhenReady = true, warmTries = 10, automatic = true)
     }
 
     /** The best untried copy that is lighter than the one we are on, or null. */
@@ -1097,9 +1107,9 @@ class PlayerActivity : Activity() {
             .put("id", str(source, "id"))
             .put("label", str(source, "label"))
             .put("provider", str(source, "provider"))
-        showCenter("Trying a lighter copy…", true)
+        quietOrCenter("Trying a lighter copy…")
         askSwitch(bodyFor(spec, pos, picked, tried.toMutableSet()), pos,
-            playWhenReady = true, warmTries = 3, automatic = true)
+            playWhenReady = true, warmTries = 8, automatic = true)
         return true
     }
 
@@ -1125,7 +1135,8 @@ class PlayerActivity : Activity() {
         api.switchSource(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@switchSource
             val url = str(reply, "url")
-            val warming = status == 503 || reply?.optBoolean("warming", false) == true
+            val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
+                str(reply, "error").contains("prepar", ignoreCase = true)
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 handler.postDelayed({
@@ -1138,11 +1149,19 @@ class PlayerActivity : Activity() {
             if (status !in 200..299 || url.isBlank() || !isPlayable(url)) {
                 hideCenter()
                 if (automatic) {
-                    showError(
-                        str(reply, "error").ifBlank {
-                            transport ?: "No other copy of this title would open"
-                        }
-                    )
+                    val preparing = str(reply, "error").contains("prepar", ignoreCase = true) || warming
+                    if (preparing) {
+                        showError(
+                            "The hub is still preparing this copy. Give it a moment, then try again.",
+                            title = "This copy is still being prepared",
+                        )
+                    } else {
+                        showError(
+                            str(reply, "error").ifBlank {
+                                transport ?: "No other copy of this title would open"
+                            }
+                        )
+                    }
                 } else {
                     val staying = currentSourceLabel.ifBlank { "the current copy" }
                     setStatus("Couldn't switch to that copy — still playing " + staying, "warn")
@@ -1414,6 +1433,9 @@ class PlayerActivity : Activity() {
     private enum class MenuKind { AUDIO, SUBTITLES, SPEED, QUALITY, EPISODES }
 
     private fun openMenu(kind: MenuKind, anchor: View) {
+        // A failure card owns the screen until the viewer answers it. Opening a menu behind — or on
+        // top of — that card leaves two panels stacked, which is what the last screenshot showed.
+        if (errorShowing) return
         if (panelKind == kind) {
             closeMenu()
             return
@@ -1512,9 +1534,12 @@ class PlayerActivity : Activity() {
 
     private fun audioRows(parent: LinearLayout) {
         if (audioOptions.length() > 0) {
-            parent.addView(menuRow(
-                "Default", "picked by your languages",
-                selectedAudioId == null && (mixHint == null || mixDisabled),
+            // "Default" told the viewer nothing. When the hub has replaced the picture's audio, the
+            // way back is the explicit "Original audio" row below; otherwise Auto is the honest name
+            // for "let the hub pick the best track for this profile's languages".
+            val mixActive = mixHint != null && !mixDisabled
+            if (!mixActive) parent.addView(menuRow(
+                "Auto", "best match for your languages", !audioChosen,
             ) { chooseAudio(null) })
             for (i in 0 until audioOptions.length()) {
                 val o = audioOptions.optJSONObject(i) ?: continue
@@ -1531,7 +1556,7 @@ class PlayerActivity : Activity() {
                 }
                 parent.addView(menuRow(
                     name,
-                    if (mixed) "mix from " + source.ifBlank { "another copy" } else "in this copy",
+                    if (mixed) "mixed from " + source.ifBlank { "another copy" } else "in this copy",
                     selected,
                 ) {
                     if (mixed) reloadAudio(mix = true, language = lang, from = source)
@@ -1544,17 +1569,17 @@ class PlayerActivity : Activity() {
         if (audioTracks.length() == 0) {
             val actual = actualTracks(C.TRACK_TYPE_AUDIO, "a")
             parent.addView(menuRow(
-                "Default", "picked by the file", selectedAudioId == null && actual.none { it.selected },
+                "Auto", "the copy's default track", !audioChosen,
             ) { chooseAudio(null) })
             for (t in actual) {
-                parent.addView(menuRow(t.label, "", t.selected) { chooseAudio(t.id) })
+                parent.addView(menuRow(t.label, "", audioChosen && t.selected) { chooseAudio(t.id) })
             }
             if (actual.isEmpty()) parent.addView(noteRow("No audio list from this copy"))
             addMixToggle(parent)
             return
         }
         parent.addView(menuRow(
-            "Default", "picked by your languages", selectedAudioId == null,
+            "Auto", "best match for your languages", !audioChosen,
         ) { chooseAudio(null) })
         for (i in 0 until audioTracks.length()) {
             val t = audioTracks.optJSONObject(i) ?: continue
@@ -1565,7 +1590,7 @@ class PlayerActivity : Activity() {
             // copy of the same words ("Hindi · Test Hindi audio · Hindi" truncated at 560 px).
             val label = if (mixed) langName(str(t, "language")) else trackWords(t)
             val note = if (mixed) "mixed from " + str(answer?.optJSONObject("audioMix"), "source") else ""
-            parent.addView(menuRow(label, note, selectedAudioId == id) { chooseAudio(id) })
+            parent.addView(menuRow(label, note, audioChosen && selectedAudioId == id) { chooseAudio(id) })
         }
         addMixToggle(parent)
     }
@@ -2201,7 +2226,7 @@ class PlayerActivity : Activity() {
         qualityButton.contentDescription = "Quality · " + qualityValue
         // A tiny dot is the only "current value" a flat icon can carry without becoming a label:
         // audio when a specific track is chosen, CC when subtitles are on, speed when it is not 1×.
-        audioButton.badge = selectedAudioId != null
+        audioButton.badge = audioChosen || (mixHint != null && !mixDisabled)
         subButton.badge = selectedSubId != null
         speedButton.badge = kotlin.math.abs(speed - 1f) > 0.01f
         updatePlayLabel()
@@ -2219,7 +2244,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun audioValue(): String {
-        val id = selectedAudioId ?: return "Default"
+        val id = selectedAudioId ?: return "Auto"
         for (i in 0 until audioTracks.length()) {
             val t = audioTracks.optJSONObject(i) ?: continue
             if (str(t, "id") == id) return langName(str(t, "language"))
@@ -2301,8 +2326,15 @@ class PlayerActivity : Activity() {
         overlay.visibility = View.INVISIBLE
     }
 
-    private fun showCenter(text: String, spinner: Boolean) {
-        // Buffering can begin while the chrome has faded. The message is the one thing that must not
+    /**
+     * An automatic transition's message. Over a running picture it is a line of status, never a
+     * card: covering the film to announce "trying another copy" is worse than a quiet subtitle.
+     */
+    private fun quietOrCenter(text: String) {
+        if (pictureLive()) setStatus(text, "warn") else showCenter(text, true)
+    }
+
+    private fun showCenter(text: String, spinner: Boolean) {        // Buffering can begin while the chrome has faded. The message is the one thing that must not
         // be invisible, so bring the layer back without stealing the ring.
         if (overlay.visibility != View.VISIBLE) {
             overlay.visibility = View.VISIBLE
@@ -2344,7 +2376,32 @@ class PlayerActivity : Activity() {
     private var errorRetry: TextView? = null
     private var errorCard: View? = null
 
-    private fun showError(message: String) {
+    /**
+     * True once a picture from this session has actually reached the screen. The viewer's rule is
+     * simple: nothing may be drawn over a film that is running. A failed attempt at a *different*
+     * copy is not the film's failure, so it gets a one-line status, never a card.
+     */
+    private var hasPicture = false
+
+    private fun pictureLive(): Boolean {
+        val p = player ?: return false
+        if (p.isPlaying) return true
+        if (p.playbackState == Player.STATE_READY) {
+            // Paused mid-film still counts: the frame is on screen and the card the viewer saw was
+            // covering a picture they could have resumed.
+            return hasPicture || p.currentPosition > 0
+        }
+        return false
+    }
+
+    private fun showError(message: String, title: String = "This copy could not be played") {
+        // A card over a running picture is the bug the viewer reported: the old copy is fine, the
+        // hub was merely late with another one. Say it in the status line and leave the picture be.
+        if (pictureLive()) {
+            hideCenter()
+            setStatus(message, "warn")
+            return
+        }
         hideCenter()
         hideNextCard()
         hideUndo()
@@ -2355,7 +2412,7 @@ class PlayerActivity : Activity() {
         overlay.visibility = View.VISIBLE
         val card = cardBox()
         card.addView(Views.text(app, "panelTitle", 28f, theme.color("brand", "#E50914"),
-            "This copy could not be played", bold = true))
+            title, bold = true))
         card.addView(Views.text(app, "sub", 21f, theme.ink2, message, maxLines = 3),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3131,7 +3188,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun langName(code: String): String {
-        if (code.isBlank()) return "Default"
+        if (code.isBlank()) return "Unknown"
         return LANG_NAMES[code.lowercase()] ?: code.uppercase()
     }
 

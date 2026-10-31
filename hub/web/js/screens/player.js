@@ -507,7 +507,7 @@ export function screen(ctx, identity) {
     const id = player.selectedAudio;
     const t = (player.audioTracks || []).find((x) => String(x.id) === String(id));
     if (t) return langName(t.language) || t.title || `Track ${t.id}`;
-    return 'Default';
+    return 'Auto';
   }
   function subLabel() {
     const id = player.selectedSub;
@@ -604,7 +604,7 @@ export function screen(ctx, identity) {
       panel.appendChild(el('h4', {}, icon('audio'), el('span', { text: 'Audio' })));
       // Symmetric with Subtitles' "Off": one row that gives up any manual pick and lets the hub rank
       // tracks by the profile's languages again.
-      panel.appendChild(row('Default', 'picked by your languages',
+      panel.appendChild(row('Auto', 'best match for your languages',
         !player.selectedAudio,
         () => { player.setAudio(null).then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
       const list = player.audioTracks || [];

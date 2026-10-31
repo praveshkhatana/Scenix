@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The cold-start face: the brand mark on the page colour, up the instant the window is created,
-     so the launch never shows a bare black frame while the hub probe runs. -->
+<!-- The cold-start face: the Scenix S mark on the page colour, up the instant the window is created,
+     so the launch never shows a bare black frame while the hub probe runs. The mark is the owner's
+     S-Logo.svg, not a letter borrowed from the wordmark. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/bg" />
     <item
-        android:width="220dp"
-        android:height="220dp"
-        android:drawable="@drawable/ic_launcher_foreground"
+        android:width="190dp"
+        android:height="190dp"
+        android:drawable="@drawable/brand_mark"
         android:gravity="center" />
 </layer-list>

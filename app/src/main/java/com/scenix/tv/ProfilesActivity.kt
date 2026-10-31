@@ -45,7 +45,12 @@ class ProfilesActivity : Activity() {
             setPadding(app.theme.px(64f), app.theme.px(50f), app.theme.px(64f), app.theme.px(40f))
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(Views.text(app, "logo", 34f, app.theme.brand, "SCENIX", bold = true))
+        // The same wordmark file the Home bar uses, so the front door and the shelves wear one brand.
+        head.addView(ImageView(this).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            scaleType = ImageView.ScaleType.FIT_START
+            contentDescription = "Scenix"
+        }, LinearLayout.LayoutParams(app.theme.px(140f), app.theme.px(32f)))
         head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         // Managing the household belongs on the household's own door, not two screens away in
         // Settings. The button opens the same editor, PIN gate included.
