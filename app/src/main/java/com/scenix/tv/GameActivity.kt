@@ -411,20 +411,31 @@ class GameActivity : Activity() {
 
         /**
          * Keep only the path to the page's biggest visible game frame; hide portal chrome around it
-         * and pin the game full-screen. A portal preview <video> is NOT a game frame. Answers
-         * 'carved' once it has acted. Idempotent — safe to run repeatedly.
+         * and pin its stage full-screen. A portal preview <video> is NOT a game frame. Every pass
+         * first restores whatever the last one hid, so when a portal swaps its DOM mid-session the
+         * page is never stranded black. Answers 'carved'/'none'. Idempotent.
          */
         const val CARVE_JS = """
 (function(){
  try{
   var W=innerWidth||1,H=innerHeight||1;
+  var hid=window.__scenixHid||(window.__scenixHid=[]);
+  while(hid.length){var h=hid.pop();try{h[0].style.removeProperty('display');}catch(x){}}
+  var pin=window.__scenixPin||(window.__scenixPin=[]);
+  while(pin.length){var p0=pin.pop();try{p0.style.removeProperty('position');p0.style.removeProperty('left');
+    p0.style.removeProperty('top');p0.style.removeProperty('width');p0.style.removeProperty('height');
+    p0.style.removeProperty('z-index');p0.style.removeProperty('object-fit');}catch(x){}}
+  document.documentElement.removeAttribute('data-scn');
+  var all=document.querySelectorAll('[data-scn]');for(var r0=0;r0<all.length;r0++)all[r0].removeAttribute('data-scn');
   function visArea(e){try{var r=e.getBoundingClientRect();
     var x=Math.min(r.right,W)-Math.max(r.left,0),y=Math.min(r.bottom,H)-Math.max(r.top,0);
     return x>0&&y>0?x*y:0;}catch(x){return 0;}}
-  var pick=null,best=0,nodes=document.querySelectorAll('iframe,canvas');
-  for(var i=0;i<nodes.length;i++){var a=visArea(nodes[i]);if(a>best){best=a;pick=nodes[i];}}
-  if(!pick||best<W*H*0.04)return 'none';
-  var node=pick,na=best;
+  var pick=null,best=0,nodes=document.querySelectorAll('iframe,canvas,video');
+  for(var i=0;i<nodes.length;i++){var n=nodes[i];
+    if(n.getAttribute&&n.getAttribute('aria-hidden')==='true')continue; // decorative art, not a game
+    var a=visArea(n)*(n.tagName==='IFRAME'?2:1);if(a>best){best=a;pick=n;}}
+  if(!pick||visArea(pick)<W*H*0.04)return 'none';
+  var node=pick,na=visArea(pick);
   while(node.parentElement&&node.parentElement!==document.body){
     var pa=visArea(node.parentElement);
     if(pa>na*1.7)break;
@@ -434,20 +445,19 @@ class GameActivity : Activity() {
   document.documentElement.setAttribute('data-scn','keep');
   for(var j=0;j<chain.length;j++)chain[j].setAttribute('data-scn','keep');
   function hideOffPath(parent,keep){var s=parent.children;
-    for(var k=0;k<s.length;k++)if(s[k]!==keep)s[k].style.setProperty('display','none','important');}
+    for(var k=0;k<s.length;k++)if(s[k]!==keep){s[k].style.setProperty('display','none','important');hid.push([s[k]]);}}
   hideOffPath(document.body,chain[0]);
   for(var l=0;l<chain.length-1;l++)hideOffPath(chain[l],chain[l+1]);
   document.documentElement.style.setProperty('background','#000','important');
   document.body.style.setProperty('margin','0','important');
   document.body.style.setProperty('background','#000','important');
-  pick.style.setProperty('position','fixed','important');
-  pick.style.setProperty('left','0','important');
-  pick.style.setProperty('top','0','important');
-  pick.style.setProperty('width','100vw','important');
-  pick.style.setProperty('height','100vh','important');
-  pick.style.setProperty('object-fit','contain','important');
-  pick.style.setProperty('z-index','2147483000','important');
-  pick.style.setProperty('border','none','important');
+  node.style.setProperty('position','fixed','important');
+  node.style.setProperty('left','0','important');
+  node.style.setProperty('top','0','important');
+  node.style.setProperty('width','100vw','important');
+  node.style.setProperty('height','100vh','important');
+  node.style.setProperty('z-index','2147483000','important');
+  pin.push(node);
   if(!window.__scenixGuard){
     window.__scenixGuard=1;
     new MutationObserver(function(ms){
