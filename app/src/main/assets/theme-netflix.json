@@ -229,6 +229,10 @@
  },
  "pack": {
   "name": "Cinema Row",
+  "homeLayout": "netflix",
+  "homeNavigation": "top-bar",
+  "homeHero": "cinema-billboard",
+  "homeRails": "stacked",
   "hero": "full",
   "heroAlign": "left",
   "heroHeight": 650,

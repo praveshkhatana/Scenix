@@ -97,6 +97,9 @@ class GameActivity : Activity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     status.visibility = View.GONE
+                    // Poki and friends wrap the game in tiles, nav pills and late popups a kid
+                    // shouldn't reach: carve the page down to the game's own container.
+                    carve(view)
                     // A host that answers 200-but-blocked shows only a sentence where the game should
                     // be; catch that too so the fallback still gets its turn before we give up.
                     view.evaluateJavascript(
@@ -238,6 +241,28 @@ class GameActivity : Activity() {
         toast("$reason — opening its backup link instead")
         web.loadUrl(fallbackUrl)
         return true
+    }
+
+    // ── Carving to the game container ───────────────────────────────────────────────────────────
+    // Portal pages (Poki and friends) wrap their game in thumbnails, nav pills and late-injected
+    // popups — content nobody asked for and not every parent wants a kid to see. The page's biggest
+    // visible iframe or canvas is taken as THE game (a portal's preview <video> is not): everything
+    // off the path from <body> down to it is hidden and the game itself pinned full-screen. Only
+    // display styles are touched, so the page's scripts and SDK keep running. The frame often exists
+    // only after the portal's own play button resolves, so the shears pass on a tick until one lands.
+
+    private fun carve(view: WebView) {
+        object : Runnable {
+            var passes = 0
+            var carved = 0
+            override fun run() {
+                if (++passes > 60) return
+                view.evaluateJavascript(CARVE_JS) { r ->
+                    if (r?.contains("carved") == true && ++carved >= 4) return@evaluateJavascript
+                    main.postDelayed(this, if (carved > 0) 5000 else 3000)
+                }
+            }
+        }.also { main.postDelayed(it, 800) }
     }
 
     private fun showHud() {
@@ -383,6 +408,63 @@ class GameActivity : Activity() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_PAD = "pad"
         const val EXTRA_FALLBACK = "fallback"
+
+        /**
+         * Keep only the path to the page's biggest visible game frame; hide portal chrome around it
+         * and pin the game full-screen. A portal preview <video> is NOT a game frame. Answers
+         * 'carved' once it has acted. Idempotent — safe to run repeatedly.
+         */
+        const val CARVE_JS = """
+(function(){
+ try{
+  var W=innerWidth||1,H=innerHeight||1;
+  function visArea(e){try{var r=e.getBoundingClientRect();
+    var x=Math.min(r.right,W)-Math.max(r.left,0),y=Math.min(r.bottom,H)-Math.max(r.top,0);
+    return x>0&&y>0?x*y:0;}catch(x){return 0;}}
+  var pick=null,best=0,nodes=document.querySelectorAll('iframe,canvas');
+  for(var i=0;i<nodes.length;i++){var a=visArea(nodes[i]);if(a>best){best=a;pick=nodes[i];}}
+  if(!pick||best<W*H*0.04)return 'none';
+  var node=pick,na=best;
+  while(node.parentElement&&node.parentElement!==document.body){
+    var pa=visArea(node.parentElement);
+    if(pa>na*1.7)break;
+    node=node.parentElement;na=pa;
+  }
+  var chain=[];for(var p=node;p;p=p.parentElement)chain.unshift(p);
+  document.documentElement.setAttribute('data-scn','keep');
+  for(var j=0;j<chain.length;j++)chain[j].setAttribute('data-scn','keep');
+  function hideOffPath(parent,keep){var s=parent.children;
+    for(var k=0;k<s.length;k++)if(s[k]!==keep)s[k].style.setProperty('display','none','important');}
+  hideOffPath(document.body,chain[0]);
+  for(var l=0;l<chain.length-1;l++)hideOffPath(chain[l],chain[l+1]);
+  document.documentElement.style.setProperty('background','#000','important');
+  document.body.style.setProperty('margin','0','important');
+  document.body.style.setProperty('background','#000','important');
+  pick.style.setProperty('position','fixed','important');
+  pick.style.setProperty('left','0','important');
+  pick.style.setProperty('top','0','important');
+  pick.style.setProperty('width','100vw','important');
+  pick.style.setProperty('height','100vh','important');
+  pick.style.setProperty('object-fit','contain','important');
+  pick.style.setProperty('z-index','2147483000','important');
+  pick.style.setProperty('border','none','important');
+  if(!window.__scenixGuard){
+    window.__scenixGuard=1;
+    new MutationObserver(function(ms){
+      for(var n=0;n<ms.length;n++){var add=ms[n].addedNodes||[];
+        for(var q=0;q<add.length;q++){var e=add[q];
+          if(e.nodeType!==1)continue;
+          if(e.tagName==='SCRIPT'||e.tagName==='STYLE')continue;
+          if(e.closest&&e.closest('[data-scn]'))continue;
+          var pos=false;try{var cs=getComputedStyle(e);pos=cs.position==='fixed'||cs.position==='absolute';}catch(x){}
+          if(pos)e.style.setProperty('display','none','important');
+        }}
+    }).observe(document.documentElement,{childList:true,subtree:true});
+  }
+  return 'carved';
+ }catch(e){}
+})()
+"""
 
         /** Ad, analytics and ad-middleware hosts the web arcades reach for. The games never need them. */
         private val AD_HOSTS = listOf(

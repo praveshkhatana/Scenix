@@ -24,7 +24,11 @@ object BrowseImages {
     // exactly while a remote press needed a frame. Two workers keep artwork loading progressive
     // without competing with focus and layout on the main render thread.
     private val pool = Executors.newFixedThreadPool(2) { r -> Thread(r, "scenix-image").apply { isDaemon = true } }
+    // A tiny image must never queue behind a shelf of full decodes: its whole job is to arrive
+    // first. One worker, a ~5 KB request and an LruCache entry are enough.
+    private val tinyPool = Executors.newFixedThreadPool(1) { r -> Thread(r, "scenix-image-tiny").apply { isDaemon = true } }
     private val main = Handler(Looper.getMainLooper())
+    private val tmdbSized = Regex("(image\\.tmdb\\.org/t/p/)(w\\d+|original)(/)")
 
     /**
      * Load into a recycled view. `onResult` is called on the main thread with true/false when the URL
@@ -53,6 +57,23 @@ object BrowseImages {
             return
         }
         view.setImageDrawable(null)
+        // A blurred lick of the artwork while the full frame is in flight. TMDB serves the same
+        // picture at 92 px for a few kilobytes, so the tile is never a black hole on a cold scroll.
+        tinyUrl(clean)?.let { small ->
+            val tinyKey = "$small@tiny"
+            val ready = cache.get(tinyKey)
+            if (ready != null) {
+                view.setImageBitmap(ready)
+            } else {
+                tinyPool.execute {
+                    val bmp = decode(small, 24)
+                    if (bmp != null) {
+                        cache.put(tinyKey, bmp)
+                        main.post { if (view.tag == requestKey) view.setImageBitmap(bmp) }
+                    }
+                }
+            }
+        }
 
         pool.execute {
             val bitmap = decode(clean, targetWidthPx)
@@ -64,6 +85,16 @@ object BrowseImages {
                 }
             }
         }
+    }
+
+    /**
+     * The same picture at a size that is almost free. TMDB is the household's dominant source;
+     * anything else keeps its full URL and simply shows the gradient until it lands.
+     */
+    private fun tinyUrl(url: String): String? {
+        if (!url.contains("image.tmdb.org/t/p/")) return null
+        val small = tmdbSized.replace(url, "$1w92$3")
+        return if (small != url) small else null
     }
 
     private fun cacheKey(url: String, targetWidthPx: Int): String {

@@ -29,6 +29,12 @@
    "name": "Netflix",
    "asset": "theme-netflix.json",
    "pack": "Classic"
+  },
+  {
+   "id": "scenix-ps5",
+   "name": "PS5",
+   "asset": "theme-ps5.json",
+   "pack": "Console Scene"
   }
  ]
 }

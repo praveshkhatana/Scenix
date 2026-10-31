@@ -110,6 +110,11 @@ class PlayerActivity : Activity() {
     // episode is playing.
     private val audioCatalog = LinkedHashMap<String, JSONObject>()
     private var audioCatalogKey = ""
+    // Every copy this title has offered, keyed by its label. The Quality menu is a property of the
+    // title too: after switching 1080 → 720 → Auto, the hub answered with fewer alternatives each
+    // time and the previous copy vanished from the list. Remembering them keeps the menu stable and
+    // still lets the hub verify a stale one when it is chosen.
+    private val sourceCatalog = LinkedHashMap<String, JSONObject>()
     private var embeddedSubs = JSONArray()
     private var hubSubs = JSONArray()
     private var subsInItem = 0
@@ -677,6 +682,7 @@ class PlayerActivity : Activity() {
             (if (keySpec != null && keySpec.season > 0) "${keySpec.season}x${keySpec.episode}" else "")
         if (catalogKey != audioCatalogKey) {
             audioCatalog.clear()
+            sourceCatalog.clear()
             audioCatalogKey = catalogKey
         }
         mergeAudioOptions(reply.optJSONArray("audioOptions") ?: JSONArray())
@@ -707,11 +713,12 @@ class PlayerActivity : Activity() {
         val picked = reply.optJSONObject("picked")
         if (picked != null) {
             currentSourceLabel = sourceWords(picked)
-            val id = str(picked, "id")
-            val label = str(picked, "label")
-            if (id.isNotBlank()) tried.add(id)
-            if (label.isNotBlank()) tried.add(label)
+            // A copy that played is not a failed copy. Putting it in `tried` made the next /play
+            // exclude it, which is exactly why a 720p choice disappeared from the Quality list
+            // after the viewer had watched it once.
+            rememberSource(picked)
         }
+        for (i in 0 until alternatives.length()) rememberSource(alternatives.optJSONObject(i))
         // A source switch must not silently undo the viewer's explicit audio/subtitle choice. The hub's
         // recommendation is only the starting point; once a person has chosen, that choice survives a
         // new copy (matched by stream index/id, and left alone if the new copy cannot honour it).
@@ -1606,6 +1613,17 @@ class PlayerActivity : Activity() {
         panelRows.last().nextFocusDownId = panelRows.last().id
     }
 
+    private fun sourceKey(o: JSONObject): String =
+        str(o, "label").ifBlank { str(o, "id") }.ifBlank { str(o, "provider") }
+
+    /** Keep the best description of a copy the title has offered, without duplicating its label. */
+    private fun rememberSource(o: JSONObject?) {
+        if (o == null) return
+        val key = sourceKey(o)
+        if (key.isBlank()) return
+        sourceCatalog[key] = JSONObject(o.toString())
+    }
+
     /** Add every language the hub offered, keeping the best evidence for each one. */
     private fun mergeAudioOptions(fresh: JSONArray) {
         for (i in 0 until fresh.length()) {
@@ -1843,6 +1861,8 @@ class PlayerActivity : Activity() {
         // another copy: that is how a "quality" change lands on a different cut. When the answer is
         // a ladder, the top rows are its own rungs and the copy list moves below a heading.
         val rungs = ladderRungs()
+        val currentKey = answer?.optJSONObject("picked")?.let { sourceKey(it) }.orEmpty()
+        val others = sourceCatalog.values.filter { sourceKey(it) != currentKey }
         if (rungs.isNotEmpty()) {
             val current = if (forcedRungHeight > 0) forcedRungHeight else selectedVideoHeight()
             parent.addView(menuRow("Auto", "follow the link", forcedRungHeight == 0) {
@@ -1853,22 +1873,21 @@ class PlayerActivity : Activity() {
                     chooseRung(h)
                 })
             }
-            if (alternatives.length() > 0) parent.addView(noteRow("Other copies"))
+            if (others.isNotEmpty()) parent.addView(noteRow("Other copies"))
         } else {
             parent.addView(menuRow("Auto", "best copy the hub can feed", false) {
                 switchTo(null)
             })
         }
-        if (rungs.isNotEmpty() && alternatives.length() > 0) {
+        if (rungs.isNotEmpty() && others.isNotEmpty()) {
             parent.addView(menuRow("Best copy", "let the hub choose again", false) { switchTo(null) })
         }
-        for (i in 0 until alternatives.length()) {
-            val src = alternatives.optJSONObject(i) ?: continue
+        for (src in others) {
             parent.addView(menuRow(sourceWords(src), sourceNote(src), false) {
                 switchTo(src)
             })
         }
-        if (alternatives.length() == 0 && rungs.isEmpty()) {
+        if (others.isEmpty() && rungs.isEmpty()) {
             parent.addView(noteRow("The hub listed no other copies"))
         }
     }

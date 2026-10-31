@@ -13,7 +13,9 @@ import java.io.InputStreamReader
  * Theme = one complete pack from `assets/theme-*.json`: colour and type tokens plus the `pack`
  * block that chooses the layout (full/split/centred hero), the rail shape (poster/landscape), the
  * card treatment (overlay/frame/glass), the focus effect (ring/glow/lift), the motion language and
- * the detail-page shape. The native screens ask [packString] rather than branching on a theme id, so
+ * the detail-page shape. [homeLayout] is the structural contract for the entire Home composition;
+ * it prevents a PS5 or Netflix pack from inheriting an Apple shell just because its token values
+ * happen to be similar. The native screens ask [packString] rather than branching on a theme id, so
  * a developer adds a pack by writing the JSON and one assets/themes.json row.
  *
  * The mockup is authored at 1920x1080 in pixels. Device pixels are those numbers times
@@ -78,6 +80,12 @@ class Theme private constructor(
     fun packString(key: String, fallback: String): String =
         pack.optString(key, fallback).takeIf { it.isNotBlank() } ?: fallback
     fun packInt(key: String, fallback: Int): Int = pack.optInt(key, fallback)
+
+    /**
+     * The complete Home composition selected by a pack.  This is intentionally typed and validated
+     * rather than exposing `homeLayout` as another arbitrary string at every call site.
+     */
+    val homeLayout: HomeLayoutSpec get() = HomeLayoutSpec.from(pack)
 
     /**
      * The home billboard is a component rather than a screen-specific arrangement.  A theme pack
