@@ -18,7 +18,10 @@ class Prefs(context: Context) {
         context.getSharedPreferences("scenix", Context.MODE_PRIVATE)
 
     /** The visual theme's id in assets/themes.json; a device preference, mirrored to the hub. */
-    fun theme(): String = sp.getString(KEY_THEME, "scenix-dark") ?: "scenix-dark"
+    // Apple is the product's reference TV treatment.  Existing households keep their explicit
+    // choice, while a new television opens directly into the polished remote-first theme instead
+    // of inheriting the legacy dark pack.
+    fun theme(): String = sp.getString(KEY_THEME, "scenix-apple") ?: "scenix-apple"
     fun setTheme(id: String) = sp.edit().putString(KEY_THEME, id.trim()).apply()
 
     /**

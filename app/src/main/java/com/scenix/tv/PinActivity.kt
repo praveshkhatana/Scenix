@@ -39,7 +39,7 @@ class PinActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.rgb(20, 20, 20))
+            setBackgroundColor(app.theme.surface)
             setPadding(app.theme.px(64f), app.theme.px(48f), app.theme.px(64f), app.theme.px(32f))
         }
         root.addView(Views.text(app, "h1", 44f, app.theme.ink, "Enter your PIN", bold = true, gravity = Gravity.CENTER))

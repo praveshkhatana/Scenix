@@ -19,7 +19,11 @@ object HubProbe {
     private val NAMED_HUB = Regex("\"hub\"\\s*:\\s*\"scenix-hub\"", RegexOption.IGNORE_CASE)
 
     /** True only for an address whose `/healthz` names this product. */
-    fun healthy(base: String, timeoutMs: Int = 1500): Boolean {
+    // A LAN connection can establish quickly while a busy Hub takes a few seconds to assemble its
+    // status/add-on report.  1.5 s made a selected Hub look dead and let the TV silently fall back
+    // to a different remembered household.  This runs only at launch/reconnect, so favour a stable
+    // real connection over a premature failover.
+    fun healthy(base: String, timeoutMs: Int = 5_000): Boolean {
         val root = base.trim().trimEnd('/')
         if (root.isBlank()) return false
         var conn: HttpURLConnection? = null

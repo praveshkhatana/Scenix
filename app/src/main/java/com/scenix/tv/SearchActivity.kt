@@ -39,6 +39,8 @@ class SearchActivity : Activity() {
     private lateinit var queryView: TextView
     private lateinit var status: TextView
     private lateinit var results: RecyclerView
+    private lateinit var resultHeading: TextView
+    private lateinit var emptyResults: TextView
     private lateinit var keys: LinearLayout
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private val handler = Handler(Looper.getMainLooper())
@@ -60,19 +62,37 @@ class SearchActivity : Activity() {
         }
         root.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
 
+        // A real search field anchors the screen.  The old bare line plus a keyboard in one corner
+        // read as unfinished because the results area had no relationship to the query.
+        val queryShell = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(app.theme.px(24f), 0, app.theme.px(24f), 0)
+            background = Views.rounded(app.theme.surface2, app.theme.px(14f))
+        }
         queryView = Views.text(app, "li", 22f, app.theme.ink, "", bold = true, maxLines = 1)
-        queryView.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(44f).toFloat())
-        queryView.setPadding(app.theme.gutter, app.theme.px(14f), app.theme.gutter, app.theme.px(18f))
-        root.addView(queryView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(84f)))
+        queryView.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(38f).toFloat())
+        queryShell.addView(queryView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(queryShell, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(78f)
+        ).apply {
+            leftMargin = app.theme.gutter
+            rightMargin = app.theme.gutter
+            topMargin = app.theme.px(18f)
+        })
 
-        val content = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(app.theme.gutter, 0, app.theme.gutter, app.theme.px(32f))
+        }
         keys = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(app.theme.px(40f), app.theme.px(8f), app.theme.px(10f), app.theme.px(24f))
+            setPadding(0, app.theme.px(10f), 0, app.theme.px(12f))
         }
         content.addView(keys, LinearLayout.LayoutParams(app.theme.px(700f), ViewGroup.LayoutParams.MATCH_PARENT))
         content.addView(resultsPane(), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+            topMargin = app.theme.px(20f)
+        })
 
         setContentView(root)
         buildKeyboard()
@@ -87,7 +107,7 @@ class SearchActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(Color.rgb(20, 20, 20))
+            setBackgroundColor(app.theme.surface)
         }
         val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
@@ -109,19 +129,30 @@ class SearchActivity : Activity() {
     private fun resultsPane(): View {
         val pane = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, app.theme.px(4f), app.theme.px(24f), 0)
+            setPadding(app.theme.px(36f), app.theme.px(10f), 0, 0)
         }
-        val head = Views.text(app, "li", 24f, app.theme.ink, "Results", bold = true)
-        head.setPadding(0, 0, 0, app.theme.px(10f))
-        pane.addView(head)
+        resultHeading = Views.text(app, "li", 26f, app.theme.ink, "Search the catalogue", bold = true)
+        resultHeading.setPadding(0, 0, 0, app.theme.px(12f))
+        pane.addView(resultHeading)
+        val resultHost = FrameLayout(this)
         results = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@SearchActivity, 4)
             setHasFixedSize(true)
             itemAnimator = null
-            setBackgroundColor(app.theme.bg)
             clipToPadding = false
+            clipChildren = false
+            visibility = View.INVISIBLE
         }
-        pane.addView(results, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        resultHost.addView(results, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        emptyResults = Views.text(app, "sub", 22f, app.theme.ink3,
+            "Choose letters to find a movie or series", gravity = Gravity.CENTER, maxLines = 2)
+        emptyResults.setPadding(app.theme.px(32f), 0, app.theme.px(32f), 0)
+        resultHost.addView(emptyResults, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        pane.addView(resultHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         return pane
     }
 
@@ -139,17 +170,27 @@ class SearchActivity : Activity() {
             }
             for (label in row) {
                 val key = Views.text(app, "li", 22f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
-                key.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(if (label.length > 1) 17f else 24f).toFloat())
-                key.background = Views.rounded(app.theme.surface2, app.theme.px(9f))
+                key.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(if (label.length > 1) 17f else 25f).toFloat())
                 key.isFocusable = true
                 key.isClickable = true
                 key.setOnClickListener { press(label) }
-                Focus.attach(key, key, app, app.theme.px(9f), scale = false, elevate = false)
-                line.addView(key, LinearLayout.LayoutParams(app.theme.px(84f), app.theme.px(60f)).apply {
+                // Large, stable light plate: on a TV a focused key must be visible from across
+                // the room, without the layout shift produced by the old lift-only focus.
+                fun paintKey(focused: Boolean) {
+                    key.background = Views.rounded(
+                        if (focused) app.theme.ink else app.theme.surface2,
+                        app.theme.px(10f),
+                    )
+                    key.setTextColor(if (focused) app.theme.bg else app.theme.ink)
+                }
+                paintKey(false)
+                Focus.attach(key, null, app, app.theme.px(10f), scale = false, elevate = false,
+                    onFocus = { focused -> paintKey(focused) })
+                line.addView(key, LinearLayout.LayoutParams(app.theme.px(88f), app.theme.px(64f)).apply {
                     if (label != row.first()) marginStart = app.theme.px(8f)
                 })
             }
-            keys.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, app.theme.px(68f)))
+            keys.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, app.theme.px(72f)))
         }
     }
 
@@ -181,9 +222,17 @@ class SearchActivity : Activity() {
         if (q.length < 2) {
             searchGen++
             results.adapter = null
+            results.visibility = View.INVISIBLE
+            emptyResults.visibility = View.VISIBLE
+            resultHeading.text = "Search the catalogue"
+            emptyResults.text = if (q.isEmpty()) "Choose letters to find a movie or series" else "One more letter to search"
             status.text = if (q.isEmpty()) "Type a title" else "One more letter…"
             return
         }
+        resultHeading.text = "Results"
+        emptyResults.visibility = View.VISIBLE
+        emptyResults.text = "Searching…"
+        results.visibility = View.INVISIBLE
         status.text = "Searching…"
         handler.postDelayed(searchNow, 320)
     }
@@ -204,6 +253,8 @@ class SearchActivity : Activity() {
                 else -> "${items.size} titles"
             }
             results.adapter = ResultAdapter(items)
+            results.visibility = View.VISIBLE
+            emptyResults.visibility = View.GONE
         }
     }
 
@@ -237,12 +288,21 @@ class SearchActivity : Activity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ResultHolder {
             val card = FrameLayout(this@SearchActivity).apply {
                 layoutParams = RecyclerView.LayoutParams(cardW, cardH).apply {
-                    marginEnd = theme.px(14f)
-                    bottomMargin = theme.px(18f)
+                    // Reserve room for the focused lockup's halo instead of cutting it off at
+                    // the next result cell.
+                    marginEnd = theme.px(24f)
+                    bottomMargin = theme.px(36f)
                 }
                 isFocusable = true
                 isClickable = true
+                clipChildren = false
             }
+            val glowPad = theme.px(20f)
+            val ringOn = View(this@SearchActivity)
+            card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = -glowPad; topMargin = -glowPad
+            })
             val art = ImageView(this@SearchActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
@@ -280,18 +340,30 @@ class SearchActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(8f); topMargin = theme.px(8f)
             })
-            Focus.attach(card, card, app, theme.radius("card", 6f), animateScale = false, elevate = false)
+            Focus.attach(card, ringOn, app, theme.radius("card", 6f), animateScale = false,
+                elevate = false, glowInset = glowPad)
             return ResultHolder(card, art, name, logo, badge)
         }
 
         override fun onBindViewHolder(holder: ResultHolder, position: Int) {
             val item = items[position]
+            holder.itemView.contentDescription = buildString {
+                append(item.title)
+                if (item.year > 0) append(", ").append(item.year)
+                if (item.match > 0) append(", ").append(item.match).append("% match")
+                append(", open details")
+            }
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
             holder.logo.visibility = View.GONE
             val facts = ArrayList<String>()
-            if (item.isNew) facts.add("NEW")
-            if (item.match > 0) facts.add("${item.match}%")
+            // Search results are deliberately terse in scene packs, while cinema/console packs
+            // put a compact status badge over the art. Keep that policy in the pack so a new
+            // theme does not need another id check here.
+            if (theme.packString("searchBadges", "show") == "show") {
+                if (item.isNew) facts.add("NEW")
+                if (item.match > 0) facts.add("${item.match}%")
+            }
             holder.badge.text = facts.joinToString(" · ")
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art, item.poster ?: item.backdrop, cardW)
