@@ -51,6 +51,8 @@ class GameActivity : Activity() {
     private lateinit var padChip: TextView
     private val main = Handler(Looper.getMainLooper())
     private var url = ""
+    private var fallbackUrl = ""
+    private var usedFallback = false
     private var titleText = "Game"
     private var padReady = false
     private var hudVisible = false
@@ -61,6 +63,7 @@ class GameActivity : Activity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         app = (application as ScenixApp).ctx
         url = intent?.getStringExtra(EXTRA_URL).orEmpty()
+        fallbackUrl = intent?.getStringExtra(EXTRA_FALLBACK).orEmpty()
         titleText = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Game" }
         padReady = intent?.getBooleanExtra(EXTRA_PAD, false) ?: false
         if (url.isBlank()) { finish(); return }
@@ -94,13 +97,40 @@ class GameActivity : Activity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     status.visibility = View.GONE
+                    // A host that answers 200-but-blocked shows only a sentence where the game should
+                    // be; catch that too so the fallback still gets its turn before we give up.
+                    view.evaluateJavascript(
+                        "(document.body && document.body.innerText || '').slice(0,400)"
+                    ) { raw ->
+                        val text = raw?.removeSurrounding("\"")?.replace("\\n", " ") ?: ""
+                        val blocked = text.contains("available in your region", true) ||
+                            text.contains("disponible en tu región", true)
+                        if (blocked) {
+                            if (!switchToBackup("This host turns away your region")) {
+                                showError("The game's home refuses to serve this region — add a mirror for it or try another title.")
+                            }
+                        }
+                    }
                 }
 
                 override fun onReceivedError(
                     view: WebView, request: WebResourceRequest, error: WebResourceError,
                 ) {
                     if (!request.isForMainFrame) return
-                    showError("This game could not be reached — ${error.description}")
+                    if (!switchToBackup("This game could not be reached")) {
+                        showError("This game could not be reached — ${error.description}")
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse,
+                ) {
+                    if (!request.isForMainFrame) return
+                    if (errorResponse.statusCode == 403 || errorResponse.statusCode == 451) {
+                        if (!switchToBackup("This host turns away your region")) {
+                            showError("The game's home refuses to serve this region (HTTP ${errorResponse.statusCode}).")
+                        }
+                    }
                 }
             }
         }
@@ -193,6 +223,21 @@ class GameActivity : Activity() {
         errorBox.visibility = View.VISIBLE
         status.visibility = View.GONE
         retryBtn?.requestFocus()
+    }
+
+    // ── Fallback links ────────────────────────────────────────────────────────────────────────
+    // Some ports' homes refuse certain countries outright (Tekken 4 answers a flat 403 here). The
+    // catalog may carry a second address for exactly those titles: one silent hop to it before
+    // showing an error, one hop only — if the backup fails too, the viewer sees why.
+
+    /** True when the hop happened; false when there is no backup or we already used it. */
+    private fun switchToBackup(reason: String): Boolean {
+        if (usedFallback || fallbackUrl.isBlank()) return false
+        usedFallback = true
+        url = fallbackUrl
+        toast("$reason — opening its backup link instead")
+        web.loadUrl(fallbackUrl)
+        return true
     }
 
     private fun showHud() {
@@ -337,6 +382,7 @@ class GameActivity : Activity() {
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PAD = "pad"
+        const val EXTRA_FALLBACK = "fallback"
 
         /** Ad, analytics and ad-middleware hosts the web arcades reach for. The games never need them. */
         private val AD_HOSTS = listOf(
