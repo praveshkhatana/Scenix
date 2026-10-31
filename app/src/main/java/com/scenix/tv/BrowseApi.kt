@@ -299,10 +299,24 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
         val path = "/app/v1/meta/" + enc(identity)
         // A cold hub resolving an eight-season series through its addons can sit well past the old
-        // 20 s; a timeout there strands the player's Episodes menu on an empty list.
-        request(path, "profile=" + enc(profileId), "GET", null, 45000) { root, _, error ->
-            done(root?.optJSONObject("item") ?: root, error)
+        // 20 s; a timeout there strands the player's Episodes menu on an empty list. A 404 is also
+        // often a one-round-trip miss rather than a missing title: the row the person just tapped
+        // came from a catalogue the hub may still be resolving. One quiet retry turns "not found"
+        // into the detail page they asked for.
+        fun attempt(tries: Int) {
+            request(path, "profile=" + enc(profileId), "GET", null, 45000) { root, status, error ->
+                val item = root?.optJSONObject("item") ?: root
+                val missing = status == 404 || root?.optString("error") == "not found"
+                if (missing && tries < 1) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                        { attempt(tries + 1) }, 700L,
+                    )
+                    return@request
+                }
+                done(item, error)
+            }
         }
+        attempt(0)
     }
 
     /**

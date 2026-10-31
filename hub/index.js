@@ -468,6 +468,34 @@ function withBudget(promise, ms, fallback, label) {
   return Promise.race([safe, guard]).finally(() => clearTimeout(timer));
 }
 
+// ---- the tile cache -------------------------------------------------------------------------------
+//
+// A row already carries fully resolved items. The detail and play routes used to throw that away and
+// ask every addon again with a few hundred milliseconds; a slow catalogue addon (DesiFlix) then turned
+// a tile the viewer could see into "not found". Keeping the tile by identity makes the detail page
+// answer with the same object the row showed, and the provider pass below only enriches it.
+const ITEM_CACHE_MAX = Number(process.env.ITEM_CACHE_MAX || 6000);
+const itemCache = new Map();
+
+function rememberItems(items) {
+  if (!Array.isArray(items)) return;
+  for (const it of items) {
+    if (!it || !it.identity) continue;
+    itemCache.delete(it.identity);
+    itemCache.set(it.identity, it);
+  }
+  while (itemCache.size > ITEM_CACHE_MAX) {
+    const first = itemCache.keys().next();
+    if (first.done) break;
+    itemCache.delete(first.value);
+  }
+}
+
+function cachedItem(identity) {
+  const it = itemCache.get(String(identity));
+  return it ? JSON.parse(JSON.stringify(it)) : null;
+}
+
 // ---- the row context (what a row's build(ctx) gets) -----------------------------------------------
 
 function makeCtx(profile, metaBudget) {
@@ -517,14 +545,16 @@ function makeCtx(profile, metaBudget) {
 
     /** One identity across every addon, merged into one tile with all its sources. */
     async resolve(identity, hint) {
-      const parts = [];
-      for (const p of registry.providers) {
-        if (typeof p.meta !== 'function') continue;
-        const it = await withBudget(
+      const known = cachedItem(identity);
+      const parts = known ? [known] : [];
+      // Ask the addons together, not one after another: ten providers at 300 ms each made a cold
+      // detail page a three-second wait, and the route's own budget then served nothing.
+      const answers = await Promise.all(registry.providers
+        .filter((p) => typeof p.meta === 'function')
+        .map((p) => withBudget(
           Promise.resolve().then(() => p.meta(identity, hint)), metaBudget || 300, null, 'meta ' + p.id,
-        );
-        if (it) parts.push(it);
-      }
+        )));
+      for (const it of answers) if (it) parts.push(it);
       const item = merge.mergeItems(parts, registry.priorities);
       if (item) {
         store.touch(item.identity);
@@ -550,6 +580,7 @@ function makeCtx(profile, metaBudget) {
           if (fresh && fresh.length) item.sources.push(...fresh);
         }
         item.sources = merge.rankSources(item.sources, registry.priorities);
+        rememberItems([item]);
       }
       return item;
     },
@@ -754,6 +785,7 @@ async function buildRow(row, ctx, budgetMs) {
     Promise.resolve().then(() => row.build(ctx)), budgetMs || ROW_BUDGET_MS, [], 'row ' + row.id,
   );
   const items = await pipeline(raw || [], ctx);
+  rememberItems(items);
   // Trim after the rules: a row may hand back more candidates than it wants on screen.
   return items.slice(0, row.max || ROW_MAX);
 }
@@ -3610,6 +3642,7 @@ async function handle(req, res) {
       const raw = held.length ? held
         : await shelves.genreTitles(genre, { limit: SEARCH_MAX * 2, budget: SEARCH_BUDGET_MS });
       const items = generalItems('genre', await pipeline(raw || [], ctx)).slice(0, SEARCH_MAX);
+      rememberItems(items);
       await taste.decorate(ctx, items);
       return send(res, 200, { genre, items });
     }
@@ -3629,6 +3662,7 @@ async function handle(req, res) {
       );
       const items = generalItems('addon-catalog:' + addonId,
         await pipeline(raw || [], ctx)).slice(0, 120);
+      rememberItems(items);
       await taste.decorate(ctx, items);
       return send(res, 200, { addon: addonId, catalog: catalogId, items });
     }
