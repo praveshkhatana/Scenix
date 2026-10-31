@@ -28,6 +28,8 @@ data class GameCard(
     val playUrl: String,
     /** A second address for titles whose first host refuses this region; empty when there is none. */
     val fallbackUrl: String,
+    /** True when the port's server demands cross-origin isolation — Android WebView never grants it. */
+    val coi: Boolean,
     /** Whether this port answers a real controller — the badge that says so rides the tile. */
     val pad: Boolean,
     val desc: String,
@@ -149,6 +151,7 @@ class GamesActivity : Activity() {
                         poster = o.optString("backdrop").ifBlank { o.optString("poster") },
                         playUrl = url,
                         fallbackUrl = o.optString("fallbackUrl"),
+                        coi = o.optBoolean("coi"),
                         pad = o.optBoolean("pad"),
                         desc = o.optString("desc"),
                     )
@@ -272,6 +275,7 @@ class GamesActivity : Activity() {
                     .putExtra(GameActivity.EXTRA_TITLE, g.title)
                     .putExtra(GameActivity.EXTRA_URL, g.playUrl)
                     .putExtra(GameActivity.EXTRA_FALLBACK, g.fallbackUrl)
+                    .putExtra(GameActivity.EXTRA_COI, g.coi)
                     .putExtra(GameActivity.EXTRA_PAD, g.pad)
             )
         }

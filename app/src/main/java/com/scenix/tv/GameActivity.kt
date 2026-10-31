@@ -53,6 +53,7 @@ class GameActivity : Activity() {
     private var url = ""
     private var fallbackUrl = ""
     private var usedFallback = false
+    private var needsCoi = false
     private var titleText = "Game"
     private var padReady = false
     private var hudVisible = false
@@ -66,6 +67,7 @@ class GameActivity : Activity() {
         fallbackUrl = intent?.getStringExtra(EXTRA_FALLBACK).orEmpty()
         titleText = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Game" }
         padReady = intent?.getBooleanExtra(EXTRA_PAD, false) ?: false
+        needsCoi = intent?.getBooleanExtra(EXTRA_COI, false) ?: false
         if (url.isBlank()) { finish(); return }
 
         val theme = app.theme
@@ -100,6 +102,16 @@ class GameActivity : Activity() {
                     // Poki and friends wrap the game in tiles, nav pills and late popups a kid
                     // shouldn't reach: carve the page down to the game's own container.
                     carve(view)
+                    // The catalog flags ports whose own servers demand cross-origin isolation: those
+                    // are multithreaded builds, and Android WebView never grants SharedArrayBuffer in
+                    // any version. A single-threaded mirror gets its one hop first; otherwise say so
+                    // plainly instead of leaving a black screen on screen forever.
+                    if (needsCoi && !usedFallback) view.evaluateJavascript("String(!!crossOriginIsolated)") { r ->
+                        if (r?.contains("true") != true) {
+                            if (!switchToBackup("This port wants multithreading this WebView lacks"))
+                                showError("This port is built multithreaded — Android's built-in browser component can't run it. Open it in a full browser, or look for a single-threaded build of the same game.")
+                        }
+                    }
                     // A host that answers 200-but-blocked shows only a sentence where the game should
                     // be; catch that too so the fallback still gets its turn before we give up.
                     view.evaluateJavascript(
@@ -255,10 +267,15 @@ class GameActivity : Activity() {
         object : Runnable {
             var passes = 0
             var carved = 0
+            var misses = 0
             override fun run() {
                 if (++passes > 60) return
                 view.evaluateJavascript(CARVE_JS) { r ->
-                    if (r?.contains("carved") == true) ++carved
+                    if (r?.contains("carved") == true) ++carved else ++misses
+                    // A portal that never puts any game frame on screen at all (Poki on some
+                    // engines): after half a minute say so instead of sitting black forever.
+                    if (misses == 10 && carved == 0)
+                        toast("This portal hasn't started its game on this TV — try another title.")
                     main.postDelayed(this, if (carved > 0) 5000 else 3000)
                 }
             }
@@ -379,8 +396,15 @@ class GameActivity : Activity() {
         return AD_HOSTS.any { host == it || host.endsWith(".$it") }
     }
 
+    // A silent 200 with an empty body looks like a successful ad response whose JSON happens to be
+    // unparseable, and some SDKs stall on that forever. 403 reads as "ad refused", which every
+    // portal already handles, and the CORS header keeps fetch-based bidders from retry-storming.
     private fun emptyBlock(): WebResourceResponse =
-        WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(byteArrayOf()))
+        WebResourceResponse(
+            "text/plain", "utf-8", 403, "Blocked",
+            mapOf("Access-Control-Allow-Origin" to "*"),
+            ByteArrayInputStream(byteArrayOf()),
+        )
 
     override fun onPause() {
         if (::web.isInitialized) web.onPause()   // freeze drawing while Bluetooth settings sit on top
@@ -408,6 +432,7 @@ class GameActivity : Activity() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_PAD = "pad"
         const val EXTRA_FALLBACK = "fallback"
+        const val EXTRA_COI = "coi"
 
         /**
          * Keep only the path to the page's biggest visible game frame and pin its stage full-screen.

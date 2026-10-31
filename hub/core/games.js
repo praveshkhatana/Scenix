@@ -55,6 +55,9 @@ function card(g, kind) {
     backdrop: g.cover || g.poster || '',
     playUrl: g.playUrl,
     fallbackUrl: g.fallbackUrl || '',
+    // Ports whose servers insist on cross-origin isolation are multithreaded builds; Android's
+    // WebView never grants that, so the player must know to say so instead of showing black.
+    coi: !!g.coi,
     pad: !!g.pad,
     kb: g.kb !== false,
     touch: g.touch !== undefined ? !!g.touch : kind !== 'p2b',
@@ -152,6 +155,7 @@ function addonCard(g, aid) {
     backdrop: g.backdrop || g.poster || g.cover || '',
     playUrl: String(g.playUrl),
     fallbackUrl: /^https?:\/\//i.test(String(g.fallbackUrl || '')) ? String(g.fallbackUrl) : '',
+    coi: !!g.coi,
     pad: !!g.pad,
     kb: g.kb !== false,
     touch: !!g.touch,
