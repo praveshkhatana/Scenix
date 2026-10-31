@@ -1042,7 +1042,7 @@ class PlayerActivity : Activity() {
             // A cold copy is not a broken file. Two silent reloads at the same playhead, with a little
             // more room each time, are cheaper than throwing away a copy that is still filling.
             sameCopyRetries++
-            showCenter(if (live) "Reconnecting to this channel…" else "Reconnecting to this copy…", true)
+            quietOrCenter(if (live) "Reconnecting to this channel…" else "Reconnecting to this copy…")
             val wait = if (sameCopyRetries == 1) 1200L else 2600L
             handler.postDelayed({
                 if (!isFinishing) answer?.let { start(it, pos, playWhenReady = true) }
