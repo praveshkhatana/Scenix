@@ -26,6 +26,8 @@ data class GameCard(
     val title: String,
     val poster: String,
     val playUrl: String,
+    /** A second address for titles whose first host refuses this region; empty when there is none. */
+    val fallbackUrl: String,
     /** Whether this port answers a real controller — the badge that says so rides the tile. */
     val pad: Boolean,
     val desc: String,
@@ -146,6 +148,7 @@ class GamesActivity : Activity() {
                         title = o.optString("title"),
                         poster = o.optString("backdrop").ifBlank { o.optString("poster") },
                         playUrl = url,
+                        fallbackUrl = o.optString("fallbackUrl"),
                         pad = o.optBoolean("pad"),
                         desc = o.optString("desc"),
                     )
@@ -268,6 +271,7 @@ class GamesActivity : Activity() {
                 Intent(this@GamesActivity, GameActivity::class.java)
                     .putExtra(GameActivity.EXTRA_TITLE, g.title)
                     .putExtra(GameActivity.EXTRA_URL, g.playUrl)
+                    .putExtra(GameActivity.EXTRA_FALLBACK, g.fallbackUrl)
                     .putExtra(GameActivity.EXTRA_PAD, g.pad)
             )
         }

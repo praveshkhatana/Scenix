@@ -3541,10 +3541,10 @@ async function handle(req, res) {
     }
 
     if (path === '/app/v1/games') {
-      // The Game mode catalogue: curated static sources, so no budget and no addon wait — it answers
-      // as fast as the shelves can be assembled. Games are not titles: they carry `playUrl` and a
-      // controller flag instead of sources, which is why they ride their own endpoint.
-      return send(res, 200, { rows: gamesApi.rows() });
+      // Games are not titles: they carry `playUrl` and a controller flag instead of sources, which
+      // is why they ride their own endpoint. Built-in shelves answer at once; game-carrying addons
+      // are asked in parallel from cache, and a dead one costs a cached miss, never a hung request.
+      return send(res, 200, { rows: await gamesApi.rows() });
     }
 
     m = /^\/app\/v1\/row\/([^/]+)$/.exec(path);

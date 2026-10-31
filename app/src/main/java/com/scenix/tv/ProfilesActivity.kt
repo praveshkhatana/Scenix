@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -27,8 +26,22 @@ class ProfilesActivity : Activity() {
     private lateinit var profileId: String
     private lateinit var row: LinearLayout
     private lateinit var status: TextView
+    /** Kept out of the initial focus graph until the household faces have arrived. */
+    private var manageProfilesButton: View? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var profiles: List<ProfileInfo> = emptyList()
+    // The gate has to show the whole household at the household's zoom. Four faces plus the empty
+    // one at 260dp each is wider than a 1080p screen at 1.3x; the last person was sliced off by the
+    // right edge. The size is chosen from the count so every face is visible until the count is
+    // genuinely large, where the strip scrolls on purpose.
+    private var facePx = 0
+    /**
+     * The framework eagerly assigns focus to the first child of a freshly populated TV row.  That
+     * is an implementation detail, not a viewer choice: if that first face is PIN protected, OK
+     * immediately opens the wrong gate.  Only an actual post-load remote move gets to override
+     * the safe first-unlocked landing target.
+     */
+    private var profileNavigationStarted = false
     /** A `tv://detail`/`tv://play` route that waits for the person to be chosen. */
     private var pendingRoute: String? = null
 
@@ -62,6 +75,12 @@ class ProfilesActivity : Activity() {
             startActivity(Intent(this, ManageProfilesActivity::class.java))
         }
         Focus.attach(manage, manage, app, app.theme.radius("button", 6f), scale = false, elevate = false)
+        // Before the hub answers, the only visible remote stop used to be this administration
+        // action. A fast OK at app launch therefore opened profile editing instead of choosing a
+        // person. It joins the focus graph only after the household row owns the landing focus.
+        manage.isFocusable = false
+        manage.isFocusableInTouchMode = false
+        manageProfilesButton = manage
         head.addView(manage)
         root.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(Views.text(app, "h1", 52f, app.theme.ink, "Who's watching?", bold = true),
@@ -76,6 +95,12 @@ class ProfilesActivity : Activity() {
         val scroller = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             isFillViewport = true
+            // The strip is only a viewport for profile tiles. If it can take focus itself Android
+            // may park the initial D-pad target on an invisible scroll container instead of a
+            // person, leaving the gate with no visible focus treatment.
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         }
         scroller.addView(row)
         root.addView(scroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
@@ -97,6 +122,7 @@ class ProfilesActivity : Activity() {
             profiles = list
             status.text = ""
             row.removeAllViews()
+            facePx = fitFaceSize(profiles.size + 1)
             for (p in profiles) row.addView(profileTile(p))
             row.addView(addTile())
             // The gate wakes up, it doesn't snap into place: each face rises a hand-width behind the
@@ -108,48 +134,126 @@ class ProfilesActivity : Activity() {
                 c.translationY = theme.px(26f).toFloat()
                 c.animate().alpha(1f).translationY(0f).setStartDelay(i * 90L).setDuration(240L).start()
             }
-            row.postDelayed({
-                firstFocus(row)?.requestFocus()
-            }, 420)
+            // Android often gives the only early control ("Edit profiles") focus while the
+            // household is loading. Once the face tiles are present, land on the remembered
+            // person (or the first unlocked person) and retry a few frames if the layout is still
+            // settling. The original one-shot request was why the gate could open with no visible
+            // focus and a first OK accidentally entered profile administration.
+            focusInitialProfile()
         }
+    }
+
+    private fun focusInitialProfile() {
+        val prefs = (application as ScenixApp).prefs
+        // A profile can be locked after it was last used. Never restore focus to that stale
+        // remembered entry; opening the gate should prefer a person who can actually enter Home.
+        val remembered = profiles.indexOfFirst { !it.locked && prefs.profileUnlocked(it.id) }
+        val unlocked = profiles.indexOfFirst { !it.locked }
+        val index = when {
+            remembered >= 0 -> remembered
+            unlocked >= 0 -> unlocked
+            else -> 0
+        }
+        var tries = 0
+        val settle = object : Runnable {
+            override fun run() {
+                // A viewer who has made an actual remote move owns focus; the automatic first-child
+                // focus that Android assigns during inflation does not.  Treating that framework
+                // stop as a choice was why a cold launch could land on a locked first profile even
+                // though a usable person was available one tile to the right.
+                if (profileNavigationStarted) return
+                val target = row.getChildAt(index)
+                // A cold launch begins in touch mode on this Android TV image. A D-pad tile that
+                // opts out of touch-mode focus cannot accept the programmatic initial request,
+                // which is why the first focus only appeared after a remote key was pressed.
+                target?.isFocusableInTouchMode = true
+                if (target?.requestFocus() == true) {
+                    manageProfilesButton?.isFocusable = true
+                    manageProfilesButton?.isFocusableInTouchMode = true
+                    return
+                }
+                if (++tries < 20) {
+                    row.postDelayed(this, 120L)
+                } else {
+                    // Keep management reachable even if the device is in an unusual focus mode;
+                    // the status remains visible and the household list can be retried by reload.
+                    manageProfilesButton?.isFocusable = true
+                    manageProfilesButton?.isFocusableInTouchMode = true
+                }
+            }
+        }
+        row.postDelayed(settle, 420L)
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+            event.keyCode in setOf(
+                android.view.KeyEvent.KEYCODE_DPAD_UP,
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                android.view.KeyEvent.KEYCODE_ENTER,
+            )
+        ) {
+            // The first remote key can arrive while the Hub request is still inflating the row.
+            // In that brief window Android has no visible target, but the old implementation still
+            // recorded it as viewer navigation. That cancelled [focusInitialProfile] and left the
+            // gate without a ring (or, worse, let a second quick OK land on Edit profiles). Let
+            // the gate finish its deterministic landing first; the next key acts on that visible
+            // person as expected.
+            if (!profileNavigationStarted && !profileRowOwnsFocus() && !managementOwnsFocus()) {
+                if (profiles.isNotEmpty()) focusInitialProfile()
+                return true
+            }
+            profileNavigationStarted = true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun profileRowOwnsFocus(): Boolean = containsFocusedDescendant(row)
+
+    private fun managementOwnsFocus(): Boolean = manageProfilesButton?.let(::containsFocusedDescendant) == true
+
+    private fun containsFocusedDescendant(ancestor: View): Boolean {
+        var focused: View? = currentFocus
+        while (focused != null) {
+            if (focused === ancestor) return true
+            focused = focused.parent as? View
+        }
+        return false
+    }
+
+    /** The largest face that lets [count] tiles (including the empty one) stand in one row. */
+    private fun fitFaceSize(count: Int): Int {
+        val theme = app.theme
+        val max = theme.px(260f)
+        val avail = resources.displayMetrics.widthPixels - theme.px(64f) * 2
+        val per = avail / count.coerceAtLeast(1)
+        return (per - theme.px(44f)).coerceIn(theme.px(120f), max)
     }
 
     private fun profileTile(p: ProfileInfo): View {
         val theme = app.theme
-        val faceSize = theme.px(260f)
+        val faceSize = if (facePx > 0) facePx else theme.px(260f)
         val tile = LinearLayout(this).apply {
+            id = View.generateViewId()
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(theme.px(30f), theme.px(10f), theme.px(30f), theme.px(10f))
+            setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
             clipChildren = false
             isFocusable = true
             isClickable = true
-        }
-        // Apple's household is a circle of faces, not a wall of posters.
-        val face = FrameLayout(this).apply {
-            setBackgroundColor(theme.surface2)
-            clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(v: View, outline: android.graphics.Outline) {
-                    outline.setRoundRect(0, 0, v.width, v.height, faceSize / 2f)
-                }
+            contentDescription = buildString {
+                append(p.name)
+                if (p.locked) append(", locked profile")
             }
         }
-        val img = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(theme.surface2)
-        }
-        face.addView(img, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (p.kids) {
-            face.addView(View(this).apply {
-                background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
-                    intArrayOf(Color.TRANSPARENT, Color.argb(80, 242, 195, 58)))
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
+        // Apple's household is a circle of faces, not a wall of posters.
+        val face = ProfileAvatar.create(this, app, p.name, p.kids, p.avatar, api, faceSize)
         tile.addView(face, LinearLayout.LayoutParams(faceSize, faceSize))
-        BrowseImages.load(img, api.absolute(p.avatar), faceSize)
         tile.addView(Views.text(app, "li", 24f, theme.ink, p.name, bold = true, gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            LinearLayout.LayoutParams(faceSize, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(16f)
             })
         if (p.locked) {
@@ -159,7 +263,11 @@ class ProfilesActivity : Activity() {
         // The ring of light rides the face itself, glowing outward into the padding around it,
         // and the face lifts gently under the ring — the gate has motion, like the real thing.
         Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
-            elevate = false, glowInset = theme.px(30f))
+            elevate = false, glowInset = theme.px(22f),
+            onFocus = { focused -> paintProfileFocus(face, faceSize, focused) })
+        // See [focusInitialProfile]: the first visible TV target must accept focus while the
+        // system is still transitioning out of touch mode on cold start.
+        tile.isFocusableInTouchMode = true
         tile.setOnClickListener { choose(p) }
         return tile
     }
@@ -167,14 +275,16 @@ class ProfilesActivity : Activity() {
     /** The last face in the circle is the empty one: it opens the household editor. */
     private fun addTile(): View {
         val theme = app.theme
-        val faceSize = theme.px(260f)
+        val faceSize = if (facePx > 0) facePx else theme.px(260f)
         val tile = LinearLayout(this).apply {
+            id = View.generateViewId()
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(theme.px(30f), theme.px(10f), theme.px(30f), theme.px(10f))
+            setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
             clipChildren = false
             isFocusable = true
             isClickable = true
+            contentDescription = "Add profile"
         }
         val face = FrameLayout(this).apply {
             background = Views.rounded(
@@ -184,15 +294,31 @@ class ProfilesActivity : Activity() {
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, faceSize))
         tile.addView(face, LinearLayout.LayoutParams(faceSize, faceSize))
         tile.addView(Views.text(app, "li", 24f, theme.ink2, "Add profile", bold = true, gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            LinearLayout.LayoutParams(faceSize, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(16f)
             })
         Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
-            elevate = false, glowInset = theme.px(30f))
+            elevate = false, glowInset = theme.px(22f),
+            onFocus = { focused -> paintProfileFocus(face, faceSize, focused) })
+        tile.isFocusableInTouchMode = true
         tile.setOnClickListener {
-            startActivity(Intent(this, ManageProfilesActivity::class.java))
+            // The plus tile is a creation action, not another way to edit the selected person.
+            // Carry that intent into the household editor so it opens the new-person flow directly.
+            startActivity(Intent(this, ManageProfilesActivity::class.java)
+                .putExtra(ManageProfilesActivity.EXTRA_START_ADD, true))
         }
         return tile
+    }
+
+    /**
+     * A profile is mostly artwork, so the generic lift alone is too subtle on Android TV. Keep the
+     * tvOS-style lift but add a restrained white circular keyline: one unmistakable current person
+     * without turning the gate into a grid of buttons.
+     */
+    private fun paintProfileFocus(face: View, faceSize: Int, focused: Boolean) {
+        face.foreground = if (focused) {
+            Views.ring(Color.argb(238, 255, 255, 255), faceSize / 2, app.theme.px(4f))
+        } else null
     }
 
     private fun choose(p: ProfileInfo) {
@@ -250,15 +376,6 @@ class ProfilesActivity : Activity() {
             val p = profiles.firstOrNull { it.id == data?.getStringExtra(PinActivity.EXTRA_PROFILE) } ?: return
             open(p)
         }
-    }
-
-    private fun firstFocus(parent: ViewGroup): View? {
-        for (i in 0 until parent.childCount) {
-            val c = parent.getChildAt(i)
-            if (c.isFocusable && c.visibility == View.VISIBLE) return c
-            if (c is ViewGroup) firstFocus(c)?.let { return it }
-        }
-        return null
     }
 
     companion object {

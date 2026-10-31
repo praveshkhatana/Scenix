@@ -1,13 +1,16 @@
 package com.scenix.tv
 
 import android.app.Activity
+import android.app.Dialog
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -38,7 +41,12 @@ class ManageProfilesActivity : Activity() {
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var profiles: List<ProfileInfo> = emptyList()
     private var settings: JSONObject? = null
-    private var picker: View? = null
+    /**
+     * A separate window, not a view painted over the page.  The old faux sheet left focus in the
+     * underlying profile list, so a D-pad press could select a parent profile through the dimmer.
+     * A real dialog gives every picker its own focus scope and is the only safe model on a TV.
+     */
+    private var picker: Dialog? = null
     private var pinLayer: FrameLayout? = null
     private val pinBuf = StringBuilder()
     private var pinSub: TextView? = null
@@ -49,11 +57,13 @@ class ManageProfilesActivity : Activity() {
     private val proofCache = HashMap<String, String>()
     private var draft: Draft? = null
     private var pendingRenameId: String? = null
+    private var startAddRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         app = (application as ScenixApp).ctx
+        startAddRequested = intent?.getBooleanExtra(EXTRA_START_ADD, false) == true
 
         root = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
         page = LinearLayout(this).apply {
@@ -84,7 +94,7 @@ class ManageProfilesActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(Color.rgb(20, 20, 20))
+            setBackgroundColor(app.theme.surface)
         }
         val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
@@ -119,6 +129,18 @@ class ManageProfilesActivity : Activity() {
                 paint()
                 page.visibility = View.VISIBLE
                 status.text = message.orEmpty()
+                // Do not make a viewer land on a profile row only to press again.  This is posted
+                // after the real household has painted, so the editor owns focus rather than a
+                // background row receiving the confirming D-pad press.
+                if (startAddRequested) {
+                    startAddRequested = false
+                    rows.post { if (!isFinishing && !isDestroyed) beginAdd() }
+                } else {
+                    // The editor opens on a real profile action, never an invisible ScrollView
+                    // or a distant back chevron. This also gives the first rendered frame a
+                    // visible remote target.
+                    rows.post { firstFocusable(rows)?.requestFocus() }
+                }
                 if (!message.isNullOrBlank()) {
                     rows.postDelayed({ if (!isFinishing && !isDestroyed) status.text = "" }, 2500)
                 }
@@ -128,7 +150,10 @@ class ManageProfilesActivity : Activity() {
 
     private fun paint() {
         rows.removeAllViews()
-        rows.addView(Views.text(app, "h1", 40f, app.theme.ink, "People", bold = true),
+        // "People" read like a separate product area and the h1 token made it dominate the whole
+        // screen. This is a household settings surface: say that plainly and reserve the giant
+        // type for the profile gate's "Who's watching?" moment.
+        rows.addView(Views.text(app, "h3", 36f, app.theme.ink, "Manage Profiles", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         rows.addView(Views.text(app, "meta", 17f, app.theme.ink3,
             "Every person who can watch here. A PIN on a profile is checked by the hub.",
@@ -160,6 +185,10 @@ class ManageProfilesActivity : Activity() {
             setOnClickListener { showProfileActions(p) }
         }
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val avatar = ProfileAvatar.create(this, app, p.name, p.kids, p.avatar, api, app.theme.px(54f))
+        row.addView(avatar, LinearLayout.LayoutParams(app.theme.px(54f), app.theme.px(54f)).apply {
+            marginEnd = app.theme.px(18f)
+        })
         words.addView(Views.text(app, "li", 24f, app.theme.ink, p.name, bold = true, maxLines = 1))
         words.addView(Views.text(app, "meta", 16f, app.theme.ink3, profileSummary(p), maxLines = 1),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -214,6 +243,7 @@ class ManageProfilesActivity : Activity() {
 
     private fun showProfileActions(p: ProfileInfo) {
         val options = ArrayList<Pair<String, String>>()
+        options.add("avatar" to "Avatar — choose a picture")
         options.add("name" to "Rename — ${p.name}")
         options.add("kind" to "Kind — ${if (p.kids) "Kids" else "Adult"}")
         options.add("age" to "Age — ${p.age.ifBlank { "not set" }}")
@@ -222,6 +252,7 @@ class ManageProfilesActivity : Activity() {
         options.add("remove" to "Remove ${p.name}")
         showPicker("Edit ${p.name}", options, "") { action ->
             when (action) {
+                "avatar" -> chooseAvatar(p)
                 "name" -> rename(p)
                 "kind" -> showKindPicker(p)
                 "age" -> showAgePicker(p)
@@ -230,6 +261,74 @@ class ManageProfilesActivity : Activity() {
                 "remove" -> confirmRemove(p)
             }
         }
+    }
+
+    private fun chooseAvatar(p: ProfileInfo) {
+        status.text = "Loading avatars…"
+        api.avatarCharacters(p.id) { choices, error ->
+            if (isFinishing || isDestroyed) return@avatarCharacters
+            status.text = ""
+            if (choices.isNullOrEmpty()) {
+                status.text = if (error != null) "Avatar images are unavailable in this read-only preview" else
+                    "No avatar images are cached on this hub yet"
+                return@avatarCharacters
+            }
+            showAvatarPicker(p, choices)
+        }
+    }
+
+    /** A remote-first character rail: choosing writes only a hub-local image reference. */
+    private fun showAvatarPicker(p: ProfileInfo, choices: List<AvatarChoice>) {
+        // Four evenly sized faces fit the same compact sheet as every other profile action.
+        // Five overflowed the old 760px-only sheet and made the avatar choice feel like a web grid.
+        val size = app.theme.px(104f)
+        val gap = app.theme.px(12f)
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, app.theme.px(4f), 0, app.theme.px(4f))
+        }
+        choices.chunked(4).forEach { lineChoices ->
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            lineChoices.forEachIndexed { index, choice ->
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    isFocusable = true
+                    isClickable = true
+                    contentDescription = "Use ${choice.label} as ${p.name}'s avatar"
+                    setOnClickListener {
+                        closePicker()
+                        patchProfile(p, JSONObject().put("avatar", choice.image), "${p.name}'s avatar changed")
+                    }
+                }
+                val face = ProfileAvatar.create(this, app, choice.label, false, choice.image, api, size)
+                tile.addView(face, LinearLayout.LayoutParams(size, size))
+                tile.addView(Views.text(app, "meta", 14f, app.theme.ink2, choice.label, gravity = Gravity.CENTER,
+                    maxLines = 1), LinearLayout.LayoutParams(size + app.theme.px(8f), app.theme.px(28f)))
+                Focus.attach(tile, face, app, size / 2, animateScale = false, elevate = false,
+                    glowInset = app.theme.px(12f),
+                    // The Apple pack's lift is elegant on posters but too subtle on a 104px face.
+                    // A circular keyline makes the remote's current avatar unambiguous.
+                    onFocus = { focused ->
+                        face.foreground = if (focused) Views.ring(
+                            Color.argb(238, 255, 255, 255), size / 2, app.theme.px(3f)
+                        ) else null
+                    })
+                line.addView(tile, LinearLayout.LayoutParams(size + app.theme.px(8f), app.theme.px(148f)).apply {
+                    if (index > 0) marginStart = gap
+                })
+            }
+            grid.addView(line, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, app.theme.px(154f)))
+        }
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            isFocusable = false
+            isFocusableInTouchMode = false
+            addView(grid)
+        }
+        showPanel("Choose an avatar", scroll, app.theme.px(520f), app.theme.px(650f))
+        val first = (grid.getChildAt(0) as? ViewGroup)?.getChildAt(0)
+        first?.post { first.requestFocus() }
     }
 
     private fun rename(p: ProfileInfo) {
@@ -552,24 +651,13 @@ class ManageProfilesActivity : Activity() {
         val rowViews = ArrayList<View>()
         for ((value, label) in options) {
             val selected = value == current
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(app.theme.px(16f), 0, app.theme.px(16f), 0)
-                background = Views.rounded(if (selected) app.theme.surface2 else Color.TRANSPARENT,
-                    app.theme.px(8f))
-                isFocusable = true
-                isClickable = true
-                setOnClickListener {
-                    closePicker()
-                    onPick(value)
-                }
+            val row = pickerRow(
+                label = (if (selected) "✓   " else "") + label,
+                selected = selected,
+            ) {
+                closePicker()
+                onPick(value)
             }
-            row.addView(Views.text(app, "li", 22f,
-                if (selected) app.theme.color("panelValue", "#F2C33A") else app.theme.ink,
-                (if (selected) "✓  " else "   ") + label, bold = selected, maxLines = 1),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Focus.attach(row, row, app, app.theme.px(8f), scale = false, elevate = false)
             list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(60f)).apply {
                 topMargin = app.theme.px(4f)
             })
@@ -618,46 +706,23 @@ class ManageProfilesActivity : Activity() {
             }
             for ((index, code) in codes.withIndex()) {
                 val selected = picked.contains(code)
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(app.theme.px(16f), 0, app.theme.px(16f), 0)
-                    background = Views.rounded(if (selected) app.theme.surface2 else Color.TRANSPARENT,
-                        app.theme.px(8f))
-                    isFocusable = true
-                    isClickable = true
-                    setOnClickListener {
-                        focusIndex = index
-                        if (selected) picked.remove(code) else picked.add(code)
-                        render()
-                    }
+                val row = pickerRow(
+                    label = (if (selected) "✓   " else "") + (labels[code] ?: code),
+                    selected = selected,
+                ) {
+                    focusIndex = index
+                    if (selected) picked.remove(code) else picked.add(code)
+                    render()
                 }
-                row.addView(Views.text(app, "li", 22f,
-                    if (selected) app.theme.color("panelValue", "#F2C33A") else app.theme.ink,
-                    (if (selected) "✓  " else "   ") + (labels[code] ?: code), bold = selected, maxLines = 1),
-                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                Focus.attach(row, row, app, app.theme.px(8f), scale = false, elevate = false)
                 list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(60f)).apply {
                     topMargin = app.theme.px(4f)
                 })
                 rowViews.add(row)
             }
-            val done = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(app.theme.px(16f), 0, app.theme.px(16f), 0)
-                background = Views.rounded(app.theme.surface2, app.theme.px(8f))
-                isFocusable = true
-                isClickable = true
-                setOnClickListener {
-                    closePicker()
-                    onDone(picked.toList())
-                }
+            val done = pickerRow("Done", selected = true) {
+                closePicker()
+                onDone(picked.toList())
             }
-            done.addView(Views.text(app, "li", 22f, app.theme.color("panelValue", "#F2C33A"), "Done",
-                bold = true, maxLines = 1),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Focus.attach(done, done, app, app.theme.px(8f), scale = false, elevate = false)
             list.addView(done, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(60f)).apply {
                 topMargin = app.theme.px(4f)
             })
@@ -680,16 +745,67 @@ class ManageProfilesActivity : Activity() {
         render()
     }
 
+    /** A consistent, high-contrast remote-control row for every modal picker. */
+    private fun pickerRow(label: String, selected: Boolean = false, onClick: () -> Unit): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(app.theme.px(18f), 0, app.theme.px(18f), 0)
+            isFocusable = true
+            isFocusableInTouchMode = false
+            isClickable = true
+            clipToOutline = true
+        }
+        val text = Views.text(app, "li", 22f, app.theme.ink, label, bold = selected, maxLines = 1)
+        row.addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        fun paint(focused: Boolean) {
+            // Apple TV's list focus is an unmistakable light plate, not a nearly invisible outline.
+            // It remains inside the row's bounds, so adjacent choices never jump as focus moves.
+            row.background = Views.rounded(
+                when {
+                    focused -> app.theme.ink
+                    selected -> app.theme.surface2
+                    else -> app.theme.color("panelRow", "#14161B")
+                },
+                app.theme.px(10f),
+            )
+            text.setTextColor(if (focused) app.theme.bg else app.theme.ink)
+            text.typeface = if (focused || selected) android.graphics.Typeface.DEFAULT_BOLD
+                else android.graphics.Typeface.DEFAULT
+        }
+        paint(false)
+        row.onFocusChangeListener = View.OnFocusChangeListener { _, focused -> paint(focused) }
+        row.setOnClickListener { onClick() }
+        row.setOnKeyListener { _, code, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && code in setOf(
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER,
+                    KeyEvent.KEYCODE_SPACE,
+                )
+            ) {
+                row.performClick()
+                true
+            } else false
+        }
+        row.setOnHoverListener { view, event ->
+            if (event.actionMasked == android.view.MotionEvent.ACTION_HOVER_ENTER) view.requestFocus()
+            false
+        }
+        return row
+    }
+
     private fun showPanel(title: String, content: View, contentHeight: Int, panelHeight: Int) {
         closePicker()
         val layer = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(190, 0, 0, 0))
+            setBackgroundColor(Color.TRANSPARENT)
             isClickable = true
         }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(28f), app.theme.px(22f), app.theme.px(28f), app.theme.px(22f))
-            background = Views.rounded(app.theme.color("panelScrim", "#E6000000"), app.theme.px(12f),
+            background = Views.rounded(app.theme.color("panelScrim", "#E6000000"),
+                app.theme.radius("modal", 12f),
                 app.theme.px(1f), app.theme.line)
             elevation = app.theme.px(16f).toFloat()
         }
@@ -698,18 +814,46 @@ class ManageProfilesActivity : Activity() {
                 bottomMargin = app.theme.px(10f)
             })
         panel.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, contentHeight))
-        layer.addView(panel, FrameLayout.LayoutParams(app.theme.px(760f), panelHeight).apply {
+        layer.addView(panel, FrameLayout.LayoutParams(app.theme.px(560f), panelHeight).apply {
             gravity = Gravity.CENTER
         })
-        root.addView(layer, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        picker = layer
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(layer)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnKeyListener { _, code, event ->
+            if (code == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN) {
+                closePicker()
+                true
+            } else false
+        }
+        dialog.setOnDismissListener { if (picker === dialog) picker = null }
+        picker = dialog
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            // Keep the page recognisable behind a sheet. A pack may tune this for its surface
+            // language (glass console chrome needs less dim than a matte cinema panel), rather
+            // than hard-coding one named theme into profile management.
+            setDimAmount(app.theme.token("panel", "dimAmount", 0.78).toFloat().coerceIn(0f, 1f))
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        }
     }
 
     private fun closePicker() {
-        picker?.let { root.removeView(it) }
+        val active = picker
         picker = null
+        active?.dismiss()
+    }
+
+    private fun firstFocusable(parent: ViewGroup): View? {
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChildAt(i)
+            if (child.isFocusable && child.visibility == View.VISIBLE) return child
+            if (child is ViewGroup) firstFocusable(child)?.let { return it }
+        }
+        return null
     }
 
     // ---- numeric pad ---------------------------------------------------------------------------
@@ -921,6 +1065,8 @@ class ManageProfilesActivity : Activity() {
     }
 
     companion object {
+        /** Launch straight into the new-person flow when the profile gate's plus tile was chosen. */
+        const val EXTRA_START_ADD = "start_add"
         private const val REQ_RENAME = 71
         private const val REQ_DRAFT_NAME = 72
 

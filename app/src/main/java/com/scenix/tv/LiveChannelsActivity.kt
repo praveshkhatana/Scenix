@@ -190,6 +190,16 @@ class LiveChannelsActivity : Activity() {
             }
             card.isFocusable = true
             card.isClickable = true
+            // The focus treatment is a background halo, not a foreground border over the logo.
+            val glowPad = theme.px(24f)
+            val ringOn = View(this@LiveChannelsActivity)
+            card.clipChildren = false
+            card.addView(ringOn, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH + glowPad * 2
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = -glowPad; rightMargin = -glowPad; topMargin = -glowPad
+            })
             val plate = FrameLayout(this@LiveChannelsActivity).apply {
                 background = Views.rounded(theme.surface, radius, theme.px(1f), theme.line)
             }
@@ -226,15 +236,6 @@ class LiveChannelsActivity : Activity() {
             card.addView(sub, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.BOTTOM; bottomMargin = theme.px(4f) })
-            val glowPad = theme.px(26f)
-            val ringOn = View(this@LiveChannelsActivity)
-            card.addView(ringOn, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, artH + glowPad * 2
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                topMargin = -glowPad
-            })
-            card.clipChildren = false
             val holder = WallHolder(card, plate, logo, mark, num, name, sub)
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
                 glowInset = glowPad,

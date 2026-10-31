@@ -51,6 +51,8 @@ class GameActivity : Activity() {
     private lateinit var padChip: TextView
     private val main = Handler(Looper.getMainLooper())
     private var url = ""
+    private var fallbackUrl = ""
+    private var usedFallback = false
     private var titleText = "Game"
     private var padReady = false
     private var hudVisible = false
@@ -61,6 +63,7 @@ class GameActivity : Activity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         app = (application as ScenixApp).ctx
         url = intent?.getStringExtra(EXTRA_URL).orEmpty()
+        fallbackUrl = intent?.getStringExtra(EXTRA_FALLBACK).orEmpty()
         titleText = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Game" }
         padReady = intent?.getBooleanExtra(EXTRA_PAD, false) ?: false
         if (url.isBlank()) { finish(); return }
@@ -94,13 +97,43 @@ class GameActivity : Activity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     status.visibility = View.GONE
+                    // Poki and friends wrap the game in tiles, nav pills and popups a kid shouldn't
+                    // reach: carve the page down to the game's own container and let it fill the screen.
+                    carve(view)
+                    // A host that answers 200-but-blocked shows only a sentence where the game should
+                    // be; catch that too so the fallback still gets its turn before we give up.
+                    view.evaluateJavascript(
+                        "(document.body && document.body.innerText || '').slice(0,400)"
+                    ) { raw ->
+                        val text = raw?.removeSurrounding("\"")?.replace("\\n", " ") ?: ""
+                        val blocked = text.contains("available in your region", true) ||
+                            text.contains("disponible en tu región", true)
+                        if (blocked) {
+                            if (!switchToBackup("This host turns away your region")) {
+                                showError("The game's home refuses to serve this region — add a mirror for it or try another title.")
+                            }
+                        }
+                    }
                 }
 
                 override fun onReceivedError(
                     view: WebView, request: WebResourceRequest, error: WebResourceError,
                 ) {
                     if (!request.isForMainFrame) return
-                    showError("This game could not be reached — ${error.description}")
+                    if (!switchToBackup("This game could not be reached")) {
+                        showError("This game could not be reached — ${error.description}")
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse,
+                ) {
+                    if (!request.isForMainFrame) return
+                    if (errorResponse.statusCode == 403 || errorResponse.statusCode == 451) {
+                        if (!switchToBackup("This host turns away your region")) {
+                            showError("The game's home refuses to serve this region (HTTP ${errorResponse.statusCode}).")
+                        }
+                    }
                 }
             }
         }
@@ -193,6 +226,35 @@ class GameActivity : Activity() {
         errorBox.visibility = View.VISIBLE
         status.visibility = View.GONE
         retryBtn?.requestFocus()
+    }
+
+    // ── Fallback links ────────────────────────────────────────────────────────────────────────
+    // Some ports' homes refuse certain countries outright (Tekken 4 answers a flat 403 here). The
+    // catalog may carry a second address for exactly those titles: one silent hop to it before
+    // showing an error, one hop only — if the backup fails too, the viewer sees why.
+
+    /** True when the hop happened; false when there is no backup or we already used it. */
+    private fun switchToBackup(reason: String): Boolean {
+        if (usedFallback || fallbackUrl.isBlank()) return false
+        usedFallback = true
+        url = fallbackUrl
+        toast("$reason — opening its backup link instead")
+        web.loadUrl(fallbackUrl)
+        return true
+    }
+
+    // ── Carving to the game container ───────────────────────────────────────────────────────────
+    // Portal pages (Poki, some arcade homes) surround their game with thumbnails, nav pills and
+    // late-injected popups — content nobody asked for and not every parent wants a kid to see. The
+    // page's biggest visible canvas/video/iframe is taken as THE game: everything off the path from
+    // <body> down to it is hidden, the game itself is pinned full-screen, and a MutationObserver
+    // keeps hiding portal furniture injected afterwards. Only display styles are touched — scripts,
+    // timers and the SDK keep running so the game stays playable.
+
+    private fun carve(view: WebView) {
+        main.postDelayed({ view.evaluateJavascript(CARVE_JS, null) }, 500)
+        // SPAs paint their shell after load; the second pass sees the settled layout.
+        main.postDelayed({ view.evaluateJavascript(CARVE_JS, null) }, 1800)
     }
 
     private fun showHud() {
@@ -337,6 +399,62 @@ class GameActivity : Activity() {
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PAD = "pad"
+        const val EXTRA_FALLBACK = "fallback"
+
+        /**
+         * Keep only the path to the page's biggest visible game frame; hide portal chrome around it
+         * and pin the game full-screen. Idempotent — safe to run twice per load.
+         */
+        const val CARVE_JS = """
+(function(){
+ try{
+  var W=innerWidth||1,H=innerHeight||1;
+  function visArea(e){try{var r=e.getBoundingClientRect();
+    var x=Math.min(r.right,W)-Math.max(r.left,0),y=Math.min(r.bottom,H)-Math.max(r.top,0);
+    return x>0&&y>0?x*y:0;}catch(x){return 0;}}
+  var pick=null,best=0,nodes=document.querySelectorAll('canvas,video,iframe');
+  for(var i=0;i<nodes.length;i++){var a=visArea(nodes[i]);if(a>best){best=a;pick=nodes[i];}}
+  if(!pick||best<W*H*0.04)return;
+  var node=pick,na=best;
+  while(node.parentElement&&node.parentElement!==document.body){
+    var pa=visArea(node.parentElement);
+    if(pa>na*1.7)break;
+    node=node.parentElement;na=pa;
+  }
+  var chain=[];for(var p=node;p;p=p.parentElement)chain.unshift(p);
+  document.documentElement.setAttribute('data-scn','keep');
+  for(var j=0;j<chain.length;j++)chain[j].setAttribute('data-scn','keep');
+  function hideOffPath(parent,keep){var s=parent.children;
+    for(var k=0;k<s.length;k++)if(s[k]!==keep)s[k].style.setProperty('display','none','important');}
+  hideOffPath(document.body,chain[0]);
+  for(var l=0;l<chain.length-1;l++)hideOffPath(chain[l],chain[l+1]);
+  document.documentElement.style.setProperty('background','#000','important');
+  document.body.style.setProperty('margin','0','important');
+  document.body.style.setProperty('background','#000','important');
+  pick.style.setProperty('position','fixed','important');
+  pick.style.setProperty('left','0','important');
+  pick.style.setProperty('top','0','important');
+  pick.style.setProperty('width','100vw','important');
+  pick.style.setProperty('height','100vh','important');
+  pick.style.setProperty('object-fit','contain','important');
+  pick.style.setProperty('z-index','2147483000','important');
+  pick.style.setProperty('border','none','important');
+  if(!window.__scenixGuard){
+    window.__scenixGuard=1;
+    new MutationObserver(function(ms){
+      for(var n=0;n<ms.length;n++){var add=ms[n].addedNodes||[];
+        for(var q=0;q<add.length;q++){var e=add[q];
+          if(e.nodeType!==1)continue;
+          if(e.tagName==='SCRIPT'||e.tagName==='STYLE')continue;
+          if(e.closest&&e.closest('[data-scn]'))continue;
+          var pos=false;try{var cs=getComputedStyle(e);pos=cs.position==='fixed'||cs.position==='absolute';}catch(x){}
+          if(pos)e.style.setProperty('display','none','important');
+        }}
+    }).observe(document.documentElement,{childList:true,subtree:true});
+  }
+ }catch(e){}
+})()
+"""
 
         /** Ad, analytics and ad-middleware hosts the web arcades reach for. The games never need them. */
         private val AD_HOSTS = listOf(

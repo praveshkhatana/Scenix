@@ -41,6 +41,9 @@ data class ProfileInfo(
     val languages: List<String> = emptyList(),
 )
 
+/** A face cached by the hub. The TV receives only the hub path, never an upstream image host. */
+data class AvatarChoice(val label: String, val image: String)
+
 /**
  * The native read path: Home, Detail, the player and the progress writes that keep Continue Watching
  * alive. The hub is still the source of truth — this only speaks the same `/app/v1` contract the web
@@ -226,6 +229,24 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 )
             }
             done(out, null)
+        }
+    }
+
+    /** Cached character faces for the native profile editor. Empty is a valid offline answer. */
+    fun avatarCharacters(seed: String, done: (choices: List<AvatarChoice>?, error: String?) -> Unit) {
+        request("/app/v1/avatars/characters", "limit=24&seed=" + enc(seed), "GET", null, 15000) { root, _, error ->
+            val arr = root?.optJSONArray("characters")
+            if (arr == null) {
+                done(null, error ?: "The hub has no cached character faces yet")
+                return@request
+            }
+            val choices = ArrayList<AvatarChoice>()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val image = s(item, "image", s(item, "src", ""))
+                if (image.isNotBlank()) choices.add(AvatarChoice(s(item, "label", s(item, "name", "Avatar")), image))
+            }
+            done(choices, null)
         }
     }
 

@@ -1,18 +1,28 @@
 /* core/games.js — the Game mode catalogue.
 
-   Sources are static data files built by tools/build-game-catalog.js:
+   Three sources ship built-in, as static data files built by tools/build-game-catalog.js:
      data/games/ported2browser.json  AAA and console titles ported to the browser
      data/games/poki.json            the Poki web arcade
      data/games/crazygames.json      the CrazyGames web arcade
+   They are seeds, not a closed list: any add-on the household installs may carry games too. An
+   installed external add-on is asked for `<base>/games.json`, which answers in exactly the shape
+   this endpoint returns — `{ rows: [ { title, items: [ { id,title,poster,playUrl,pad,… } ] } ] }` —
+   and its shelves land after the built-ins, named after the add-on. A dead or game-less add-on
+   costs one cached miss, never a hung request.
 
    A game is not a video title: it has no sources, no subtitles and no progress. What it carries
-   instead is `playUrl` — the address a client opens full-screen — and `pad`, whether the port
-   answers a game controller. The shelves are assembled here so every client (the native TV app,
-   the phone) draws one shared shape: rows of items with identity "game:<id>". */
+   instead is `playUrl` — the address a client opens full-screen — `fallbackUrl` for when that
+   first host refuses this region, and `pad`, whether the port answers a game controller. The
+   shelves are assembled here so every client (the native TV app, the phone) draws one shared
+   shape: rows of items with identity "game:<id>". */
 'use strict';
 
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const path = require('path');
+
+const addons = require('./addons');
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'games');
 const cache = new Map(); // file -> { mtime, rows }
@@ -44,6 +54,7 @@ function card(g, kind) {
     poster: g.cover || g.poster || '',
     backdrop: g.cover || g.poster || '',
     playUrl: g.playUrl,
+    fallbackUrl: g.fallbackUrl || '',
     pad: !!g.pad,
     kb: g.kb !== false,
     touch: g.touch !== undefined ? !!g.touch : kind !== 'p2b',
@@ -55,7 +66,7 @@ function card(g, kind) {
 
 const dedupe = (items) => [...new Map(items.map((i) => [i.title.toLowerCase(), i])).values()];
 
-function rows() {
+async function builtinRows() {
   const p2b = load('ported2browser.json').map((g) => card(g, 'p2b'));
   const poki = load('poki.json').map((g) => card(g, 'poki'));
   const crazy = load('crazygames.json').map((g) => card(g, 'crazy'));
@@ -94,6 +105,110 @@ function rows() {
   if (poki.length >= 4) out.push({ id: 'games-poki', title: 'Web arcade · Poki', card: 'game', items: poki.slice(0, 30), total: poki.length });
 
   return out;
+}
+
+/* ── Game-carrying addons ──────────────────────────────────────────────────────────────────────
+   An installed external addon is asked once per cache window for `<base>/games.json`. Nothing
+   about this is special-cased per addon: the built-ins above could themselves be addons, and a
+   household adding a new source changes this endpoint without a hub edit or restart. */
+
+const ADDON_OK_MS = 6 * 60 * 60 * 1000;   // an addon that answered games keeps them fresh this long
+const ADDON_MISS_MS = 10 * 60 * 1000;     // one that did not gets asked again after ten minutes
+const ADDON_FETCH_MS = Number(process.env.GAMES_ADDON_TIMEOUT_MS || 6000);
+const ADDON_MAX_BYTES = 4e6;
+const addonCache = new Map(); // addon id -> { at, rows }
+
+function fetchJson(url, ms) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    const timer = setTimeout(() => { try { req.destroy(); } catch (e) {} finish(null); }, ms);
+    let req;
+    try {
+      const lib = /^https:/i.test(url) ? https : http;
+      req = lib.get(url, { headers: { 'user-agent': 'ScenixHub/1.0', accept: 'application/json' }, timeout: ms }, (res) => {
+        if (res.statusCode !== 200) { res.resume(); return finish(null); }
+        let body = '';
+        let size = 0;
+        res.setEncoding('utf8');
+        res.on('data', (d) => { size += d.length; if (size > ADDON_MAX_BYTES) { req.destroy(); return finish(null); } body += d; });
+        res.on('end', () => { try { finish(JSON.parse(body)); } catch (e) { finish(null); } });
+      });
+      req.on('error', () => finish(null));
+      req.on('timeout', () => { req.destroy(); finish(null); });
+    } catch (e) { finish(null); }
+  });
+}
+
+/* An addon's item becomes a card on the same wire shape the built-ins use. The identity is
+   namespaced by addon id so two sources offering the same title never merge into one tile. */
+function addonCard(g, aid) {
+  if (!g || !g.id || !g.title || !/^https?:\/\//i.test(String(g.playUrl || ''))) return null;
+  return {
+    identity: 'game:' + aid + ':' + g.id,
+    type: 'game',
+    title: String(g.title).slice(0, 120),
+    poster: g.poster || g.cover || '',
+    backdrop: g.backdrop || g.poster || g.cover || '',
+    playUrl: String(g.playUrl),
+    fallbackUrl: /^https?:\/\//i.test(String(g.fallbackUrl || '')) ? String(g.fallbackUrl) : '',
+    pad: !!g.pad,
+    kb: g.kb !== false,
+    touch: !!g.touch,
+    tags: (g.tags || []).slice(0, 4),
+    desc: (g.desc || '').slice(0, 200),
+    source: 'addon:' + aid,
+  };
+}
+
+async function addonShelves(addonList) {
+  const out = [];
+  await Promise.all(addonList.map(async (a) => {
+    const hit = addonCache.get(a.id);
+    const ttl = hit && hit.rows ? ADDON_OK_MS : ADDON_MISS_MS;
+    if (hit && Date.now() - hit.at < ttl) {
+      if (hit.rows) out.push(...hit.rows);
+      return;
+    }
+    // The community protocol carries the addon's own configuration in its URL path, so the base —
+    // not the origin — is where its games.json lives.
+    const base = String(a.url || '').replace(/\/manifest\.json\/?$/, '');
+    const body = base ? await fetchJson(base + '/games.json', ADDON_FETCH_MS) : null;
+    let shelves = null;
+    if (body && Array.isArray(body.rows)) {
+      shelves = [];
+      for (let i = 0; i < body.rows.length && shelves.length < 8; i++) {
+        const r = body.rows[i] || {};
+        const items = ((r.items || []).map((g) => addonCard(g, a.id)).filter(Boolean));
+        if (items.length >= 3) {
+          shelves.push({
+            id: 'ga-' + a.id + '-' + (r.id || i),
+            title: String(r.title || a.name || 'Games'),
+            card: 'game',
+            items: items.slice(0, 60),
+            total: items.length,
+          });
+        }
+      }
+    }
+    addonCache.set(a.id, { at: Date.now(), rows: shelves });
+    if (shelves) out.push(...shelves);
+  }));
+  return out;
+}
+
+async function rows() {
+  const built = await builtinRows();
+  let carriers = [];
+  try {
+    carriers = (await addons.list())
+      .filter((a) => !a.native && a.enabled !== false && /https?:\/\//i.test(String(a.url || '')));
+  } catch (e) { /* the addon host is having a moment; built-ins still answer */ }
+  let extra = [];
+  try { extra = await addonShelves(carriers); } catch (e) { /* same */ }
+  // One shelf per addon at most would starve a rich source; title-level dedupe across sources
+  // keeps the featured row honest while each add-on still owns its own rail.
+  return built.concat(extra);
 }
 
 module.exports = { rows };
