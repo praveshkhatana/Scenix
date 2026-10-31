@@ -255,10 +255,17 @@ internal class Ps5HomeLayout(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val brand = Views.text(app, "li", 18f, theme.ink, "SCENIX", bold = true)
-        left.addView(brand, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginEnd = theme.px(28f) })
+        // The owner's wordmark, not styled text: the PS5 strip is a brand placement like every
+        // other, and its letterforms must not depend on the television's font.
+        val brand = android.widget.ImageView(context).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            setColorFilter(theme.brand)
+            scaleType = android.widget.ImageView.ScaleType.FIT_START
+            contentDescription = "Scenix"
+        }
+        left.addView(brand, LinearLayout.LayoutParams(theme.px(122f), theme.px(28f)).apply {
+            marginEnd = theme.px(24f)
+        })
         val sections = listOf(
             // These are compact content filters, modelled on the reference's ALL/RACING/etc.
             // strip—not a conventional application navbar.
