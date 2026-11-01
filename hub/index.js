@@ -81,6 +81,7 @@ const shelves = require('./core/catalogs');
 const taste = require('./core/taste');
 const prefs = require('./core/prefs');
 const gateway = require('./core/gateway');
+const liveHealth = require('./core/live-health');
 // Optional: a paid resolver, off unless the owner configures a provider and a token. It is tried before
 // the gateway and is never a hard dependency of the play path.
 const debrid = require('./core/debrid');
@@ -2240,6 +2241,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const skip = exclusions(opts.exclude);
   const open = sources.filter((s) => !isExcluded(s, skip));
   await probePass(open.length ? open : sources, kept.streamId || identity, { force: opts.reprobe === true });
+  // A live channel that comes BACK to the hub (`/switch` with exclusions — the TV's own failover after
+  // a stall or an error) is the freshest evidence that exists about this feed: a screen tried to watch
+  // it and could not. The scheduled probe re-checks only every 30 minutes, so without this the dead
+  // feed the viewer just left keeps its working badge — and keeps winning the tune — until tonight is
+  // over. Report it, so the next tune picks another variant and the wall marks it honestly.
+  if (kept.type === 'channel' && Array.isArray(opts.exclude) && opts.exclude.length) {
+    const h = liveHealth.get(identity);
+    if (h && h.ok && h.url) liveHealth.report(identity, false, h.url, 'a viewer could not play this feed');
+  }
   // And the languages the copies state, from the track cache: the ranking rule prefers a proven Hindi
   // track over a filename that promises one, and the response has to carry the same list the picker
   // ranked on. Cache-only, so this costs the play budget nothing.

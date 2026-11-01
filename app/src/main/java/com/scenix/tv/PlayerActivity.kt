@@ -160,6 +160,8 @@ class PlayerActivity : Activity() {
     private var subsGen = 0
     private var failovers = 0
     private var sameCopyRetries = 0
+    /** Bounded re-tunes after a live feed closed its body mid-evening; reset when a picture plays. */
+    private var liveEndedRetries = 0
     private var bufferingSince = 0L
     private var recoveryScheduled = false
     /** Picture the player is holding, in ms ahead of the playhead, and how long it has been shrinking. */
@@ -181,8 +183,11 @@ class PlayerActivity : Activity() {
         if (sameCopyRetries < 2) {
             sameCopyRetries++
             showCenter("Still loading this copy…", true)
+            // Gen-guarded like every HTTP path: a switch or an episode jump that resolved while this
+            // retry was queued must not be restarted at the OLD item's playhead when the lambda fires.
+            val gen = requestGen
             handler.postDelayed({
-                if (!isFinishing) answer?.let { start(it, pos, playWhenReady = true) }
+                if (!isFinishing && gen == requestGen) answer?.let { start(it, pos, playWhenReady = true) }
             }, 1200L)
             bufferingSince = 0L
             return@Runnable
@@ -247,6 +252,8 @@ class PlayerActivity : Activity() {
     private var nextShowing = false
     private var undoShowing = false
     private var undoSpec: PlaySpec? = null
+    /** Where the viewer sat in the episode auto-advance just left; Undo goes back TO it, not to 0. */
+    private var undoPositionMs = 0L
 
     private val hideRunnable = Runnable { hideChrome() }
     private var ticker: Runnable? = null
@@ -340,10 +347,14 @@ class PlayerActivity : Activity() {
 
     private fun buildPlayer() {
         val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Scenix/0.1")
+            // NOT setUserAgent: DefaultHttpDataSource applies the factory's UA AFTER the per-request
+            // properties, so the hub's own User-Agent — the browser UA live feeds demand — was silently
+            // replaced by ours on every IPTV request (Referer survived, UA did not). The fallback lives
+            // in defaultRequestProperties instead, which the answer's headers may still override.
             .setConnectTimeoutMs(10000)
             .setReadTimeoutMs(30000)
             .setAllowCrossProtocolRedirects(true)
+        httpFactory.setDefaultRequestProperties(mapOf("User-Agent" to "Scenix/0.1"))
         http = httpFactory
 
         val ctx = app
@@ -457,13 +468,18 @@ class PlayerActivity : Activity() {
             updatePlayLabel()
             if (isPlaying) {
                 bufferingSince = 0L
+                liveEndedRetries = 0
                 handler.removeCallbacks(stallCheck)
                 // A frame is moving: no loading card and no failure card may sit on top of it. This
                 // is the one place that guarantees the rule, whichever path started the picture.
                 if (errorShowing) clearError()
                 hideCenter()
             }
-            if (!isPlaying) saveProgress(force = true) else armHide()
+            // Only a PAUSE the viewer asked for deserves the forced write. isPlaying also flips false
+            // on every rebuffer and every setMediaItem swap; forcing there makes a stall-prone copy
+            // chatty with the progress store on top of the regular cadence in tick().
+            if (isPlaying) armHide()
+            else if (player?.playWhenReady != true) saveProgress(force = true)
         }
 
         override fun onTracksChanged(tracks: Tracks) {
@@ -563,6 +579,13 @@ class PlayerActivity : Activity() {
 
     private fun open(spec: PlaySpec, positionMs: Long) {
         saveProgress(force = true)
+        // End the old picture NOW. Leaving the previous episode decoding means its sound plays under
+        // "Preparing this copy…", and its STATE_READY keeps pictureLive() true — so when the NEW title
+        // fails, showError degrades to a one-line status and the viewer is left with a spinner over
+        // the wrong film. (Same reasoning in spectrum().)
+        player?.let {
+            try { it.stop(); it.clearMediaItems() } catch (e: Exception) { /* already gone */ }
+        }
         this.spec = spec
         answer = null
         live = spec.type == "channel" || spec.type == "live"
@@ -731,7 +754,10 @@ class PlayerActivity : Activity() {
         if (!audioChosen) selectedAudioId = answerAudio
         if (!subChosen) selectedSubId = answerSub
 
+        // Baseline UA first, then the answer's own headers on top: setDefaultRequestProperties REPLACES
+        // the map, so a hub answer that carries only Referer must not also erase our fallback UA.
         val headers = HashMap<String, String>()
+        headers["User-Agent"] = "Scenix/0.1"
         reply.optJSONObject("headers")?.let { h ->
             for (k in h.keys()) headers[k] = h.optString(k, "")
         }
@@ -754,7 +780,16 @@ class PlayerActivity : Activity() {
         loadedAnswer = reply
         // Seek the item to the same film position in the ladder's own relative timeline. For a direct
         // copy the offset is zero, so this is the original setMediaItem(item, positionMs).
-        val mediaStart = (positionMs - timelineOffsetMs).coerceAtLeast(0L)
+        // A live item gets TIME_UNSET — the live edge. A saved/last playhead is behind a timeshift
+        // window that has already moved, and seeking to it either throws BEHIND_LIVE_WINDOW or tunes
+        // into nothing.
+        // A resume point at or past the end of the copy (progress written from a longer alternate cut)
+        // must not land the first frame inside STATE_ENDED and fire the next-episode countdown on a
+        // "resume" nobody watched.
+        val capped = if (durationMs > 0 && positionMs >= durationMs - 10_000)
+            (durationMs - 20_000).coerceAtLeast(0L) else positionMs
+        val mediaStart = if (live) C.TIME_UNSET
+            else (capped - timelineOffsetMs).coerceAtLeast(0L)
         p.setMediaItem(item, mediaStart)
         pendingAudio = selectedAudioId
         pendingSub = selectedSubId
@@ -973,8 +1008,33 @@ class PlayerActivity : Activity() {
     }
 
     private fun findGroup(groups: List<Tracks.Group>, id: String, ordered: JSONArray?): Tracks.Group? {
+        // First: the language/label the hub recorded for the clicked row, matched against what media3
+        // reports. The positional lookup below is only correct while the hub's list is EXACTLY the
+        // container's stream list — commentary filtering, language dedupe or a cover-art stream media3
+        // hides all shift it, and a positional hit then selects a silent wrong language.
+        val row = ordered?.optJSONObject(positionOf(ordered, id).takeIf { it >= 0 } ?: -1)
+        val rowLabel = row?.optString("label").orEmpty().ifBlank { row?.optString("name").orEmpty() }
+        val rowLang = row?.optString("lang").orEmpty().ifBlank { row?.optString("language").orEmpty() }
+        if (rowLabel.isNotBlank()) {
+            groups.firstOrNull { g -> (0 until g.length).any { i -> g.getTrackFormat(i).label == rowLabel } }
+                ?.let { return it }
+        }
         val position = positionOf(ordered, id)
-        if (position >= 0) groups.getOrNull(position)?.let { return it }
+        if (position >= 0 && rowLang.isBlank() && rowLabel.isBlank()) {
+            groups.getOrNull(position)?.let { return it }
+        } else if (position >= 0 && rowLang.isNotBlank()) {
+            // Language known: only trust the position if that group actually carries the language —
+            // otherwise find the group that does, and use the position only as the last resort.
+            groups.firstOrNull { g ->
+                (0 until g.length).any { i ->
+                    val f = g.getTrackFormat(i)
+                    f.language == rowLang || (f.language.isNullOrBlank() && rowLang == "und")
+                }
+            }?.let { return it }
+            groups.getOrNull(position)?.let { return it }
+        } else if (position >= 0) {
+            groups.getOrNull(position)?.let { return it }
+        }
         if (id.startsWith("hub:")) {
             val index = id.removePrefix("hub:").toIntOrNull() ?: return null
             val sub = hubSubs.optJSONObject(index) ?: return null
@@ -1065,7 +1125,15 @@ class PlayerActivity : Activity() {
         val name = error.errorCodeName
         Log.w(TAG, "playback error " + name + " / " + error.errorCode + " / " + error.message)
         val detail = (error.message ?: "").lowercase()
-        if (!app.prefs.hevcBlocked() && (detail.contains("hevc") || detail.contains("hvc1"))) {
+        // A message-text match alone banned HEVC for the whole install: media3 IO errors embed the data
+        // URI, so a 404 on `movie-1080p-hevc.mkv` used to block the codec permanently with no way back.
+        // Only a decoder-side fault on a copy that IS hevc may do that.
+        val decoderFault = error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+        val pickedLabel = str(answer?.optJSONObject("picked"), "label").lowercase()
+        val hevcCopy = detail.contains("hevc") || detail.contains("hvc1") ||
+            pickedLabel.contains("hevc") || pickedLabel.contains("h265")
+        if (!app.prefs.hevcBlocked() && decoderFault && hevcCopy) {
             // The file reached the decoder; the decoder is the part that could not draw it. Remember
             // that for this panel, then let the normal failover ask the hub for an H.264 copy.
             app.prefs.setHevcBlocked(true)
@@ -1080,8 +1148,11 @@ class PlayerActivity : Activity() {
             sameCopyRetries++
             quietOrCenter(if (live) "Reconnecting to this channel…" else "Reconnecting to this copy…")
             val wait = if (sameCopyRetries == 1) 1200L else 2600L
+            // Gen guard: if the viewer switched or jumped episodes while this retry was queued, the
+            // lambda must not restart the NEW answer at the OLD item's playhead.
+            val gen = requestGen
             handler.postDelayed({
-                if (!isFinishing) answer?.let { start(it, pos, playWhenReady = true) }
+                if (!isFinishing && gen == requestGen) answer?.let { start(it, pos, playWhenReady = true) }
             }, wait)
             return
         }
@@ -1090,7 +1161,8 @@ class PlayerActivity : Activity() {
             str(it, "label").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
         }
         if (failovers >= MAX_FAILOVERS) {
-            showError("Nothing on this hub would play this title. ${sourceAdvice()}")
+            showError(if (live) "This channel is off the air. Try another channel."
+                else "Nothing on this hub would play this title. ${sourceAdvice()}")
             return
         }
         failovers++
@@ -1106,6 +1178,19 @@ class PlayerActivity : Activity() {
     private fun failoverToNext(preferLower: Boolean = false) {
         val spec = spec ?: return
         val pos = player?.let { filmPosition(it) } ?: 0L
+        // A stalled copy never raised an ExoPlayer error, but this screen HAS tried it: record it, or
+        // the switch below asks the hub for the same top-ranked copy, stalls again, and the cycle
+        // spends the whole episode — this path never consulted MAX_FAILOVERS at all.
+        answer?.optJSONObject("picked")?.let {
+            str(it, "id").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
+            str(it, "label").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
+        }
+        if (failovers >= MAX_FAILOVERS) {
+            showError(if (live) "This channel is off the air. Try another channel."
+                else "Nothing on this hub would play this title. ${sourceAdvice()}")
+            return
+        }
+        failovers++
         clearError()
         if (preferLower) {
             val lower = lowerAlternative()
@@ -2695,6 +2780,23 @@ class PlayerActivity : Activity() {
 
     private fun onEnded() {
         saveProgress(force = true)
+        // A live feed that simply closes its body LOOKS like the end of a film to a player: STATE_ENDED
+        // on a live item is a CDN hanging up, not a finished programme. Re-tune the same channel
+        // (bounded) instead of telling the viewer to press Play to watch it again.
+        if (live && player?.isCurrentMediaItemLive == true) {
+            if (liveEndedRetries++ < 5) {
+                quietOrCenter("Reconnecting to this channel…")
+                val gen = requestGen
+                handler.postDelayed({
+                    if (!isFinishing && !isDestroyed && gen == requestGen)
+                        answer?.let { start(it, 0L, playWhenReady = true) }
+                }, 800L)
+                return
+            }
+            showError("This channel is off the air. Try another channel.")
+            return
+        }
+        liveEndedRetries = 0
         val next = nextEpisode
         if (next == null) {
             showChrome(focus = true)
@@ -2795,6 +2897,7 @@ class PlayerActivity : Activity() {
         if (season <= 0 || episode <= 0) return
         val old = spec ?: return
         undoSpec = old
+        undoPositionMs = maxPosition
         hideNextCard()
         val title = str(next, "title").ifBlank { old.title }
         open(PlaySpec(old.identity, old.type, season, episode, if (title.isBlank()) old.title else title), 0L)
@@ -2815,7 +2918,7 @@ class PlayerActivity : Activity() {
         card.addView(Views.text(app, "meta", 18f, theme.ink2, "Started the next episode"))
         val undo = chip("Undo", compact = true) {
             hideUndo()
-            open(previous, 0L)
+            open(previous, undoPositionMs)
         }
         card.addView(undo, wrap().withStart(theme.px(14f)))
         undoCard = card
@@ -2862,16 +2965,17 @@ class PlayerActivity : Activity() {
     private fun prefetchLiveChannels() {
         if (liveLoaded) return
         liveLoaded = true
-        api.load(profileId) { rows, _ ->
-            if (rows == null || isFinishing) return@load
+        // The zap ring is the whole channel list, not the 18-channel home-row preview it used to be
+        // taken from: zapping a channel that never made the home row used to "wrap" to channel 1.
+        // /app/v1/row/live is the full live shelf, ordered by health then zap number — the order the
+        // hub itself publishes numbers in.
+        api.row(profileId, "live") { _, items, _ ->
+            if (isFinishing) return@row
             val seen = LinkedHashMap<String, Item>()
-            for (row in rows) {
-                for (item in row.items) {
-                    if (item.isLive() && item.identity.isNotBlank()) {
-                        seen.putIfAbsent(item.identity, item)
-                    }
-                }
+            for (item in items.orEmpty()) {
+                if (item.isLive() && item.identity.isNotBlank()) seen.putIfAbsent(item.identity, item)
             }
+            if (seen.isEmpty()) return@row
             liveChannels = seen.values.toList()
             // The number is only known once the live row arrives; the header may already be up.
             if (live) updateHeader()
@@ -2894,6 +2998,13 @@ class PlayerActivity : Activity() {
         this.spec = spec
         displayTitle = spec.title
         live = true
+        // Stop the old feed the instant the zap is accepted. Until now the previous channel kept
+        // decoding until the new answer landed, so a failed tune left the viewer looking at the new
+        // channel's header and the old channel's picture — and Play/Pause acted on the old one.
+        player?.let {
+            try { it.stop(); it.clearMediaItems() } catch (e: Exception) { /* already gone */ }
+        }
+        liveEndedRetries = 0
         answer = null
         tried.clear()
         failovers = 0

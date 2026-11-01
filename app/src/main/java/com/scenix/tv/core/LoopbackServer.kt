@@ -60,6 +60,11 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
     private fun handle(socket: Socket) {
         try {
             socket.use { s ->
+                // An idle read timeout, or one abandoned connection sits on one of eight pool threads
+                // forever: ExoPlayer routinely leaves range sockets half-open, and a few of those
+                // quietly freeze every other loopback route (play, progress, subs) on a TV-class box.
+                s.soTimeout = 30_000
+                s.tcpNoDelay = true
                 val input = s.getInputStream()
                 val request = rawLine(input) ?: return
                 val parts = request.split(" ")

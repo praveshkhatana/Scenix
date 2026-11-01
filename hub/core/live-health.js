@@ -227,8 +227,7 @@ function assignNumbers(orderedIdentities) {
 
 function numberFor(identity) {
   const entry = state.channels[String(identity)];
-  return entry && Number.isFinite(entry.number) ? entry.number : null;
-}
+  return entry && Number.isFinite(entry.number) ? entry.number : null;}
 
 /** The probe record for an identity, or null when the hub has never checked this channel. */
 function get(identity) {
@@ -291,5 +290,23 @@ function status() {
   };
 }
 
-module.exports = { probe, assignNumbers, numberFor, get, rank, compare, status, FILE,
+/**
+ * A verdict from OUTSIDE the probe pass: a viewer's own screen just played (or failed to play) this
+ * feed. Written with the same shape the prober writes, so rank(), compare() and the published
+ * `live.health` all start telling the truth about a feed the moment a household notices — instead of
+ * waiting up to 30 minutes for the next scheduled check.
+ */
+function report(identity, ok, url, error) {
+  const key = String(identity);
+  if (!key) return null;
+  const entry = state.channels[key] || (state.channels[key] = {});
+  entry.ok = Boolean(ok);
+  entry.checkedAt = Date.now();
+  if (url) entry.url = String(url);
+  entry.error = ok ? null : String(error || 'a viewer reported a failure');
+  scheduleSave();
+  return get(identity);
+}
+
+module.exports = { probe, assignNumbers, numberFor, get, rank, compare, status, report, FILE,
   limits: { PROBE_TIMEOUT_MS, CONCURRENCY, STALE_MS } };

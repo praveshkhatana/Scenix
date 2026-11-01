@@ -326,7 +326,7 @@ function channelList() {
   const live = (settings.get().live || {});
   const hidden = new Set(live.hidden || []);
   const groups = new Set(live.groupsHidden || []);
-  return allChannels.map((c) => ({
+  const out = allChannels.map((c) => ({
     identity: identityForName(c.name),
     name: c.name,
     group: c.group,
@@ -336,6 +336,18 @@ function channelList() {
     enabled: !hidden.has(identityForName(c.name)) && !(c.groups || []).some((g) => groups.has(g)),
     number: liveHealth.numberFor(identityForName(c.name)) || null,
   }));
+  // The wall used to publish these blind and in raw playlist order: a channel the hub had watched
+  // fail looked identical to a working one, and the tile order had nothing to do with the numbers it
+  // prints. Same verdicts and same working-first, number-then-name order as the live row.
+  for (const c of out) {
+    const h = liveHealth.get(c.identity);
+    c.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
+  }
+  out.sort((a, b) => liveHealth.compare(
+    { identity: a.identity, title: a.name },
+    { identity: b.identity, title: b.name },
+  ));
+  return out;
 }
 
 function channelGroups() {
