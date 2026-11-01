@@ -46,8 +46,8 @@ Interactive states (reference shows default only; others inferred → deviation 
 | inkOnActiveSeg | #FFFFFF | m |
 | pillInk (idle nav text) | #B7C4D2 | e (glyph AA blend) |
 | searchKnob | rgba(255,255,255,0.13) raised circle, white glyph | m |
-| heroTintA deep card | grad #2E6196 → #1F4E7E | m (#205C92/#265A8D over art) |
-| heroTintB pale card | grad #9FB6DC → #7F9CCB | m (#87A2CD) |
+| heroTintA deep card | grad #225A92 → #2E6196 | m (grid remeasure 2026-11-01 core (34,90,146)=#225A92; first-iteration values superseded — shipped pack passed landmark audit) |
+| heroTintB pale card | grad #87A2CD → #7E9CCB | m (grid remeasure sample #87A2CD; first-iteration values superseded) |
 | glassRim (specular 1px on cards/chips) | rgba(255,255,255,0.38) | e (edge highlight) |
 | chipFill | rgba(255,255,255,0.10) | m (chip (143,159,174) vs wall (132,155,170)) |
 | inkOnGlass / captionInk | #FFFFFF (title #EAF1F6) | m |
