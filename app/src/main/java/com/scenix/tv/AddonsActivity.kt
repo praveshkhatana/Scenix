@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
@@ -62,7 +63,15 @@ class AddonsActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.gutter, app.theme.px(18f), app.theme.gutter, app.theme.px(40f))
         }
-        root.addView(rows, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        // A hub with more than a handful of add-ons outgrows the screen; unscrolled, the trailing rows
+        // sit clipped and focus walks into a half-visible row it can never bring up. ScrollView passes
+        // child focus into view on its own, exactly as Settings does.
+        val scroll = ScrollView(this).apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+        scroll.addView(rows)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         load()
     }

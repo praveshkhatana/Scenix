@@ -9,6 +9,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
@@ -72,7 +73,14 @@ class SourcePacksActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.gutter, app.theme.px(18f), app.theme.gutter, app.theme.px(40f))
         }
-        root.addView(rows, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        // The pack list outgrows the screen on a warm hub; unscrolled, the last rows are clipped and
+        // unreachable by D-pad. Same ScrollView wrapper Settings uses — it scrolls focused children in.
+        val scroll = ScrollView(this).apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+        scroll.addView(rows)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         load()
     }

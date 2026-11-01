@@ -54,8 +54,9 @@ class BrowseActivity : Activity() {
     private var section = ""
     private var skeleton: View? = null
     private var contentRoot: ViewGroup? = null
-    /** The wordmark fades once the page scrolls, so a row heading never sits under it. */
-    private var brandMark: View? = null
+    /** The floating nav fades once the billboard has gone under it, and always shows when the
+     * remote is standing on it or back at the top of the page. */
+    private var chromeBar: View? = null
 
     // The hero and the first shelf are ONE section, the way Apple's shelf-top works: the slides the
     // hero shows are the tiles of the Featured row, and whichever side moves, the other follows.
@@ -184,19 +185,28 @@ class BrowseActivity : Activity() {
     }
 
     /**
-     * The wordmark belongs to the top of the page. It steps aside once the billboard has actually
-     * gone under the bar, so a shelf heading never sits beneath it — measured from the hero's own
-     * frame, because the RecyclerView's scroll offset is an estimate with variable-height rows and
-     * reported a scrolled page while the hero was still filling the screen.
+     * The floating bar belongs to the top of the page: the whole bar — wordmark, pill, and action
+     * icons together — steps aside once the billboard has actually gone under it, so a shelf
+     * heading never sits beneath it. It is measured from the hero's own frame, because the
+     * RecyclerView's scroll offset is an estimate with variable-height rows. A strict threshold
+     * with nothing re-asserting it is how Home kept no nav at all after a DOWN-and-UP: the fade
+     * animates (opacity only), and standing on the bar or on the billboard always brings it back,
+     * so a focus stop is never invisible.
      */
     private fun updateBrandFade() {
-        val mark = brandMark ?: return
+        val bar = chromeBar ?: return
+        val f = currentFocus
+        val onTopChrome = f != null && (isInside(bar, f) || outerPositionOf(f) == 0)
         val lm = list.layoutManager as? LinearLayoutManager
         val hero = lm?.findViewByPosition(0)
-        // Before the list is laid out there is no hero frame to measure; the mark starts visible.
+        // Before the list is laid out there is no hero frame to measure; the bar starts visible.
         // Hiding it on "not measured yet" is how Home came up with no wordmark at all.
-        if (hero == null) return
-        mark.alpha = if (hero.bottom > app.theme.px(96f)) 1f else 0f
+        val visible = onTopChrome || (hero != null && hero.bottom > app.theme.px(96f))
+        val target = if (visible) 1f else 0f
+        if (bar.alpha == target) return
+        val ms = app.theme.token("anim", "navFadeMs", 180.0).toLong().coerceIn(60L, 400L)
+        bar.animate().cancel()
+        bar.animate().alpha(target).setDuration(ms).start()
     }
 
     /**
@@ -445,6 +455,9 @@ class BrowseActivity : Activity() {
                 updateBrandFade()
             }
         })
+        // A focus change without a scroll — UP from the first row lands on the bar itself — must
+        // bring the bar back too, or the ring sits on an invisible stop.
+        window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ -> updateBrandFade() }
         load()
     }
 
@@ -725,7 +738,6 @@ class BrowseActivity : Activity() {
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }
-        if (transparent) brandMark = brand
         val profile = navButton("Profile") {
             startActivity(
                 Intent(this@BrowseActivity, ProfilesActivity::class.java)
@@ -845,6 +857,7 @@ class BrowseActivity : Activity() {
             ).apply { gravity = Gravity.CENTER })
             // DOWN from anywhere on the bar returns to the top of the shelves.
             for (i in 0 until pill.childCount) pill.getChildAt(i).nextFocusDownId = shelfListId
+            if (transparent) chromeBar = bar
             return bar
         }
         // Classic/Netflix navigation uses the wordmark as its Home stop.  It used to be only
@@ -914,6 +927,7 @@ class BrowseActivity : Activity() {
         pillStops = listOf(homeBrand, movies, series, games, profile, search, settings)
         wirePillFocus()
         for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
+        if (transparent) chromeBar = bar
         return bar
     }
 
@@ -1137,10 +1151,15 @@ class BrowseActivity : Activity() {
             // now live *inside* the HeroComponent, so the data source does not become a duplicate
             // Featured shelf below it.
             val maxSlides = app.theme.token("hero", "maxItems", 5.0).toInt().coerceAtLeast(1)
+            // A slide with no artwork at all still gets a tile, but its selector square is an empty
+            // dark hole — the blank tiles in the Featured strip. Only titles with real art become
+            // slides; a hub row of artless items keeps its shelf but never becomes the hero.
+            fun pickSlides(items: List<Item>) =
+                items.filter { !it.backdrop.isNullOrBlank() || !it.poster.isNullOrBlank() }.take(maxSlides)
             val heroRow = rows.firstOrNull { it.id == "hero" }
             val shelves: List<BrowseRow>
             if (heroRow != null && heroRow.items.isNotEmpty()) {
-                slides = heroRow.items.take(maxSlides)
+                slides = pickSlides(heroRow.items)
                 shelves = others
             } else {
                 val first = others.firstOrNull()
@@ -1148,7 +1167,7 @@ class BrowseActivity : Activity() {
                     slides = emptyList()
                     shelves = others
                 } else {
-                    slides = first.items.take(maxSlides)
+                    slides = pickSlides(first.items)
                     // If the first shelf supplied the hero, do not draw that same row again under
                     // it. The hero owns its compact previews; subsequent rows remain browse rows.
                     shelves = others.drop(1)

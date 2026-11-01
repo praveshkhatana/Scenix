@@ -425,7 +425,23 @@ internal class HeroComponent(
             }
         }
         root.addView(art, FrameLayout.LayoutParams(width, height))
-        BrowseImages.load(art, item.backdrop ?: item.poster, width)
+        // The slide's own title stays hidden while art paints; it only appears if both load
+        // attempts fail, so the tile names its slide instead of being a dark hole under the remote.
+        val caption = Views.text(app, "sub", 17f, theme.ink, item.title, bold = true,
+            gravity = Gravity.BOTTOM or Gravity.START, maxLines = 1).apply {
+            visibility = View.GONE
+            setPadding(theme.px(12f), 0, theme.px(12f), theme.px(16f))
+        }
+        // A dead image edge is transient on these sources; an empty square that never fills reads
+        // as a broken carousel. Retry once, and if the art still refuses, name the slide instead of
+        // leaving a dark hole under the remote.
+        BrowseImages.load(art, item.backdrop ?: item.poster, width) { ok ->
+            if (!ok) art.postDelayed({
+                BrowseImages.load(art, item.backdrop ?: item.poster, width) { settled ->
+                    if (!settled && art.drawable == null) caption.visibility = View.VISIBLE
+                }
+            }, 1500L)
+        }
         val shade = View(context).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
@@ -435,6 +451,7 @@ internal class HeroComponent(
         root.addView(shade, FrameLayout.LayoutParams(width, theme.px(42f)).apply {
             gravity = Gravity.BOTTOM
         })
+        root.addView(caption, FrameLayout.LayoutParams(width, height))
         val active = View(context).apply {
             background = Views.rounded(theme.ink, theme.px(999f))
             visibility = View.INVISIBLE

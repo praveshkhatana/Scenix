@@ -39,6 +39,7 @@ class SearchActivity : Activity() {
     private lateinit var queryView: TextView
     private lateinit var status: TextView
     private lateinit var results: RecyclerView
+    private lateinit var gridManager: GridLayoutManager
     private lateinit var resultHeading: TextView
     private lateinit var emptyResults: TextView
     private lateinit var keys: LinearLayout
@@ -135,13 +136,22 @@ class SearchActivity : Activity() {
         resultHeading.setPadding(0, 0, 0, app.theme.px(12f))
         pane.addView(resultHeading)
         val resultHost = FrameLayout(this)
+        gridManager = GridLayoutManager(this@SearchActivity, 4)
         results = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@SearchActivity, 4)
+            layoutManager = gridManager
             setHasFixedSize(true)
             itemAnimator = null
             clipToPadding = false
             clipChildren = false
             visibility = View.INVISIBLE
+            // The pane is narrower than four fixed 230 px cards plus their halo gaps, and the cards
+            // then drew over their neighbours — the overlapping rows in the audit shots. Count the
+            // columns from the width actually measured, and let each card fill its own column.
+            addOnLayoutChangeListener { _, _, _, w, _, _, _, _, _ ->
+                if (w <= 0) return@addOnLayoutChangeListener
+                val cols = (w / (app.theme.px(230f) + app.theme.px(24f))).coerceAtLeast(1)
+                if (gridManager.spanCount != cols) gridManager.spanCount = cols
+            }
         }
         resultHost.addView(results, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
@@ -287,7 +297,7 @@ class SearchActivity : Activity() {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ResultHolder {
             val card = FrameLayout(this@SearchActivity).apply {
-                layoutParams = RecyclerView.LayoutParams(cardW, cardH).apply {
+                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
                     // Reserve room for the focused lockup's halo instead of cutting it off at
                     // the next result cell.
                     marginEnd = theme.px(24f)
@@ -299,9 +309,10 @@ class SearchActivity : Activity() {
             }
             val glowPad = theme.px(20f)
             val ringOn = View(this@SearchActivity)
-            card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
-                gravity = Gravity.TOP or Gravity.START
-                leftMargin = -glowPad; topMargin = -glowPad
+            card.addView(ringOn, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+            ).apply {
+                leftMargin = -glowPad; topMargin = -glowPad; rightMargin = -glowPad; bottomMargin = -glowPad
             })
             val art = ImageView(this@SearchActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP

@@ -80,7 +80,16 @@ object BrowseImages {
             if (bitmap != null) cache.put(requestKey, bitmap)
             main.post {
                 if (view.tag == requestKey) {
-                    if (bitmap != null) view.setImageBitmap(bitmap)
+                    if (bitmap != null) {
+                        // Art that arrives after the placeholder was placed should fade up into it
+                        // (opacity only, entry family), not pop into existence mid-scroll.
+                        val wasEmpty = view.drawable == null
+                        view.setImageBitmap(bitmap)
+                        if (wasEmpty) {
+                            view.alpha = 0f
+                            view.animate().alpha(1f).setDuration(240).start()
+                        }
+                    }
                     onResult?.invoke(bitmap != null)
                 }
             }

@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
@@ -63,7 +64,14 @@ class DebridActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.gutter, app.theme.px(18f), app.theme.gutter, app.theme.px(40f))
         }
-        root.addView(rows, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        // The provider list can outgrow the screen; unscrolled, trailing rows are clipped and the
+        // D-pad walks into a half-visible row. Same ScrollView wrapper Settings uses.
+        val scroll = ScrollView(this).apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+        scroll.addView(rows)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         load()
     }
