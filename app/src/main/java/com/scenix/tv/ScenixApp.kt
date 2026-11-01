@@ -25,15 +25,15 @@ class ScenixApp : Application() {
         val h = metrics.heightPixels
 
         prefs = Prefs(this)
-        theme = Theme.load(assets, w, h, Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
+        theme = Theme.load(this, assets, w, h, Theme.assetFor(this, assets, prefs.theme()), prefs.uiZoom())
         ctx = AppContext(this, theme, prefs)
     }
 
     /** Reload the chosen theme in place; screens built by the new activities then read it. */
     fun reloadTheme() {
         val metrics = resources.displayMetrics
-        val next = Theme.load(assets, metrics.widthPixels, metrics.heightPixels,
-            Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
+        val next = Theme.load(this, assets, metrics.widthPixels, metrics.heightPixels,
+            Theme.assetFor(this, assets, prefs.theme()), prefs.uiZoom())
         theme = next
         ctx.theme = next
     }

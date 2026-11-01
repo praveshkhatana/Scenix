@@ -210,7 +210,7 @@ class SettingsActivity : Activity() {
                     )
                 }
             }
-            val picked = Theme.catalog(assets).firstOrNull { it.id == app.prefs.theme() }
+            val picked = Theme.catalog(this, assets).firstOrNull { it.id == app.prefs.theme() }
             val themeName = when {
                 picked == null -> app.prefs.theme()
                 picked.pack.isBlank() -> picked.name
@@ -218,6 +218,12 @@ class SettingsActivity : Activity() {
             }
             addRow("Theme", themeName, "The look of the native screens and the web UI") {
                 requireAdmin { pickTheme() }
+            }
+            val installedPacks = Theme.catalog(this, assets).count { it.installed }
+            addRow("Pack themes",
+                if (installedPacks == 0) "None installed" else "$installedPacks installed",
+                "Paint a curated pack with your own colours and sizes from a JSON URL") {
+                requireAdmin { showPackThemes() }
             }
             // Accessibility, not taste: one multiplier over the whole theme so text, tiles, gaps and
             // the hero all grow together for far seats and weak eyes. No admin door on this one.
@@ -284,6 +290,9 @@ class SettingsActivity : Activity() {
                 }
             }
         }
+        // Repainting swaps every row out; the screen must never be left without a focus anchor,
+        // so the walk resumes at the top of the rows, exactly like on first entry.
+        rows.getChildAt(0)?.post { rows.getChildAt(0).requestFocus() }
     }
 
     /**
@@ -348,7 +357,13 @@ class SettingsActivity : Activity() {
     @Deprecated("Activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_LOCAL_TREE || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
+        if (requestCode == REQ_PACK_URL) {
+            val url = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT)?.trim().orEmpty()
+            if (url.isNotBlank()) installPack(url)
+            return
+        }
+        if (requestCode != REQ_LOCAL_TREE) return
         val uri = data?.data ?: return
         try {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -763,7 +778,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun pickTheme() {
-        val choices = Theme.catalog(assets)
+        val choices = Theme.catalog(this, assets)
         showPicker("Theme", choices.map {
             it.id to if (it.pack.isBlank()) it.name else it.name + " · " + it.pack
         }, app.prefs.theme()) { id ->
@@ -778,6 +793,94 @@ class SettingsActivity : Activity() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             )
         }
+    }
+
+    /**
+     * The installed tier of the pack system: token reskins of the curated packs, each one JSON at
+     * `files/packs/<id>.json` naming its base in `basedOn`. A reskin paints colours, radii,
+     * spacing, type, focus bands and size numbers — the layout itself stays the curated pack's,
+     * so an installed pack can never make Home unusable.
+     */
+    private fun showPackThemes() {
+        val installed = Theme.catalog(this, assets).filter { it.installed }
+        val options = ArrayList<Pair<String, String>>()
+        options.add("add" to "Add a pack theme from a URL")
+        for (c in installed) options.add("remove:" + c.id to "Remove " + c.name)
+        showPicker("Pack themes", options, "") { value ->
+            when {
+                value == "add" -> startActivityForResult(
+                    Intent(this, TextEntryActivity::class.java)
+                        .putExtra(TextEntryActivity.EXTRA_TITLE, "Add a pack theme")
+                        .putExtra(TextEntryActivity.EXTRA_HINT, "https://…/pack.json"),
+                    REQ_PACK_URL,
+                )
+                value.startsWith("remove:") -> removePack(value.removePrefix("remove:"))
+            }
+        }
+    }
+
+    private fun installPack(url: String) {
+        status.text = "Fetching the pack…"
+        Thread {
+            val outcome = try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.inputStream.use { inp ->
+                    val text = inp.bufferedReader().use { it.readText() }.take(65_536)
+                    val o = JSONObject(text)
+                    val id = o.optString("id").trim()
+                    val baseId = o.optString("basedOn").trim()
+                    when {
+                        !Regex("^[a-z][a-z0-9-]{1,31}$").matches(id) ->
+                            "The pack id must be lowercase letters, digits and dashes"
+                        Theme.catalog(assets).none { it.id == baseId } ->
+                            "It is not based on one of the five packs this TV carries"
+                        else -> {
+                            val dir = java.io.File(filesDir, "packs").apply { mkdirs() }
+                            java.io.File(dir, "$id.json").writeText(o.toString())
+                            null
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                "The pack could not be fetched or read"
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                status.text = outcome ?: "The pack is installed — pick it under Theme"
+                paint()
+            }
+        }.start()
+    }
+
+    private fun removePack(id: String) {
+        // Read the base before deleting: if this pack is the one being worn, the TV falls back to
+        // the curated pack it was painting, not to some unrelated default.
+        val file = java.io.File(java.io.File(filesDir, "packs"), "$id.json")
+        val baseId = try {
+            JSONObject(file.readText()).optString("basedOn").trim()
+        } catch (t: Throwable) {
+            ""
+        }
+        try {
+            file.delete()
+        } catch (t: Throwable) {
+            status.text = "The pack could not be removed"
+        }
+        if (app.prefs.theme() == id) {
+            // A screen cannot keep painting a pack that no longer exists: fall back to its base
+            // and rebuild the task, the way switching themes does.
+            val fallback = Theme.catalog(this, assets).firstOrNull { it.id == baseId }?.id
+                ?: Theme.catalog(this, assets).first { !it.installed }.id
+            app.prefs.setTheme(fallback)
+            (application as ScenixApp).reloadTheme()
+            startActivity(
+                Intent(this, ProfilesActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
+        }
+        paint()
     }
 
     private fun changeLock() {
@@ -924,6 +1027,7 @@ class SettingsActivity : Activity() {
     companion object {
         const val EXTRA_PROFILE = "profile"
         private const val REQ_LOCAL_TREE = 9001
+        private const val REQ_PACK_URL = 9002
         private const val REQ_LOCAL_PERMISSION = 9002
         private val LANGUAGES = listOf(
             "hin" to "Hindi", "eng" to "English", "pan" to "Punjabi", "tam" to "Tamil",
