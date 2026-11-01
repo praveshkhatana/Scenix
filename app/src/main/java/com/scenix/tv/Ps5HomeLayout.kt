@@ -366,7 +366,7 @@ internal class Ps5HomeLayout(
     private fun makeTile(index: Int, item: Item): Tile {
         val width = theme.px(theme.packInt("ps5TileWidth", 174).toFloat())
         val height = theme.px(theme.packInt("ps5TileHeight", 226).toFloat())
-        val outerPad = theme.px(18f)
+        val outerPad = theme.focusGlowInset
         val radius = theme.radius("card", 10f)
         val root = FrameLayout(context).apply {
             id = View.generateViewId()

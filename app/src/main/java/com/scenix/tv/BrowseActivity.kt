@@ -1610,7 +1610,7 @@ class BrowseActivity : Activity() {
             // This transparent, oversized view is the focus treatment's canvas. It must be the
             // first child so the artwork masks the centre of the halo; adding it last painted the
             // former focus bands over the poster and caption.
-            val glowPad = theme.px(24f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@BrowseActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
@@ -1772,7 +1772,7 @@ class BrowseActivity : Activity() {
             val slideState = if (featured) View(this@BrowseActivity).apply {
                 // Featured tiles are previews of the hero, not a second focus target. Apple gets
                 // one short active-slide marker; other packs retain their existing full rim.
-                background = if (theme.id == "scenix-apple") {
+                background = if (theme.packString("featuredMarker", "rim") == "bar") {
                     // A black cradle keeps the white marker legible even over a bright poster;
                     // this is state, not another card outline, so it cannot be mistaken for focus.
                     LayerDrawable(arrayOf(
@@ -1788,7 +1788,7 @@ class BrowseActivity : Activity() {
                 visibility = View.GONE
             } else null
             if (slideState != null) {
-                val markerLayout = if (theme.id == "scenix-apple") {
+                val markerLayout = if (theme.packString("featuredMarker", "rim") == "bar") {
                     FrameLayout.LayoutParams(theme.px(84f), theme.px(10f)).apply {
                         gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                         bottomMargin = captionH + theme.px(10f)

@@ -193,7 +193,7 @@ class LiveChannelsActivity : Activity() {
             card.isFocusable = true
             card.isClickable = true
             // The focus treatment is a background halo, not a foreground border over the logo.
-            val glowPad = theme.px(24f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@LiveChannelsActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(

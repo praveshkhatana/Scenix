@@ -250,7 +250,7 @@ class GamesActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(10f); topMargin = theme.px(10f)
             })
-            val glowPad = theme.px(26f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@GamesActivity)
             card.addView(ringOn, FrameLayout.LayoutParams(cardW, artH + glowPad * 2).apply {
                 gravity = Gravity.TOP or Gravity.START

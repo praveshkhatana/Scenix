@@ -308,12 +308,12 @@ class ManageProfilesActivity : Activity() {
                 tile.addView(Views.text(app, "meta", 14f, app.theme.ink2, choice.label, gravity = Gravity.CENTER,
                     maxLines = 1), LinearLayout.LayoutParams(size + app.theme.px(8f), app.theme.px(28f)))
                 Focus.attach(tile, face, app, size / 2, animateScale = false, elevate = false,
-                    glowInset = app.theme.px(12f),
+                    glowInset = app.theme.focusGlowInsetSm,
                     // The Apple pack's lift is elegant on posters but too subtle on a 104px face.
                     // A circular keyline makes the remote's current avatar unambiguous.
                     onFocus = { focused ->
                         face.foreground = if (focused) Views.ring(
-                            Color.argb(238, 255, 255, 255), size / 2, app.theme.px(3f)
+                            Color.argb(238, 255, 255, 255), size / 2, app.theme.focusRingPx
                         ) else null
                     })
                 line.addView(tile, LinearLayout.LayoutParams(size + app.theme.px(8f), app.theme.px(148f)).apply {

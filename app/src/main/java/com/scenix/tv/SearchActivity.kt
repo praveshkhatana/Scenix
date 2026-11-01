@@ -310,7 +310,7 @@ class SearchActivity : Activity() {
                 isClickable = true
                 clipChildren = false
             }
-            val glowPad = theme.px(20f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@SearchActivity)
             card.addView(ringOn, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,

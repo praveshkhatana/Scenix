@@ -270,7 +270,7 @@ class ProfilesActivity : Activity() {
         // The ring of light rides the face itself, glowing outward into the padding around it,
         // and the face lifts gently under the ring — the gate has motion, like the real thing.
         Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
-            elevate = false, glowInset = theme.px(22f),
+            elevate = false, glowInset = theme.focusGlowInset,
             onFocus = { focused -> paintProfileFocus(face, faceSize, focused) })
         // See [focusInitialProfile]: the first visible TV target must accept focus while the
         // system is still transitioning out of touch mode on cold start.
@@ -305,7 +305,7 @@ class ProfilesActivity : Activity() {
                 topMargin = theme.px(16f)
             })
         Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
-            elevate = false, glowInset = theme.px(22f),
+            elevate = false, glowInset = theme.focusGlowInset,
             onFocus = { focused -> paintProfileFocus(face, faceSize, focused) })
         tile.isFocusableInTouchMode = true
         tile.setOnClickListener {
@@ -324,7 +324,7 @@ class ProfilesActivity : Activity() {
      */
     private fun paintProfileFocus(face: View, faceSize: Int, focused: Boolean) {
         face.foreground = if (focused) {
-            Views.ring(Color.argb(238, 255, 255, 255), faceSize / 2, app.theme.px(4f))
+            Views.ring(Color.argb(238, 255, 255, 255), faceSize / 2, app.theme.focusRingPx)
         } else null
     }
 

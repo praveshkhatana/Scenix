@@ -394,7 +394,7 @@ internal class HeroComponent(
         val width = theme.px(232f)
         val height = theme.px(96f)
         val radius = theme.radius("card", 6f)
-        val haloPad = theme.px(16f)
+        val haloPad = theme.focusGlowInsetSm
         val root = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true

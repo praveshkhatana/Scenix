@@ -68,6 +68,13 @@ class Theme private constructor(
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
 
     /**
+     * The halo bands every shelf, grid and tile shares: the content-tile inset and the compact-
+     * chrome inset. Screens must never hand-pick a number again — this is THE vocabulary.
+     */
+    val focusGlowInset get() = px(focus.optDouble("glowInset", 24.0).toFloat())
+    val focusGlowInsetSm get() = px(focus.optDouble("glowInsetSm", 16.0).toFloat())
+
+    /**
      * Android TV exposes "remove animations" through the system animator scale.  A focus change
      * must still be obvious in that mode, but it must settle immediately rather than leaving a
      * half-lifted tile on screen.  Keeping this with the theme makes every native surface use the

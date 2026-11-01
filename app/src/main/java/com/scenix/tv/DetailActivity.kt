@@ -434,7 +434,7 @@ class DetailActivity : Activity() {
             card.isFocusable = true
             card.isClickable = true
             // The glow sits beneath the artwork, leaving the poster and its caption clean.
-            val glowPad = theme.px(22f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@DetailActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, artH + glowPad * 2).apply {
@@ -656,7 +656,7 @@ class DetailActivity : Activity() {
             val artH = theme.px(243f)
             val copyH = theme.px(104f)
             val cardH = artH + copyH
-            val haloPad = if (theme.focusStyle == "glow") theme.px(24f) else theme.px(5f)
+            val haloPad = if (theme.focusStyle == "glow") theme.focusGlowInset else theme.px(5f)
             val tile = FrameLayout(this).apply {
                 id = View.generateViewId()
                 isFocusable = true
@@ -756,7 +756,7 @@ class DetailActivity : Activity() {
             episodeTiles.clear()
 
             val cardH = theme.px(243f) + theme.px(104f)
-            val haloPad = if (theme.focusStyle == "glow") theme.px(24f) else theme.px(5f)
+            val haloPad = if (theme.focusStyle == "glow") theme.focusGlowInset else theme.px(5f)
             val rail = HorizontalScrollView(this).apply {
                 isHorizontalScrollBarEnabled = false
                 isFillViewport = false

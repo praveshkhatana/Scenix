@@ -123,7 +123,9 @@
     "durationMs": 150,
     "shadowElevation": 18,
     "glass": 1,
-    "glassPad": 8
+    "glassPad": 8,
+    "glowInset": 18,
+    "glowInsetSm": 14
   },
   "anim": {
     "cardFadeInMs": 180,

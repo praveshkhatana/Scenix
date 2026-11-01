@@ -202,7 +202,7 @@ class SectionActivity : Activity() {
             card.isClickable = true
             // Keep the halo underneath the image. A glow added after the caption paints opaque
             // bands over the artwork instead of light around the lockup.
-            val glowPad = theme.px(24f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@SectionActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(
