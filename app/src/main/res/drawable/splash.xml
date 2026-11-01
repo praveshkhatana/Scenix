@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The cold-start face: the Scenix S mark on the page colour, up the instant the window is created,
-     so the launch never shows a bare black frame while the hub probe runs. The mark is the owner's
-     S-Logo.svg, not a letter borrowed from the wordmark. -->
+<!-- The cold-start face: the full Scenix wordmark on the page colour, up the instant the window is
+     created, so the launch never shows a bare black frame while the hub probe runs. A TV splash has
+     room for the whole wordmark; the S mark stays where the wordmark does not fit — the round and
+     square launcher icons. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/bg" />
     <item
-        android:width="190dp"
-        android:height="190dp"
-        android:drawable="@drawable/brand_mark"
+        android:width="420dp"
+        android:height="97dp"
+        android:drawable="@drawable/scenix_wordmark"
         android:gravity="center" />
 </layer-list>

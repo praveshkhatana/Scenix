@@ -272,6 +272,7 @@ internal class Ps5HomeLayout(
             "All" to "",
             "Movies" to "movies",
             "Series" to "series",
+            "Games" to "games",
             "Live" to "live",
         )
         sections.forEachIndexed { index, (label, route) ->

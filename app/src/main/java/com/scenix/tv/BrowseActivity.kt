@@ -778,12 +778,13 @@ class BrowseActivity : Activity() {
             pill.addView(seriesTab)
             // Games is its own mode, not another catalogue tab: the hub answers a games shelf set
             // that has nothing in common with movie rows, so the tab opens its own screen.
-            pill.addView(navTab("Games") {
+            val gamesTab = navTab("Games", active = false) {
                 startActivity(
                     Intent(this@BrowseActivity, GamesActivity::class.java)
                         .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
                 )
-            })
+            }.apply { id = View.generateViewId() }
+            pill.addView(gamesTab)
             val live = navTab("Live TV") {
                 startActivity(
                     Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
@@ -833,6 +834,7 @@ class BrowseActivity : Activity() {
                 add(homeTab)
                 add(moviesTab)
                 add(seriesTab)
+                add(gamesTab)
                 add(live)
                 add(searchIcon)
                 add(gear)
@@ -866,6 +868,14 @@ class BrowseActivity : Activity() {
             onFocus = { if (it) onChromeFocused() })
         val movies = navButton("Movies") { goTab("movies") }.apply { id = View.generateViewId() }
         val series = navButton("Series") { goTab("series") }.apply { id = View.generateViewId() }
+        // Games is a mode, not a catalogue tab, in this bar too: without it the only way to the
+        // games screens from the Netflix and Classic packs was the settings page.
+        val games = navButton("Games") {
+            startActivity(
+                Intent(this@BrowseActivity, GamesActivity::class.java)
+                    .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
+            )
+        }.apply { id = View.generateViewId() }
         profile.id = View.generateViewId()
         search.id = View.generateViewId()
         settings.id = View.generateViewId()
@@ -884,6 +894,10 @@ class BrowseActivity : Activity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = theme.px(18f)
             })
+        bar.addView(games,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = theme.px(18f)
+            })
         bar.addView(profile, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = theme.px(24f)
         })
@@ -897,7 +911,7 @@ class BrowseActivity : Activity() {
         // bar, and on TV that made the Home/Play boundary impossible to traverse reliably.
         navAnchor = homeBrand
         pillGroup = bar
-        pillStops = listOf(homeBrand, movies, series, profile, search, settings)
+        pillStops = listOf(homeBrand, movies, series, games, profile, search, settings)
         wirePillFocus()
         for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
         return bar
@@ -1442,6 +1456,11 @@ class BrowseActivity : Activity() {
                                 startActivity(
                                     Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
                                         .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+                                )
+                            } else if (target == "games") {
+                                startActivity(
+                                    Intent(this@BrowseActivity, GamesActivity::class.java)
+                                        .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
                                 )
                             } else goTab(target)
                         },
