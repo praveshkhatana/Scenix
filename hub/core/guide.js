@@ -42,6 +42,46 @@ function slug(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
 }
 
+// Trailing noise the two ecosystems decorate the SAME channel with: iptv-org writes
+// "7SMusic.in@SD" and "Music India (HD)", epgshare01 writes "7SMusic.in" and "Music India HD".
+// Neither side can be edited, so matching drops these tokens from both. Only trailing ones:
+// "Ten 1 HD" loses "hd" but never the "1", and "Sony MAX" is not stripped to "Sony".
+const QUAL_TOKENS = new Set(['hd', 'sd', 'fhd', 'uhd', '4k', '3d']);
+const COUNTRY_TOKENS = new Set(['in', 'uk', 'us', 'pk', 'au', 'bd', 'ca', 'za', 'ae', 'sg', 'my', 'nz', 'ie']);
+
+/**
+ * The lookup spellings of one channel name/id, most exact first. Beyond the literal slug: the same
+ * name without trailing quality tokens, without a trailing country token, and with the word
+ * separators removed entirely (iptv-org writes "ETNow.in", epgshare01 "ET.Now.in" — squashed, both
+ * are "etnow"). The guide registers every spelling of each channel it knows; a lookup tries its own
+ * spellings in order and takes the first that answers.
+ */
+function variants(s) {
+  const base = String(s || '')
+    .toLowerCase()
+    .replace(/\((?:hd|sd|fhd|uhd|4k|3d)\)/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!base.length) return [];
+  const out = [];
+  const seen = new Set();
+  const add = (toks) => {
+    if (!toks.length) return;
+    for (const v of [toks.join('_'), toks.join('')]) {
+      if (v.length > 1 && !seen.has(v)) { seen.add(v); out.push(v); }
+    }
+  };
+  add(base);
+  let q = base;
+  while (q.length && QUAL_TOKENS.has(q[q.length - 1])) { q = q.slice(0, -1); add(q); }
+  let c = q;
+  while (c.length && COUNTRY_TOKENS.has(c[c.length - 1])) { c = c.slice(0, -1); add(c); }
+  while (c.length && QUAL_TOKENS.has(c[c.length - 1])) { c = c.slice(0, -1); add(c); }
+  return out;
+}
+
 function guideUrl() {
   return String((settings.get().live || {}).xmltv || '').trim();
 }
@@ -129,8 +169,8 @@ function fetchText(url, depth = 0) {
 }
 
 /** Parse one XMLTV document into the slug -> sorted-programmes map. */
-function parse(text) {
-  const map = new Map();
+function parse(text, into) {
+  const map = into || new Map();
   // <channel id="X">Display Name</channel> lets a guide keyed by tvg-id still be found by a
   // playlist that only knows the channel's name (and the other way round).
   const idToName = new Map();
@@ -141,7 +181,6 @@ function parse(text) {
     const name = firstTag(/<display-name[^>]*>([\s\S]*?)<\/display-name>/, cm[2]);
     if (id && name) idToName.set(slug(id), name);
   }
-  programmeCount = 0;
   const progRe = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/g;
   let pm;
   while ((pm = progRe.exec(text))) {
@@ -154,12 +193,14 @@ function parse(text) {
     const title = firstTag(/<title[^>]*>([\s\S]*?)<\/title>/, body);
     if (!title) continue;
     const cid = attr(open, 'channel');
+    // Register every spelling of the channel this programme belongs to: its id, its display name
+    // (so a playlist that only knows names finds it), and each of their quality/country-stripped
+    // and squashed variants — that is what lets iptv-org's "Colors.in@SD" meet epgshare01's
+    // "Colors.HD.in". The lookup uses the same recipe, most exact spelling first.
+    const viaName = cid ? idToName.get(slug(cid)) : '';
     const keys = new Set();
-    if (cid) {
-      keys.add(slug(cid));
-      const viaName = idToName.get(slug(cid));
-      if (viaName) keys.add(slug(viaName));
-    }
+    if (cid) for (const k of variants(cid)) keys.add(k);
+    if (viaName) for (const k of variants(viaName)) keys.add(k);
     if (!keys.size) continue;
     for (const key of keys) {
       let list = map.get(key);
@@ -186,31 +227,51 @@ function parse(text) {
 }
 
 /**
- * Fetch (if the owner configured one) and parse the guide. Always resolves; the outcome is visible
- * through status(). The playlist refresh and the 30-minute health tick both call this.
+ * Fetch (if the owner configured one) and parse the guide. The setting may hold up to three URLs
+ * separated by spaces or commas: public guides are split by region/language (epgshare01 publishes
+ * IN1/IN2/IN4 for India), and one household's playlist spans those same splits. Always resolves;
+ * the outcome — including a partial failure across several URLs — is visible through status(). The
+ * playlist refresh and the 30-minute health tick both call this.
  */
 function refresh(force = false) {
   if (fetching) return fetching;
-  const url = guideUrl();
-  if (!url) {
+  const urls = guideUrl().split(/[\s,]+/).map((x) => x.trim()).filter(Boolean).slice(0, 3);
+  if (!urls.length) {
     byChannel = new Map();
     updatedAt = 0; lastError = null; channelKeys = 0; programmeCount = 0;
     return Promise.resolve();
   }
   if (!force && updatedAt && Date.now() - updatedAt < REFRESH_MS) return Promise.resolve();
-  fetching = fetchText(url).then((text) => {
-    const map = parse(text);
+  fetching = Promise.resolve().then(async () => {
+    programmeCount = 0;
+    let map = new Map();
+    let fetched = 0;
+    let firstError = null;
+    for (const url of urls) {
+      try {
+        map = parse(await fetchText(url), map);
+        fetched++;
+      } catch (e) {
+        firstError = firstError || String(e.message || e);
+        log('GUIDE FAIL', url, firstError);
+      }
+      if (programmeCount >= MAX_PROGRAMMES) break;
+    }
+    if (!fetched) {
+      // Nothing answered. Keep answering last-known-good nulls rather than throwing at whoever
+      // triggered the refresh, but say so — status().error is where a dead guide URL shows up.
+      lastError = firstError;
+      log('GUIDE FAIL', 'all guide urls failed:', firstError);
+      return;
+    }
     byChannel = map;
     channelKeys = map.size;
     updatedAt = Date.now();
-    lastError = null;
+    lastError = firstError; // one dead url beside live ones is worth seeing, not hiding
     let total = 0;
     for (const list of map.values()) total += list.length;
     programmeCount = total;
-    log('GUIDE OK', 'keys', map.size, 'programmes', total);
-  }).catch((e) => {
-    lastError = String(e.message || e);
-    log('GUIDE FAIL', lastError);
+    log('GUIDE OK', 'urls', fetched, 'keys', map.size, 'programmes', total);
   }).finally(() => {
     fetching = null;
   });
@@ -220,8 +281,12 @@ function refresh(force = false) {
 function lookup(channel) {
   const name = channel && typeof channel === 'object' ? String(channel.name || '') : String(channel || '');
   const id = channel && typeof channel === 'object' ? String(channel.tvgId || '') : '';
-  for (const key of [slug(id), slug(name)]) {
-    if (!key) continue;
+  // The playlist's own id first (its @SD/@HD suffix stripped is a second spelling), then names:
+  // exact ids beat names, and names beat nothing.
+  const keys = [];
+  if (id) { keys.push(...variants(id), ...variants(String(id).split('@')[0])); }
+  if (name) keys.push(...variants(name));
+  for (const key of keys) {
     const list = byChannel.get(key);
     if (list && list.length) return list;
   }
@@ -275,4 +340,4 @@ function status() {
   };
 }
 
-module.exports = { refresh, nowNext, status, parse, parseXmltvTime };
+module.exports = { refresh, nowNext, status, parse, parseXmltvTime, variants };
