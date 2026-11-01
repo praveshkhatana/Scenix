@@ -791,6 +791,34 @@ function evictOver(c) {
     if (isWatched(old)) break;
     drop(old, 'over the copy limit');
   }
+  evictBytes(c);
+}
+
+/**
+ * The copy COUNT cap says how many cushions this box may hold; it says nothing about how many
+ * MEGABYTES. Browsing eight titles inside the 60 s watched window parks eight prime targets in RAM
+ * while the count pass sits idle — prod logs showed total hold climbing past the configured ceiling
+ * (86 MB held against a 96 MB cap, each copy inside its own window bound). The byte cap is the
+ * number the box actually has: drop the least-recent unwatched copies first, and past 1.5x the cap,
+ * drop recently-read copies nobody is reading THIS second, oldest first.
+ */
+function evictBytes(c) {
+  let held = 0;
+  for (const cp of copies.values()) held += cp.held();
+  if (held <= c.maxBytes) return;
+  const list = Array.from(copies.values()).sort((a, b) => a.lastUsed - b.lastUsed);
+  for (const hard of [false, true]) {
+    for (const old of list) {
+      if (!copies.has(old)) continue;
+      if (!hard && held <= c.maxBytes) return;
+      if (hard && held <= c.maxBytes * 1.5) return;
+      if (hard ? old.readers.size > 0 : isWatched(old)) continue;
+      const h = old.held();
+      drop(old, 'over the byte cap');
+      held -= h;
+    }
+    if (held <= c.maxBytes) return;
+  }
 }
 
 function drop(copy, why) {
@@ -827,21 +855,26 @@ async function sustain(copy, opts = {}) {
   const need = Number(opts.needMbps);
   if (Number.isFinite(need) && need > 0) copy.needMbps = need;
   const at = Number.isFinite(Number(opts.at)) ? Math.max(0, Number(opts.at)) : copy.base;
+  // A copy someone is READING right now (a /switch walks the queue without excluding the copy that is
+  // playing) must not be reset and yanked: its starve history is what protects the viewer, and a seek
+  // mid-read throws away the fill behind the player and measures across the seek. Sample only what
+  // arrives from here on, from where the reader already sits.
+  const serving = copy.readers.size > 0;
   copy.primeTarget = 0;   // a real viewer is reading now: the full bound applies
   const t0 = Date.now();
   copy.openedAt = t0;
-  copy.windows = [];
-  copy.slowRun = 0;
+  if (!serving) { copy.windows = []; copy.slowRun = 0; }
+  const wBase = copy.windows.length;
   copy.sliding = true;   // keep the reader running: pausing it mid-sample hides the swarm's real rate
-  copy.anchor = at;
+  if (!serving) copy.anchor = at;
   const alreadyHeld = copy.held();
   // Bytes we already hold stay held: they were paid for a moment ago and the player is about to want them.
   // What this sample measures is what arrives from here on.
-  if (copy.base <= at && (copy.pos === copy.base || at < copy.pos)) copy.ensureReader(copy.pos);
+  if (serving || (copy.base <= at && (copy.pos === copy.base || at < copy.pos))) copy.ensureReader(copy.pos);
   else copy.seekTo(at);
   const startPos = copy.pos;
   const deadline = t0 + budgetMs;
-  await copy.waitFor(() => Date.now() - t0 >= deadline || (!copy.isActive() && copy.windows.length > 0),
+  await copy.waitFor(() => Date.now() - t0 >= deadline || (!copy.isActive() && copy.windows.length > wBase),
     budgetMs + 80);
   // Close whatever window is still open so a sample taken over 4 s always reports both of its halves.
   // A short final window counts: a Play press that spent a second on the host's time-to-first-byte has
@@ -857,7 +890,8 @@ async function sustain(copy, opts = {}) {
   copy.lastUsed = Date.now();
   let worst = null;
   let validWindows = 0;
-  for (const w of copy.windows) if (w.valid) { validWindows++; if (worst === null || w.mbps < worst) worst = w.mbps; }
+  const sample = copy.windows.slice(wBase); // only windows opened during THIS sample belong to the verdict
+  for (const w of sample) if (w.valid) { validWindows++; if (worst === null || w.mbps < worst) worst = w.mbps; }
   const avg = (bytes * 8) / 1e6 / (ms / 1000);
   // One window is not a rate. The engine hands over its cached head at tens of MB/s and then goes quiet,
   // and a sample that only ever saw the head called a torrent with a dead swarm 14 Mbps — the picture
@@ -878,7 +912,7 @@ async function sustain(copy, opts = {}) {
     bytes,
     ms,
     bufferedMB: Math.round((copy.held() / MB) * 10) / 10,
-    windows: copy.windows.slice(-4).map((w) => ({
+    windows: sample.slice(-4).map((w) => ({
       ms: w.ms, mbps: Math.round(w.mbps * 10) / 10, valid: w.valid,
     })),
   };
@@ -951,6 +985,9 @@ function rangeOf(req) {
   if (m[1]) begin = Number(m[1]);
   if (m[2]) end = Number(m[2]);
   if (!m[1] && m[2]) return { begin: null, end: null, suffix: Number(m[2]), ranged: true };
+  // `bytes=500-0` is not a range: answering it would emit `Content-Range: bytes 500-0/…` and a
+  // negative Content-Length — an HTTP parse error at the player where a clean 416 is the cure.
+  if (end != null && end < begin) return { begin: 0, end: null, ranged: false, invalid: true };
   return { begin, end, ranged: true };
 }
 
@@ -1032,8 +1069,10 @@ function sideRead(res, copy, want, t0) {
         done = true;
         up.destroy();
         // Remember the far end of what we just delivered off-book: the next request that starts here is
-        // a continuation, not a probe.
-        copy.sideEnd = from + bytes;
+        // a continuation, not a probe. Only when the host actually honoured the range — a host that
+        // answered with a plain 200 full body delivered bytes from 0, and recording `from + bytes` as
+        // the end would point the continuation test at bytes that were never fetched.
+        copy.sideEnd = (up.statusCode === 206 || from === 0) ? from + bytes : null;
         copy.sideAt = Date.now();
         if (!res.writableEnded) { try { res.end(); } catch (e) { /* gone */ } }
         const secs = Math.max(0.001, (Date.now() - t0) / 1000);
@@ -1073,6 +1112,12 @@ async function serve(req, res, who, opts = {}) {
   const tag = copy.tag();
   const t0 = Date.now();
   const want = rangeOf(req);
+  if (want.invalid) {
+    res.writeHead(416, { 'content-range': 'bytes */' +
+      (Number.isFinite(copy.fileSize) && copy.fileSize > 0 ? copy.fileSize : '*') });
+    res.end();
+    return true;
+  }
 
   if (want.begin === null) {
     // `bytes=-N`, a suffix read: a player probing the end of a container (Matroska keeps its seek head
@@ -1166,8 +1211,11 @@ async function serve(req, res, who, opts = {}) {
   if (!sameRange) {
     hdrs['accept-ranges'] = 'bytes';
     if (want.ranged) {
+      // A total this hub has never seen stays `*` (valid per RFC 9110): inventing `offset+1` used to
+      // claim a file was one byte longer than the byte just asked for, and media3 takes content-range
+      // totals at their word when it computes end-of-file.
       hdrs['content-range'] = 'bytes ' + offset + '-' + (end == null ? '*' : end)
-        + '/' + (copy.fileSize || (offset + 1));
+        + '/' + (Number.isFinite(copy.fileSize) && copy.fileSize > 0 ? copy.fileSize : '*');
       if (end != null) hdrs['content-length'] = String(end - offset + 1);
     } else if (Number.isFinite(copy.fileSize) && copy.fileSize > 0) {
       hdrs['content-length'] = String(Math.max(0, copy.fileSize - offset));
@@ -1264,6 +1312,9 @@ const tick = setInterval(() => {
     if (copy.ranges) copy.planFetch(c);
     if (!copy.readers.size && now - copy.lastUsed > c.idleMs) drop(copy, 'idle');
   }
+  // Copies the watcher protected (read a moment ago, prime target filled) can each sit at their own
+  // bound; only a global pass keeps the SUM inside readAheadMB between Play presses.
+  evictBytes(c);
   for (const [h, s] of Array.from(slow.entries())) if (s.until < now) slow.delete(h);
 }, 500);
 if (tick.unref) tick.unref();

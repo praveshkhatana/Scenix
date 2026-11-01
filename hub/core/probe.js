@@ -619,7 +619,11 @@ async function probeAll(targets, { budgetMs = BUDGET_MS, force = false, timeoutM
 /** Synchronous read of what we already measured — for a rule or a row that must not wait at all. */
 function peek(url, headers = {}) {
   if (!ENABLED || !probeable(url)) return null;
-  return publicEntry(state.entries[keyFor(url, headers)] || null);
+  const e = state.entries[keyFor(url, headers)] || null;
+  // Freshness or nothing: entries are only swept after ~80 min, and `mintedRefusal` reads OK verdicts
+  // through here — an hour-old "this signed link was alive" hands an expired link straight to the TV
+  // while the same function age-checks failures. An expired OK is not a fact; it is a guess.
+  return e && freshEnough(e) ? publicEntry(e) : null;
 }
 
 /** Drop a measurement (the app reported "this one buffered": do not trust it until it is re-measured). */

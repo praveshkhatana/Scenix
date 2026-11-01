@@ -441,13 +441,19 @@ function file(req, res, job, rel, cors) {
       headers['Content-Length'] = end - start + 1;
       res.writeHead(206, headers);
       if (req.method === 'HEAD') return res.end();
-      return fs.createReadStream(full, { start, end }).pipe(res);
+      // The 60 s sweeper can rmSync this job directory between the statSync above and the open below;
+      // an unlistened ReadStream error is an uncaught exception and takes the whole hub with it.
+      const r1 = fs.createReadStream(full, { start, end });
+      r1.on('error', () => res.destroy());
+      return r1.pipe(res);
     }
   }
   headers['Content-Length'] = stat.size;
   res.writeHead(200, headers);
   if (req && req.method === 'HEAD') return res.end();
-  return fs.createReadStream(full).pipe(res);
+  const r2 = fs.createReadStream(full);
+  r2.on('error', () => res.destroy());
+  return r2.pipe(res);
 }
 
 function status() {

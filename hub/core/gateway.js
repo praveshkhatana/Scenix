@@ -25,6 +25,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const { URL } = require('url');
 // One-way dependency: the engine knows which file a torrent is, and only that makes it worth asking the
 // file what languages it carries. core/media.js never asks about the engine.
@@ -33,6 +34,11 @@ const readahead = require('./readahead');
 
 const MODE = String(process.env.GATEWAY || 'off').toLowerCase();
 const ENGINE = String(process.env.TORR_URL || 'http://127.0.0.1:8090').replace(/\/+$/, '');
+// Pick the client from the engine's own scheme. An https TORR_URL through http.get does not fail
+// politely — it throws ERR_INVALID_PROTOCOL and, with no supervisor, takes the hub down. readahead.js
+// already learned this lesson the hard way (prod outage, 2026-11-01); the engine URL is configurable,
+// so this file must not assume the habit of a plain http localhost default.
+const ELIB = /^https:/i.test(ENGINE) ? https : http;
 /** Same format as the hub's own lines, so `grep 'PROXY TTFB' hub.log` reads across both files. */
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 // Only needed when the engine is reached through something other than its own address.
@@ -91,7 +97,7 @@ function engineGet(pathAndQuery, timeoutMs) {
   return new Promise((resolve) => {
     let url;
     try { url = new URL(ENGINE + pathAndQuery); } catch (e) { return resolve({ error: 'bad TORR_URL: ' + e.message }); }
-    const req = http.get(url, { timeout: timeoutMs || PROBE_TIMEOUT_MS }, (res) => {
+    const req = ELIB.get(url, { timeout: timeoutMs || PROBE_TIMEOUT_MS }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
@@ -162,7 +168,7 @@ function enginePost(path, body, timeoutMs) {
   return new Promise((resolve) => {
     let url, payload;
     try { url = new URL(ENGINE + path); payload = Buffer.from(JSON.stringify(body)); } catch (e) { return resolve({ error: 'bad TORR_URL: ' + e.message }); }
-    const req = http.request(url, {
+    const req = ELIB.request(url, {
       method: 'POST',
       timeout: timeoutMs || PROBE_TIMEOUT_MS,
       headers: { 'content-type': 'application/json', 'content-length': payload.length },
@@ -249,7 +255,7 @@ function touchPlay(hash, fileId, bytes) {
   const want = Math.max(1, Number(bytes) || TOUCH_BYTES);
   const t0 = Date.now();
   try {
-    const req = http.get(ENGINE + '/play/' + hash + '/' + fileId,
+    const req = ELIB.get(ENGINE + '/play/' + hash + '/' + fileId,
       { timeout: TOUCH_TIMEOUT_MS, headers: { Range: 'bytes=0-' + (want - 1) } }, (res) => {
         let got = 0;
         res.on('data', (c) => {
@@ -313,6 +319,15 @@ function isCold(hash) {
 
 setInterval(() => {
   const now = Date.now();
+  // Both side-maps only ever get NEW entries: `prepared` grows one per title this box has ever
+  // touched (six-hour TTLs are checked on read, never swept) and `cold` expires only if the same
+  // hash is asked about again. A long-lived hub would otherwise carry every torrent it ever met.
+  for (const [k, p] of prepared) {
+    if (!p) { prepared.delete(k); continue; }
+    const life = String(k).startsWith('miss:') ? (p.ttl || MISS_DEAD_MS) : 6 * 3600e3;
+    if (now - (Number(p.at) || 0) > life) prepared.delete(k);
+  }
+  for (const [h, c] of cold) if (c.until < now) cold.delete(h);
   for (const [hash, w] of warm) {
     if (w.until < now) { warm.delete(hash); continue; }
     enginePost('/torrents', { action: 'add', link: w.link, save_to_db: true }, 3000);
@@ -340,7 +355,7 @@ function pump(hash, fileId, fileSize) {
   const target = Math.min(PUMP_BYTES, Number(fileSize) > 0 ? Number(fileSize) : PUMP_BYTES);
   if (target < 1048576) return;
   try {
-    const req = http.get(ENGINE + '/play/' + hash + '/' + fileId,
+    const req = ELIB.get(ENGINE + '/play/' + hash + '/' + fileId,
       { timeout: 60e3, headers: { Range: 'bytes=0-' + (target - 1) } }, (res) => {
         let got = 0;
         res.on('data', (c) => { got += c.length; if (got >= target) { res.destroy(); } });

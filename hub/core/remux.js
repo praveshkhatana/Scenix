@@ -465,7 +465,17 @@ function serve(req, res, u, cors, tracksLookup) {
           return;
         }
         served += c.length;
-        res.write(c);
+        // Backpressure, not a queue: a TV reading slower than ffmpeg remuxes must pause the faucet,
+        // or every unread chunk of a two-hour film piles into Node's write buffer and the hub's RSS
+        // grows without bound — and the stall watchdog then reads CLIENT slowness as SWARM slowness.
+        if (!res.write(c)) {
+          try { child.stdout.pause(); } catch (e) { /* gone */ }
+          res.once('drain', () => {
+            if (my === gen && !settled && !res.writableEnded) {
+              try { child.stdout.resume(); } catch (e) { /* gone */ }
+            }
+          });
+        }
       };
       pump(chunk);
       child.stdout.on('data', pump);
@@ -696,7 +706,12 @@ function hlsServe(req, res, u, cors, jobId, file) {
       const type = /\.m3u8$/.test(safe) ? 'application/vnd.apple.mpegurl'
         : /\.mp4$|\.m4s$/.test(safe) ? 'video/iso.segment' : 'video/mp2t';
       res.writeHead(200, Object.assign({ 'Content-Type': type, 'Cache-Control': 'no-store' }, cors));
-      fs.createReadStream(full).pipe(res);
+      // ffmpeg runs with delete_segments and the idle sweeper rmSyncs the whole directory, so a segment
+      // can vanish between the stat above and this open — and a ReadStream error with no listener is an
+      // uncaught exception, which on a hub with no supervisor is every screen on the house going dark.
+      const stream = fs.createReadStream(full);
+      stream.on('error', () => res.destroy());
+      stream.pipe(res);
     } else if (waited > 15000 || !job.child) {
       clearInterval(poll);
       sendJson(res, cors, 404, { error: 'segment not ready', waitedMs: waited });

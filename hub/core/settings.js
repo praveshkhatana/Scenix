@@ -379,15 +379,19 @@ function seedFromEnv(s) {
   if (process.env.PLAYLIST_URL && !s.live.playlist) s.live.playlist = String(process.env.PLAYLIST_URL).trim();
   const max = process.env.ADDON_MAX_SOURCES;
   const min = process.env.ADDON_MIN_SIZE_MB;
-  if (max !== undefined && s.addons.maxSources === DEFAULTS.addons.maxSources) s.addons.maxSources = Number(max);
-  if (min !== undefined && s.addons.minSizeMB === DEFAULTS.addons.minSizeMB) s.addons.minSizeMB = Number(min);
+  // A blank environment variable is not a value: `ADDON_MAX_SOURCES=` must not mean "zero sources"
+  // and `READ_AHEAD_MB=` must not mean "no cushion".
+  const envNum = (raw) => (raw === undefined || String(raw).trim() === '' || !Number.isFinite(Number(raw)))
+    ? null : Number(raw);
+  if (envNum(max) !== null && s.addons.maxSources === DEFAULTS.addons.maxSources) s.addons.maxSources = envNum(max);
+  if (envNum(min) !== null && s.addons.minSizeMB === DEFAULTS.addons.minSizeMB) s.addons.minSizeMB = envNum(min);
   // Read-ahead is on by default; an owner who wants the old pass-through pipe, or a smaller cushion on a
   // smaller box, can say so at install time without opening the UI.
   if (process.env.READ_AHEAD === '0' && s.playback.readAhead === DEFAULTS.playback.readAhead) {
     s.playback.readAhead = false;
   }
   const ra = process.env.READ_AHEAD_MB;
-  if (ra !== undefined && s.playback.readAheadMB === DEFAULTS.playback.readAheadMB) s.playback.readAheadMB = Number(ra);
+  if (envNum(ra) !== null && s.playback.readAheadMB === DEFAULTS.playback.readAheadMB) s.playback.readAheadMB = envNum(ra);
   // A debrid account is optional, so these only fill a blank install: an owner who turned it off in the
   // UI must not have it switched back on by an environment variable left in a compose file.
   if (process.env.DEBRID_ENABLED === '1' && s.debrid.enabled === DEFAULTS.debrid.enabled) {

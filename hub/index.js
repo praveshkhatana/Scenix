@@ -159,7 +159,10 @@ const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 1500);
 // exact link and cannot rank it honestly. One short check catches a service page answering 200 before a
 // player does; this many more ranked copies are woken when that check refuses one.
 const PLAY_VALIDATE_TIMEOUT_MS = Number(process.env.PLAY_VALIDATE_TIMEOUT_MS || 1200);
-const PLAY_VALIDATE_RETRIES = Number.isFinite(Number(process.env.PLAY_VALIDATE_RETRIES))
+// A blank environment variable is not a zero: `Number('')` is 0 and finite, so the naive guard let a
+// stray `PLAY_VALIDATE_RETRIES=` in a service file silently mean "no mint retries at all".
+const PLAY_VALIDATE_RETRIES = String(process.env.PLAY_VALIDATE_RETRIES ?? '').trim() !== ''
+    && Number.isFinite(Number(process.env.PLAY_VALIDATE_RETRIES))
   ? Math.max(0, Math.min(5, Number(process.env.PLAY_VALIDATE_RETRIES))) : 2;
 // How much of the ranking rule's speed bar applies to a client that plays the copy itself.
 //
@@ -173,12 +176,19 @@ const PLAY_VALIDATE_RETRIES = Number.isFinite(Number(process.env.PLAY_VALIDATE_R
 // wins on language, and a dead swarm is still disqualified.
 const PLAY_NATIVE_HEADROOM_SCALE = Math.min(1, Math.max(0.2, Number(process.env.PLAY_NATIVE_HEADROOM_SCALE || 0.7)));
 
-// What this line can carry through the torrent engine, learned from the bytes it actually delivered.
-// Measured here: plain HTTP download reaches 70+ Mbps while BitTorrent on the same box and the same
-// trackers delivers around 1 Mbps, so a 4K copy needing 8 Mbps is not a quality choice, it is a broken
-// promise. The picker feeds this number back into its own ordering, which is what "Auto" quality on a
-// paid app really means — the sharpest copy the connection can feed, worked out by measurement.
-let gatewayMbps = null;
+// What this line can carry, learned from the bytes it actually delivered. Measured here: plain HTTP
+// download reaches 70+ Mbps while BitTorrent on the same box and the same trackers delivers around
+// 1 Mbps, so a 4K copy needing 8 Mbps is not a quality choice, it is a broken promise. The picker feeds
+// these numbers back into its own ordering, which is what "Auto" quality on a paid app really means —
+// the sharpest copy the connection can feed, worked out by measurement. Two numbers, not one average:
+// an addon host's speed says nothing about what a swarm will carry, and one fast HTTP link mixing into
+// the swarm figure demoted 4K torrents that the box happily streamed all evening.
+let directMbps = null;   // measured through core/readahead.js against a direct/adaptive host
+let swarmMbps = null;    // measured through the torrent engine
+function linkMbpsNow() {
+  const v = [directMbps, swarmMbps].filter((x) => Number.isFinite(x));
+  return v.length ? Math.max.apply(null, v) : null;
+}
 const GATEWAY_FIT = 0.85; // keep 15% of the measured pipe for the player's own buffer
 // A play decision is the one place a page view is allowed to touch the internet: the hub measures the
 // links it is about to hand over, but never waits more than this for the measurement (core/probe.js
@@ -1098,7 +1108,7 @@ async function healthBody() {
     gateway: Object.assign({}, gateway.status(), {
       // The rate the engine has last been measured delivering, so the number the picker orders by is
       // visible from outside rather than inferred from which copy it happened to choose.
-      linkMbps: gatewayMbps ? Number(gatewayMbps.toFixed(2)) : null,
+      linkMbps: linkMbpsNow() == null ? null : Number(linkMbpsNow().toFixed(2)),
     }),
     // Optional paid resolver. Off is a normal, expected state; when on, this says which provider is
     // selected and whether a token is stored, never what it is. The check is not performed here so
@@ -1347,7 +1357,13 @@ async function proxyStream(req, res, u) {
       'range=' + (req.headers.range || 'none'));
     if (ttfb > 10000) gateway.noteCold(hash, ttfb); // reopening cost something: worth knowing at next play
   }
-  const done = gateway.readBegin(hash, fileId);
+  const release = gateway.readBegin(hash, fileId);
+  // release must fire exactly once per read: `end`, `error` and the response's `close` all overlap on a
+  // normal completed response, and readEnd deletes the entry at n<=0 — a double release with a second
+  // reader open tells the keep-warm heartbeat nobody is watching, and its offset-0 touch then drags
+  // the engine's sequential cache backwards under a mid-film viewer.
+  let released = false;
+  const done = () => { if (!released) { released = true; release(); } };
   let bytes = 0;
   let ended = false;
   const pass = { ...corsHeaders() };
@@ -1791,6 +1807,7 @@ function resumeOffset(source, item, positionMs) {
   if (!(pos > 0) || !(dur > 0) || !(size > 0)) return 0;
   return Math.max(0, Math.min(size - 1, Math.floor(size * (pos / dur))));
 }
+void resumeOffset; // kept for the day a pre-roll is placed by playhead again; the play path pre-rolls the head (see pickAndPlay)
 
 /**
  * What a source says about one language. `fromTracks` is the file's own measurement; `fromClaims` is the
@@ -2321,12 +2338,12 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // because it is the 70 Mbps HTTP path rather than the 1 Mbps BitTorrent one. The viewer asked for top
   // quality and gets the top quality that plays — which is what "Auto" means in a paid app.
   const fitRank = (s) => {
-    if (!gatewayMbps || !s || s.kind !== 'torrent') return -1;
+    if (!swarmMbps || !s || s.kind !== 'torrent') return -1;
     // `kept` is the merged item itself (pipeline returns the items it kept), so the runtime this
     // arithmetic needs comes off it directly.
     const need = ranking.estimateMbps(s, kept);
     if (!need) return -1; // an adaptive ladder has no fixed bitrate; it adjusts itself
-    return need <= gatewayMbps * fitCeiling ? 0 : need;
+    return need <= swarmMbps * fitCeiling ? 0 : need;
   };
   queue.sort((a, b) => fitRank(a) - fitRank(b));
   // An explicit copy stays at the head even when the automatic fit order would move a smaller torrent
@@ -2502,7 +2519,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // green light here starts with a cushion already under them, and the screen then reads the hub at
       // LAN speed instead of sitting on one rationed socket.
       const needDirect = ranking.estimateMbps(cand, kept);
-      const directOn = readahead.cfg().direct && /^https?:\/\//i.test(String(o.url || ''));
+      // A live channel is not a file. Its "copy" is a moving playlist: measuring it through the
+      // read-ahead buffer spends the play budget sustaining a window nobody will read, opens four
+      // extra sockets per zap against an IPTV host that reads them as abuse, and the bytes it parks
+      // in RAM are dead weight — the answer hands the origin URL to the screen directly (out.live).
+      // probePass is the only live check the picker needs; it already GETs the manifest.
+      const directOn = readahead.cfg().direct && kept.type !== 'channel' && !o.live
+        && /^https?:\/\//i.test(String(o.url || ''));
       if (directOn) {
         const who = { url: o.url, headers: o.headers || {} };
         const shunned = readahead.slowFor(who);
@@ -2534,7 +2557,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         if (md && md.bufferedMB != null) o.bufferedMB = md.bufferedMB;
         if (md && md.prebuffer) o.prebuffer = md.prebuffer;
         if (realD) {
-          gatewayMbps = gatewayMbps ? gatewayMbps * 0.6 + gotD * 0.4 : gotD;
+          directMbps = directMbps ? directMbps * 0.6 + gotD * 0.4 : gotD;
           log('PLAY RATE MEASURED', identity, labelOf(cand),
             'mbps=' + gotD.toFixed(1), 'need=' + (needDirect == null ? '?' : needDirect.toFixed(1)),
             'avg=' + md.avgMbps, 'over=' + md.ms + 'ms', 'windows=' + JSON.stringify(md.windows || []),
@@ -2686,7 +2709,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       readahead.noteNeed({ hash: r.hash, fileId: r.fileId }, needs);
       m = await readahead.sustain(buf, {
         needMbps: needs,
-        at: resumeOffset(cand, kept, opts.positionMs),
+        // The head of the file, not the byte the resume sits on: the same lesson the direct path
+        // above documents at length — the player opens this copy at byte 0 and parses the container
+        // before it seeks anywhere, so a pre-roll at the resume point gets thrown away in a seek and
+        // that repeat costs the first frame.
+        at: 0,
         // A fair share of the time that is left, not all of it: three copies inside eleven seconds means
         // the copy tested third must not be judged on a 1.5 s glance while the first had four. The reader
         // is left open either way, so a copy passed over keeps warming in the background and the next
@@ -2731,7 +2758,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       gateway.clearCold(r.hash);
       readahead.clearSlow(r.hash);
     } else if (rateIsReal) {
-      gatewayMbps = gatewayMbps ? gatewayMbps * 0.6 + got * 0.4 : got;
+      swarmMbps = swarmMbps ? swarmMbps * 0.6 + got * 0.4 : got;
       log('PLAY RATE MEASURED', identity, labelOf(cand),
         'mbps=' + got.toFixed(1), 'need=' + (needs == null ? '?' : needs.toFixed(1)),
         'avg=' + m.avgMbps, 'over=' + m.ms + 'ms', 'windows=' + JSON.stringify(m.windows || []),
@@ -3654,7 +3681,7 @@ async function handle(req, res) {
         gateway: Object.assign({}, gateway.status(), {
       // The rate the engine has last been measured delivering, so the number the picker orders by is
       // visible from outside rather than inferred from which copy it happened to choose.
-      linkMbps: gatewayMbps ? Number(gatewayMbps.toFixed(2)) : null,
+      linkMbps: linkMbpsNow() == null ? null : Number(linkMbpsNow().toFixed(2)),
     }),
         // What this hub can actually do, so a client UI decides from facts rather than from guessing
         // which build of the hub it happens to be talking to — the same contract is answered by the app
