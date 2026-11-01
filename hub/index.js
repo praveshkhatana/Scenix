@@ -468,6 +468,34 @@ function withBudget(promise, ms, fallback, label) {
   return Promise.race([safe, guard]).finally(() => clearTimeout(timer));
 }
 
+// ---- the tile cache -------------------------------------------------------------------------------
+//
+// A row already carries fully resolved items. The detail and play routes used to throw that away and
+// ask every addon again with a few hundred milliseconds; a slow catalogue addon (DesiFlix) then turned
+// a tile the viewer could see into "not found". Keeping the tile by identity makes the detail page
+// answer with the same object the row showed, and the provider pass below only enriches it.
+const ITEM_CACHE_MAX = Number(process.env.ITEM_CACHE_MAX || 6000);
+const itemCache = new Map();
+
+function rememberItems(items) {
+  if (!Array.isArray(items)) return;
+  for (const it of items) {
+    if (!it || !it.identity) continue;
+    itemCache.delete(it.identity);
+    itemCache.set(it.identity, it);
+  }
+  while (itemCache.size > ITEM_CACHE_MAX) {
+    const first = itemCache.keys().next();
+    if (first.done) break;
+    itemCache.delete(first.value);
+  }
+}
+
+function cachedItem(identity) {
+  const it = itemCache.get(String(identity));
+  return it ? JSON.parse(JSON.stringify(it)) : null;
+}
+
 // ---- the row context (what a row's build(ctx) gets) -----------------------------------------------
 
 function makeCtx(profile, metaBudget) {
@@ -517,14 +545,16 @@ function makeCtx(profile, metaBudget) {
 
     /** One identity across every addon, merged into one tile with all its sources. */
     async resolve(identity, hint) {
-      const parts = [];
-      for (const p of registry.providers) {
-        if (typeof p.meta !== 'function') continue;
-        const it = await withBudget(
+      const known = cachedItem(identity);
+      const parts = known ? [known] : [];
+      // Ask the addons together, not one after another: ten providers at 300 ms each made a cold
+      // detail page a three-second wait, and the route's own budget then served nothing.
+      const answers = await Promise.all(registry.providers
+        .filter((p) => typeof p.meta === 'function')
+        .map((p) => withBudget(
           Promise.resolve().then(() => p.meta(identity, hint)), metaBudget || 300, null, 'meta ' + p.id,
-        );
-        if (it) parts.push(it);
-      }
+        )));
+      for (const it of answers) if (it) parts.push(it);
       const item = merge.mergeItems(parts, registry.priorities);
       if (item) {
         store.touch(item.identity);
@@ -550,6 +580,7 @@ function makeCtx(profile, metaBudget) {
           if (fresh && fresh.length) item.sources.push(...fresh);
         }
         item.sources = merge.rankSources(item.sources, registry.priorities);
+        rememberItems([item]);
       }
       return item;
     },
@@ -754,6 +785,7 @@ async function buildRow(row, ctx, budgetMs) {
     Promise.resolve().then(() => row.build(ctx)), budgetMs || ROW_BUDGET_MS, [], 'row ' + row.id,
   );
   const items = await pipeline(raw || [], ctx);
+  rememberItems(items);
   // Trim after the rules: a row may hand back more candidates than it wants on screen.
   return items.slice(0, row.max || ROW_MAX);
 }
@@ -1296,6 +1328,86 @@ async function proxyStream(req, res, u) {
       ended = true;
     }
   });
+}
+
+/**
+ * A cushion, addressed.
+ *
+ * The picker measured a plain internet copy through core/readahead.js and kept the bytes it pulled; this
+ * map is the bridge from the token in the player's address back to the origin URL and the headers that
+ * origin insists on (`iKey`, `Referer`). Those stay here, where the screen never has to know them, and
+ * the TV gets one address that is always a fast local server — which is the whole difference between a
+ * copy a rationed host feeds at 2 Mbps on one socket and the same copy playing for two and a half hours.
+ *
+ * Tokens are per Play press on purpose: a direct addon link is signed and unique per resolve, and a
+ * cushion keyed by that URL can never serve someone else's stale bytes. They live as long as a film.
+ */
+const BUFFER_SESSION_MS = 3 * 60 * 60e3;
+const bufferSessions = new Map(); // token -> { url, headers, need, at, lastUsed }
+
+function mintBuffer(target) {
+  let tok = '';
+  do {
+    tok = crypto.randomBytes(9).toString('hex');
+  } while (bufferSessions.has(tok));
+  bufferSessions.set(tok, {
+    url: String(target.url),
+    headers: (target.headers && typeof target.headers === 'object') ? target.headers : {},
+    need: Number.isFinite(Number(target.need)) ? Number(target.need) : null,
+    at: Date.now(),
+    lastUsed: Date.now(),
+  });
+  // Nothing schedules this: a hub that serves one film at a time holds a handful of entries, and the
+  // sweep rides along with the press that needs one.
+  if (bufferSessions.size > 12) {
+    for (const [k, s] of bufferSessions) {
+      if (Date.now() - s.lastUsed > BUFFER_SESSION_MS) bufferSessions.delete(k);
+    }
+  }
+  return tok;
+}
+
+/**
+ * GET /app/v1/buffer?t=… — read a cushioned copy out of this box's RAM.
+ *
+ * The range handling, the window and the "the origin stopped feeding us" behaviour are all the torrent
+ * path's own code (readahead.serve), because a throttled file host and a thin swarm are the same
+ * problem wearing different clothes: the screen must never be the one waiting on the internet.
+ */
+async function bufferStream(req, res, u) {
+  const tok = String(u.searchParams.get('t') || '');
+  const s = bufferSessions.get(tok);
+  if (!s) {
+    // The hub restarted, or this address outlived its film. Say so in the shape the app already reads
+    // for a warming answer, so the screen re-presses /play instead of calling the file broken.
+    return send(res, 410, {
+      error: 'buffer gone',
+      warming: true,
+      detail: 'this buffered address is older than the film it pointed at',
+      retryAfterMs: 800,
+    }, 'application/json', { 'Retry-After': '1' });
+  }
+  s.lastUsed = Date.now();
+  const need = Number(u.searchParams.get('need'));
+  const served = await readahead.serve(req, res, { url: s.url, headers: s.headers }, {
+    needMbps: Number.isFinite(need) && need > 0 ? need : s.need,
+    // Shorter than the engine's header wait, and deliberately so: the hub has been pulling this copy with
+    // several sockets since it promised it, so fifteen seconds without a single byte means the host has
+    // stopped cooperating. Say so quickly and let the screen step down to a lighter copy while it still has
+    // picture, rather than sitting on one rationed read until the player gives up on its own.
+    headersMs: 15000,
+    retryAfterMs: PLAY_RETRY_AFTER_MS,
+    onCold: (waited, err) => log('BUFFER COLD', 'url=' + String(s.url).slice(0, 90),
+      'waited=' + waited + 'ms', String(err || 'no bytes')),
+  });
+  if (served) return;
+  // A suffix range (`bytes=-N`, a player probing the end of a container) or a cushion switched off in
+  // Settings: fall back to the plain pass-through with the origin's headers put back the way it wants.
+  const back = new URL(req.url, 'http://127.0.0.1:' + PORT);
+  back.searchParams.set('u', s.url);
+  const hh = Object.entries(s.headers || {}).map(([k, v]) => k + ':' + v).join('||');
+  if (hh) back.searchParams.set('h', hh);
+  return proxyStream(req, res, back);
 }
 
 /**
@@ -2203,6 +2315,124 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           continue;
         }
       }
+      // ---- measure the copy the way the screen is going to read it ---------------------------
+      //
+      // Everything above proves this link *answers*. It does not prove it can carry a picture, and for a
+      // direct addon link that is the whole game: one HTTP connection to a free file host, and those
+      // hosts ration each connection. Measured tonight on the copy this house watches: one socket ran
+      // 5 Mbps for ten megabytes, decayed to 2 Mbps by 25 MB, then handed over 30 MB in ninety seconds
+      // and stopped; four ranged reads in parallel carried 48 MB in 36 s. The 256 KB probe only ever
+      // sees the burst at the front of that curve — it reported "3.9 Mbps, enough for the 1.7 Mbps this
+      // file needs" — so the picker promised a 1080p copy the host could not feed, and the film froze
+      // four minutes in, which is exactly the complaint about this app.
+      //
+      // So the hub measures *through* its own read-ahead buffer, which reads with several ranged
+      // connections at once, and the verdict is the worst one-second window of that read: the number
+      // that predicts a freeze. The bytes it pulls are kept as the pre-roll, so a viewer who gets a
+      // green light here starts with a cushion already under them, and the screen then reads the hub at
+      // LAN speed instead of sitting on one rationed socket.
+      const needDirect = ranking.estimateMbps(cand, kept);
+      const directOn = readahead.cfg().direct && /^https?:\/\//i.test(String(o.url || ''));
+      if (directOn) {
+        const who = { url: o.url, headers: o.headers || {} };
+        const shunned = readahead.slowFor(who);
+        if (shunned && queue.length > 1) {
+          tried.push(labelOf(cand) + ': starved a viewer '
+            + Math.round((Date.now() - shunned.at) / 1000) + 's ago at ' + shunned.mbps
+            + ' Mbps against the ~' + shunned.needMbps + ' Mbps this file needs');
+          o.checked = true;
+          o.slow = true;
+          o.neededMbps = shunned.needMbps;
+          o.measuredMbps = shunned.mbps;
+          slowGateway = slowGateway || { o, cand };
+          continue;
+        }
+        const md = await readahead.cushionUrl(o.url, o.headers || {}, {
+          needMbps: needDirect,
+          // Measure and pre-roll the HEAD of the file, even resuming mid-film. A resume looks as if it
+          // wants the byte the viewer sits on — computed from size over runtime, the same arithmetic the
+          // ranking uses — but the player opens a new instance for the copy this press chose and parses the
+          // container from byte 0 before it seeks anywhere. Measured tonight: the hub pre-rolled 2.9 MB at
+          // 1.27 MB, the screen asked for byte 0 forty milliseconds later, the cushion threw the pre-roll
+          // away in a seek, and that repeat cost the first frame. The head is always wanted; the resume
+          // seek follows once the header is read, and by then the fill is running anyway.
+          at: 0,
+          leftMs: deadline - Date.now(),
+        });
+        const gotD = md && Number.isFinite(md.mbps) ? md.mbps : null;
+        const realD = !!md && !!md.real && gotD != null;
+        if (md && md.bufferedMB != null) o.bufferedMB = md.bufferedMB;
+        if (md && md.prebuffer) o.prebuffer = md.prebuffer;
+        if (realD) {
+          gatewayMbps = gatewayMbps ? gatewayMbps * 0.6 + gotD * 0.4 : gotD;
+          log('PLAY RATE MEASURED', identity, labelOf(cand),
+            'mbps=' + gotD.toFixed(1), 'need=' + (needDirect == null ? '?' : needDirect.toFixed(1)),
+            'avg=' + md.avgMbps, 'over=' + md.ms + 'ms', 'windows=' + JSON.stringify(md.windows || []),
+            'bufferedMB=' + md.bufferedMB, 'note=cushion');
+          if (needDirect && gotD >= needDirect * speedBar) readahead.clearSlowFor(who);
+        }
+        if (md && md.cached) {
+          // Its bytes are already in this box's RAM: nothing left to learn, and the fastest answer in
+          // the house. This is the paid service's advantage, arrived at with a buffer.
+          log('PLAY RATE CACHED', identity, labelOf(cand), 'bufferedMB=' + md.bufferedMB,
+            'need=' + (needDirect == null ? '?' : needDirect.toFixed(1)), 'note=cushion');
+          o.checked = true;
+          o.cached = true;
+          o.cushioned = true;
+          o.neededMbps = Number.isFinite(needDirect) ? Number(needDirect.toFixed(2)) : null;
+          if (gotD != null) o.measuredMbps = Number(gotD.toFixed(2));
+        } else if (realD && needDirect && gotD < needDirect * speedBar) {
+          // Carried bytes, at a rate this file cannot live on. The bar is the same one the torrent path
+          // uses, and the answer is the same: keep the sharpest copy the host can feed, and step down.
+          tried.push(labelOf(cand) + ': cushion carried ' + gotD.toFixed(1) + ' Mbps over ' + md.ms
+            + 'ms, this file needs ~' + needDirect.toFixed(1) + ' Mbps'
+            + (speedBar < ranking.HEADROOM ? ' (bar relaxed to ' + speedBar.toFixed(2)
+              + 'x for a client that plays the copy itself)' : ''));
+          o.checked = true;
+          o.slow = true;
+          o.neededMbps = Number(needDirect.toFixed(2));
+          o.measuredMbps = Number(gotD.toFixed(2));
+          o.measuredBytes = md.bytes || 0;
+          const headroom = gotD / needDirect;
+          if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
+          continue;
+        } else if (realD) {
+          o.checked = true;
+          o.cushioned = true;
+          o.neededMbps = Number.isFinite(needDirect) ? Number(needDirect.toFixed(2)) : null;
+          o.measuredMbps = Number(gotD.toFixed(2));
+        } else if (md && md.bytes > 0 && queue.length > queue.indexOf(cand) + 1) {
+          // Bytes, but a sample too short to be a rate. Not a green light while another copy is still
+          // queued to be tried; the reader stays open, so this one keeps filling for the next press.
+          log('PLAY RATE IGNORED', identity, 'kbps=' + (gotD == null ? '?' : Math.round(gotD * 1000)),
+            'reason=shortWindow', 'bytes=' + md.bytes, 'over=' + md.ms + 'ms', 'note=cushion');
+          tried.push(labelOf(cand) + ': only ' + ((md.windows || []).length) + ' timed window of it ('
+            + md.bytes + ' bytes in ' + md.ms + 'ms) — no rate to judge');
+          o.checked = true;
+          o.measuredBytes = md.bytes;
+          o.neededMbps = Number.isFinite(needDirect) ? Number(needDirect.toFixed(2)) : null;
+          o.measuredMbps = gotD == null ? null : Number(gotD.toFixed(2));
+          slowGateway = slowGateway || { o, cand };
+          continue;
+        } else if (md && md.bytes > 0) {
+          // Last copy on the list and it moved: play it. Unproven is not the same as proven slow, and
+          // the hub's own cushion is what will catch it if the host collapses later.
+          o.checked = true;
+          o.cushioned = true;
+          o.unproven = true;
+          o.neededMbps = Number.isFinite(needDirect) ? Number(needDirect.toFixed(2)) : null;
+          o.measuredBytes = md.bytes;
+          if (gotD != null) o.measuredMbps = Number(gotD.toFixed(2));
+        } else if (md && queue.length > queue.indexOf(cand) + 1) {
+          // Headers answered and then silence: a host that is throttling us or a link that has gone
+          // stale mid-play. Ask the next copy, and remember this one as a fallback.
+          tried.push(labelOf(cand) + ': no byte of it arrived in ' + md.ms + 'ms (host silent)');
+          o.checked = true;
+          o.measuredBytes = 0;
+          slowGateway = slowGateway || { o, cand };
+          continue;
+        }
+      }
       out = o; source = cand; break;
     }
 
@@ -3052,6 +3282,57 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       log('LADDER FAIL', identity, e.message);
     }
   }
+  // ---- hand the screen the hub, not the host ---------------------------------------------------
+  // This route used to give a direct addon link straight to the player, which put one rationed socket
+  // between the viewer and the film: measured on this host, 5 Mbps for the first ten megabytes, 2 Mbps by
+  // 25 MB, a stall at 30 MB, and a picture that froze four minutes into a 1080p copy. Every copy the
+  // player opens out of the internet now goes through the cushion in this box's RAM — the screen reads at
+  // LAN speed while the hub keeps several ranged reads going and paces itself. The origin's own headers
+  // (a signed link's key, the Referer a host insists on) stay here, where the screen never has to know
+  // them, and a host that refuses a suffix range can no longer kill playback of an otherwise fine file.
+  const cushioned = readahead.cfg().direct
+    && !out.remuxed && !out.audioMix && !out.live
+    && out.mode !== 'gateway' && out.mode !== 'ladder'
+    && /^https?:\/\//i.test(String(out.url || ''));
+  if (cushioned) {
+    // The picker normally arrives here with the copy already measured through its cushion. A copy that
+    // was chosen by the fallback scoring (nothing cleared the bar, so the least bad one wins) never got
+    // that far, and it still deserves the buffer: it is the copy the household is about to watch.
+    const buf = readahead.acquire({ url: out.url, headers: out.headers || {} });
+    if (buf) {
+      if (!Number.isFinite(out.neededMbps)) {
+        const need = ranking.estimateMbps(source, kept);
+        if (Number.isFinite(need)) out.neededMbps = Number(need.toFixed(2));
+      }
+      readahead.noteNeed({ url: out.url }, out.neededMbps);
+      if (!out.prebuffer) {
+        const pb = await readahead.preBuffer(buf, {
+          bytes: 6, sec: readahead.cfg().preSec, budgetMs: 1200,
+        });
+        out.prebuffer = {
+          ms: pb.ms, bytes: pb.bytes, sec: pb.sec, MB: pb.MB,
+          neededMbps: out.neededMbps, complete: pb.complete,
+        };
+      }
+      out.buffered = true;
+      const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
+      const tok = mintBuffer({ url: out.url, headers: out.headers, need: out.neededMbps });
+      out.originUrl = out.url;
+      out.proxiedUrl = '/app/v1/buffer?t=' + tok
+        + (Number.isFinite(out.neededMbps) ? '&need=' + out.neededMbps : '');
+      out.url = base + out.proxiedUrl;
+      out.proxied = true;
+      out.headers = {};
+      out.why = (out.why || []).concat(
+        'buffered at the hub: it holds ~' + ((out.prebuffer && out.prebuffer.MB) || out.bufferedMB || 0)
+        + ' MB and reads the host with ' + readahead.cfg().conns + ' connections, so this screen never waits on one',
+      );
+      log('PLAY BUFFERED', identity, labelOf(source), 't=' + tok,
+        'bufferedMB=' + ((out.prebuffer && out.prebuffer.MB) != null ? out.prebuffer.MB : out.bufferedMB),
+        'need=' + (out.neededMbps == null ? '?' : out.neededMbps),
+        'measured=' + (out.measuredMbps == null ? '?' : out.measuredMbps));
+    }
+  }
   return { status: 200, body: out };
 }
 
@@ -3092,6 +3373,13 @@ async function handle(req, res) {
     return send(res, 400, { error: 'malformed request URI', uri: raw });
   }
   res.req = req;
+  // The one line that answers "did this request even reach the hub?" — a stream URL the screen re-opens
+  // with a Range header is where playback problems are decided, and without the incoming Range in the
+  // log the hub can only report what it answered, not what it was asked.
+  if (process.env.LOG_REQUESTS === '1') {
+    log('REQ IN', req.method, raw, 'range=' + (req.headers.range || '-'),
+      'ua=' + String(req.headers['user-agent'] || '-').slice(0, 40));
+  }
 
   try {
     if (req.method === 'OPTIONS') {
@@ -3610,6 +3898,7 @@ async function handle(req, res) {
       const raw = held.length ? held
         : await shelves.genreTitles(genre, { limit: SEARCH_MAX * 2, budget: SEARCH_BUDGET_MS });
       const items = generalItems('genre', await pipeline(raw || [], ctx)).slice(0, SEARCH_MAX);
+      rememberItems(items);
       await taste.decorate(ctx, items);
       return send(res, 200, { genre, items });
     }
@@ -3629,6 +3918,7 @@ async function handle(req, res) {
       );
       const items = generalItems('addon-catalog:' + addonId,
         await pipeline(raw || [], ctx)).slice(0, 120);
+      rememberItems(items);
       await taste.decorate(ctx, items);
       return send(res, 200, { addon: addonId, catalog: catalogId, items });
     }
@@ -3948,6 +4238,9 @@ async function handle(req, res) {
     }
 
     if (path === '/app/v1/proxy') return await proxyStream(req, res, u);
+    // A direct internet copy this hub is cushioning for the screen. The player reads this address rather
+    // than the host that published the file; see bufferStream.
+    if (path === '/app/v1/buffer') return await bufferStream(req, res, u);
 
     // A browser cannot play Matroska, and a TV does not want its Dolby re-encoded on the way to it, so
     // the caller says which container it can read. `any` (the default, and what the installed app sends)

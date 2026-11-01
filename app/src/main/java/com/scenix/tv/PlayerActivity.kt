@@ -88,6 +88,9 @@ class PlayerActivity : Activity() {
         val title: String,
     )
 
+    /** A stable identity for a row in the episode sheet while its views are rebuilt per season. */
+    private data class EpisodeRowKey(val season: Int, val episode: Int)
+
     private var spec: PlaySpec? = null
     /** The spec the player is actually holding, which can trail [spec] while a new answer is in flight. */
     private var loadedSpec: PlaySpec? = null
@@ -107,6 +110,11 @@ class PlayerActivity : Activity() {
     // episode is playing.
     private val audioCatalog = LinkedHashMap<String, JSONObject>()
     private var audioCatalogKey = ""
+    // Every copy this title has offered, keyed by its label. The Quality menu is a property of the
+    // title too: after switching 1080 → 720 → Auto, the hub answered with fewer alternatives each
+    // time and the previous copy vanished from the list. Remembering them keeps the menu stable and
+    // still lets the hub verify a stale one when it is chosen.
+    private val sourceCatalog = LinkedHashMap<String, JSONObject>()
     private var embeddedSubs = JSONArray()
     private var hubSubs = JSONArray()
     private var subsInItem = 0
@@ -117,6 +125,12 @@ class PlayerActivity : Activity() {
     private var episodesFetching = false
     /** Season the Episodes menu is showing; 0 means "follow whatever episode is playing". */
     private var epSeason = 0
+    /**
+     * A season switch rebuilds the sheet. Keep the episode number as data across that rebuild so
+     * there is one focus request, rather than a race between the default selection and a later
+     * attempt to restore the viewer's position.
+     */
+    private var pendingEpisodeFocus: EpisodeRowKey? = null
     private var selectedAudioId: String? = null
     private var selectedSubId: String? = null
     private var audioChosen = false
@@ -148,6 +162,10 @@ class PlayerActivity : Activity() {
     private var sameCopyRetries = 0
     private var bufferingSince = 0L
     private var recoveryScheduled = false
+    /** Picture the player is holding, in ms ahead of the playhead, and how long it has been shrinking. */
+    private var cushionAheadMs = -1L
+    private var cushionFalling = 0
+    private var cushionSwitches = 0
     /**
      * A copy that is still filling is not a copy that failed. The watchdog waits before spending the
      * retry/failover budget; an ExoPlayer error still gets its own two soft reloads first.
@@ -668,6 +686,7 @@ class PlayerActivity : Activity() {
             (if (keySpec != null && keySpec.season > 0) "${keySpec.season}x${keySpec.episode}" else "")
         if (catalogKey != audioCatalogKey) {
             audioCatalog.clear()
+            sourceCatalog.clear()
             audioCatalogKey = catalogKey
         }
         mergeAudioOptions(reply.optJSONArray("audioOptions") ?: JSONArray())
@@ -698,11 +717,12 @@ class PlayerActivity : Activity() {
         val picked = reply.optJSONObject("picked")
         if (picked != null) {
             currentSourceLabel = sourceWords(picked)
-            val id = str(picked, "id")
-            val label = str(picked, "label")
-            if (id.isNotBlank()) tried.add(id)
-            if (label.isNotBlank()) tried.add(label)
+            // A copy that played is not a failed copy. Putting it in `tried` made the next /play
+            // exclude it, which is exactly why a 720p choice disappeared from the Quality list
+            // after the viewer had watched it once.
+            rememberSource(picked)
         }
+        for (i in 0 until alternatives.length()) rememberSource(alternatives.optJSONObject(i))
         // A source switch must not silently undo the viewer's explicit audio/subtitle choice. The hub's
         // recommendation is only the starting point; once a person has chosen, that choice survives a
         // new copy (matched by stream index/id, and left alone if the new copy cannot honour it).
@@ -1369,6 +1389,36 @@ class PlayerActivity : Activity() {
             backButton, playButton, rewindButton, forwardButton,
             audioButton, subButton, speedButton, qualityButton,
         ) + listOfNotNull(episodesButton) + listOf(seekLine)
+        wireChromeFocus()
+    }
+
+    /**
+     * The transport controls are visually separated by a large flexible spacer. Geometric focus
+     * search therefore preferred the scrubber over the Audio/Episodes cluster on some TV panels.
+     * Give the remote an intentional left/right route so every icon is reachable without a
+     * diagonal hunt; hidden controls are omitted whenever transport state changes.
+     */
+    private fun wireChromeFocus() {
+        val controls = listOfNotNull(
+            playButton,
+            rewindButton.takeIf { it.visibility == View.VISIBLE },
+            forwardButton.takeIf { it.visibility == View.VISIBLE },
+            audioButton,
+            subButton,
+            speedButton.takeIf { it.visibility == View.VISIBLE },
+            qualityButton,
+            episodesButton,
+        )
+        if (controls.isEmpty()) return
+        controls.forEach { if (it.id == View.NO_ID) it.id = View.generateViewId() }
+        controls.forEachIndexed { index, control ->
+            control.nextFocusLeftId = controls[(index - 1).coerceAtLeast(0)].id
+            control.nextFocusRightId = controls[(index + 1).coerceAtMost(controls.lastIndex)].id
+        }
+        if (seekLine.id == View.NO_ID) seekLine.id = View.generateViewId()
+        // Down from the timeline returns to the transport rather than falling into an invisible
+        // player surface. Left/right remains the expected seek gesture.
+        seekLine.nextFocusDownId = controls.first().id
     }
 
     private fun buildCenter() {
@@ -1415,17 +1465,31 @@ class PlayerActivity : Activity() {
         return v
     }
 
-    private fun chip(label: String, compact: Boolean = false, action: () -> Unit): TextView {
+    private fun chip(
+        label: String,
+        compact: Boolean = false,
+        selected: Boolean = false,
+        arrow: ((Int) -> Boolean)? = null,
+        action: () -> Unit,
+    ): TextView {
         val b = Views.text(
-            app, "li", if (compact) 20f else 22f, theme.ink, label, bold = true,
+            app, "li", if (compact) 20f else 22f,
+            if (selected) theme.color("panelValue", "#F2C33A") else theme.ink,
+            label, bold = true,
             gravity = Gravity.CENTER,
         )
         b.setPadding(
             theme.px(if (compact) 18f else 22f), theme.px(10f),
             theme.px(if (compact) 18f else 22f), theme.px(10f),
         )
-        b.background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.radius("button", 6f))
-        Focus.attach(b, b, app, theme.radius("button", 6f), scale = false, elevate = false, onClick = action)
+        b.background = Views.rounded(
+            if (selected) theme.color("surface2", "#232323") else theme.color("btnGrey", "#1AFFFFFF"),
+            theme.radius("button", 6f),
+        )
+        Focus.attach(
+            b, b, app, theme.radius("button", 6f), scale = false, elevate = false,
+            onClick = action, arrow = arrow,
+        )
         return b
     }
 
@@ -1535,9 +1599,14 @@ class PlayerActivity : Activity() {
         panel = container
 
         trapFocus()
-        val target = if (keepFocus && focused != null && panelRows.contains(focused)) focused
-        else panelRows.getOrNull(selectedRowIndex(kind)) ?: panelRows.firstOrNull()
-        target?.post { if (panel != null) target.requestFocus() }
+        val preservedEpisode = if (kind == MenuKind.EPISODES) pendingEpisodeFocus else null
+        val target = when {
+            keepFocus && focused != null && panelRows.contains(focused) -> focused
+            preservedEpisode != null -> nearestEpisodeRow(preservedEpisode)
+            else -> panelRows.getOrNull(selectedRowIndex(kind)) ?: panelRows.firstOrNull()
+        }
+        if (kind == MenuKind.EPISODES) pendingEpisodeFocus = null
+        target?.post { focusMenuTarget(target, container) }
     }
 
     /** First/last rows point at themselves so the ring cannot fall out of an open menu. */
@@ -1546,6 +1615,17 @@ class PlayerActivity : Activity() {
         for (r in panelRows) r.id = View.generateViewId()
         panelRows.first().nextFocusUpId = panelRows.first().id
         panelRows.last().nextFocusDownId = panelRows.last().id
+    }
+
+    private fun sourceKey(o: JSONObject): String =
+        str(o, "label").ifBlank { str(o, "id") }.ifBlank { str(o, "provider") }
+
+    /** Keep the best description of a copy the title has offered, without duplicating its label. */
+    private fun rememberSource(o: JSONObject?) {
+        if (o == null) return
+        val key = sourceKey(o)
+        if (key.isBlank()) return
+        sourceCatalog[key] = JSONObject(o.toString())
     }
 
     /** Add every language the hub offered, keeping the best evidence for each one. */
@@ -1564,6 +1644,18 @@ class PlayerActivity : Activity() {
         (if (str(o, "kind") == "track") 4 else 0) +
             (if (o.optBoolean("confirmed")) 2 else 0) +
             (if (str(o, "source").isNotBlank()) 1 else 0)
+
+
+    /**
+     * A panel is attached after its rows are built. Requesting focus one frame too early makes
+     * Android focus the first season chip instead of the episode row; retry the exact target until
+     * the sheet owns it, while ignoring an older sheet that has already been replaced.
+     */
+    private fun focusMenuTarget(target: View, owner: View, tries: Int = 0) {
+        if (panel !== owner) return
+        if (target.isShown && target.requestFocus()) return
+        if (tries < 8) target.postDelayed({ focusMenuTarget(target, owner, tries + 1) }, 80L)
+    }
 
     private fun audioRows(parent: LinearLayout) {
         if (audioOptions.length() > 0) {
@@ -1773,6 +1865,8 @@ class PlayerActivity : Activity() {
         // another copy: that is how a "quality" change lands on a different cut. When the answer is
         // a ladder, the top rows are its own rungs and the copy list moves below a heading.
         val rungs = ladderRungs()
+        val currentKey = answer?.optJSONObject("picked")?.let { sourceKey(it) }.orEmpty()
+        val others = sourceCatalog.values.filter { sourceKey(it) != currentKey }
         if (rungs.isNotEmpty()) {
             val current = if (forcedRungHeight > 0) forcedRungHeight else selectedVideoHeight()
             parent.addView(menuRow("Auto", "follow the link", forcedRungHeight == 0) {
@@ -1783,22 +1877,21 @@ class PlayerActivity : Activity() {
                     chooseRung(h)
                 })
             }
-            if (alternatives.length() > 0) parent.addView(noteRow("Other copies"))
+            if (others.isNotEmpty()) parent.addView(noteRow("Other copies"))
         } else {
             parent.addView(menuRow("Auto", "best copy the hub can feed", false) {
                 switchTo(null)
             })
         }
-        if (rungs.isNotEmpty() && alternatives.length() > 0) {
+        if (rungs.isNotEmpty() && others.isNotEmpty()) {
             parent.addView(menuRow("Best copy", "let the hub choose again", false) { switchTo(null) })
         }
-        for (i in 0 until alternatives.length()) {
-            val src = alternatives.optJSONObject(i) ?: continue
+        for (src in others) {
             parent.addView(menuRow(sourceWords(src), sourceNote(src), false) {
                 switchTo(src)
             })
         }
-        if (alternatives.length() == 0 && rungs.isEmpty()) {
+        if (others.isEmpty() && rungs.isEmpty()) {
             parent.addView(noteRow("The hub listed no other copies"))
         }
     }
@@ -1881,6 +1974,77 @@ class PlayerActivity : Activity() {
         return out
     }
 
+    /** Sorted, distinct seasons available to the player-side Episodes sheet. */
+    private fun episodeSeasons(): List<Int> {
+        val eps = episodesList ?: return emptyList()
+        val seasons = ArrayList<Int>()
+        for (i in 0 until eps.length()) {
+            val season = eps.optJSONObject(i)?.optInt("season", 1) ?: continue
+            if (season !in seasons) seasons.add(season)
+        }
+        seasons.sort()
+        return seasons
+    }
+
+    /** Find the episode row currently carrying D-pad focus, even if a child later becomes focusable. */
+    private fun focusedEpisodeRow(): EpisodeRowKey? {
+        var view: View? = currentFocus
+        while (view != null) {
+            (view.tag as? EpisodeRowKey)?.let { return it }
+            view = view.parent as? View
+        }
+        return null
+    }
+
+    /**
+     * Find the closest row in a freshly built season. A request for E10 in a shorter season lands
+     * on its last real episode instead of falling back to a non-interactive header.
+     */
+    private fun nearestEpisodeRow(preferred: EpisodeRowKey): View? {
+        var chosen: View? = null
+        var closest = Int.MAX_VALUE
+        for (row in panelRows) {
+            val key = row.tag as? EpisodeRowKey ?: continue
+            if (key.season != preferred.season) continue
+            val distance = kotlin.math.abs(key.episode - preferred.episode)
+            if (chosen == null || distance < closest) {
+                chosen = row
+                closest = distance
+            }
+        }
+        return chosen
+    }
+
+    /** Rebuild the sheet for [season] and retain the viewer's episode position when possible. */
+    private fun showEpisodeSeason(season: Int, preferredEpisode: Int? = focusedEpisodeRow()?.episode) {
+        if (epSeason == season || panelKind != MenuKind.EPISODES) return
+        pendingEpisodeFocus = EpisodeRowKey(
+            season,
+            preferredEpisode ?: spec?.episode?.takeIf { it > 0 } ?: 1,
+        )
+        epSeason = season
+        rebuildMenu(MenuKind.EPISODES, keepFocus = false)
+    }
+
+    /**
+     * LEFT/RIGHT belongs to the season rail while the episode list is open. Android's focus search
+     * otherwise only sees the vertical rows below it, which made the rail look interactive but
+     * impossible to use from a remote. Cycling also makes both ends of the rail useful on a TV.
+     */
+    private fun moveEpisodeSeason(delta: Int): Boolean {
+        if (panelKind != MenuKind.EPISODES) return false
+        val seasons = episodeSeasons()
+        if (seasons.size < 2) return false
+        val playingIndex = seasons.indexOf(spec?.season ?: 0)
+        val currentIndex = seasons.indexOf(epSeason).takeIf { it >= 0 }
+            ?: playingIndex.takeIf { it >= 0 }
+            ?: 0
+        val nextIndex = (currentIndex + delta + seasons.size) % seasons.size
+        val preferred = focusedEpisodeRow()?.episode ?: spec?.episode?.takeIf { it > 0 }
+        showEpisodeSeason(seasons[nextIndex], preferred)
+        return true
+    }
+
     /**
      * The episode jump list — Apple TV's core series affordance, drawn inside the player so a viewer
      * never has to leave playback to change episode. The list is read from the hub's meta record on
@@ -1906,12 +2070,7 @@ class PlayerActivity : Activity() {
             }
             return
         }
-        val seasons = ArrayList<Int>()
-        for (i in 0 until eps.length()) {
-            val se = eps.optJSONObject(i)?.optInt("season", 1) ?: continue
-            if (se !in seasons) seasons.add(se)
-        }
-        seasons.sort()
+        val seasons = episodeSeasons()
         if (epSeason == 0)
             epSeason = if (seasons.contains(s.season)) s.season else seasons.firstOrNull() ?: 0
         if (seasons.size > 1) {
@@ -1920,11 +2079,19 @@ class PlayerActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
             }
             for (se in seasons) {
-                chips.addView(chip("Season $se", compact = true) {
-                    if (epSeason != se) {
-                        epSeason = se
-                        rebuildMenu(MenuKind.EPISODES)
-                    }
+                chips.addView(chip(
+                    "Season $se",
+                    compact = true,
+                    selected = se == epSeason,
+                    arrow = { code ->
+                        when (code) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> moveEpisodeSeason(-1)
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> moveEpisodeSeason(1)
+                            else -> false
+                        }
+                    },
+                ) {
+                    showEpisodeSeason(se, spec?.episode?.takeIf { it > 0 })
                 }, wrap().withStart(if (chips.childCount == 0) 0 else theme.px(8f)))
             }
             parent.addView(chips, LinearLayout.LayoutParams(
@@ -1970,6 +2137,7 @@ class PlayerActivity : Activity() {
             )
             isFocusable = true
             isClickable = true
+            tag = EpisodeRowKey(ep.optInt("season", 1), number)
             setOnClickListener { action() }
         }
         val radius = theme.radius("card", 6f).toFloat()
@@ -2002,7 +2170,24 @@ class PlayerActivity : Activity() {
                 ).apply { topMargin = theme.px(5f) })
         }
         row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        Focus.attach(row, row, app, theme.radius("listItem", 6f), scale = false, elevate = false)
+        Focus.attach(
+            row,
+            row,
+            app,
+            theme.radius("listItem", 6f),
+            scale = false,
+            elevate = false,
+            // Activity-level routing handles the entire sheet, but keep the same rule on the
+            // focused row as a boundary fallback for TV firmware that dispatches D-pad keys
+            // straight to its focused child.
+            arrow = { code ->
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> moveEpisodeSeason(-1)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> moveEpisodeSeason(1)
+                    else -> false
+                }
+            },
+        )
         row.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(106f)
         ).apply { topMargin = theme.space("panelRowGap", 10f) }
@@ -2274,6 +2459,7 @@ class PlayerActivity : Activity() {
         speedButton.visibility = if (show) View.VISIBLE else View.GONE
         rewindButton.visibility = if (show) View.VISIBLE else View.GONE
         forwardButton.visibility = if (show) View.VISIBLE else View.GONE
+        if (::qualityButton.isInitialized) wireChromeFocus()
     }
 
     private fun audioValue(): String {
@@ -2767,6 +2953,7 @@ class PlayerActivity : Activity() {
         updatePosition()
         updateSkip()
         val p = player ?: return
+        watchCushion(p)
         if (p.isPlaying && !live) {
             val now = SystemClock.elapsedRealtime()
             if (now >= nextProgressAt) {
@@ -2774,6 +2961,58 @@ class PlayerActivity : Activity() {
                 saveProgress(force = false)
             }
         }
+    }
+
+    /**
+     * The distance between the playhead and the end of what the player is holding, watched while the
+     * picture is moving.
+     *
+     * This is the signal the old logic never looked at, and it is the one that explains "it plays a movie
+     * in chunks and keeps buffering after a few minutes". A copy that fails that way is not broken: the
+     * host behind it is a little slower than the film, so the cushion drains by a few hundred kilobits a
+     * second and the freeze arrives minutes later, when the viewer has already settled in. The 12 s stall
+     * check only starts at the freeze. A hub-cushioned copy makes the distance readable — the screen reads
+     * RAM at LAN speed while the hub pulls from the host — so a *shrinking* cushion under the floor says
+     * the race is being lost while there is still picture to switch on, and the viewer steps down to a
+     * lighter copy instead of watching a loading card.
+     */
+    private fun watchCushion(p: ExoPlayer) {
+        if (live || recoveryScheduled || failovers >= MAX_FAILOVERS
+            || cushionSwitches >= CUSHION_SWITCHES_MAX
+        ) {
+            return
+        }
+        if (p.playbackState != Player.STATE_READY || !p.isPlaying) {
+            cushionAheadMs = -1L
+            cushionFalling = 0
+            return
+        }
+        val ahead = p.bufferedPosition - p.currentPosition
+        // Unknown (a live window), or a cushion so full that this sample says nothing yet.
+        if (ahead <= 0L || ahead > CUSHION_FLOOR_MS * 6) {
+            cushionAheadMs = -1L
+            cushionFalling = 0
+            return
+        }
+        val prev = cushionAheadMs
+        cushionAheadMs = ahead
+        if (prev < 0L || ahead > CUSHION_FLOOR_MS) {
+            cushionFalling = 0
+            return
+        }
+        // Only a real decline counts. Half a second of playback consumes 500 ms of cushion, so a source
+        // keeping pace shows a roughly flat line and a source winning it shows a rising one.
+        if (ahead < prev - 150L) cushionFalling++ else cushionFalling = 0
+        if (cushionFalling < CUSHION_FALL_TICKS) return
+        cushionFalling = 0
+        cushionAheadMs = -1L
+        cushionSwitches++
+        recoveryScheduled = true
+        quietOrCenter(
+            if (lowerAlternative() != null) "This copy is falling behind — moving to a lighter one…"
+            else "This copy is falling behind — trying another one…"
+        )
+        failoverToNext(preferLower = true)
     }
 
     /**
@@ -2927,6 +3166,10 @@ class PlayerActivity : Activity() {
                     return true
                 }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (panelKind == MenuKind.EPISODES) {
+                        val delta = if (code == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+                        if (moveEpisodeSeason(delta)) return true
+                    }
                     if (panel == null) {
                         val dir = if (code == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
                         // At rest (chrome hidden) the remote is a television remote: left/right zaps a
@@ -3256,6 +3499,17 @@ class PlayerActivity : Activity() {
 
         private const val TAG = "ScenixPlayer"
         private const val STALL_AFTER_MS = 12_000L
+        /**
+         * The cushion the drain watchdog acts under: picture the player holds, in ms, below which the
+         * copy is worth leaving — as long as holding less of it is a *trend* and not a seek. Ten seconds
+         * of film is what a switch to another copy costs, so acting here means the viewer never sees the
+         * loading card this used to end in.
+         */
+        private const val CUSHION_FLOOR_MS = 12_000L
+        /** 500 ms ticks of monotonic decline before the copy is judged to be losing the race. */
+        private const val CUSHION_FALL_TICKS = 8
+        /** A viewer may be moved down twice for a shrinking cushion; after that the menu is theirs. */
+        private const val CUSHION_SWITCHES_MAX = 2
         private const val GLYPH_PLAY = 0
         private const val GLYPH_BACK10 = 1
         private const val GLYPH_FORWARD30 = 2

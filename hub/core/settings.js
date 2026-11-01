@@ -97,13 +97,18 @@ const DEFAULTS = {
   // Scenix/design/playback-strategy.md §5). These are how much of the film we hold, not how long we wait.
   playback: {
     readAhead: true,      // buffer torrent bytes in the hub ahead of the player at all
+    bufferDirect: true,   // do the same for a plain internet copy: the screen reads the hub, not the host
     readAheadMB: 96,      // the cushion, in bytes of RAM, per copy
     readAheadSec: 90,     // the same cushion as seconds of media; whichever is smaller wins
+    readAheadConns: 4,    // range connections per cushioned copy (free hosts ration each one)
+    readAheadChunkMB: 4,  // how much of the file one of those connections pulls
     preBufferSec: 15,     // hold this much picture before promising the first frame
     sustainBudgetMs: 4000, // how long a Play press spends learning a copy's real, sustained rate
     starvedWindows: 2,    // slow windows in a row before the hub moves the viewer to a smaller copy
     // Kept out of the Settings screen because an owner has no reason to touch them:
-    readAheadCopies: 2,      // how many copies may be cushioned at the same time
+    readAheadCopies: 4,      // how many copies may be cushioned at the same time — a Play press
+                             // cushions every quality it measures, and the one the screen is watching
+                             // must never be dropped to make room for the others
     readAheadIdleMs: 45000,  // release a cushion this long after the last reader hangs up
     preBufferMB: 32,         // never pre-roll more bytes than this, whatever the seconds say
     preBufferMs: 6000,       // never delay the first frame longer than this to get the pre-roll
@@ -180,13 +185,18 @@ function normalizePlayback(p) {
   const src = p && typeof p === 'object' ? p : {};
   const out = {};
   for (const k of Object.keys(d)) {
-    if (k === 'readAhead') { out[k] = src[k] !== false; continue; }
+    if (k === 'readAhead' || k === 'bufferDirect') { out[k] = src[k] !== false; continue; }
     out[k] = num(src[k], d[k], 0, 1e9);
   }
   // Sizes and seconds have their own sane ceilings; a 4 GB cushion on a 32 GB box that also runs the
   // torrent engine is not a preference, it is a swap.
   out.readAheadMB = num(src.readAheadMB, d.readAheadMB, 8, 2048);
   out.readAheadSec = num(src.readAheadSec, d.readAheadSec, 5, 900);
+  // A free file host (Heroku, a drive direct link) gives each connection its own small share of the
+  // pipe, so one reader is the bottleneck, not the film: several ranges in flight is what makes a
+  // 2 Mbps-per-socket host feed a 1080p copy.
+  out.readAheadConns = Math.round(num(src.readAheadConns, d.readAheadConns, 1, 8));
+  out.readAheadChunkMB = num(src.readAheadChunkMB, d.readAheadChunkMB, 1, 32);
   out.preBufferSec = num(src.preBufferSec, d.preBufferSec, 0, 180);
   out.preBufferMB = num(src.preBufferMB, d.preBufferMB, 1, 512);
   out.preBufferMs = num(src.preBufferMs, d.preBufferMs, 0, 20000);
