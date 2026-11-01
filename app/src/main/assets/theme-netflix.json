@@ -45,7 +45,8 @@
     "numeralFillRed": "#E50914",
     "numeralStrokeRed": "#4A0007",
     "matBorder": "rgba(255,255,255,0.35)",
-    "hdInk": "#E5E5E5"
+    "hdInk": "#E5E5E5",
+    "listFill": "#181818"
   },
   "spacing": {
     "gutter": 76,
@@ -63,7 +64,8 @@
     "panelPad": 28,
     "panelPadV": 24,
     "panelRowGap": 10,
-    "listItem": 14
+    "listItem": 76,
+    "listGap": 6
   },
   "radii": {
     "card": 4,

@@ -15,6 +15,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -60,7 +61,8 @@ class CategoriesActivity : Activity() {
         root = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
+            val wall = Screens.wall(app)
+            if (wall != null) background = wall else setBackgroundColor(app.theme.bg)
         }
         page.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
         val scroll = ScrollView(this).apply {
@@ -82,25 +84,8 @@ class CategoriesActivity : Activity() {
     }
 
     private fun topBar(): View {
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(app.theme.surface)
-        }
-        val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
-        back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
-        back.isFocusable = true
-        back.isClickable = true
-        back.setOnClickListener { finish() }
-        Focus.attach(back, back, app, app.theme.px(10f), scale = false, elevate = false)
-        bar.addView(back, LinearLayout.LayoutParams(app.theme.px(56f), app.theme.px(50f)))
-        bar.addView(Views.text(app, "li", 26f, app.theme.ink, "Categories", bold = true).apply {
-            setPadding(app.theme.px(20f), 0, 0, 0)
-        })
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        status = Views.text(app, "meta", 19f, app.theme.ink2, "", maxLines = 1)
-        bar.addView(status)
+        val (bar, barStatus) = Screens.topBar(this, app, "Categories") { finish() }
+        status = barStatus
         return bar
     }
 
@@ -288,41 +273,21 @@ class CategoriesActivity : Activity() {
     }
 
     private fun section(title: String, note: String) {
-        rows.addView(Views.text(app, "li", 26f, app.theme.ink, title, bold = true),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        rows.addView(Views.text(app, "meta", 17f, app.theme.ink3, note, maxLines = 2),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(2f)
-                bottomMargin = app.theme.px(12f)
-            })
+        Screens.section(this, app, rows, title)
+        if (note.isNotBlank()) {
+            rows.addView(Views.text(app, "meta", 17f, app.theme.ink3, note, maxLines = 2),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = app.theme.px(2f)
+                    bottomMargin = app.theme.px(12f)
+                })
+        }
     }
 
     private fun addRow(label: String, value: String, note: String, focusKey: String, action: () -> Unit): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.px(24f), 0, app.theme.px(24f), 0)
-            background = Views.rounded(app.theme.surface, app.theme.px(10f))
-            isFocusable = true
-            isClickable = true
-            tag = focusKey
-            setOnClickListener { action() }
-        }
-        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        texts.addView(Views.text(app, "li", 24f, app.theme.ink, label, bold = true, maxLines = 1))
-        if (note.isNotBlank()) {
-            texts.addView(Views.text(app, "meta", 16f, app.theme.ink3, note, maxLines = 1),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(2f)
-                })
-        }
-        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (value.isNotBlank()) {
-            row.addView(Views.text(app, "meta", 20f, app.theme.ink2, value, maxLines = 1, gravity = Gravity.END))
-        }
-        Focus.attach(row, row, app, app.theme.px(10f), scale = false, elevate = false)
-        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)).apply {
-            bottomMargin = app.theme.px(10f)
+        val row = Screens.row(this, app, label, value, note, chevron = true, onClick = action)
+        row.tag = focusKey
+        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = Screens.listGap(app)
         })
         return row
     }
@@ -547,8 +512,7 @@ class CategoriesActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(28f), app.theme.px(22f), app.theme.px(28f), app.theme.px(22f))
-            background = Views.rounded(app.theme.color("panelScrim", "#E6000000"), app.theme.px(12f),
-                app.theme.px(1f), app.theme.line)
+            background = Screens.modalFill(app)
             elevation = app.theme.px(16f).toFloat()
         }
         panel.addView(Views.text(app, "li", 26f, app.theme.ink, title, bold = true),

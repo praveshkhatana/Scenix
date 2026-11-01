@@ -21,8 +21,9 @@ import com.scenix.tv.core.Views
  *
  * The mockup's rounded outer frame is only a presentation border; on a real TV the WHOLE screen is
  * the soft blue-grey wallpaper wash, with every block sitting directly on it: the SCENIX wordmark
- * in white at left; a DARK centred pill nav with the search target welded to its end; a household
- * cluster at right (frost bell, avatar, profile name); two tinted feature cards side by side —
+ * in white at left; a DARK centred pill nav with the search target welded to its end; one
+ * household stop at right (a frosted pill with the avatar and profile name, beside a settings
+ * gear, both reachable from the search dot); two tinted feature cards side by side —
  * steel-blue and paler periwinkle plates carrying a white title, a dark circular play control and
  * key art bleeding from the facing edge; a row of frosted glass chips naming the household's real
  * shelves with only one chip darkened; and below the hero, captioned poster rails with rating and
@@ -40,6 +41,7 @@ internal class CleanHomeLayout(
         val onSection: (String) -> Unit,
         val onProfile: () -> Unit,
         val onSearch: () -> Unit,
+        val onSettings: () -> Unit,
         /** A chip jumps to the real shelf it names rather than inventing a filtered route. */
         val onShelf: (String) -> Unit,
     )
@@ -67,6 +69,9 @@ internal class CleanHomeLayout(
     private lateinit var avatarFace: ImageView
     private lateinit var avatarIni: TextView
     private lateinit var nameText: TextView
+    private lateinit var searchStop: View
+    private lateinit var profilePill: LinearLayout
+    private lateinit var gearStop: FrameLayout
 
     init {
         // Transparent: the host paints the wallpaper across the entire screen behind this
@@ -118,23 +123,18 @@ internal class CleanHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
-        val bell = FrameLayout(context).apply {
-            background = Views.rounded(theme.color("chipFrost", "#3A4552"), theme.px(999f))
-        }
-        bell.addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_bell)
-            setColorFilter(Color.WHITE)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(theme.px(12f), theme.px(12f), theme.px(12f), theme.px(12f))
-        }, LayoutParams(theme.px(48f), theme.px(48f)))
-        household.addView(bell, LinearLayout.LayoutParams(theme.px(48f), theme.px(48f)))
-
-        val avatarStop = FrameLayout(context).apply {
+        // ONE household stop: the avatar and the name are the same job — switching who watches —
+        // so they weld into one frosted pill with its chevron. No bell: there is no notifications
+        // feature yet, and an icon that promises one is decoration that lies.
+        profilePill = LinearLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Profiles"
-            setPadding(theme.px(8f), theme.px(4f), theme.px(8f), theme.px(4f))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = Views.rounded(theme.color("pill", "#1E252E"), theme.px(999f))
+            setPadding(theme.px(6f), theme.px(6f), theme.px(18f), theme.px(6f))
         }
         avatarIni = Views.text(app, "meta", 17f, theme.ink, "?", bold = true,
             gravity = Gravity.CENTER).apply {
@@ -149,25 +149,54 @@ internal class CleanHomeLayout(
                 }
             }
         }
-        avatarStop.addView(avatarIni, LayoutParams(theme.px(46f), theme.px(46f)))
-        avatarStop.addView(avatarFace, LayoutParams(theme.px(46f), theme.px(46f)))
-        Focus.attach(avatarStop, avatarStop, app, theme.px(999f), scale = false, elevate = false,
-            onClick = callbacks.onProfile)
-        pillStops += avatarStop
-        household.addView(avatarStop, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = theme.px(10f) })
-
+        profilePill.addView(avatarIni, LinearLayout.LayoutParams(theme.px(44f), theme.px(44f)))
+        profilePill.addView(avatarFace, LinearLayout.LayoutParams(theme.px(44f), theme.px(44f)))
         nameText = Views.text(app, "nav", 17f, theme.color("inkOnWall", "#FFFFFF"), "", bold = true,
-            maxLines = 1).apply { visibility = View.GONE }
-        household.addView(nameText, LinearLayout.LayoutParams(
+            maxLines = 1)
+        profilePill.addView(nameText, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { marginStart = theme.px(10f) })
+        val down = Views.text(app, "nav", 15f, Color.WHITE, "⌄", bold = true, gravity = Gravity.CENTER)
+        profilePill.addView(down, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(6f) })
+        Focus.attach(profilePill, profilePill, app, theme.px(999f), scale = false, elevate = false,
+            onClick = callbacks.onProfile)
+        pillStops += profilePill
+        household.addView(profilePill, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(56f)))
+
+        // The settings gear: the light pack's door to the TV's own settings, reachable from the
+        // search dot rather than decoration the remote can never meet.
+        gearStop = FrameLayout(context).apply {
+            id = View.generateViewId()
+            isFocusable = true
+            isClickable = true
+            contentDescription = "Settings"
+            background = Views.rounded(theme.color("chipFrost", "#3A4552"), theme.px(999f))
+        }
+        gearStop.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_nav_settings)
+            setColorFilter(Color.WHITE)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(theme.px(12f), theme.px(12f), theme.px(12f), theme.px(12f))
+        }, LayoutParams(theme.px(48f), theme.px(48f)))
+        Focus.attach(gearStop, gearStop, app, theme.px(999f), scale = false, elevate = false,
+            onClick = callbacks.onSettings)
+        pillStops += gearStop
+        household.addView(gearStop, LinearLayout.LayoutParams(theme.px(50f), theme.px(50f)).apply {
+            marginStart = theme.px(10f)
+        })
         header.addView(household, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
         content.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)))
+
+        searchStop.nextFocusRightId = profilePill.id
+        profilePill.nextFocusLeftId = searchStop.id
+        profilePill.nextFocusRightId = gearStop.id
+        gearStop.nextFocusLeftId = profilePill.id
 
         // --- the two feature cards ------------------------------------------------------------
         val cardRow = LinearLayout(context).apply {
@@ -234,6 +263,7 @@ internal class CleanHomeLayout(
             contentDescription = "Search"
             background = Views.rounded(theme.color("pillActive", "#3A4552"), theme.px(999f))
         }
+        searchStop = dot
         dot.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_nav_search)
             setColorFilter(Color.WHITE)
@@ -355,15 +385,14 @@ internal class CleanHomeLayout(
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
     }
 
-    /** The header prints the signed-in profile's name, like the mockup's household cluster. */
+    /** The header pill prints the signed-in profile's name beside its face. */
     fun setProfile(name: String, avatarUrl: String?) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
         avatarIni.text = trimmed.take(1).uppercase()
         nameText.text = trimmed.take(18)
-        nameText.visibility = View.VISIBLE
         if (!avatarUrl.isNullOrBlank()) {
-            BrowseImages.load(avatarFace, avatarUrl, theme.px(46f)) { ok ->
+            BrowseImages.load(avatarFace, avatarUrl, theme.px(44f)) { ok ->
                 if (ok) avatarIni.visibility = View.GONE
             }
         }

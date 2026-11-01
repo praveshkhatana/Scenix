@@ -68,7 +68,9 @@
     "inkOnCard": "#FFFFFF",
     "rowInk": "#F4F8FC",
     "captionInk": "#FFFFFF",
-    "captionSub": "#C7D3DE"
+    "captionSub": "#C7D3DE",
+    "listFill": "rgba(255,255,255,0.62)",
+    "listStroke": "rgba(255,255,255,0.90)"
   },
   "spacing": {
     "gutter": 72,
@@ -86,14 +88,15 @@
     "panelPad": 28,
     "panelPadV": 24,
     "panelRowGap": 10,
-    "listItem": 14
+    "listItem": 96,
+    "listGap": 14
   },
   "radii": {
     "card": 22,
     "badge": 8,
     "chip": 999,
     "button": 999,
-    "listItem": 8,
+    "listItem": 18,
     "field": 12,
     "key": 12,
     "modal": 18,

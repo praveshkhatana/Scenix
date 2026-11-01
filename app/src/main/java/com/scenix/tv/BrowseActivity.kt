@@ -402,10 +402,22 @@ class BrowseActivity : Activity() {
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
             )
-            HomeLayoutSpec.Hero.KIDS_STAGE -> GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(app.theme.color("stageYellow", "#FFC93A"), app.theme.color("stageDeep", "#F4B81E")),
-            )
+            HomeLayoutSpec.Hero.KIDS_STAGE -> {
+                // The reference is not flat sunshine: the page edge keeps a saturated yellow rim,
+                // while the whole content sits on one huge lighter-yellow sheet with soft corners.
+                val ground = GradientDrawable(
+                    GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(app.theme.color("stageYellow", "#FFC93A"), app.theme.color("stageDeep", "#F4B81E")),
+                )
+                val sheet = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = app.theme.px(56f).toFloat()
+                    setColor(app.theme.color("stageSheet", "#FFF3D0"))
+                }
+                android.graphics.drawable.LayerDrawable(arrayOf(ground, sheet)).apply {
+                    setLayerInset(1, app.theme.px(36f), app.theme.px(18f), app.theme.px(36f), 0)
+                }
+            }
             else -> null
         }
         val content: ViewGroup = if (stageMode) FrameLayout(this) else LinearLayout(this).apply {
@@ -893,8 +905,10 @@ class BrowseActivity : Activity() {
         // The wordmark itself has no opaque surface for Android to paint a keyline onto.  A
         // FrameLayout lets Focus use its foreground, keeping the compact ring above the mark
         // without letting a background child influence the bar's wrap-content measurement.
+        // The mark's vector canvas is 351x81 dp — enormous if left at wrap-content, where it
+        // towered over the bar. The wordmark is a signature, not the page's hero.
         homeBrand.addView(brand, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            theme.px(132f), theme.px(30f)
         ).apply { gravity = Gravity.CENTER })
         Focus.attach(homeBrand, homeBrand, app, theme.radius("button", 6f), scale = false, elevate = false,
             onFocus = { if (it) onChromeFocused() })
@@ -1675,18 +1689,34 @@ class BrowseActivity : Activity() {
                 leftMargin = -glowPad
                 topMargin = -glowPad
             })
+            // A pack whose below-captions name a plate colour (the Kids stage frames every tile in
+            // its own yellow) gets chunky framed tiles: the photo sits INSIDE a rounded plate with
+            // a soft glow, as in the reference, never pasted bare onto the sheet.
+            val tilePlate = if (below) theme.colorOr("cardTint", 0) else 0
+            val tileInset = if (tilePlate != 0) theme.px(12f) else 0
+            if (tilePlate != 0) {
+                card.addView(View(this@BrowseActivity).apply {
+                    background = Views.rounded(tilePlate, radius + theme.px(10f))
+                    elevation = theme.px(10f).toFloat()
+                }, FrameLayout.LayoutParams(cardW, cardH).apply { gravity = Gravity.TOP })
+            }
             val art = ImageView(this@BrowseActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
                 clipToOutline = true
+                // The plate sits at elevation 10 to cast its glow; the photo must sit above it or
+                // Android's z-order paints the plate over the artwork.
+                if (tilePlate != 0) elevation = theme.px(12f).toFloat()
                 outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) {
                         outline.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 6f).toFloat())
                     }
                 }
             }
-            card.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
+            card.addView(art, FrameLayout.LayoutParams(cardW - tileInset * 2, cardH - tileInset * 2).apply {
                 gravity = Gravity.TOP
+                leftMargin = tileInset
+                topMargin = tileInset
             })
             if (!frame && !below) {
                 val shade = View(this@BrowseActivity).apply {

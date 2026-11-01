@@ -66,7 +66,9 @@
     "cardTint": "#FFD866",
     "stageYellow": "#FFC93A",
     "stageDeep": "#F4B81E",
-    "accentYellow": "#FFD34E"
+    "accentYellow": "#FFD34E",
+    "listFill": "#FFEDBE",
+    "stageSheet": "#FFF3D0"
   },
   "spacing": {
     "gutter": 72,
@@ -84,14 +86,15 @@
     "panelPad": 28,
     "panelPadV": 24,
     "panelRowGap": 10,
-    "listItem": 14
+    "listItem": 112,
+    "listGap": 16
   },
   "radii": {
     "card": 26,
     "badge": 8,
     "chip": 999,
     "button": 999,
-    "listItem": 8,
+    "listItem": 24,
     "field": 12,
     "key": 12,
     "modal": 18,

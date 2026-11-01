@@ -22,12 +22,15 @@ import com.scenix.tv.core.Views
  * The mockup's rounded outer frame is only a presentation border; on a real TV the WHOLE screen is
  * the sunshine-yellow stage, deepening slightly toward the bottom, with every block sitting directly
  * on it: a black circular brand mark at top-left with its BLACK tab pill welded beside it and a
- * yellow search dot at the pill's end; a household cluster at right (avatar, gold bell, black name
- * plate); two oversized feature cards — one full-art with the title printed over the top and a play
- * circle at the foot, one yellow plate with key art bleeding from its inner edge; a row of black
- * chip pills naming the household's real shelves; and below the hero, the host's rails draw chunky
- * square captioned tiles. Focus is a thick black keyline — the same ink as everything else — never
- * a glow.
+ * yellow search dot at the pill's end; one household stop at right — a single black pill holding
+ * the avatar and the profile's name, welded beside a black settings gear, both reachable from the
+ * search dot with the D-pad (a bell for a feature this app does not have would be decoration);
+ * two oversized feature cards — one full-art with the title printed over the top and a play
+ * circle at the foot, one yellow plate with key art BLEEDING out of its inner edge into the plate
+ * — each carrying a soft standing shadow so it glows off the sheet; a row of
+ * black chip pills naming the household's real shelves; and below the hero, the host's rails draw
+ * chunky square captioned tiles. Focus is a thick black keyline — the same ink as everything else
+ * — never a glow.
  */
 internal class KidsHomeLayout(
     context: Context,
@@ -40,6 +43,7 @@ internal class KidsHomeLayout(
         val onSection: (String) -> Unit,
         val onProfile: () -> Unit,
         val onSearch: () -> Unit,
+        val onSettings: () -> Unit,
         val onShelf: (String) -> Unit,
     )
 
@@ -66,6 +70,9 @@ internal class KidsHomeLayout(
     private lateinit var avatarFace: ImageView
     private lateinit var avatarIni: TextView
     private lateinit var namePlate: TextView
+    private lateinit var searchStop: View
+    private lateinit var profilePill: LinearLayout
+    private lateinit var gearStop: FrameLayout
 
     init {
         // Transparent: the host paints the sunshine stage across the entire screen behind this
@@ -118,11 +125,19 @@ internal class KidsHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
-        val avatarStop = FrameLayout(context).apply {
+        // ONE household stop, not three. The avatar and the name are the same job — switching who
+        // watches — so they weld into one black pill: a face disc, the profile's name, and its
+        // quiet chevron. There is no bell: this app has no notifications yet, and an icon that
+        // lies about a feature is worse than empty space.
+        profilePill = LinearLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Profiles"
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = Views.rounded(theme.ink, theme.px(999f))
+            setPadding(theme.px(7f), theme.px(7f), theme.px(20f), theme.px(7f))
         }
         avatarFace = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -133,44 +148,59 @@ internal class KidsHomeLayout(
                 }
             }
         }
-        avatarIni = Views.text(app, "meta", 19f, Color.WHITE, "?", bold = true,
+        avatarIni = Views.text(app, "meta", 18f, Color.WHITE, "?", bold = true,
             gravity = Gravity.CENTER).apply {
+            background = Views.rounded(Color.argb(60, 255, 255, 255), theme.px(999f))
+        }
+        profilePill.addView(avatarIni, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
+        profilePill.addView(avatarFace, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
+        namePlate = Views.text(app, "nav", 17f, Color.WHITE, "", bold = true, maxLines = 1)
+        profilePill.addView(namePlate, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(12f) })
+        val down = Views.text(app, "nav", 15f, theme.color("accentYellow", "#FFD34E"), "⌄",
+            bold = true, gravity = Gravity.CENTER)
+        profilePill.addView(down, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(8f) })
+        Focus.attach(profilePill, profilePill, app, theme.px(999f), scale = false, elevate = false,
+            onClick = callbacks.onProfile)
+        pillStops += profilePill
+        household.addView(profilePill, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(60f)))
+
+        // The settings gear: without it a kids household has no door to the TV's own settings.
+        gearStop = FrameLayout(context).apply {
+            id = View.generateViewId()
+            isFocusable = true
+            isClickable = true
+            contentDescription = "Settings"
             background = Views.rounded(theme.ink, theme.px(999f))
         }
-        avatarStop.addView(avatarIni, LayoutParams(theme.px(54f), theme.px(54f)))
-        avatarStop.addView(avatarFace, LayoutParams(theme.px(54f), theme.px(54f)))
-        Focus.attach(avatarStop, avatarStop, app, theme.px(999f), scale = false, elevate = false,
-            onClick = callbacks.onProfile)
-        pillStops += avatarStop
-        household.addView(avatarStop, LinearLayout.LayoutParams(theme.px(54f), theme.px(54f)))
-
-        val bell = FrameLayout(context).apply {
-            background = Views.rounded(theme.color("accentYellow", "#FFD34E"), theme.px(999f))
-        }
-        bell.addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_bell)
-            setColorFilter(theme.ink)
+        gearStop.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_nav_settings)
+            setColorFilter(Color.WHITE)
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(theme.px(13f), theme.px(13f), theme.px(13f), theme.px(13f))
-        }, LayoutParams(theme.px(52f), theme.px(52f)))
-        household.addView(bell, LinearLayout.LayoutParams(theme.px(52f), theme.px(52f)).apply {
+            setPadding(theme.px(12f), theme.px(12f), theme.px(12f), theme.px(12f))
+        }, LayoutParams(theme.px(50f), theme.px(50f)))
+        Focus.attach(gearStop, gearStop, app, theme.px(999f), scale = false, elevate = false,
+            onClick = callbacks.onSettings)
+        pillStops += gearStop
+        household.addView(gearStop, LinearLayout.LayoutParams(theme.px(52f), theme.px(52f)).apply {
             marginStart = theme.px(12f)
         })
-
-        namePlate = Views.text(app, "nav", 17f, Color.WHITE, "", bold = true).apply {
-            background = Views.rounded(theme.ink, theme.px(999f))
-            setPadding(theme.px(20f), theme.px(13f), theme.px(20f), theme.px(13f))
-            maxLines = 1
-            visibility = View.GONE
-        }
-        household.addView(namePlate, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = theme.px(14f) })
         header.addView(household, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
         content.addView(header, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)))
+
+        // The top-right stops were previously decoration the remote could never reach: spell out
+        // the walk RIGHT out of the search dot — profile pill, then the gear.
+        searchStop.nextFocusRightId = profilePill.id
+        profilePill.nextFocusLeftId = searchStop.id
+        profilePill.nextFocusRightId = gearStop.id
+        gearStop.nextFocusLeftId = profilePill.id
 
         // --- the two oversized feature cards ---------------------------------------------------
         val cardRow = LinearLayout(context).apply {
@@ -238,6 +268,7 @@ internal class KidsHomeLayout(
             contentDescription = "Search"
             background = Views.rounded(theme.color("accentYellow", "#FFD34E"), theme.px(999f))
         }
+        searchStop = dot
         dot.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_nav_search)
             setColorFilter(theme.ink)
@@ -269,6 +300,8 @@ internal class KidsHomeLayout(
                 }
             }
             clipToOutline = true
+            // A soft standing shadow: the plate glows off the sheet, as in the reference.
+            elevation = theme.px(16f).toFloat()
         }
         val art = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
@@ -318,6 +351,12 @@ internal class KidsHomeLayout(
             val artBox = FrameLayout(context)
             artBox.addView(art, LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            // The key art bleeds out of the plate: a tint gradient eats the photo's inner edge
+            // instead of leaving the hard seam a pasted rectangle gives.
+            artBox.addView(View(context).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                    intArrayOf(theme.color("cardTint", "#FFD866"), Color.TRANSPARENT))
+            }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             // The left column stacks the ink title at the top and the play row at the foot.
             val textCol = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -384,15 +423,14 @@ internal class KidsHomeLayout(
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
     }
 
-    /** The household cluster prints the signed-in profile's name, like the mockup's name plate. */
+    /** The household pill prints the signed-in profile's name beside its face. */
     fun setProfile(name: String, avatarUrl: String?) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
         avatarIni.text = trimmed.take(1).uppercase()
         namePlate.text = trimmed.take(18)
-        namePlate.visibility = View.VISIBLE
         if (!avatarUrl.isNullOrBlank()) {
-            BrowseImages.load(avatarFace, avatarUrl, theme.px(54f)) { ok ->
+            BrowseImages.load(avatarFace, avatarUrl, theme.px(46f)) { ok ->
                 if (ok) avatarIni.visibility = View.GONE
             }
         }

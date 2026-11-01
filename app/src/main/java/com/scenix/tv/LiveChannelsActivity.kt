@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -52,7 +53,10 @@ class LiveChannelsActivity : Activity() {
         if (profileId.isBlank()) { finish(); return }
 
         val theme = app.theme
-        val root = FrameLayout(this).apply { setBackgroundColor(theme.bg) }
+        val root = FrameLayout(this).apply {
+            val wall = Screens.wall(app)
+            if (wall != null) background = wall else setBackgroundColor(theme.bg)
+        }
         grid = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@LiveChannelsActivity, 6)
             setHasFixedSize(true)
@@ -361,27 +365,16 @@ class LiveChannelsActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(theme.px(26f), theme.px(20f), theme.px(26f), theme.px(20f))
-            background = Views.rounded(theme.color("panelScrim", "#E6000000"), theme.px(12f),
-                theme.px(1f), theme.line)
+            background = Screens.modalFill(app)
         }
         panel.addView(Views.text(app, "li", 24f, theme.ink, title, bold = true, maxLines = 2))
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         var first: View? = null
         for ((value, label) in options) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(theme.px(14f), 0, theme.px(14f), 0)
-                isFocusable = true
-                isClickable = true
-                setOnClickListener {
-                    closePicker()
-                    onPick(value)
-                }
+            val row = Screens.pickerRow(this, app, label, selected = false) {
+                closePicker()
+                onPick(value)
             }
-            row.addView(Views.text(app, "li", 20f, theme.ink, label, maxLines = 1),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Focus.attach(row, row, app, theme.px(8f), scale = false, elevate = false)
             list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(56f)))
             if (first == null) first = row
         }

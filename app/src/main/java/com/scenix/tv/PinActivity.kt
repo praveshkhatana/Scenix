@@ -14,6 +14,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 
@@ -40,7 +41,8 @@ class PinActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(app.theme.surface)
+            val wall = Screens.wall(app)
+            if (wall != null) background = wall else setBackgroundColor(app.theme.surface)
             setPadding(app.theme.px(64f), app.theme.px(48f), app.theme.px(64f), app.theme.px(32f))
         }
         root.addView(Views.text(app, "h1", 44f, app.theme.ink, "Enter your PIN", bold = true, gravity = Gravity.CENTER))
@@ -64,11 +66,13 @@ class PinActivity : Activity() {
             for (label in labels) {
                 val b = Views.text(app, "li", if (label.length > 1) 18f else 28f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
                 b.setPadding(app.theme.px(8f), 0, app.theme.px(8f), 0)
-                b.background = Views.rounded(app.theme.surface2, app.theme.px(10f))
+                // The keypad keys are the pack's keys: same rounded plate language as Settings' PIN pad.
+                val keyRadius = app.theme.radius("key", 12f)
+                b.background = Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
                 b.isFocusable = true
                 b.isClickable = true
                 b.setOnClickListener { press(label) }
-                Focus.attach(b, b, app, app.theme.px(10f), scale = false, elevate = false)
+                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false)
                 line.addView(b, LinearLayout.LayoutParams(app.theme.px(150f), app.theme.px(74f)).apply {
                     marginStart = app.theme.px(8f); marginEnd = app.theme.px(8f)
                 })
