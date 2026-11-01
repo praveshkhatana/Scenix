@@ -60,7 +60,7 @@ class LocalHub private constructor(context: Context) {
             .put("subtitleLanguages", o.optJSONArray("subtitleLanguages") ?: JSONArray())
             .put("adult", o.optBoolean("adult", false))
             .put("cacheTtlHours", o.optInt("cacheTtlHours", 6))
-            .put("theme", o.optString("theme", "scenix-dark"))
+            .put("theme", o.optString("theme", "scenix-apple"))
             .put("debrid", o.optJSONObject("debrid") ?: defaultDebrid())
             .put("live", o.optJSONObject("live") ?: JSONObject())
             // The folder this TV may read, as a SAF tree URI plus the words the owner sees. Empty is
@@ -76,7 +76,7 @@ class LocalHub private constructor(context: Context) {
         }
         if (body.has("adult")) merged.put("adult", body.optBoolean("adult", false))
         if (body.has("cacheTtlHours")) merged.put("cacheTtlHours", body.optInt("cacheTtlHours", 6))
-        if (body.has("theme")) merged.put("theme", body.optString("theme", "scenix-dark"))
+        if (body.has("theme")) merged.put("theme", body.optString("theme", "scenix-apple"))
         if (body.has("debrid")) {
             // A token is write-only: null removes it, a blank string keeps the stored one.
             val cur = merged.optJSONObject("debrid") ?: defaultDebrid()
@@ -251,7 +251,7 @@ class LocalHub private constructor(context: Context) {
         .put("subtitleLanguages", JSONArray())
         .put("adult", false)
         .put("cacheTtlHours", 6)
-        .put("theme", "scenix-dark")
+        .put("theme", "scenix-apple")
         .put("debrid", defaultDebrid())
         .put("live", JSONObject())
         .put("local", JSONObject())
@@ -267,24 +267,25 @@ class LocalHub private constructor(context: Context) {
             val text = assets.open("themes.json").bufferedReader().use { it.readText() }
             JSONObject(text).optJSONArray("themes") ?: JSONArray()
         } catch (t: Throwable) {
-            JSONArray().put(JSONObject().put("id", "scenix-dark")
-                .put("name", "Scenix Dark").put("asset", "theme.json").put("pack", "Classic"))
+            JSONArray().put(JSONObject().put("id", "scenix-apple")
+                .put("name", "Clean").put("asset", "theme-apple.json").put("pack", "Scene"))
         }
     }
 
     /** `GET /app/v1/theme`: the selected tokens, so the bundled web UI follows the TV's theme too. */
     fun themeJson(): JSONObject {
         val themes = themeCatalog()
-        val wanted = settings().optString("theme", "scenix-dark")
+        val wanted = settings().optString("theme", "scenix-apple")
         var choice: JSONObject? = null
         for (i in 0 until themes.length()) {
             val o = themes.optJSONObject(i) ?: continue
             if (o.optString("id") == wanted) { choice = o; break }
         }
+        // A saved theme this build no longer ships is not an error: the first shipped pack answers.
         if (choice == null && themes.length() > 0) choice = themes.optJSONObject(0)
-        val id = choice?.optString("id") ?: "scenix-dark"
-        val name = choice?.optString("name") ?: "Scenix Dark"
-        val asset = choice?.optString("asset")?.takeIf { it.isNotBlank() } ?: "theme.json"
+        val id = choice?.optString("id") ?: "scenix-apple"
+        val name = choice?.optString("name") ?: "Clean"
+        val asset = choice?.optString("asset")?.takeIf { it.isNotBlank() } ?: "theme-apple.json"
         val tokens = try {
             JSONObject(assets.open(asset).bufferedReader().use { it.readText() })
         } catch (t: Throwable) {
@@ -346,7 +347,7 @@ class LocalHub private constructor(context: Context) {
             .put("id", "standalone")
             .put("name", appContext.getString(R.string.app_name))
             .put("version", appContext.getString(R.string.app_name) + " standalone")
-            .put("theme", settings().optString("theme", "scenix-dark"))
+            .put("theme", settings().optString("theme", "scenix-apple"))
             .put("api", "/app/v1")
             .put("capabilities", caps)
             .put("addons", addonsJson())

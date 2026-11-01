@@ -25,6 +25,9 @@ class ScenixApp : Application() {
         val h = metrics.heightPixels
 
         prefs = Prefs(this)
+        // Packs come and go between builds. A TV still holding a retired theme id lands on the
+        // default look at boot instead of wandering through fallbacks with a stale label.
+        if (Theme.catalog(assets).none { it.id == prefs.theme() }) prefs.setTheme(Theme.DEFAULT_ID)
         theme = Theme.load(assets, w, h, Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
         ctx = AppContext(this, theme, prefs)
     }

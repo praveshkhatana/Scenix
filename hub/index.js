@@ -186,7 +186,7 @@ const GATEWAY_FIT = 0.85; // keep 15% of the measured pipe for the player's own 
 const PLAY_PROBE_BUDGET_MS = Number(process.env.PLAY_PROBE_BUDGET_MS || probe.limits.BUDGET_MS);
 const PLAY_PROBE_MAX = Number(process.env.PLAY_PROBE_MAX || 6); // measured candidates per decision
 const DAYS = Number(process.env.DAYS || 45); // "just added" window
-const THEME_ID = process.env.THEME_ID || 'scenix-dark';
+const THEME_ID = process.env.THEME_ID || 'scenix-apple';
 const HEALTH_CACHE_MS = 15000;
 const UPSTREAM_UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/0.1';
 
@@ -3525,9 +3525,11 @@ function themeCatalog() {
 }
 function themePayload() {
   const themes = themeCatalog();
-  const wanted = String(settings.get().theme || 'scenix-dark');
+  // "Clean" is the shipped default; a household holding a pack that was retired between builds
+  // lands on the first entry of the shipped catalog rather than a theme the build cannot draw.
+  const wanted = String(settings.get().theme || 'scenix-apple');
   const choice = themes.find((t) => t.id === wanted) || themes[0]
-    || { id: 'scenix-dark', name: 'Scenix Dark', asset: 'theme.json' };
+    || { id: 'scenix-apple', name: 'Clean', asset: 'theme-apple.json' };
   let tokens = null;
   try {
     // The manifest is the allow-list; an id from a request never becomes a path.

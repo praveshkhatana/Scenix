@@ -1,26 +1,8 @@
 {
  "themes": [
   {
-   "id": "scenix-dark",
-   "name": "Scenix Dark",
-   "asset": "theme.json",
-   "pack": "Classic"
-  },
-  {
-   "id": "scenix-midnight",
-   "name": "Midnight",
-   "asset": "theme-midnight.json",
-   "pack": "Cinema"
-  },
-  {
-   "id": "scenix-ember",
-   "name": "Ember",
-   "asset": "theme-ember.json",
-   "pack": "Editorial"
-  },
-  {
    "id": "scenix-apple",
-   "name": "Apple",
+   "name": "Clean",
    "asset": "theme-apple.json",
    "pack": "Scene"
   },

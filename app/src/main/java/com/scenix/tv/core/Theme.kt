@@ -181,6 +181,12 @@ class Theme private constructor(
     companion object {
         private const val TAG = "ScenixTheme"
         const val ASSET = "theme.json"
+        /**
+         * The pack a device falls back to when its saved theme is not shipped any more. Packs come
+         * and go — a household left holding a retired id must land on a real look, not a half-loaded
+         * one — so one id owns that answer and every fallback reads it.
+         */
+        const val DEFAULT_ID = "scenix-apple"
 
         /** One selectable theme from assets/themes.json. `pack` names its layout family. */
         data class Choice(val id: String, val name: String, val asset: String, val pack: String = "")
@@ -201,12 +207,17 @@ class Theme private constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "assets/themes.json missing or unreadable", t)
             }
-            if (out.isEmpty()) out.add(Choice("scenix-dark", "Scenix Dark", ASSET))
+            if (out.isEmpty()) out.add(Choice(DEFAULT_ID, "Clean", "theme-apple.json", "Scene"))
             return out
         }
 
-        fun assetFor(assets: AssetManager, id: String): String =
-            catalog(assets).firstOrNull { it.id == id }?.asset ?: ASSET
+        /** A saved id whose pack this build no longer ships resolves to the default pack. */
+        fun assetFor(assets: AssetManager, id: String): String {
+            val all = catalog(assets)
+            return all.firstOrNull { it.id == id }?.asset
+                ?: all.firstOrNull { it.id == DEFAULT_ID }?.asset
+                ?: ASSET
+        }
 
         fun load(assets: AssetManager, screenW: Int, screenH: Int, asset: String = ASSET, zoom: Float = 1f): Theme {
             var root = JSONObject()
@@ -231,7 +242,7 @@ class Theme private constructor(
                 zoom.coerceIn(1f, 1.3f)
             Log.i(TAG, "theme ${root.optString("id", "?")} scale=$scale (${screenW}x$screenH)")
             return Theme(
-                id = root.optString("id", "scenix-dark"),
+                id = root.optString("id", DEFAULT_ID),
                 canvasWidth = cw,
                 canvasHeight = ch,
                 scale = if (scale <= 0f) 1f else scale,

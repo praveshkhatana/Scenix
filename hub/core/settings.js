@@ -40,8 +40,8 @@ const DEFAULTS = {
   // the owner gives it, and two hubs on one LAN must be tellable apart by a person, not by a hostname.
   hubName: 'Scenix Hub',
   // The visual theme selected for the browser/native chrome. The token files live in web/assets and
-  // are the same shape as the Android assets; an unknown id falls back to the shipped dark theme.
-  theme: 'scenix-dark',
+  // are the same shape as the Android assets; an unknown id falls back to the shipped default pack.
+  theme: 'scenix-apple',
   // ISO-639-2/T codes, the form the hub's own rules and profiles work in (hin, eng, pan).
   // Empty means: no language filter at all — every copy the addons return is allowed.
   languages: [],
