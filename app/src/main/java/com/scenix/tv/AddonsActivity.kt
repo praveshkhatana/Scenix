@@ -89,6 +89,9 @@ class AddonsActivity : Activity() {
             installed = list
             status.text = ""
             paint()
+            // Entering a screen lands on its first content stop, never on chrome: the back chevron
+            // is reached by walking UP from the rows, like every other list screen.
+            rows.getChildAt(0)?.post { rows.getChildAt(0).requestFocus() }
         }
     }
 

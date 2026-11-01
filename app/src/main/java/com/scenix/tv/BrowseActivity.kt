@@ -1155,8 +1155,10 @@ class BrowseActivity : Activity() {
                 return@load
             }
             loaded = true
-            // The pill's Live TV tab appears only for households whose hub actually carries it.
-            liveSeen = rows.any { it.id == "live" || it.card == "channel" }
+            // The pill's Live TV tab appears only for households whose hub actually carries it —
+            // and then never withdraws: a hub mid re-warm briefly answers with stale empty rows,
+            // and a tab that keeps changing shape under the thumb is worse than one that arrives late.
+            if (rows.any { it.id == "live" || it.card == "channel" }) liveSeen = true
             liveTab?.visibility = if (liveSeen) View.VISIBLE else View.GONE
             wirePillFocus()
             // Live has a whole tab and a wall of its own; the Home shelves are for films and shows,

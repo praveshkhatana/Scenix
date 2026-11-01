@@ -406,6 +406,9 @@ class DetailActivity : Activity() {
             }.sortedByDescending { it.genres.count { g -> genres.contains(g) } * 100 + it.match }
                 .take(14)
             if (picks.isEmpty()) {
+                // The empty-state rule again: the heading stays only with an honest line under it,
+                // and the placeholder rail collapses so there is no blank band pretending to load.
+                rail.visibility = View.GONE
                 contentSlot?.addView(Views.text(app, "sub", 20f, theme.ink3,
                     "This hub has not found anything similar yet."),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -490,21 +493,43 @@ class DetailActivity : Activity() {
     ) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view)
 
     private fun castRow(parent: LinearLayout, cast: JSONArray, theme: com.scenix.tv.core.Theme) {
+        // Empty-state rule for the whole page: a heading never paints above content that has
+        // nothing to show. An entry with no name prints nothing, so it does not count as content;
+        // if no entry counts, the Cast block simply is not there (Wildwood showed a bare heading).
+        val people = ArrayList<JSONObject>()
+        for (i in 0 until minOf(cast.length(), 8)) {
+            // The hub answers with enriched people ({name, character, profile}) when the face
+            // lookup had budget, and bare names when it did not; both are people. A bare name
+            // rides the initial disc below.
+            val person = when (val entry = cast.opt(i)) {
+                is JSONObject -> entry
+                is String -> JSONObject().put("name", entry)
+                else -> continue
+            }
+            if (s(person, "name", "").isBlank()) continue
+            people.add(person)
+        }
+        if (people.isEmpty()) return
         parent.addView(Views.text(app, "rowTitle", 27f, theme.ink, "Cast", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(18f); bottomMargin = theme.px(12f)
             })
         val strip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (i in 0 until minOf(cast.length(), 8)) {
-            val person = cast.optJSONObject(i) ?: continue
+        for (person in people) {
             val box = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(theme.px(8f), 0, theme.px(8f), 0)
             }
+            // A face without a photo is still a face: the disc carries the person's initial,
+            // which steps aside only when the hub supplied a real portrait.
+            val faceSlot = FrameLayout(this)
+            faceSlot.addView(Views.text(app, "h3", 34f, theme.ink2,
+                s(person, "name", " ").trim().take(1).uppercase(), bold = true, gravity = Gravity.CENTER).apply {
+                background = Views.rounded(theme.surface2, theme.px(999f))
+            }, FrameLayout.LayoutParams(theme.px(112f), theme.px(112f)))
             val face = ImageView(this).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(theme.surface2)
                 clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) {
@@ -512,8 +537,13 @@ class DetailActivity : Activity() {
                     }
                 }
             }
-            box.addView(face, LinearLayout.LayoutParams(theme.px(112f), theme.px(112f)))
-            BrowseImages.load(face, s(person, "profile", ""), theme.px(112f))
+            faceSlot.addView(face, FrameLayout.LayoutParams(theme.px(112f), theme.px(112f)))
+            box.addView(faceSlot, LinearLayout.LayoutParams(theme.px(112f), theme.px(112f)))
+            BrowseImages.load(face, s(person, "profile", ""), theme.px(112f)) { ok ->
+                if (!isFinishing && !isDestroyed && ok) {
+                    (faceSlot.getChildAt(0) as? TextView)?.visibility = View.GONE
+                }
+            }
             box.addView(Views.text(app, "caption", 18f, theme.ink, s(person, "name", ""), maxLines = 1, gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(8f) })
             box.addView(Views.text(app, "meta", 15f, theme.ink3, s(person, "character", ""), maxLines = 1, gravity = Gravity.CENTER),

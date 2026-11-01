@@ -130,6 +130,8 @@ class SettingsActivity : Activity() {
         }
     }
 
+    private var enteredOnce = false
+
     /** Settings carries the row metadata and its hidden/order config; the editor is optional. */
     private fun loadRows() {
         api.settings { root, _ ->
@@ -143,6 +145,13 @@ class SettingsActivity : Activity() {
             }
             paint()
             page.visibility = View.VISIBLE
+            // Entering a screen lands on its first content stop, never on chrome: the back chevron
+            // is reached by walking UP from the rows, like every other list screen. Re-entry after
+            // an action keeps wherever the person left focus.
+            if (!enteredOnce) {
+                enteredOnce = true
+                rows.getChildAt(0)?.post { rows.getChildAt(0).requestFocus() }
+            }
         }
     }
 

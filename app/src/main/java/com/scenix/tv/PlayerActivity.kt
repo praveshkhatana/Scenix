@@ -2631,7 +2631,21 @@ class PlayerActivity : Activity() {
         return false
     }
 
-    private fun showError(message: String, title: String = "This copy could not be played") {
+    /** Hub answers arrive as lowercase machine words; the page answers in sentences. */
+    private fun humaniseError(raw: String): String {
+        val t = raw.trim()
+        if (t.isEmpty()) return "The hub gave no reason."
+        val said = when {
+            t.contains("warm", true) || t.contains("prepar", true) ->
+                "The hub is still preparing this copy — try again in a moment"
+            t.contains("not found", true) -> "No source in this hub carries this title"
+            else -> t.replaceFirstChar { it.uppercaseChar() }
+        }
+        return if (said.endsWith(".") || said.endsWith("…")) said else "$said."
+    }
+
+    private fun showError(rawMessage: String, title: String = "This copy could not be played") {
+        val message = humaniseError(rawMessage)
         // A card over a running picture is the bug the viewer reported: the old copy is fine, the
         // hub was merely late with another one. Say it in the status line and leave the picture be.
         if (pictureLive()) {
@@ -2648,8 +2662,9 @@ class PlayerActivity : Activity() {
         cancelHide()
         revealChrome()
         val card = cardBox()
-        card.addView(Views.text(app, "panelTitle", 28f, theme.color("brand", "#E50914"),
-            title, bold = true))
+        // One heading language across the app: ink, never a coloured title — the pack's accent
+        // already rides on the chips below.
+        card.addView(Views.text(app, "panelTitle", 28f, theme.ink, title, bold = true))
         card.addView(Views.text(app, "sub", 21f, theme.ink2, message, maxLines = 3),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
