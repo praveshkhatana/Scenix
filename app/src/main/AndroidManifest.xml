@@ -108,6 +108,16 @@
             android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- The embedded-engine player: same contract as the WebView player, Gecko underneath, so
+             a pad pairing or a controller arriving must not restart the running game either. -->
+        <activity
+            android:name=".CoiGameActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
         <activity
             android:name=".DebridActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"

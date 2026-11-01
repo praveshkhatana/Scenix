@@ -270,8 +270,10 @@ class GamesActivity : Activity() {
         }
 
         private fun open(g: GameCard) {
+            // Multithreaded ports need SharedArrayBuffer, which Android's WebView never grants —
+            // those go to the Gecko engine embedded in our own APK instead.
             startActivity(
-                Intent(this@GamesActivity, GameActivity::class.java)
+                Intent(this@GamesActivity, if (g.coi) CoiGameActivity::class.java else GameActivity::class.java)
                     .putExtra(GameActivity.EXTRA_TITLE, g.title)
                     .putExtra(GameActivity.EXTRA_URL, g.playUrl)
                     .putExtra(GameActivity.EXTRA_FALLBACK, g.fallbackUrl)

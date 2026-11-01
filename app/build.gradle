@@ -47,6 +47,7 @@ android {
         targetSdk 34
         versionCode 1
         versionName '0.1-p1'
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }  // GeckoView's x86_64 is dead weight on TVs
     }
 
     buildTypes {
@@ -116,6 +117,12 @@ dependencies {
     // classpath. Every IPTV tile in the hub is HLS, so this is what live playback runs on.
     implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
     implementation 'androidx.media3:media3-exoplayer-dash:1.4.1'
+    // Firefox's embeddable engine: the multithreaded WASM ports (catalog coi flag) need
+    // SharedArrayBuffer, which Android WebView never grants. GeckoView carries it, in-app.
+    // Pinned to the 128 ESR: its transitive deps (core 1.13.1, kotlin 1.9.24) are exactly this
+    // project's toolchain — newer GV builds demand compileSdk 35+ and break AGP 8.5.2.
+    implementation 'org.mozilla.geckoview:geckoview:128.0.20240725162350'
+
     // Standalone torrent engine: libtorrent compiled for this TV's 32-bit ARM ABI.
     implementation 'org.libtorrent4j:libtorrent4j:2.1.0-35'
     implementation 'org.libtorrent4j:libtorrent4j-android-arm:2.1.0-35'
