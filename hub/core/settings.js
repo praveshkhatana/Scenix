@@ -51,7 +51,7 @@ const DEFAULTS = {
   // (`norm:<slug>`) the household does not want; `groupsHidden` removes a whole genre; `order` is the
   // owner's own sequence, with anything it does not mention following in the provider's order. All three
   // ship empty, so a fresh hub shows the playlist as published and the owner edits from the UI.
-  live: { playlist: '', hidden: [], groupsHidden: [], order: [] },
+  live: { playlist: '', xmltv: '', hidden: [], groupsHidden: [], order: [] },
   // How the addon host behaves. These were env-var constants; they are the owner's to set now.
   addons: { maxSources: 12, minSizeMB: 100, sizeFilter: '200MB-1.5GB,1.5GB-8GB' },
   // Owner-defined source packs. Both are descriptors, not code: a native addon reads them by id and
@@ -327,6 +327,9 @@ function normalize(s) {
     languages: normalizeLanguages(s.languages),
     live: {
       playlist: String((s.live || {}).playlist || '').trim().slice(0, 400),
+      // An optional XMLTV guide URL. Channels play perfectly without one; a guide is what puts
+      // "now / next" on the player header and the wall instead of nothing at all.
+      xmltv: String((s.live || {}).xmltv || '').trim().slice(0, 400),
       hidden: idList((s.live || {}).hidden),
       groupsHidden: idList((s.live || {}).groupsHidden),
       order: idList((s.live || {}).order),

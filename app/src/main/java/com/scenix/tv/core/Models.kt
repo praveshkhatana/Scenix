@@ -31,6 +31,33 @@ internal fun sa(a: JSONArray, i: Int, def: String = ""): String =
  * lead with a feed that answered, but an unknown feed is never hidden — it is the normal state of a
  * channel nobody has tuned yet.
  */
+/** One programme from the hub's optional XMLTV guide (core/guide.js): what is on, or what comes next. */
+data class Programme(
+    val title: String = "",
+    val startMs: Long = 0,
+    val stopMs: Long = 0,
+    val minsLeft: Int = 0,
+    /** 0..1000, the hub's own read of how far into the programme the wall clock sits. */
+    val progress: Int = 0,
+    val category: String = "",
+) {
+    companion object {
+        fun from(o: JSONObject?): Programme? {
+            if (o == null) return null
+            val t = s(o, "title", "")
+            if (t.isEmpty()) return null
+            return Programme(
+                title = t,
+                startMs = o.optLong("start", 0L),
+                stopMs = o.optLong("stop", 0L),
+                minsLeft = o.optInt("minsLeft", 0),
+                progress = o.optInt("progress", 0),
+                category = s(o, "category", ""),
+            )
+        }
+    }
+}
+
 data class Live(
     val now: String = "",
     val quality: String = "",
@@ -41,6 +68,10 @@ data class Live(
     val checkedAt: Long = 0,
     val latencyMs: Long = 0,
     val error: String = "",
+    // The optional XMLTV guide the owner pointed settings.live.xmltv at. Empty title = this hub
+    // knows nothing about what is on; the player header then shows only the channel name, as before.
+    val nowProgramme: Programme? = null,
+    val nextProgramme: Programme? = null,
 ) {
     companion object {
         fun from(o: JSONObject?): Live? {
@@ -53,9 +84,11 @@ data class Live(
                 checkedAt = o.optLong("checkedAt", 0L),
                 latencyMs = o.optLong("latencyMs", 0L),
                 error = s(o, "error", ""),
+                nowProgramme = Programme.from(o.optJSONObject("now")),
+                nextProgramme = Programme.from(o.optJSONObject("next")),
             )
             return if (l.now.isEmpty() && l.quality.isEmpty() && l.number <= 0 &&
-                l.health.isEmpty() && l.checkedAt <= 0L
+                l.health.isEmpty() && l.checkedAt <= 0L && l.nowProgramme == null && l.nextProgramme == null
             ) null else l
         }
     }

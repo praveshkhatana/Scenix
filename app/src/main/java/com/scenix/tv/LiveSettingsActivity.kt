@@ -119,6 +119,24 @@ class LiveSettingsActivity : Activity() {
             editPlaylist(playlist)
         }
 
+        // The optional programme guide. Channels play with or without it; a guide is what puts
+        // "Now: …" on the player header and the wall.
+        val xmltv = live?.optString("xmltv").orEmpty()
+        val guide = s.optJSONObject("live")?.optJSONObject("guide")
+        val guideNote = when {
+            xmltv.isBlank() -> "Optional XMLTV address — puts what is ON on the player header and the wall"
+            guide == null || guide.optString("error").isNotBlank() ->
+                "Last fetch failed: " + (guide?.optString("error").orEmpty().ifBlank { "the hub has not fetched it yet" })
+            guide.optLong("updatedAt", 0L) > 0L ->
+                "${guide.optInt("channels", 0)} channels · updated ${
+                    java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT)
+                        .format(java.util.Date(guide.optLong("updatedAt")))}"
+            else -> "Guide configured"
+        }
+        addRow("Programme guide (XMLTV)", if (xmltv.isBlank()) "Not set" else xmltv, guideNote) {
+            editGuide(xmltv)
+        }
+
         val hidden = ids(live?.optJSONArray("groupsHidden"))
         val all = groupOptions(hidden)
         addRow("Hidden groups", groupSummary(hidden, all.size),
@@ -217,6 +235,16 @@ class LiveSettingsActivity : Activity() {
         )
     }
 
+    private fun editGuide(current: String) {
+        startActivityForResult(
+            Intent(this, TextEntryActivity::class.java)
+                .putExtra(TextEntryActivity.EXTRA_TITLE, "Programme guide (XMLTV)")
+                .putExtra(TextEntryActivity.EXTRA_VALUE, current)
+                .putExtra(TextEntryActivity.EXTRA_HINT, "https://…/epg.xml — optional; empty removes the guide"),
+            REQ_GUIDE,
+        )
+    }
+
     private fun showGroups(all: List<String>, hidden: List<String>) {
         showChecklist(
             "Hidden groups",
@@ -249,10 +277,15 @@ class LiveSettingsActivity : Activity() {
     @Deprecated("Activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_PLAYLIST || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val url = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT).orEmpty().trim()
-        commit(if (url.isBlank()) "Live TV off" else "Playlist saved") { s ->
-            live(s).put("playlist", url)
+        when (requestCode) {
+            REQ_PLAYLIST -> commit(if (url.isBlank()) "Live TV off" else "Playlist saved") { s ->
+                live(s).put("playlist", url)
+            }
+            REQ_GUIDE -> commit(if (url.isBlank()) "Guide removed" else "Guide saved") { s ->
+                live(s).put("xmltv", url)
+            }
         }
     }
 
@@ -384,5 +417,6 @@ class LiveSettingsActivity : Activity() {
 
     companion object {
         private const val REQ_PLAYLIST = 61
+        private const val REQ_GUIDE = 62
     }
 }

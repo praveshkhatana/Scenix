@@ -49,6 +49,7 @@ import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.Programme
 import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.player.Ceilings
 import org.json.JSONArray
@@ -156,6 +157,9 @@ class PlayerActivity : Activity() {
     private var maxPosition = 0L
     private var lastSavedPosition = -1L
     private var nextProgressAt = 0L
+    /** Live watch time, counted only while frames move, flushed to the hub as `watchMs` deltas. */
+    private var liveWatchMs = 0L
+    private var liveWatchBaseAt = 0L
     private var requestGen = 0
     private var subsGen = 0
     private var failovers = 0
@@ -2500,6 +2504,14 @@ class PlayerActivity : Activity() {
             val channel = liveChannels.firstOrNull { it.identity == s?.identity }
             val number = channel?.live?.number ?: 0
             if (number > 0) bits.add(0, "CH $number")
+            // What the guide says is on right now. The hub only publishes this when the owner set
+            // settings.live.xmltv, so on a guide-less hub the header reads exactly as it used to.
+            val now = channel?.live?.nowProgramme
+                ?: answer?.optJSONObject("live")?.optJSONObject("now")?.let { hubProgramme(it) }
+            if (now != null && now.title.isNotBlank()) {
+                val left = if (now.minsLeft > 0) " · ${now.minsLeft} min left" else ""
+                bits.add("Now: ${now.title}$left")
+            }
         }
         val epTitle = answer?.optJSONObject("episode")?.let { str(it, "title") }.orEmpty()
         if (epTitle.isNotBlank()) bits.add(epTitle)
@@ -2515,6 +2527,16 @@ class PlayerActivity : Activity() {
         metaView.text = bits.joinToString("  ·  ")
         liveBadge.visibility = if (live) View.VISIBLE else View.GONE
     }
+
+    /** Raw hub JSON (`live.now`) -> the few fields the header prints, for paths that hold the answer, not the Item. */
+    private fun hubProgramme(o: JSONObject): Programme = Programme(
+        title = o.optString("title", ""),
+        startMs = o.optLong("start", 0L),
+        stopMs = o.optLong("stop", 0L),
+        minsLeft = o.optInt("minsLeft", 0),
+        progress = o.optInt("progress", 0),
+        category = o.optString("category", ""),
+    )
 
     private fun paintChips() {
         audioButton.contentDescription = "Audio · " + audioValue()
@@ -2995,6 +3017,9 @@ class PlayerActivity : Activity() {
     }
 
     private fun spectrum(spec: PlaySpec) {
+        // Flush the channel being left FIRST: its partial watch minutes belong to its own identity,
+        // and by now the spec/live flags below would route the post to the NEW channel.
+        saveProgress(force = true)
         this.spec = spec
         displayTitle = spec.title
         live = true
@@ -3065,10 +3090,12 @@ class PlayerActivity : Activity() {
         updateSkip()
         val p = player ?: return
         watchCushion(p)
-        if (p.isPlaying && !live) {
+        if (p.isPlaying) {
             val now = SystemClock.elapsedRealtime()
             if (now >= nextProgressAt) {
                 nextProgressAt = now + progressPostMs
+                // Live takes the same cadence and posts its watch-time delta; saveProgress routes
+                // on the live flag itself.
                 saveProgress(force = false)
             }
         }
@@ -3171,11 +3198,29 @@ class PlayerActivity : Activity() {
     }
 
     private fun saveProgress(force: Boolean) {
+        // Bank watch time under WHATEVER is loaded now, before any identity churn below can route a
+        // flush to the wrong channel.
+        if (live || loadedAnswer?.optBoolean("live", false) == true) flushLiveWatch()
         // The playhead belongs to what the player is actually holding, not to a request that is still
         // in flight. Without this, a Next press could write the old episode's position under the new
         // episode's identity for the seconds the hub takes to answer.
         val spec = loadedSpec ?: return
-        if (live || (loadedAnswer?.optBoolean("live", false) == true)) return
+        if (live || (loadedAnswer?.optBoolean("live", false) == true)) {
+            // A live channel has no playhead to carry, but it DOES have watch time: without this the
+            // hub never learns that an evening of zapping happened — no last-channel, no watched
+            // history, no honest Continue row. The delta is only counted while a frame is moving, and
+            // posted as an additive `watchMs` (core/store.js adds it; the max-semantics watchedMs
+            // stays for files).
+            val delta = flushLiveWatch()
+            if (delta <= 0L) return
+            api.progress(JSONObject()
+                .put("identity", spec.identity)
+                .put("profile", profileId)
+                .put("type", spec.type)
+                .put("title", loadedTitle.ifBlank { spec.title })
+                .put("watchMs", delta))
+            return
+        }
         val p = player ?: return
         val pos = filmPosition(p)
         if (pos <= 0L) return
@@ -3191,6 +3236,12 @@ class PlayerActivity : Activity() {
             .put("positionMs", pos)
             .put("durationMs", dur.coerceAtLeast(0L))
             .put("watchedMs", maxPosition)
+        // Name the copy this screen is actually reading. /progress used to answer every screen with
+        // stats about "whichever watched copy the hub touched last" — on two simultaneous screens one
+        // viewer's starved buffer downgraded the other's healthy stream. The url is what the hub
+        // handed this player (its proxy, its buffer, or the direct link it cushioned), so the hub can
+        // look up THIS copy's numbers.
+        loadedAnswer?.optString("url")?.takeIf { it.isNotBlank() }?.let { body.put("stream", it) }
         if (spec.season > 0 && spec.episode > 0) {
             body.put("season", spec.season).put("episode", spec.episode)
             body.put("episode", JSONObject()
@@ -3199,6 +3250,23 @@ class PlayerActivity : Activity() {
                 .put("title", loadedAnswer?.optJSONObject("episode")?.let { str(it, "title") }.orEmpty()))
         }
         api.progress(body)
+    }
+
+    /**
+     * Bank and return the live watch time accumulated since the last call. Counting runs from the
+     * last moment a frame was moving: a feed that stops mid-evening stops earning watch time right
+     * then, rather than at the next heartbeat.
+     */
+    private fun flushLiveWatch(): Long {
+        val p = player
+        val watching = p != null && p.isPlaying
+        val now = SystemClock.elapsedRealtime()
+        if (watching && liveWatchBaseAt == 0L) liveWatchBaseAt = now
+        if (!watching && liveWatchBaseAt > 0L) liveWatchMs += now - liveWatchBaseAt
+        if (watching) liveWatchBaseAt = now
+        val delta = liveWatchMs
+        liveWatchMs = 0L
+        return delta
     }
 
     private fun finishToDetail() {
@@ -3583,12 +3651,22 @@ class PlayerActivity : Activity() {
         val ext = format.lowercase().ifBlank {
             url.substringBefore('?').substringAfterLast('.', "").lowercase()
         }
-        return when (ext) {
-            "ass", "ssa" -> MimeTypes.TEXT_SSA
-            "vtt", "webvtt" -> MimeTypes.TEXT_VTT
-            "ttml", "dfxp" -> MimeTypes.APPLICATION_TTML
-            else -> MimeTypes.APPLICATION_SUBRIP
+        when (ext) {
+            "ass", "ssa" -> return MimeTypes.TEXT_SSA
+            "vtt", "webvtt" -> return MimeTypes.TEXT_VTT
+            "ttml", "dfxp" -> return MimeTypes.APPLICATION_TTML
+            "srt", "sub" -> return MimeTypes.APPLICATION_SUBRIP
         }
+        // An extension-less signed URL still usually says what it is somewhere in its path or query
+        // (?fmt=vtt, /subs/movie.ass?token=…). Guessing SubRip for a WebVTT or ASS sidecar renders
+        // nothing or garbage, so look for the word before falling back to it.
+        val hay = url.lowercase()
+        when {
+            Regex("""\bwebvtt\b|\.vtt\b|[_=]vtt\b""").containsMatchIn(hay) -> return MimeTypes.TEXT_VTT
+            Regex("""\bass\b|\.ass\b|[_=]ass\b|\bssa\b""").containsMatchIn(hay) -> return MimeTypes.TEXT_SSA
+            Regex("""\bttml\b|\bdfxp\b""").containsMatchIn(hay) -> return MimeTypes.APPLICATION_TTML
+        }
+        return MimeTypes.APPLICATION_SUBRIP
     }
 
     // =========================================================================================

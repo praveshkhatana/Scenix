@@ -1045,6 +1045,10 @@ export function screen(ctx, identity) {
       season: spec.season, episode: spec.episode, title: spec.title,
       positionMs: Math.round(st.positionMs), durationMs: Math.round(st.durationMs || 0),
       watchedMs: Math.round(st.watchedMs || st.positionMs),
+      // Name the copy this screen holds, so the hub's starvation report is about THIS film and not
+      // "whichever watched copy was touched last" (two tabs, two screens: one starved buffer used to
+      // downgrade the other's healthy stream).
+      stream: player.srcUrl || undefined,
     }).then((r) => {
       // The hub answers this with what it is doing with the bytes of this film: the rate the swarm is
       // actually delivering against the bitrate the copy needs, and how much picture is sitting in its

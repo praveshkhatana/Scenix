@@ -18,6 +18,7 @@ const https = require('https');
 const { URL } = require('url');
 
 const liveHealth = require('../core/live-health');
+const guide = require('../core/guide');
 const settings = require('../core/settings');
 
 const PROVIDER_ID = 'live-tv';
@@ -125,6 +126,7 @@ function parseM3U(text) {
     out.push({
       id: ID_PREFIX + (slug(attr('tvg-id')) || slug(name) + '_' + out.length),
       name,
+      tvgId: attr('tvg-id') || '', // what an XMLTV guide keys this channel by, when the playlist says
       group: groups[0],
       groups,
       logo: attr('tvg-logo'),
@@ -342,6 +344,10 @@ function channelList() {
   for (const c of out) {
     const h = liveHealth.get(c.identity);
     c.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
+    // What's on right now, tile by tile — only when the owner configured a guide, so a hub without
+    // one publishes exactly what it published before.
+    const epg = guide.nowNext({ name: c.name, tvgId: c.tvgId || '' });
+    if (epg.now || epg.next) { c.now = epg.now; c.next = epg.next; }
   }
   out.sort((a, b) => liveHealth.compare(
     { identity: a.identity, title: a.name },
@@ -399,13 +405,14 @@ function hubItems(list) {
     if (langs.length) item.languages = [...new Set([...(item.languages || []), ...langs])];
     item.genres = [...new Set([...(item.genres || []), ...c.groups])];
     if (qbits(c.quality) > qbits(item.live.quality)) item.live.quality = c.quality;
-    // iptv-org gives no EPG here: `live.now` stays null, the app shows the channel name instead.
   }
 
-  // Additive on the §1 `live` object: what the prober saw, and the stable zap number.
+  // Additive on the §1 `live` object: what the prober saw, the stable zap number, and — when the
+  // owner pointed settings.live.xmltv at a guide — what is on this channel right now and what follows.
   //   live.health   "working" | "dead" | "unknown"  (unknown = never checked, or the evidence is old)
   //   live.checkedAt / live.latencyMs / live.error   the probe record behind that verdict
   //   live.number   1, 2, 3 … assigned once and kept across restarts (core/live-health.js)
+  //   live.now / live.next  { title, start, stop, minsLeft, progress } from core/guide.js, or null
   for (const item of byName.values()) {
     const h = liveHealth.get(item.identity);
     item.live.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
@@ -413,6 +420,10 @@ function hubItems(list) {
     item.live.latencyMs = h ? h.latencyMs : null;
     item.live.error = h && !h.ok ? h.error : null;
     item.live.number = liveHealth.numberFor(item.identity);
+    const tvgId = (channels.find((c) => identityForName(c.name) === item.identity && c.tvgId) || {}).tvgId || '';
+    const epg = guide.nowNext({ name: item.title, tvgId });
+    item.live.now = epg.now;
+    item.live.next = epg.next;
     if (h && h.ok && h.url) {
       const at = item.sources.findIndex((s) => s._url === h.url);
       if (at > 0) item.sources.unshift(item.sources.splice(at, 1)[0]);
@@ -502,11 +513,16 @@ module.exports = {
   // Hub-side warmup: /app/v1 never waits on the network, it reads whatever this holds.
   start() {
     // Playlist first, then the health pass behind it — both in the background, never awaited, so a
-    // slow playlist or a wall of dead feeds cannot delay the hub coming up.
+    // slow playlist or a wall of dead feeds cannot delay the hub coming up. The guide (if the owner
+    // configured one) rides along: now/next is header polish and must never gate playback.
     refresh(true).then(() => probePass('startup'));
+    guide.refresh(true);
     const t = setInterval(() => refresh(true).then(() => probePass('playlist refresh')), REFRESH_MS);
     if (t.unref) t.unref();
     const h = setInterval(() => {
+      // A configured guide is re-fetched on the same beat the feeds are re-probed: 30 min is what
+      // keeps "now/next" honest without hammering the guide host.
+      guide.refresh();
       if (channels.length) probePass('health refresh');
     }, HEALTH_REFRESH_MS);
     if (h.unref) h.unref();
@@ -611,6 +627,7 @@ module.exports = {
       lastFetch: lastFetch ? new Date(lastFetch).toISOString() : null,
       lastError,
       health: liveHealth.status(), // {checked, working, dead, unknown, numbered, updatedAt}
+      guide: guide.status(), // {configured, channels, programmes, updatedAt, error} — core/guide.js
     };
   },
 

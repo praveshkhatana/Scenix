@@ -1397,6 +1397,31 @@ function parseWho(u) {
 }
 
 /**
+ * The same report as live(), but about the copy a GIVEN screen is reading, not "whichever watched
+ * copy was touched last". Two screens on one hub: the bedroom's healthy 4K torrent used to get
+ * downgraded by the living room's starved buffer, because /progress had no way to name its own copy.
+ * A screen that says which URL it holds gets stats for exactly that copy; `null` means this hub is
+ * not serving those bytes (a direct third-party URL), which the client reads as "judge for yourself".
+ */
+function statsFor(who) {
+  const copy = get(who);
+  if (!copy) return null;
+  const w = copy.lastValidWindow();
+  const sec = copy.bufferedSec();
+  return {
+    hash: String(copy.hash || copy.key).slice(0, 12),
+    fileId: copy.fileId,
+    mbps: w == null ? null : Math.round(w.mbps * 100) / 100,
+    needMbps: Number.isFinite(copy.needMbps) ? Math.round(copy.needMbps * 100) / 100 : null,
+    bufferedMB: Math.round((copy.held() / MB) * 10) / 10,
+    bufferedSec: sec == null ? null : Math.round(sec),
+    slowRun: copy.slowRun,
+    starved: copy.starved,
+    runway: copy.runway(),
+  };
+}
+
+/**
  * Measure a plain internet copy *through* the cushion and then hand back what the cushion holds.
  *
  * This is the difference between the two answers a free file host gives. Measured on one tonight: a
@@ -1444,5 +1469,5 @@ async function cushionUrl(url, headers, opts = {}) {
 module.exports = {
   cfg, acquire, get, drop, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
   sustain, preBuffer, prime, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
-  cushionUrl,
+  statsFor, cushionUrl,
 };

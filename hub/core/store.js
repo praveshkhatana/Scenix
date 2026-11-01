@@ -104,9 +104,14 @@ class Store {
     const ikey = String(identity);
     this.progress[pkey] = this.progress[pkey] || {};
     const cur = this.progress[pkey][ikey] || { positionMs: 0, watchedMs: 0 };
+    // `watchedMs` is a running total (both clients send their own max-position), but `watchMs` is an
+    // ADDITIVE delta: a live channel has no playhead to carry, so the only honest record of watching
+    // is seconds accumulated between heartbeats. Channels therefore reach Continue Watching and the
+    // last-watched channel with the same mechanism as a film, instead of never being recorded at all.
+    const delta = Math.max(0, Math.min(10 * 60e3, Number(patch.watchMs) || 0));
     const next = {
       positionMs: Math.max(0, Number(patch.positionMs) || cur.positionMs || 0),
-      watchedMs: Math.max(0, Number(patch.watchedMs) || cur.watchedMs || 0),
+      watchedMs: Math.max(0, Number(patch.watchedMs) || cur.watchedMs || 0) + delta,
       // Which episode of a series this person stopped on, so the next Play press resumes that episode
       // instead of restarting S01E01 three seasons in.
       episode: patch.episode && Number(patch.episode.season) > 0 && Number(patch.episode.episode) > 0

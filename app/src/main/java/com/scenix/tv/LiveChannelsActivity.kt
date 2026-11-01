@@ -41,6 +41,8 @@ class LiveChannelsActivity : Activity() {
     private var only: MutableList<String> = ArrayList()
     private var order: MutableList<String> = ArrayList()
     private var picker: View? = null
+    private var filter = ""
+    private var rootView: FrameLayout? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +54,7 @@ class LiveChannelsActivity : Activity() {
 
         val theme = app.theme
         val root = FrameLayout(this).apply { setBackgroundColor(theme.bg) }
+        rootView = root
         grid = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@LiveChannelsActivity, 6)
             setHasFixedSize(true)
@@ -97,7 +100,40 @@ class LiveChannelsActivity : Activity() {
         bar.addView(Views.text(app, "rowTitle", 26f, theme.ink, "Live TV", bold = true).apply {
             setPadding(theme.px(18f), 0, 0, 0)
         })
+        // 383 tiles is a wall, not a shelf: the way to channel 214 is to name it, not to scroll.
+        val search = Views.text(app, "li", 19f, theme.ink,
+            if (filter.isBlank()) "Search" else "Search: $filter  ✕", bold = true, gravity = Gravity.CENTER)
+        search.background = Views.rounded(theme.surface2, theme.px(8f))
+        search.isFocusable = true
+        search.isClickable = true
+        search.setOnClickListener { askFilter() }
+        Focus.attach(search, search, app, theme.px(8f), scale = false, elevate = false)
+        bar.addView(search, LinearLayout.LayoutParams(
+            theme.px(if (filter.isBlank()) 170f else 340f), theme.px(52f)
+        ).apply {
+            marginStart = theme.px(22f)
+        })
         return bar
+    }
+
+    private fun askFilter() {
+        startActivityForResult(
+            Intent(this, TextEntryActivity::class.java)
+                .putExtra(TextEntryActivity.EXTRA_TITLE, "Find a channel")
+                .putExtra(TextEntryActivity.EXTRA_VALUE, filter)
+                .putExtra(TextEntryActivity.EXTRA_HINT, "a word in the channel name — empty shows the whole wall")
+                .putExtra(TextEntryActivity.EXTRA_PLAIN_TEXT, true),
+            REQ_FILTER,
+        )
+    }
+
+    @Deprecated("Activity result API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_FILTER || resultCode != RESULT_OK) return
+        filter = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT).orEmpty().trim()
+        setContentView(rootView) // the top bar's chip has to change its label
+        paint()
     }
 
     private fun load() {
@@ -135,14 +171,22 @@ class LiveChannelsActivity : Activity() {
     private fun paint() {
         val src = channels ?: return
         val list = ArrayList<JSONObject>()
+        val needle = filter.lowercase()
         for (i in 0 until src.length()) {
             val ch = src.optJSONObject(i) ?: continue
             if (ch.optString("identity").isBlank()) continue
             if (ch.optBoolean("enabled", true).not()) continue
+            if (needle.isNotBlank()) {
+                // Match the name or the genre: "news" narrowing 383 tiles to 22 is the whole point.
+                val hay = (ch.optString("name") + " " + ch.optString("group")).lowercase()
+                if (!hay.contains(needle)) continue
+            }
             list.add(ch)
         }
         if (list.isEmpty()) {
-            status.text = "No channels are available to this profile"
+            status.text = if (needle.isNotBlank()) "No channel matches “$filter”"
+                else "No channels are available to this profile"
+            grid.adapter = WallAdapter(emptyList())
             return
         }
         // A personal lineup leads the wall, in its own order; the rest follow so the tab is never empty.
@@ -152,7 +196,9 @@ class LiveChannelsActivity : Activity() {
         for (id in order) if (id in only) byId[id]?.let { chosen.add(it) }
         for (ch in list) if (ch.optString("identity") !in only) rest.add(ch)
         grid.adapter = WallAdapter(chosen + rest)
-        if (only.isEmpty()) {
+        if (needle.isNotBlank()) {
+            status.text = "$needle matches ${chosen.size + rest.size} channels · press Search to change it"
+        } else if (only.isEmpty()) {
             status.text = "Every channel this profile may watch · hold OK on a tile for the lineup"
         }
         grid.postDelayed({
@@ -257,8 +303,14 @@ class LiveChannelsActivity : Activity() {
             holder.num.visibility = if (number > 0) View.VISIBLE else View.GONE
             val group = ch.optString("group")
             val inLineup = ch.optString("identity") in only
-            holder.sub.text = listOf(group, if (inLineup) "In lineup" else "").filter { it.isNotBlank() }
-                .joinToString(" · ")
+            // The hub only puts `now` on a tile when the owner configured a guide; then "what's on"
+            // belongs on the wall as much as in the player.
+            val now = ch.optJSONObject("now")?.optString("title").orEmpty()
+            holder.sub.text = listOf(
+                if (now.isNotBlank()) "Now: $now" else "",
+                group,
+                if (inLineup) "In lineup" else "",
+            ).filter { it.isNotBlank() }.joinToString(" · ")
             val logoUrl = ch.optString("logo")
             if (logoUrl.isNotBlank()) {
                 holder.mark.visibility = View.GONE
@@ -406,5 +458,6 @@ class LiveChannelsActivity : Activity() {
 
     companion object {
         const val EXTRA_PROFILE = "profile"
+        private const val REQ_FILTER = 71
     }
 }

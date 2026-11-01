@@ -174,7 +174,11 @@ async function probe(targets, { timeoutMs = PROBE_TIMEOUT_MS, concurrency = CONC
       if (i >= list.length) return;
       const t = list[i];
       let best = null;
-      for (const url of t.urls.slice(0, 2)) {
+      // Test the channel's feeds until one ANSWERS, not just the first two: a channel whose 1080p and
+      // 720p mirrors are dead but whose 480p feed is alive used to be filed "dead" — and the pick is
+      // exactly the record the wall and the tuner sort on. Bounded at 4 so a fully dead channel with
+      // six mirrors cannot stretch one 30-minute probe round forever.
+      for (const url of t.urls.slice(0, 4)) {
         const r = await probeUrl(url, timeoutMs);
         if (!best || (r.ok && !best.ok)) best = { ...r, url };
         if (r.ok) break;

@@ -3789,7 +3789,13 @@ async function handle(req, res) {
         live: (() => {
           const p = registry.byId['live-tv'];
           return p && typeof p.channelList === 'function'
-            ? { channels: p.channelList(), groups: p.channelGroups() }
+            ? {
+              channels: p.channelList(), groups: p.channelGroups(),
+              // What core/guide.js last saw: {configured, channels, programmes, updatedAt, error}.
+              // The Live settings screen shows it under the guide address, and the wall's tiles
+              // already carry `now`/`next` from the same source.
+              guide: require('./core/guide').status(),
+            }
             : { channels: [], groups: [] };
         })(),
         file: settings.FILE,
@@ -4580,7 +4586,30 @@ async function handle(req, res) {
       // of picture are sitting in RAM in front of the screen. A client that asks every
       // playback.progressPostMs gets the downgrade decision handed to it instead of having to discover a
       // frozen frame on its own.
-      return send(res, 200, { ok: true, identity: body.identity, progress, stream: readahead.live() });
+      //
+      // A client that TELLS us which copy it holds (the url its /play answer handed it) gets stats about
+      // its OWN copy. Without that, live() answered "the most recently touched watched copy" — on two
+      // simultaneous screens, one viewer's starved buffer made the hub downgrade the other's healthy
+      // stream. A direct third-party url matches a cushion by url too; anything we never buffered
+      // answers null and the client judges its own buffer instead.
+      let stream = null;
+      const held = String(body.stream || '');
+      const bm = /\/app\/v1\/buffer\?t=([a-f0-9]+)/.exec(held);
+      if (bm && bufferSessions.get(bm[1])) {
+        const s = bufferSessions.get(bm[1]);
+        stream = readahead.statsFor({ url: s.url, headers: s.headers });
+      } else if (held) {
+        // The url a client holds is usually OUR proxy wrapper, and inside it the engine's own
+        // /play/<hash>/<fileId> address is percent-encoded — parseWho cannot see through %2F.
+        // Try the raw string first (a direct engine url matches as-is), then the decoded one.
+        let eng = readahead.parseWho(held);
+        if (!eng.hash) {
+          try { eng = readahead.parseWho(decodeURIComponent(held)); } catch (e) { /* not utf8: raw stands */ }
+        }
+        stream = readahead.statsFor(eng.hash ? eng : { url: held });
+      }
+      if (!stream) stream = readahead.live(); // a client that has not learned to name its copy yet
+      return send(res, 200, { ok: true, identity: body.identity, progress, stream });
     }
 
     return send(res, 404, { error: 'not found', path });
