@@ -307,10 +307,23 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
             request(path, "profile=" + enc(profileId), "GET", null, 45000) { root, status, error ->
                 val item = root?.optJSONObject("item") ?: root
                 val missing = status == 404 || root?.optString("error") == "not found"
-                if (missing && tries < 1) {
+                // The hub now distinguishes "the addons said nothing" (404) from "an addon is still
+                // answering" (503 warming, with its own retryAfterMs). Both deserve a quiet retry:
+                // the answer is in transit, and the second ask lands in a warm cache.
+                val warming = status == 503 &&
+                    (root?.opt("warming") != null || root?.optString("error") == "warming")
+                if ((missing || warming) && tries < 2) {
+                    val wait = if (warming)
+                        root?.optLong("retryAfterMs")?.takeIf { it in 300..5000 } ?: 1200L else 700L
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                        { attempt(tries + 1) }, 700L,
+                        { attempt(tries + 1) }, wait,
                     )
+                    return@request
+                }
+                // A kids profile tapping an adult title gets a real answer — "the rules of this
+                // profile say no" — and deserves those words, not a status code.
+                if (status == 403 && (root?.opt("droppedByRule") != null || root?.has("tier") == true)) {
+                    done(null, "this profile can't watch this title")
                     return@request
                 }
                 done(item, error)

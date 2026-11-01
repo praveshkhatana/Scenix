@@ -45,6 +45,30 @@ const streamCache = new Map(); // identity -> { raw, at }
 const catalogCache = new Map(); // catalog id + page/query -> { body, at }
 const titleCache = new Map(); // base identity -> { title, year, type }
 
+// The aggregator rate limits. Building a home row fires a background stream ask for every tile it
+// carries; fired all at once, every one comes back HTTP 429 and the tile cache fills with nothing.
+// Background asks go through this one-at-a-time pacer, and a 429 stops background traffic for a
+// minute — the upstream's own answer to being rushed. Viewer-facing calls (a detail page, a Play)
+// do not queue: they are one round trip per tap, which the API serves happily.
+const BG_GAP_MS = Number(process.env.FRAMEXTV_BG_GAP_MS || 700);
+let bgNextAt = 0;
+let bgPauseUntil = 0;
+function bgAsk(work, label) {
+  (async () => {
+    const now = Date.now();
+    const start = Math.max(now, bgNextAt, bgPauseUntil);
+    bgNextAt = start + BG_GAP_MS;
+    const wait = start - now;
+    if (wait > 0) await new Promise((r) => { const t = setTimeout(r, wait); if (t.unref) t.unref(); });
+    await work();
+  })().catch((e) => {
+    if (/429/.test(String((e && e.message) || ''))) {
+      bgPauseUntil = Date.now() + 60000;
+      log('FRAMEXTV RATE LIMIT', label, 'background stream traffic paused for 60 s');
+    } else log('FRAMEXTV STREAM MISS', label, e.message);
+  });
+}
+
 function getJson(url, timeoutMs = REQUEST_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https:') ? https : http;
@@ -308,7 +332,7 @@ function sourcesForItem(item) {
   }
   // `sources()` runs under a small cache budget. Fetch in the background and let the detail route's
   // `fetchStreams()` spend the real round trip.
-  void streamForItem(item).catch((e) => log('FRAMEXTV STREAM MISS', item.identity, e.message));
+  bgAsk(() => streamForItem(item), item.identity);
   return [];
 }
 
@@ -381,6 +405,10 @@ async function catalogPage(catalogId, extra = {}) {
   else if (catalogId !== 'framextv-trending') return [];
   const params = { page };
   if (extra.search) params.query = String(extra.search);
+  // The search endpoint answers 400 without a query, and the boot-time catalog warm-up asks every
+  // mounted catalog exactly once — including this one. A warm-up with nothing to search is nothing
+  // to ask: answer empty and keep the log clean for failures that mean something.
+  if (catalogId === 'framextv-search' && !String(extra.search || '').trim()) return [];
   const res = await api(path, params);
   if (!res || res.success === false) return [];
   const items = (Array.isArray(res.results) ? res.results : []).map(mapCatalogItem).filter(Boolean);

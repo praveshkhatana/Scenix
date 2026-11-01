@@ -122,6 +122,31 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 const cache = new Map(); // url -> { at, body }
 const inflight = new Map(); // url -> promise
+const pending = new Map(); // identity -> how many upstream calls for that identity are in flight right now
+
+/**
+ * Is the hub still waiting on an answer for this identity from any mounted addon?
+ *
+ * A route that resolves an identity to nothing while these are in flight must not answer "not found":
+ * the answer is in transit, not missing. This is the difference between the 404 that made a detail
+ * page blink on a first tap and the "warming, again in 1.5 s" that lets the same request succeed.
+ */
+function pendingFor(identity) {
+  return (pending.get(String(identity)) || 0) > 0;
+}
+
+/** Run `work` while the identity is marked in flight; the mark is reference-counted and self-cleared. */
+function trackPending(identity, work) {
+  const key = String(identity || '');
+  pending.set(key, (pending.get(key) || 0) + 1);
+  return Promise.resolve()
+    .then(() => work())
+    .finally(() => {
+      const n = (pending.get(key) || 0) - 1;
+      if (n <= 0) pending.delete(key);
+      else pending.set(key, n);
+    });
+}
 
 function get(url, timeoutMs = FETCH_TIMEOUT_MS, ok404 = false) {
   return new Promise((resolve, reject) => {
@@ -500,6 +525,19 @@ function addressableBy(identity, addonId) {
   return id.startsWith('imdb:') || id.startsWith('yt:') || id.startsWith(addonId + ':');
 }
 
+/**
+ * The hub identity for one upstream video id from an episode list. IMDb-triple ids (`tt123:1:4`) keep
+ * the shared `imdb:` namespace so dedupe and cross-addon sources keep working; anything else belongs
+ * to the addon that published it.
+ */
+function episodeAddress(addonId, remoteId) {
+  const rid = String(remoteId || '').trim();
+  const aid = String(addonId || '');
+  if (!rid || !aid) return null;
+  if (/^tt\d{5,}(:\d+:\d+)?$/.test(rid)) return 'imdb:' + rid;
+  return aid + ':' + rid;
+}
+
 const TYPE_MAP = { movie: 'movie', series: 'series', tv: 'channel', channel: 'channel' };
 function mapType(t) {
   return TYPE_MAP[String(t || '').toLowerCase()] || 'video';
@@ -752,6 +790,13 @@ class External {
             synopsis: cleanText(v.overview) || cleanText(v.description) || null,
             releasedAt: toMs(v.released) || toMs(v.firstAired),
             thumb: v.thumbnail || null,
+            // Not every addon addresses an episode as `<show>:<season>:<episode>`. DesiFlix hands each
+            // video its own id (`dsx:e:<base64>`) and answers streams only for that; the community
+            // protocol uses the imdb triple. Keep the upstream's own address so Play can ask the
+            // question this addon actually understands — throwing it away is why a DesiFlix series
+            // listed its episodes and then played none of them.
+            remoteId: cleanText(v.id) || null,
+            _addon: this.id,
           }))
           .filter((e) => e.season && e.episode)
           .sort((a, b) => a.season - b.season || a.episode - b.episode)
@@ -793,7 +838,13 @@ class External {
    * type we already know - from the catalog that published this tile, or from the client's hint - is
    * asked first, and only an unknown identity falls back to guessing.
    */
-  async meta(identity, hint) {
+  meta(identity, hint) {
+    // Marked in flight for the whole call — including the stream fetch it waits on — so a meta route
+    // racing this cold lookup can tell "still asking" from "answered nothing".
+    return trackPending(identity, () => this.metaWork(identity, hint));
+  }
+
+  async metaWork(identity, hint) {
     await this.ensureManifest();
     if (!this.has('meta') || !addressableBy(identity, this.id)) return null;
     const known = this.types.get(identity) || null;
@@ -867,7 +918,12 @@ class External {
    * One waiting stream lookup, for the detail page where a round trip is acceptable. Rows never call
    * this: the home screen answers from cache and the same sources show up on the next request.
    */
-  async fetchStreams(identity) {
+  fetchStreams(identity) {
+    // Same in-flight mark as meta: an episode address this hub is still fetching must not 404.
+    return trackPending(identity, () => this.fetchStreamsWork(identity));
+  }
+
+  async fetchStreamsWork(identity) {
     await this.ensureManifest();
     if (!this.has('stream') || !addressableBy(identity, this.id)) return [];
     await getJson(this.streamPath(identity),
@@ -1358,6 +1414,7 @@ function byId(id) {
 
 module.exports = {
   init, list, add, remove, setEnabled, byId, entries, resyncSeeds, seedAddons, clearCache,
+  pendingFor, episodeAddress,
   // Background cache fill for every genre each mounted addon declares. `installed` holds the live objects -
   // `entries()` is the saved config and has no methods to call, which is the kind of mistake that makes a
   // warm-up look like it ran while it fetched nothing at all. Native providers sit in the same map wrapped

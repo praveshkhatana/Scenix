@@ -475,20 +475,56 @@ function withBudget(promise, ms, fallback, label) {
 // a tile the viewer could see into "not found". Keeping the tile by identity makes the detail page
 // answer with the same object the row showed, and the provider pass below only enriches it.
 const ITEM_CACHE_MAX = Number(process.env.ITEM_CACHE_MAX || 6000);
+const ITEM_CACHE_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'item-cache.json');
 const itemCache = new Map();
+
+(function loadItemCache() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(ITEM_CACHE_FILE, 'utf8'));
+    let n = 0;
+    for (const [id, it] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+      if (it && it.identity) { itemCache.set(String(id), it); n++; }
+    }
+    while (itemCache.size > ITEM_CACHE_MAX) itemCache.delete(itemCache.keys().next().value);
+    if (n) log('ITEM cache restored', n, 'tiles from', ITEM_CACHE_FILE);
+  } catch (e) {
+    if (e.code !== 'ENOENT') log('ITEM cache restore failed', e.message);
+  }
+})();
+
+let itemCacheSave = null;
+function scheduleItemCacheSave() {
+  if (itemCacheSave) clearTimeout(itemCacheSave);
+  itemCacheSave = setTimeout(() => {
+    itemCacheSave = null;
+    try {
+      fs.mkdirSync(path.dirname(ITEM_CACHE_FILE), { recursive: true });
+      const out = {};
+      for (const [id, it] of itemCache) out[id] = it;
+      const tmp = ITEM_CACHE_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, ITEM_CACHE_FILE);
+    } catch (e) { /* a tile that fails to persist cold-reopens once; the row will remember it again */ }
+  }, 800);
+  if (itemCacheSave.unref) itemCacheSave.unref();
+}
 
 function rememberItems(items) {
   if (!Array.isArray(items)) return;
+  let changed = false;
   for (const it of items) {
     if (!it || !it.identity) continue;
     itemCache.delete(it.identity);
     itemCache.set(it.identity, it);
+    changed = true;
   }
   while (itemCache.size > ITEM_CACHE_MAX) {
     const first = itemCache.keys().next();
     if (first.done) break;
     itemCache.delete(first.value);
+    changed = true;
   }
+  if (changed) scheduleItemCacheSave();
 }
 
 function cachedItem(identity) {
@@ -549,13 +585,32 @@ function makeCtx(profile, metaBudget) {
       const parts = known ? [known] : [];
       // Ask the addons together, not one after another: ten providers at 300 ms each made a cold
       // detail page a three-second wait, and the route's own budget then served nothing.
-      const answers = await Promise.all(registry.providers
-        .filter((p) => typeof p.meta === 'function')
-        .map((p) => withBudget(
-          Promise.resolve().then(() => p.meta(identity, hint)), metaBudget || 300, null, 'meta ' + p.id,
-        )));
+      const askers = registry.providers.filter((p) => typeof p.meta === 'function');
+      const raw = askers.map((p) => Promise.resolve().then(() => p.meta(identity, hint)));
+      const answers = await Promise.all(
+        raw.map((pr, i) => withBudget(pr, metaBudget || 300, null, 'meta ' + askers[i].id)),
+      );
       for (const it of answers) if (it) parts.push(it);
-      const item = merge.mergeItems(parts, registry.priorities);
+      let item = merge.mergeItems(parts, registry.priorities);
+      // Nothing answered inside the budget, but at least one addon is still talking to its upstream
+      // about this exact title. "Not found" here is a lie the viewer punishes with a second tap — and
+      // the second tap works, which is exactly how this bug reads in the living room. The call is in
+      // flight, not missing: wait for it to land (capped), then ask once more — that ask is a cache hit.
+      if (!item && addons.pendingFor(identity)) {
+        const settleMs = Math.min(9000, Math.max(2000, (metaBudget || 300) * 2));
+        log('META SETTLE', identity, 'budget=' + (metaBudget || 300) + 'ms', 'waiting=' + settleMs + 'ms',
+          'upstreams still answering');
+        await Promise.race([
+          Promise.allSettled(raw),
+          new Promise((r) => { const t = setTimeout(r, settleMs); if (t.unref) t.unref(); }),
+        ]);
+        const again = await Promise.all(askers.map((p) => withBudget(
+          Promise.resolve().then(() => p.meta(identity, hint)), 1500, null, 'meta settle ' + p.id,
+        )));
+        for (const it of again) if (it) parts.push(it);
+        item = merge.mergeItems(parts, registry.priorities);
+        if (item) log('META SETTLE', item.identity, 'answered once the upstream landed');
+      }
       if (item) {
         store.touch(item.identity);
         // A series is addressed episode by episode. The detail page has to list the sources of the same
@@ -565,7 +620,7 @@ function makeCtx(profile, metaBudget) {
         if (item.type === 'series') {
           item.progress = store.progressFor(ctx.profile.id, item.identity);
           const ep = episodeOf(item, null, null);
-          if (ep) item.streamId = item.identity + ':' + ep.season + ':' + ep.episode;
+          if (ep) item.streamId = episodeStreamId(item, ep);
         }
         await contributeSources(item);
         // A detail page may spend one round trip so the picker is complete before anyone taps Play.
@@ -1632,15 +1687,88 @@ function episodeOf(item, season, episode) {
   return { season: 1, episode: 1, title: null };
 }
 
+/**
+ * The address to stream one episode of this item.
+ *
+ * The community protocol says `<show>:<season>:<episode>`, and addons like Torrentio answer that.
+ * Catalogue addons like DesiFlix publish each video under its own upstream id and answer streams only
+ * for it — asking `<show>:1:1` there is a question the addon cannot hear, so a show with a full episode
+ * list played none of them. When the episode list carried an id from upstream, ask with that.
+ */
+function episodeStreamId(item, ep) {
+  const built = item.identity + ':' + ep.season + ':' + ep.episode;
+  const alt = addons.episodeAddress(ep._addon || (item._addons || [])[0], ep.remoteId);
+  return alt && alt !== built ? alt : built;
+}
+
 /** Streams for an address nobody has asked for yet — the detail page's waiting path, reused by Play. */
 async function fetchEpisodeSources(item) {
-  for (const p of registry.providers) {
-    if (typeof p.fetchStreams !== 'function') continue;
-    const extra = await withBudget(Promise.resolve().then(() => p.fetchStreams(item.streamId)),
-      META_BUDGET_MS, [], 'episode streams ' + p.id);
-    if (extra && extra.length) item.sources.push(...extra);
+  const askers = registry.providers.filter((p) => typeof p.fetchStreams === 'function');
+  const ask = async () => {
+    for (const p of askers) {
+      const extra = await withBudget(Promise.resolve().then(() => p.fetchStreams(item.streamId)),
+        META_BUDGET_MS, [], 'episode streams ' + p.id);
+      if (extra && extra.length) item.sources.push(...extra);
+    }
+  };
+  await ask();
+  // The episode question was the right one and an addon is still fetching that very stream. Say
+  // "one moment" with a bounded wait and ask again — the second ask is a cache hit — instead of
+  // answering "no sources" for a stream that lands a second later and makes the viewer press again.
+  if (!(item.sources || []).length && addons.pendingFor(item.streamId)) {
+    const until = Date.now() + Math.min(6000, META_BUDGET_MS * 2);
+    log('EPISODE SETTLE', item.streamId, 'waiting up to', until - Date.now(), 'ms for in-flight streams');
+    while (addons.pendingFor(item.streamId) && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    await ask();
   }
   item.sources = merge.rankSources(item.sources || [], registry.priorities);
+}
+
+/**
+ * A catalogue addon that publishes the same show twice, with different episode lists.
+ *
+ * The DesiFlix case: the series row lists "Dead-End Job" under one key that upstream answers with
+ * an empty episode list, while the addon's own search finds the same show under a second key that
+ * carries the full list, real streams, playable episodes. The viewer is looking at one show. Before
+ * answering "no sources" to an episode, ask what a search for this exact title would return, and if
+ * a sibling has what this tile lacks, adopt its episode list onto this tile — the identity stays the
+ * one rows, progress and Continue are built on. Returns the addressed episode, or null.
+ */
+async function adoptEpisodeSibling(item, ctx, opts) {
+  const title = String(item.title || '').trim();
+  if (!title || item.type !== 'series') return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const want = norm(title);
+  const year = Number(item.year);
+  for (const p of registry.providers) {
+    if (typeof p.catalog !== 'function') continue;
+    let cats = [];
+    try { cats = (typeof p.catalogs === 'function' ? await p.catalogs() : []) || []; } catch (e) { continue; }
+    for (const c of cats) {
+      if (!(c.extra || []).includes('search')) continue;
+      const hits = await ctx.catalog(p.id, c.id, { search: title }, SEARCH_BUDGET_MS);
+      const sib = (hits || []).find((h) => h && h.identity !== item.identity && h.type === 'series'
+        && norm(h.title) === want
+        && (!Number.isFinite(year) || !Number.isFinite(Number(h.year)) || Number(h.year) === year));
+      if (!sib) continue;
+      const full = await ctx.metaOnly(sib.identity, 'series', 1500);
+      if (!full || !Array.isArray(full.episodes) || !full.episodes.length) continue;
+      log('EPISODE SIBLING', item.identity, '->', sib.identity, 'episodes=' + full.episodes.length);
+      item.episodes = full.episodes;
+      const ep = episodeOf(item, opts.season, opts.episode);
+      if (!ep) continue;
+      item.streamId = episodeStreamId(item, ep);
+      item.sources = [];
+      await fetchEpisodeSources(item);
+      if ((item.sources || []).length) {
+        rememberItems([item]); // the detail page listing this show now sees the same episodes
+        return ep;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -1885,19 +2013,33 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
 async function mintedRefusal(o, deadline) {
   if (!probe.ENABLED || !probe.probeable(o && o.url)) return null;
   const headers = o.headers || {};
+  const coldHost = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|web\.app/i
+    .test(String((o && o.url) || ''));
   const known = probe.peek(o.url, headers);
   // Already measured: a working link needs nothing from this check, and a failure we still believe is
   // refused without spending a millisecond on it. An old failure is re-checked like any other mint,
   // because a link coming back to life must not be refused on a stale verdict.
   if (known) {
     if (known.ok === true) return null;
-    if (Number(known.ageMs) <= probe.limits.FAIL_TTL_MS) return known.error || 'measured dead';
+    // On a cold-start host, a failure whose shape is "it never answered in time" is the dyno still
+    // asleep — not evidence the link is dead. Re-ask it with the wake-up window instead of honouring
+    // that verdict for a minute.
+    const silence = /timeout|no answer|silence|stream read failed|ECONN|socket|closed/i
+      .test(String(known.error || ''));
+    if (Number(known.ageMs) <= probe.limits.FAIL_TTL_MS && !(coldHost && silence)) {
+      return known.error || 'measured dead';
+    }
   }
   const left = deadline - Date.now();
   if (left < 400) return null; // no time to judge it: answer as the hub did before this check existed
+  // Free-tier Heroku (and its friends on Render/Koyeb/Railway) is where these scraper APIs live, and a
+  // sleeping dyno answers the first request in 2-6 s and every one after it fast. Judging that silence
+  // "dead" at 1.2 s is what made a viewer's second tap work when the first one said "no playable
+  // source". Give a cold-start host the time its wake-up actually costs.
+  const capMs = coldHost ? Math.max(PLAY_VALIDATE_TIMEOUT_MS, 6000) : PLAY_VALIDATE_TIMEOUT_MS;
   try {
     const v = await probe.check(o.url, headers, {
-      timeoutMs: Math.max(300, Math.min(PLAY_VALIDATE_TIMEOUT_MS, left)),
+      timeoutMs: Math.max(300, Math.min(capMs, left)),
     });
     if (!v) return null;
     // Keep the measurement (including the filename) on the answer the picker is about to inspect.
@@ -2020,15 +2162,28 @@ function labelNamesOtherTitle(label, title) {
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
   const item = await ctx.resolve(identity, type);
-  if (!item) return { status: 404, body: { error: 'not found', identity } };
+  if (!item) {
+    if (addons.pendingFor(identity)) {
+      return { status: 503, body: {
+        error: 'warming', warming: true, retryAfterMs: 1500, identity,
+        detail: 'the hub is still resolving this title with its addons',
+      } };
+    }
+    return { status: 404, body: { error: 'not found', identity } };
+  }
   // Address the episode before anything ranks or filters sources, so the rules and the picker all see
   // the streams for the episode the viewer is about to watch.
   let ep = episodeOf(item, opts.season, opts.episode);
-  if (ep && item.streamId !== item.identity + ':' + ep.season + ':' + ep.episode) {
-    item.streamId = item.identity + ':' + ep.season + ':' + ep.episode;
-    item.sources = [];
-    await fetchEpisodeSources(item);
-    if (!(item.sources || []).length) {
+  const epAddr = ep ? episodeStreamId(item, ep) : null;
+  if (ep) {
+    if (item.streamId !== epAddr) {
+      item.streamId = epAddr;
+      item.sources = [];
+    }
+    if (!(item.sources || []).length) await fetchEpisodeSources(item); // cheap when resolve already asked
+    if (!(item.sources || []).length && type === 'series' && await adoptEpisodeSibling(item, ctx, opts)) {
+      // The sibling carried the episode the show itself could not. Sources are on the item now.
+    } else if (!(item.sources || []).length) {
       // Episode addressing is the right question, but some addons only list a show as a whole (a season
       // pack, or a catalog with no episode ids). An empty answer must not cost the title: fall back to
       // the show address the hub used before this existed.
@@ -2046,7 +2201,17 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const [kept] = await pipeline([item], ctx); // rules rank sources and enforce the profile's scope
   if (!kept) return { status: 403, body: { identity, droppedByRule: true } };
   let sources = kept.sources || [];
-  if (!sources.length) return { status: 404, body: { error: 'no sources', identity } };
+  if (!sources.length) {
+    // Same bargain as the missing item: if an addon is still fetching this title's streams, the
+    // copies are in transit. The app's warming path retries; a bare 404 sends it to an error card.
+    if (addons.pendingFor(identity) || addons.pendingFor(kept.streamId || identity)) {
+      return { status: 503, body: {
+        error: 'warming', warming: true, retryAfterMs: 1500, identity,
+        detail: 'the hub is still fetching sources for this title',
+      } };
+    }
+    return { status: 404, body: { error: 'no sources', identity } };
+  }
   for (const s of sources) s.id = probe.sourceId(s); // the handle `exclude` names, assigned before filtering
 
   // Touch the links before handing any of them over, then let the ranking rule use what came back.
@@ -2671,6 +2836,19 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   if (!out || !out.url) {
     // The viewer sees "nothing played" either way; the difference is whether the log can say why.
     log('PLAY FAIL', identity, tried.join(' | '));
+    // When every refusal was of the silence kind — timeouts, no bytes, dropped sockets — rather than
+    // a refusal of the content (an HTML page, the wrong film's filename), the copies may simply be
+    // sleeping hosts that have not woken yet. Answer the hub's warming bargain and the app waits and
+    // asks again quietly; the second attempt finds a woken box. A refusal that was about the content
+    // itself stays an honest 404.
+    const silenceOnly = tried.length > 0 && tried.every((t) =>
+      /timeout|no answer|silence|stream read failed|ECONN|socket|closed|measured down/i.test(t));
+    if (silenceOnly) {
+      return { status: 503, body: {
+        error: 'warming', warming: true, retryAfterMs: 2500, identity, tried,
+        detail: 'every copy answered too slowly to measure; they stay candidates, not verdicts',
+      } };
+    }
     return { status: 404, body: { error: 'no playable source', identity, tried } };
   }
 
@@ -3873,6 +4051,11 @@ async function handle(req, res) {
         }
       }
       const items = generalItems('search', await pipeline(all, ctx)).slice(0, SEARCH_MAX);
+      // A search hit the viewer can see is a tile the next tap will ask for by identity. If search
+      // results are the one place the tile cache was not filled, a first tap on a fresh result is
+      // cold: the addon meta has to beat the route budget from scratch, and "not found" appears
+      // where a result card was on screen a second ago.
+      rememberItems(items);
       await taste.decorate(ctx, items);
       return send(res, 200, { q, items });
     }
@@ -3938,7 +4121,18 @@ async function handle(req, res) {
       const ctx = makeCtx(profile, budget);
       // The client knows the tile's type; passing it stops an addon guessing the wrong one.
       const item = await ctx.resolve(identity, u.searchParams.get('type'));
-      if (!item) return send(res, 404, { error: 'not found', identity });
+      if (!item) {
+        // An upstream that is still past its budget is not an absence: answer the hub's warming bargain
+        // (the same one the play route makes) so the app retries and the same tap succeeds. A settled
+        // silence — the addon answered, and answered nothing — keeps the honest 404.
+        if (addons.pendingFor(identity)) {
+          return send(res, 503, {
+            error: 'warming', warming: true, retryAfterMs: 1500, identity,
+            detail: 'the hub is still asking its addons for this title',
+          });
+        }
+        return send(res, 404, { error: 'not found', identity });
+      }
       const [kept] = await pipeline([item], ctx);
       // Anything already measured is free, so the detail page shows the same status the play path
       // will use. Nothing here waits on the network: the meta response is exactly as fast as it was.

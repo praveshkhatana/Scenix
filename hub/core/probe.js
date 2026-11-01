@@ -73,6 +73,19 @@ const PROBE_TIMEOUT_MS = num(process.env.PROBE_TIMEOUT_MS, 1200);
 // evening ends. A stale "working" row is how a player was handed a URL that now returns 404.
 const OK_TTL_MS = num(process.env.PROBE_OK_TTL_MS, 4 * 60 * 1000);
 const FAIL_TTL_MS = num(process.env.PROBE_FAIL_TTL_MS, 60 * 1000); // a dead link is a rumour for a minute
+// Free Heroku dynos and their friends on Render/Koyeb/Railway are where scraper APIs sleep between
+// viewers. The first request wakes the box and can take 2-6 s; every request after it is fast. A
+// 1.2 s verdict calls that "dead", the play refuses the copy, and the viewer's second tap — which
+// woke the box — works. That gap is the "works on retry" bug. Ask these hosts for their wake-up
+// time once, up front.
+const COLD_HOST = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|\bweb\.app\b/i;
+const COLD_START_WAIT_MS = num(process.env.PROBE_COLD_START_MS, 6000);
+function coldAllowance(url, timeoutMs) {
+  return COLD_HOST.test(String(url || '')) ? Math.max(timeoutMs, COLD_START_WAIT_MS) : timeoutMs;
+}
+function coldAwareTimeout(url, timeoutMs) {
+  return COLD_HOST.test(String(url || '')) ? Math.max(timeoutMs, COLD_START_WAIT_MS) : timeoutMs;
+}
 const CONCURRENCY = Math.min(16, Math.max(1, num(process.env.PROBE_CONCURRENCY, 4)));
 const BUDGET_MS = num(process.env.PROBE_BUDGET_MS, 1500); // a request never waits longer than this
 const CACHE_MAX = num(process.env.PROBE_CACHE_MAX, 600); // entries kept; oldest are pruned on save
@@ -179,6 +192,7 @@ function sourceId(source) {
  * that verdict is the whole reason this module exists.
  */
 function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = PROBE_BYTES } = {}) {
+  timeoutMs = coldAllowance(url, timeoutMs); // a sleeping dyno is waking, not dying
   // hrtime, not Date.now: a transfer over a fast pipe finishes in well under a millisecond, and a
   // clock that cannot see it reports a 0 ms window, which would report the speed as zero.
   const t0 = process.hrtime.bigint();
@@ -332,6 +346,7 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
  * Returns { ok, reason, status, contentType, bytes, latencyMs, checkedAt } and never throws.
  */
 function check(url, headers = {}, { timeoutMs = 1200, maxBytes = 4096 } = {}) {
+  timeoutMs = coldAllowance(url, timeoutMs); // a sleeping dyno is waking, not dying
   const verdict = (ok, reason, extra) => ({
     ok,
     reason: reason || null,
