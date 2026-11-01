@@ -57,6 +57,7 @@ class GameActivity : Activity() {
     private var needsCoi = false
     private var titleText = "Game"
     private var padReady = false
+    private var desktopUa = false
     private var hudVisible = false
     private var hidHud = Runnable { hideHud() }
 
@@ -69,6 +70,7 @@ class GameActivity : Activity() {
         titleText = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Game" }
         padReady = intent?.getBooleanExtra(EXTRA_PAD, false) ?: false
         needsCoi = intent?.getBooleanExtra(EXTRA_COI, false) ?: false
+        desktopUa = intent?.getBooleanExtra(EXTRA_DESKTOP_UA, false) ?: false
         if (url.isBlank()) { finish(); return }
 
         val theme = app.theme
@@ -84,6 +86,11 @@ class GameActivity : Activity() {
             // the page — a plain Chrome identity is the honest one, and it stops ports from serving
             // their "open in a browser" fallback instead of starting.
             settings.userAgentString = settings.userAgentString.replace("; wv", "")
+            // A few web arcades (the GameDistribution family behind miniplay, which carries the real
+            // Subway Surfers) answer their mobile browser a bare 404 and only serve the page to a
+            // desktop one. Those catalogue entries say ua:"desktop" and get this identity.
+            if (desktopUa) settings.userAgentString =
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
             settings.mediaPlaybackRequiresUserGesture = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             settings.setSupportZoom(false)
@@ -458,6 +465,7 @@ class GameActivity : Activity() {
         const val EXTRA_PAD = "pad"
         const val EXTRA_FALLBACK = "fallback"
         const val EXTRA_COI = "coi"
+        const val EXTRA_DESKTOP_UA = "desktop_ua"
 
         /**
          * Keep only the path to the page's biggest visible game frame and pin its stage full-screen.

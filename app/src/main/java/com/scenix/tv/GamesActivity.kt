@@ -33,6 +33,8 @@ data class GameCard(
     val coi: Boolean,
     /** Whether this port answers a real controller — the badge that says so rides the tile. */
     val pad: Boolean,
+    /** "desktop" for hosts that answer web portals only when the browser claims a desktop UA. */
+    val ua: String,
     val desc: String,
 )
 
@@ -182,6 +184,7 @@ class GamesActivity : Activity() {
                         fallbackUrl = o.optString("fallbackUrl"),
                         coi = o.optBoolean("coi"),
                         pad = o.optBoolean("pad"),
+                        ua = o.optString("ua"),
                         desc = o.optString("desc"),
                     )
                 )
@@ -412,6 +415,7 @@ class GamesActivity : Activity() {
                 .putExtra(GameActivity.EXTRA_FALLBACK, g.fallbackUrl)
                 .putExtra(GameActivity.EXTRA_COI, g.coi)
                 .putExtra(GameActivity.EXTRA_PAD, g.pad)
+                .putExtra(GameActivity.EXTRA_DESKTOP_UA, g.ua == "desktop")
         )
     }
 

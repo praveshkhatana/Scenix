@@ -62,6 +62,9 @@ function card(g, kind) {
     pad: !!g.pad,
     kb: g.kb !== false,
     touch: g.touch !== undefined ? !!g.touch : kind !== 'p2b',
+    // "desktop" marks a host that answers a browser-identity check before it serves the game at
+    // all (the GameDistribution family returns 404 to a mobile UA). The player swaps its identity.
+    ua: g.ua || '',
     tags: (g.tags || []).slice(0, 4),
     desc: (g.desc || '').slice(0, 200),
     source: kind,
@@ -167,6 +170,7 @@ function addonCard(g, aid) {
     pad: !!g.pad,
     kb: g.kb !== false,
     touch: !!g.touch,
+    ua: g.ua || '',
     tags: (g.tags || []).slice(0, 4),
     desc: (g.desc || '').slice(0, 200),
     source: 'addon:' + aid,

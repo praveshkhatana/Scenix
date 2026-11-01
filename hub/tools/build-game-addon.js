@@ -23,6 +23,7 @@ const item = (g, defTouch) => ({
   id: g.id, title: g.title, poster: g.cover || g.poster || '', playUrl: g.playUrl,
   coi: !!g.coi, pad: !!g.pad, kb: g.kb !== false,
   touch: g.touch !== undefined ? !!g.touch : defTouch,
+  ua: g.ua || '',
   tags: (g.tags || []).slice(0, 4), desc: (g.desc || '').slice(0, 200),
 });
 
