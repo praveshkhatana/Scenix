@@ -408,12 +408,13 @@ class GameActivity : Activity() {
         } catch (t: Throwable) { /* pairing notices are a nicety, not the point of play */ }
     }
 
-    /** The TV's own Bluetooth screen — the only place a DualSense or Xbox pad can be put into range. */
+    /** The app's own controller screen — it shows what is connected, tests buttons, and opens
+     *  Android's Bluetooth pairing from there (pairing itself is Android's job on a TV). */
     private fun pairController() {
         try {
-            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+            startActivity(Intent(this, ControllersActivity::class.java))
         } catch (t: Throwable) {
-            try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (u: Throwable) {
+            try { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (u: Throwable) {
                 toast("Open Bluetooth settings in Android to pair a controller")
             }
         }

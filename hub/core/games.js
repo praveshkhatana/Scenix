@@ -116,7 +116,9 @@ async function builtinRows() {
   // GPUs of TV boxes before it ever inserts a game iframe — a blank screen we cannot fix from
   // outside. Subway Surfers, the one title people ask for, ships in curated.json via a
   // GameDistribution embed instead.)
-  if (crazy.length >= 4) out.push({ id: 'games-crazy', title: 'Web arcade · CrazyGames', card: 'game', items: crazy.slice(0, 30), total: crazy.length });
+  // Shelf names never carry a portal's brand: the catalogue is ours, and a partner's name on our
+  // shelf title is a trademark we did not earn. The source lives only in the build tool.
+  if (crazy.length >= 4) out.push({ id: 'games-crazy', title: 'Web Arcade', card: 'game', items: crazy.slice(0, 30), total: crazy.length });
 
   return out;
 }
@@ -178,20 +180,18 @@ function addonCard(g, aid) {
 }
 
 async function addonShelves(addonList) {
-  const out = [];
-  await Promise.all(addonList.map(async (a) => {
+  const groups = await Promise.all(addonList.map(async (a) => {
     const hit = addonCache.get(a.id);
     const ttl = hit && hit.rows ? ADDON_OK_MS : ADDON_MISS_MS;
-    if (hit && Date.now() - hit.at < ttl) {
-      if (hit.rows) out.push(...hit.rows);
-      return;
-    }
+    if (hit && Date.now() - hit.at < ttl) return hit.rows ? { shelves: hit.rows, official: !!hit.official } : null;
     // The community protocol carries the addon's own configuration in its URL path, so the base —
     // not the origin — is where its games.json lives.
     const base = String(a.url || '').replace(/\/manifest\.json\/?$/, '');
     const body = base ? await fetchJson(base + '/games.json', ADDON_FETCH_MS) : null;
     let shelves = null;
+    let official = false;
     if (body && Array.isArray(body.rows)) {
+      official = body.official === true;
       shelves = [];
       for (let i = 0; i < body.rows.length && shelves.length < 8; i++) {
         const r = body.rows[i] || {};
@@ -207,24 +207,32 @@ async function addonShelves(addonList) {
         }
       }
     }
-    addonCache.set(a.id, { at: Date.now(), rows: shelves });
-    if (shelves) out.push(...shelves);
+    addonCache.set(a.id, { at: Date.now(), rows: shelves, official: official && !!(shelves && shelves.length) });
+    return shelves ? { shelves, official } : null;
   }));
-  return out;
+  const ok = groups.filter(Boolean);
+  // The official catalogue first: its "Highlighted" row is the front of the Games tab, not whichever
+  // add-on happens to rank higher in the hub's list.
+  return {
+    rows: ok.flatMap((g) => (g.official ? g.shelves : []))
+      .concat(ok.flatMap((g) => (g.official ? [] : g.shelves))),
+    official: ok.some((g) => g.official),
+  };
 }
 
 async function rows() {
-  const built = await builtinRows();
   let carriers = [];
   try {
     carriers = (await addons.list())
       .filter((a) => !a.native && a.enabled !== false && /https?:\/\//i.test(String(a.url || '')));
   } catch (e) { /* the addon host is having a moment; built-ins still answer */ }
-  let extra = [];
+  let extra = { rows: [], official: false };
   try { extra = await addonShelves(carriers); } catch (e) { /* same */ }
-  // One shelf per addon at most would starve a rich source; title-level dedupe across sources
-  // keeps the featured row honest while each add-on still owns its own rail.
-  return built.concat(extra);
+  // The official Scenix Games add-on IS the built-in list published to its own repo. When it
+  // answers, shelving both would show every title twice — so the built-ins stand down. They stay
+  // for a hub that removed the add-on or is cut off from GitHub, which is why they are not deleted.
+  const built = extra.official ? [] : await builtinRows();
+  return built.concat(extra.rows);
 }
 
 module.exports = { rows };

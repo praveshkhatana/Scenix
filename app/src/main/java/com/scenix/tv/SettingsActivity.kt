@@ -169,6 +169,9 @@ class SettingsActivity : Activity() {
                     .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
             )
         }
+        addRow("Controllers", controllersSummary(), "See what is connected, test its buttons, pair a new pad") {
+            startActivity(Intent(this, ControllersActivity::class.java))
+        }
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
         }
@@ -272,6 +275,22 @@ class SettingsActivity : Activity() {
                     }
                 }
             }
+        }
+    }
+
+    /** What the Controllers row says about the TV right now — honest, not "Connected?" guessing. */
+    private fun controllersSummary(): String {
+        val gamepad = android.view.InputDevice.SOURCE_GAMEPAD
+        val pads = try {
+            val im = getSystemService(android.content.Context.INPUT_SERVICE) as android.hardware.input.InputManager
+            android.view.InputDevice.getDeviceIds().toList().mapNotNull { id ->
+                try { im.getInputDevice(id) } catch (t: Throwable) { null }
+            }.filter { d -> (d.sources and gamepad) == gamepad && !d.name.contains("virtual", true) }
+        } catch (t: Throwable) { emptyList() }
+        return when (pads.size) {
+            0 -> "None connected"
+            1 -> "1 connected · " + pads[0].name.take(24)
+            else -> pads.size.toString() + " connected"
         }
     }
 

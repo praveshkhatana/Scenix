@@ -90,6 +90,10 @@ function seedAddons() {
     // public endpoint answers with *service links* (subscription / rent landing pages), not media files;
     // rules/source_ranking.js keeps those below a real file so play() never hands the TV a web page.
     { id: 'watchhub', name: 'WatchHub', url: 'https://watchhub.strem.io/manifest.json' },
+    // The game catalogue lives in its own public repo — the Scenix repo carries no game data — so
+    // it arrives as a seeded add-on instead of data files: a fresh or standalone hub gets a
+    // populated Games tab out of the box, and one push to that repo updates every household.
+    { id: 'scenix-games', name: 'Scenix Games', url: 'https://praveshkhatana.github.io/scenix-games-addon/manifest.json' },
   ];
   if (process.env.SEED_ADDON_URLS) {
     seeds.length = 0;

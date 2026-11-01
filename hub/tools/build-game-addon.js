@@ -51,7 +51,8 @@ shelf('racing', 'Racing & sports', p2b.filter((g) => g.tags.some((t) => /racing|
 shelf('classics', 'Console & PC classics', p2b.filter((g) => g.tags.some((t) => /platform|adventure|rpg|indie/i.test(t))));
 shelf('retro', 'Retro & arcade', p2b.filter((g) => g.tags.some((t) => /retro|arcade|puzzle/i.test(t))));
 shelf('everything', 'Every port', p2b);
-if (crazy.length >= 4) rows.push({ id: 'crazy', title: 'Web arcade · CrazyGames', items: crazy });
+// Shelf titles never carry a partner's brand — the catalogue is ours; sources live in build tools.
+if (crazy.length >= 4) rows.push({ id: 'crazy', title: 'Web Arcade', items: crazy });
 
 const manifest = {
   id: 'tv.scenix.games', name: 'Scenix Games', version: '1.0.0',
@@ -61,7 +62,9 @@ const manifest = {
 
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 1));
-fs.writeFileSync(path.join(outDir, 'games.json'), JSON.stringify({ rows }, null, 1));
+// "official" tells a Scenix hub this add-on IS its built-in catalogue published — a hub that has
+// both would otherwise shelf every title twice (core/games.js skips the built-ins when it answers).
+fs.writeFileSync(path.join(outDir, 'games.json'), JSON.stringify({ official: true, rows }, null, 1));
 const bytes = fs.statSync(path.join(outDir, 'games.json')).size;
 console.log('addon repo:', outDir);
 for (const r of rows) console.log(' ', r.title.padEnd(28), r.items.length);
