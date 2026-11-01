@@ -97,6 +97,55 @@ async function imageFor(title) {
   return null;
 }
 
+// Raw sibling of get() for game pages: HTML, not JSON, and a byte cap.
+function getRaw(url, ms = 12000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    const timer = setTimeout(() => { try { req.destroy(); } catch (e) {} finish(''); }, ms);
+    let req;
+    try {
+      req = https.get(url, { headers: { 'user-agent': UA, accept: 'text/html' } }, (res) => {
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          res.resume();
+          try { return finish(getRaw(new URL(res.headers.location, url).toString(), ms)); } catch (e) { return finish(''); }
+        }
+        if (res.statusCode !== 200) { res.resume(); return finish(''); }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (d) => { body += d; if (body.length > 6e5) { req.destroy(); finish(body); } });
+        res.on('end', () => finish(body));
+      });
+      req.on('error', () => finish(''));
+      req.on('timeout', () => { req.destroy(); finish(''); });
+    } catch (e) { finish(''); }
+  });
+}
+
+function metaContent(html, key) {
+  for (const t of html.match(/<meta\b[^>]*>/gi) || []) {
+    const attrs = {};
+    for (const m of t.matchAll(/(property|name|content)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi))
+      attrs[m[1].toLowerCase()] = m[2] !== undefined ? m[2] : m[3];
+    const k = (attrs.property || attrs.name || '').toLowerCase();
+    if (k === key && attrs.content) return attrs.content;
+  }
+  return '';
+}
+
+// Last resort for an entry with no art anywhere else: the picture the game's own page advertises.
+async function ogImage(pageUrl) {
+  try {
+    const u = new URL(pageUrl);
+    if (!/^https?:$/.test(u.protocol)) return '';
+    const html = await getRaw(u.toString());
+    const img = metaContent(html, 'og:image') || metaContent(html, 'twitter:image');
+    if (!img || /^data:/i.test(img)) return '';
+    const abs = new URL(img, u).toString();
+    return /^https:\/\//.test(abs) ? abs : '';
+  } catch (e) { return ''; }
+}
+
 (async () => {
   const files = ['ported2browser.json', 'crazygames.json', 'curated.json'];
   let found = 0, kept = 0, total = 0;
@@ -108,14 +157,20 @@ async function imageFor(title) {
       const cur = g.cover || g.poster || '';
       let host = '';
       try { host = new URL(cur).hostname.replace(/^www\./, ''); } catch (e) {}
-      // Only touch covers that hang off a portal's CDN — a game's own page is fine where it is.
-      if (!DEP_HOSTS.test(host)) continue;
+      // Fill entries that have no cover at all, and replace ones that hang off a portal's CDN —
+      // a game's own page is fine where it is.
+      if (cur && !DEP_HOSTS.test(host)) continue;
       total++;
       const hit = await imageFor(g.title);
       if (hit) {
         g.cover = hit.url;
         g.coverSrc = 'wikipedia:' + hit.page;
         found++;
+      } else if (!cur && g.playUrl) {
+        // No Wikipedia page and no old cover: ask the game's own page for its picture.
+        const own = await ogImage(g.playUrl);
+        if (own) { g.cover = own; g.coverSrc = 'ownpage'; found++; }
+        else { g.coverSrc = 'none'; kept++; }
       } else {
         g.coverSrc = 'keep:' + host;   // no confident match — the old cover stays as fallback
         kept++;
