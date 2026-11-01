@@ -9,6 +9,16 @@
  * If you change the sweep design, change the copy in GameActivity too — both engines ship it.
  */
 (function () {
+  // Some ports refuse to boot when the JS flag crossOriginIsolated reads false, but on this
+  // engine SharedArrayBuffer works unisolated and GeckoView's webRequest can never rewrite
+  // headers on the app's own top-level document. Nothing is enforced either way, so the page
+  // is simply told it is isolated; the real flag is kept for the app's report.
+  var realCoi = false;
+  try {
+    realCoi = !!window.crossOriginIsolated;
+    if (!realCoi)
+      Object.defineProperty(window, "crossOriginIsolated", { get: function () { return true; } });
+  } catch (e) {}
   var port = null;
   try {
     port = browser.runtime.connect({ name: "carve" });
@@ -46,14 +56,31 @@
     var has = !!document.querySelector("canvas");
     if (!force && !has) return;
     coiSentCanvas = has ? true : coiSentCanvas;
-    var c; try { c = !!window.crossOriginIsolated; } catch (e) { c = false; }
+    var c = realCoi; // the honest flag, captured before we raised it for the page
     // The isolation flag can read false on engines that don't know the portal's COEP variant
     // while SharedArrayBuffer still works — the constructor itself is the honest test.
     var sab = "ok";
     try { new SharedArrayBuffer(8); } catch (e) { sab = "no"; }
-    say("coi", { v: c, sab: sab, canvas: has });
+    // Some ports say in their own words that their server never sent the headers; that exact
+    // phrase is the app's cue to inject them and reload.
+    var txt = ""; try { txt = (document.body && document.body.innerText) || ""; } catch (e) {}
+    say("coi", { v: c, sab: sab, canvas: has, recomp: /cross-origin isolation|COOP\/COEP/i.test(txt) });
   }
   reportCoi(true);
+
+  // One-later capability probe for the app log: what graphics backends this engine actually
+  // hands the page, plus the page's own first words (a port that refuses to boot says why).
+  setTimeout(function () {
+    try {
+      var gpu = "no"; try { gpu = navigator.gpu ? "yes" : "no"; } catch (e) { gpu = "err"; }
+      var gl = "no"; try {
+        var tc = document.createElement("canvas"); tc.width = tc.height = 8;
+        gl = (tc.getContext("webgl2") || tc.getContext("webgl")) ? "yes" : "no";
+      } catch (e) { gl = "err"; }
+      var txt = ""; try { txt = ((document.body && document.body.innerText) || "").replace(/\s+/g, " ").slice(0, 220); } catch (e) {}
+      say("coi", { probe: 1, gpu: gpu, gl: gl, canvas: !!document.querySelector("canvas"), txt: txt });
+    } catch (e) {}
+  }, 9000);
 
   // ── the sweep ─────────────────────────────────────────────────────────────────────────────
   function sweep() {
@@ -136,6 +163,7 @@
             }
           } catch (x) {}
         }
+        promoPass(doc, node);
         if (!dv.__scenixGuard) {
           dv.__scenixGuard = 1;
           new dv.MutationObserver(function (ms) {
@@ -148,7 +176,13 @@
                 if (!outsideStage(el)) continue;
                 var pos = false;
                 try { var c2 = dv.getComputedStyle(el); pos = c2.position === "fixed" || c2.position === "absolute"; } catch (x) {}
-                if (pos) { el.style.setProperty("display", "none", "important"); hid.push(el); }
+                if (pos) { el.style.setProperty("display", "none", "important"); hid.push(el); continue; }
+                try { // a tile strip that isn't floating still sells other games
+                  if (!el.querySelector || el.querySelector("canvas,video")) continue;
+                  if (el.querySelectorAll("a,button").length >= 3 && el.querySelectorAll("img").length >= 2) {
+                    el.style.setProperty("display", "none", "important"); hid.push(el);
+                  }
+                } catch (x) {}
               }
             }
           }).observe(doc.documentElement, { childList: true, subtree: true });
@@ -156,13 +190,14 @@
         return true;
       }
       var ok = carveDoc(document, true);
+      if (!ok) promoPass(document, null); // no stage yet: promo still must not float
       function dive(doc, d) {
         if (d > 2) return;
         var fs = doc.querySelectorAll("iframe");
         for (var i = 0; i < fs.length; i++) {
           try {
             var cd = fs[i].contentDocument;
-            if (cd && cd.body) { if (carveDoc(cd, false)) ok = true; dive(cd, d + 1); }
+            if (cd && cd.body) { if (carveDoc(cd, false)) ok = true; else promoPass(cd, null); dive(cd, d + 1); }
           } catch (x) {}
         }
       }
@@ -172,10 +207,66 @@
       // before the game's canvas appears there is no stage and the overlays would survive.
       killAds();
       pressStart();
+      relayRefusal();
       reportCoi(false);
 
       return { res: ok ? "carved" : "none", canvas: !!document.querySelector("canvas") };
     } catch (e) { return { res: "none", canvas: false }; }
+  }
+
+  // Promo banners and cross-promo tile rows that the stage rules leave behind — and they must
+  // run whether or not a stage exists, because on a page whose game never boots (a port waiting
+  // for headers its server forgot) there is no stage at all and every overlay just floats.
+  // A strip of game tiles always goes; a small floating notice with a close button of its own
+  // goes too — unless it reads like loader feedback, which the child needs to see.
+  function promoPass(doc, node) {
+    var dv = doc.defaultView || window;
+    var W = dv.innerWidth || 1, H = dv.innerHeight || 1;
+    var hid = window.__scenixHid || (window.__scenixHid = []);
+    var els = doc.querySelectorAll("div,section,aside");
+    for (var i = 0; i < els.length; i++) {
+      var e = els[i];
+      if (node && (e === node || node.contains(e) || e.contains(node))) continue; // never the stage's own subtree
+      try {
+        if (e.querySelector("canvas,video,iframe")) continue;
+        var b = e.getBoundingClientRect();
+        if (b.width < 80 || b.height < 24) continue;
+        var links = e.querySelectorAll("a,button").length;
+        if (links >= 3 && e.querySelectorAll("img").length >= 2) {
+          e.style.setProperty("display", "none", "important"); hid.push(e); continue; // tile strip sells other games
+        }
+        var cs = dv.getComputedStyle(e);
+        if (cs.position !== "fixed" && cs.position !== "absolute" && cs.position !== "sticky") continue;
+        if (links < 1) continue;
+        if (b.height >= H * 0.35 && b.width >= W * 0.6) continue; // big overlays are gates — killAds/pressStart own those
+        var t = (e.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 220) continue;
+        if (/down|loading|extract|install|verif|buffer|memory|insert|pause|started|ready/i.test(t)) continue;
+        e.style.setProperty("display", "none", "important"); hid.push(e);
+      } catch (x) {}
+    }
+  }
+
+  // A port that cannot boot on this engine says why in its own words ("This browser has no
+  // WebGPU…", "This page needs cross-origin isolation…"). The sweep hides that line with the
+  // rest of the portal chrome, leaving a black screen and no reason; relay it to the app first
+  // so the viewer sees the honest one-liner instead. Deduped per page so a slow tick can't spam.
+  var REFUSE = /(has no WebGPU|no WebGPU|no usable graphics adapter|cross-origin isolation|WebGPU is switched on|WebGL[^.]{0,30}(not|no)|not supported by this browser|requires? (a browser|WebGPU|WebGL2?)|Use a (current|modern)|needs? (a|an) (modern|updated|current))/i;
+  function relayRefusal() {
+    try {
+      var seen = window.__scenixRefused || (window.__scenixRefused = {});
+      var els = document.querySelectorAll("div,section,main,output,p");
+      for (var i = 0; i < els.length; i++) {
+        var e = els[i];
+        if (e.querySelector && e.querySelector("canvas,iframe,video")) continue;
+        var t = (e.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length < 12 || t.length > 240) continue;
+        if (!REFUSE.test(t)) continue;
+        if (seen[t]) continue;
+        seen[t] = 1;
+        say("refuse", { t: t });
+      }
+    } catch (x) {}
   }
 
   // A full-frame fixed/absolute panel with text and no canvas is a gate or an upsell ad

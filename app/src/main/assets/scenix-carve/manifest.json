@@ -1,11 +1,19 @@
 {
   "manifest_version": 2,
   "name": "Scenix carve",
-  "version": "2.10",
+  "version": "2.19",
   "browser_specific_settings": { "gecko": { "id": "scenix-carve@scenix.app" } },
   "description": "Cut portal chrome away so the game stage is all the child sees, and report the sweep back to the app.",
   "background": { "scripts": ["bg.js"] },
   "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["fake.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
     {
       "matches": ["<all_urls>"],
       "js": ["carve.js"],
@@ -14,5 +22,5 @@
       "match_about_blank": true
     }
   ],
-  "permissions": ["<all_urls>", "geckoViewAddons", "nativeMessaging"]
+  "permissions": ["<all_urls>", "geckoViewAddons", "nativeMessaging", "webRequest", "webRequestBlocking"]
 }

@@ -100,7 +100,14 @@ class GameActivity : Activity() {
                     view: WebView, request: WebResourceRequest,
                 ): WebResourceResponse? {
                     val u = request.url
-                    return if (isAdHost(u)) emptyBlock() else null
+                    // Some mirrors ship the game from their own host and the tray of "related games"
+                    // rides in with a little promo script inside the game frame — a frame this
+                    // WebView's script can never reach (cross-origin), so the tray must die where
+                    // it is requested. The prebid bundle is the ad auction the same portals run.
+                    val path = u.path?.lowercase().orEmpty()
+                    if (isAdHost(u) || path.endsWith("/files/scripts/scr.js") || "/prebid" in path)
+                        return emptyBlock()
+                    return null
                 }
 
                 override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
@@ -304,6 +311,13 @@ class GameActivity : Activity() {
                         // The game's own frame is on screen — the wordmark hands the stage over to it.
                         loader.finish()
                     } else ++misses
+                    // The page told us in its own words why its game never boots here (no WebGPU,
+                    // no adapter): say that instead of guessing at a stall.
+                    val why = r?.substringAfter("|refuse:", "")?.trim('"')?.trim().orEmpty()
+                    if (why.isNotEmpty() && why != r) main.post {
+                        status.text = why
+                        status.visibility = View.VISIBLE
+                    }
                     // A portal that never puts any game frame on screen at all (Poki on some
                     // engines): after half a minute say so instead of sitting black forever.
                     if (misses == 10 && carved == 0)
@@ -531,6 +545,7 @@ class GameActivity : Activity() {
     try{var cs=v.getComputedStyle(e);
      if((cs.position==='fixed'||cs.position==='absolute')&&(area(e)>W*H*0.02||parseInt(cs.zIndex,10)>=9)){
       e.style.setProperty('display','none','important');hid.push(e);}}catch(x){}}
+   promoPass(doc,node);
    if(!v.__scenixGuard){v.__scenixGuard=1;
     new v.MutationObserver(function(ms){
      for(var m=0;m<ms.length;m++){var add=ms[m].addedNodes||[];
@@ -539,17 +554,58 @@ class GameActivity : Activity() {
        if(el.tagName==='SCRIPT'||el.tagName==='STYLE')continue;
        if(!outsideStage(el))continue;
        var pos=false;try{var c2=v.getComputedStyle(el);pos=c2.position==='fixed'||c2.position==='absolute';}catch(x){}
-       if(pos){el.style.setProperty('display','none','important');hid.push(el);}
+       if(pos){el.style.setProperty('display','none','important');hid.push(el);continue;}
+       try{if(el.querySelector&&!el.querySelector('canvas,video')&&
+           el.querySelectorAll('a,button').length>=3&&el.querySelectorAll('img').length>=2){
+            el.style.setProperty('display','none','important');hid.push(el);}}catch(x){}
       }}}).observe(doc.documentElement,{childList:true,subtree:true});
    }
    return true;
   }
+  // Promo banners and cross-promo tile rows: a strip of game tiles always goes; a small floating
+  // notice with its own close button goes too — unless it reads like loader feedback. Runs even
+  // when no stage exists yet, so an unbooted page never shows chrome floating over black.
+  function promoPass(doc,node){
+   var v=doc.defaultView||window,W=v.innerWidth||1,H=v.innerHeight||1;
+   var els=doc.querySelectorAll('div,section,aside');
+   for(var i=0;i<els.length;i++){var e=els[i];
+    if(node&&(e===node||node.contains(e)||e.contains(node)))continue;
+    try{
+     if(e.querySelector('canvas,video,iframe'))continue;
+     var b=e.getBoundingClientRect();if(b.width<80||b.height<24)continue;
+     var links=e.querySelectorAll('a,button').length;
+     if(links>=3&&e.querySelectorAll('img').length>=2){e.style.setProperty('display','none','important');hid.push(e);continue;}
+     var cs=v.getComputedStyle(e);
+     if(cs.position!=='fixed'&&cs.position!=='absolute'&&cs.position!=='sticky')continue;
+     if(links<1)continue;
+     if(b.height>=H*0.35&&b.width>=W*0.6)continue; // big overlays are gates, not banners
+     var t=(e.textContent||'').replace(/\s+/g,' ').trim();
+     if(!t||t.length>220)continue;
+     if(/down|loading|extract|install|verif|buffer|memory|insert|pause|started|ready/i.test(t))continue;
+     e.style.setProperty('display','none','important');hid.push(e);
+    }catch(x){}}
+  }
   var ok=carveDoc(document,true);
+  if(!ok)promoPass(document,null);
   function dive(doc,d){if(d>2)return;var fs=doc.querySelectorAll('iframe');
    for(var i=0;i<fs.length;i++){try{var cd=fs[i].contentDocument;
-    if(cd&&cd.body){if(carveDoc(cd,false))ok=true;dive(cd,d+1);}}catch(x){}}} // cross-origin frames: blocked, skipped
+    if(cd&&cd.body){if(carveDoc(cd,false))ok=true;else promoPass(cd,null);dive(cd,d+1);}}catch(x){}}} // cross-origin frames: blocked, skipped
   dive(document,0);
-  return ok?'carved':'none';
+  // A port that cannot boot on this engine says why in its own words ("This browser has no
+  // WebGPU…", "WebGL is not supported…"). The sweep hides that line with the portal chrome,
+  // leaving a black screen and no reason; hand it to the app so it can say it out loud.
+  var refuse="";
+  try{
+   var seen=window.__scenixRefused||(window.__scenixRefused={});
+   var REFUSE=/(has no WebGPU|no WebGPU|no usable graphics adapter|cross-origin isolation|WebGPU is switched on|WebGL[^.]{0,30}(not|no)|not supported by this browser|requires? (a browser|WebGPU|WebGL2?)|Use a (current|modern)|needs? (a|an) (modern|updated|current))/i;
+   var els=document.querySelectorAll("div,section,main,output,p");
+   for(var q=0;q<els.length;q++){var el=els[q];
+    if(el.querySelector&&el.querySelector("canvas,iframe,video"))continue;
+    var t=(el.textContent||"").replace(/\s+/g," ").trim();
+    if(!t||t.length<12||t.length>240||!REFUSE.test(t)||seen[t])continue;
+    seen[t]=1;refuse=t;break;}
+  }catch(x){}
+  return (ok?'carved':'none')+(refuse?'|refuse:'+refuse:'');
  }catch(e){}
 })()
 """
@@ -561,6 +617,8 @@ class GameActivity : Activity() {
             "2mdn.net", "bat.bing.com", "a.poki.com", "amazon-adsystem.com",
             "criteo.com", "criteo.net", "taboola.com", "moatads.com", "adnxs.com",
             "adsafeprotected.com", "smartadserver.com",
+            "mc.yandex.ru", "mc.yandex.net", "mc.yandex.com", "an.yandex.ru", "yandex.ru",
+            "yandex.net", "yandex.com",
         )
     }
 }

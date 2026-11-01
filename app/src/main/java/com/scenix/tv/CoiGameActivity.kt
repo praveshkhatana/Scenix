@@ -63,6 +63,9 @@ class CoiGameActivity : Activity() {
     private var missStreak = 0
     private var stallTold = false
     private var sawCanvasAt = 0L
+    // A relayed refusal ("This browser has no WebGPU…") owns the status line for the session:
+    // paint events must not hide it again and the canvas pass must not re-raise the hint.
+    private var refuseShown = false
     private var hint: TextView? = null
     private var hintTold = false
     private lateinit var loader: GameLoader
@@ -76,6 +79,11 @@ class CoiGameActivity : Activity() {
     private val reportedSeqs = LinkedHashMap<String, Unit>()
     private val seenPorts = LinkedHashSet<String>()
     private var portWired = false
+    // A recomp-style port that complains its own server never sends the COOP/COEP headers gets
+    // one shot at us injecting them: the app hands the host to bg.js over the native port and
+    // reloads once.
+    private var carvePort: WebExtension.Port? = null
+    private var coiFixTried = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -182,8 +190,15 @@ class CoiGameActivity : Activity() {
             .javaScriptEnabled(true)
             .contentBlocking(blocking)
             .build()
+        // One engine per process, kept warm between games. Gecko forbids a second runtime at a
+        // time, and shutdown() finishes long after onDestroy returns — closing one game and
+        // opening the next quickly used to crash the newcomer with "Only one GeckoRuntime
+        // instance". The engine itself is a single parent process; every game's content processes
+        // still die the moment its session closes, and the next game starts warm instead of cold.
         val rt = try {
-            GeckoRuntime.create(this, settings)
+            synchronized(Engine) {
+                Engine.runtime ?: GeckoRuntime.create(applicationContext, settings).also { Engine.runtime = it }
+            }
         } catch (t: Throwable) {
             showError("The embedded engine could not start on this TV — ${t.message}")
             return
@@ -242,6 +257,8 @@ class CoiGameActivity : Activity() {
             object : WebExtension.MessageDelegate {
                 override fun onConnect(port: WebExtension.Port) {
                     android.util.Log.i(TAG, "carve port connected from ${port.sender?.url}")
+                    carvePort = port
+                    seedCoiHosts() // headers must be in place BEFORE the first document fetch
                     port.setDelegate(object : WebExtension.PortDelegate {
                         override fun onPortMessage(message: Any, port: WebExtension.Port) { report(message) }
                     })
@@ -255,7 +272,16 @@ class CoiGameActivity : Activity() {
                 }
             }
         }
-        fun bind() { val d = carveDelegate ?: return; if (we != null) s.webExtensionController.setMessageDelegate(we, d, "carve") }
+        // The background opens its native port with no session behind it, so a session-bound
+        // delegate never resolves for it — bind on the extension itself. report() dedupes by seq.
+        fun bind() {
+            val d = carveDelegate ?: return
+            if (we == null) return
+            s.webExtensionController.setMessageDelegate(we, d, "carve")
+            try { we.setMessageDelegate(d, "carve") } catch (t: Throwable) {
+                android.util.Log.w(TAG, "extension carve delegate failed", t)
+            }
+        }
         bind()
 
         // Portal pages ask permission for popups and play their ad gates through alert/confirm —
@@ -280,6 +306,8 @@ class CoiGameActivity : Activity() {
             override fun onPageStart(session: GeckoSession, url: String) {
                 bind()
                 main.post {
+                    refuseShown = false
+                    status.text = "Loading $titleText…"
                     status.visibility = View.VISIBLE
                     errorBox.visibility = View.GONE
                     hint?.visibility = View.GONE
@@ -296,7 +324,7 @@ class CoiGameActivity : Activity() {
 
             override fun onPageStop(session: GeckoSession, success: Boolean) {
                 main.post {
-                    if (painted || !success) status.visibility = View.GONE
+                    if ((painted || !success) && !refuseShown) status.visibility = View.GONE
                     // Page settled but a first play still streams its core and ROM — keep the
                     // wordmark sweeping until the game's own canvas lands on the stage.
                     if (success) loader.loop()
@@ -308,7 +336,7 @@ class CoiGameActivity : Activity() {
                 painted = true
                 // The portal's chrome painting is not the game starting — the wordmark hands over
                 // when the carve sweep reports a real game canvas, and stays sweeping until then.
-                main.post { status.visibility = View.GONE }
+                main.post { if (!refuseShown) status.visibility = View.GONE }
             }
 
             override fun onCrash(session: GeckoSession) {
@@ -441,7 +469,7 @@ class CoiGameActivity : Activity() {
         val m = when (message) {
             is Map<*, *> -> message
             is org.json.JSONObject ->
-                mapOf("what" to message.optString("what"), "val" to message.get("val"), "seq" to message.get("seq"))
+                mapOf("what" to message.optString("what"), "val" to message.opt("val"), "seq" to message.opt("seq"))
             else -> return
         }
         // The same sweep can arrive through both delivery paths; the sequence number makes it once.
@@ -458,6 +486,18 @@ class CoiGameActivity : Activity() {
                 val c = valMap(m) ?: return
                 val sab = c["sab"]?.toString()
                 val canvas = c["canvas"]?.toString() == "true"
+                // carve.js already tells the page it is isolated (the flag alone never blocks
+                // anything here — SharedArrayBuffer builds unisolated), so the only port still
+                // refusing is one that says so in its own words (the "This page needs
+                // cross-origin isolation" line). For that, hand the host to bg.js so it can
+                // answer subresources with our own COOP/COEP headers, and reload — once.
+                val refuses = c["recomp"]?.toString() == "true"
+                if (refuses && !coiFixTried) {
+                    coiFixTried = true
+                    seedCoiHosts()
+                    main.postDelayed({ session?.loadUri(url) }, 400)
+                    return
+                }
                 // A wrapper frame is never isolated and that is normal; and the isolation flag
                 // can read false on an engine that doesn't know the portal's COEP variant while
                 // SharedArrayBuffer still works. Only a frame that holds the game canvas AND
@@ -470,6 +510,22 @@ class CoiGameActivity : Activity() {
             }
 
             "dom" -> android.util.Log.i(TAG, "carve dom: ${m["val"]}")
+
+            // The page explained in its own words why its game will not boot on this engine
+            // (no WebGPU, no adapter). Show that line — it beats a black canvas and a guess.
+            // Latched: a canvas pass must not re-raise the hint, and page-stop/paint events must
+            // not hide the line again behind it.
+            "refuse" -> {
+                val c = valMap(m) ?: return
+                val t = c["t"]?.toString().orEmpty().trim()
+                if (t.isNotEmpty()) main.post {
+                    refuseShown = true
+                    hintTold = true
+                    hint?.visibility = View.GONE
+                    status.text = t
+                    status.visibility = View.VISIBLE
+                }
+            }
 
             "carve" -> {
                 val c = valMap(m)
@@ -515,6 +571,21 @@ class CoiGameActivity : Activity() {
                 out
             }
             else -> null
+        }
+    }
+
+    /** Tell bg.js which host answers with our own COOP/COEP headers — before its first fetch. */
+    private fun seedCoiHosts() {
+        try {
+            val h = android.net.Uri.parse(url).host ?: ""
+            if (h.isEmpty()) return
+            val msg = org.json.JSONObject()
+            msg.put("what", "coiHosts")
+            msg.put("val", org.json.JSONArray(listOf(h)))
+            carvePort?.postMessage(msg)
+            android.util.Log.i(TAG, "coi hosts seeded: $h")
+        } catch (t: Throwable) {
+            android.util.Log.w(TAG, "coi host handoff failed", t)
         }
     }
 
@@ -682,17 +753,18 @@ class CoiGameActivity : Activity() {
         main.removeCallbacksAndMessages(null)
         session?.close()
         session = null
-        // The built-in install survives in the engine's profile; take it back out so the next
-        // launch installs the current carve.js instead of a stale copy.
-        extension?.let { ext ->
-            runtime?.webExtensionController?.uninstall(ext)?.accept({ }, { t ->
-                android.util.Log.i(TAG, "carve uninstall declined (kept in profile): $t")
-            })
-        }
+        // The extension stays installed — ensureBuiltIn compares versions and re-installs only
+        // when the APK ships a newer carve, so there is no stale copy to chase out. The engine
+        // stays up (see onCreate): closing the session already ends the game's content processes,
+        // and shutting the whole runtime down between games only raced with the next create().
         extension = null
-        runtime?.shutdown()   // 2 GB TVs: the engine's RAM must come back the moment the game ends
         runtime = null
         super.onDestroy()
+    }
+
+    /** The one Gecko engine this process is allowed to have, shared by every coi game. */
+    private object Engine {
+        var runtime: GeckoRuntime? = null
     }
 
     companion object {

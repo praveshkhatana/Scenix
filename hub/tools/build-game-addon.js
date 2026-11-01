@@ -27,9 +27,14 @@ const item = (g, defTouch) => ({
   tags: (g.tags || []).slice(0, 4), desc: (g.desc || '').slice(0, 200),
 });
 
-const curated = load('curated.json').map((g) => item(g, false));
-const p2b = load('ported2browser.json').map((g) => item(g, false));
-const crazy = load('crazygames.json').map((g) => item(g, true));
+// Ports that can't run on a TV at all stay out even if a data refresh adds them back.
+// "Cricket 07" is WebGPU-only and asks the player for their own game folder.
+const DROP = [/cricket 07/i];
+const keep = (list) => list.filter((g) => !DROP.some((r) => r.test(g.title || '')));
+
+const curated = keep(load('curated.json')).map((g) => item(g, false));
+const p2b = keep(load('ported2browser.json')).map((g) => item(g, false));
+const crazy = keep(load('crazygames.json')).map((g) => item(g, true));
 const rows = [];
 
 if (curated.length) rows.push({ id: 'highlight', title: 'Highlighted', items: curated });
