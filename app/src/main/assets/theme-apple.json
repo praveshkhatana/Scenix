@@ -26,7 +26,12 @@
   "scrim": "rgba(0,0,0,0.72)",
   "scrimInk": "rgba(0,0,0,0.86)",
   "scrimMid": "rgba(0,0,0,0.48)",
+  "stageVeilTop": "rgba(0,0,0,0.43)",
+  "stageVeilMid": "rgba(0,0,0,0.75)",
+  "stageVeilBottom": "rgba(0,0,0,0.96)",
   "modalScrim": "rgba(0,0,0,0.82)",
+  "glassSurface": "rgba(8,10,14,0.59)",
+  "glassLine": "rgba(255,255,255,0.35)",
   "btnGrey": "rgba(255,255,255,0.16)",
   "lineStrong": "rgba(255,255,255,0.58)",
   "track": "#2A2C34",
@@ -155,7 +160,7 @@
    "caption": false,
    "fullBleed": true
   },
-  "_top10": "The giant numeral is sized off the art height, so it scales with whatever card size the row uses. Mockup: 210 px text on a 300 px tall art, -26 px overlap, 7 px outline.",
+  "_top10": "Ranking stays compact in the card metadata so artwork remains the lockup, not a giant numeral.",
   "numeralTextRatio": 0.495,
   "numeralWidthRatio": 0.55,
   "numeralOverlapRatio": 0.229,
@@ -204,16 +209,17 @@
   "padV": 24,
   "radius": 10,
   "rowGap": 10,
-  "rowHeight": 68
+  "rowHeight": 68,
+  "dimAmount": 0.58
  },
  "detail": {
   "maxSources": 6.0,
   "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
  },
  "preview": {
-  "enabled": 1.0,
+  "enabled": 0.0,
   "delayMs": 1500.0,
-  "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
+  "_note": "Apple pack keeps the hero artwork-led until Hub previews are title-scoped and reliable; this avoids a live video surface competing with remote navigation"
  },
  "hero": {
   "rotateMs": 6000,
@@ -228,17 +234,23 @@
  },
  "pack": {
   "name": "Scene",
+  "homeLayout": "apple",
+  "homeNavigation": "pack",
+  "homeHero": "shared-slider",
+  "homeRails": "stacked",
   "hero": "full",
   "heroAlign": "left",
   "heroHeight": 720,
   "rows": "landscape",
   "card": "below",
-  "focus": "lift",
+  "focus": "glow",
   "focusColor": "#FFFFFF",
   "motion": "fade",
   "detail": "backdrop",
   "nav": "pill",
-  "rank": "outline",
+  "cardNewLabel": "inline",
+  "searchBadges": "hide",
+  "rank": "compact",
   "stage": "focus"
  }
 }

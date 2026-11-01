@@ -20,8 +20,15 @@ object BrowseImages {
     private val cache = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
-    private val pool = Executors.newFixedThreadPool(4) { r -> Thread(r, "scenix-image").apply { isDaemon = true } }
+    // Four simultaneous JPEG decodes were enough to monopolise the emulator/low-end TV cores
+    // exactly while a remote press needed a frame. Two workers keep artwork loading progressive
+    // without competing with focus and layout on the main render thread.
+    private val pool = Executors.newFixedThreadPool(2) { r -> Thread(r, "scenix-image").apply { isDaemon = true } }
+    // A tiny image must never queue behind a shelf of full decodes: its whole job is to arrive
+    // first. One worker, a ~5 KB request and an LruCache entry are enough.
+    private val tinyPool = Executors.newFixedThreadPool(1) { r -> Thread(r, "scenix-image-tiny").apply { isDaemon = true } }
     private val main = Handler(Looper.getMainLooper())
+    private val tmdbSized = Regex("(image\\.tmdb\\.org/t/p/)(w\\d+|original)(/)")
 
     /**
      * Load into a recycled view. `onResult` is called on the main thread with true/false when the URL
@@ -29,28 +36,72 @@ object BrowseImages {
      */
     fun load(view: ImageView, url: String?, targetWidthPx: Int = 420, onResult: ((Boolean) -> Unit)? = null) {
         val clean = url?.trim().orEmpty()
+        // A scene backdrop deliberately uses a small sampled bitmap while the hero uses a sharp
+        // one. Cache those as distinct variants: a low-resolution stage image must never replace
+        // the hero/card bitmap just because it arrived first.
+        val requestKey = cacheKey(clean, targetWidthPx)
         // RecyclerView rebinds a card every time it leaves and re-enters the window. Re-setting the
         // same bitmap clears the drawable first, which costs a frame and a bitmap upload for nothing.
-        if (view.tag == clean && view.drawable != null) { onResult?.invoke(true); return }
-        view.tag = clean
-        view.setImageDrawable(null)
-        if (clean.isEmpty()) { onResult?.invoke(false); return }
-        cache.get(clean)?.let {
+        if (view.tag == requestKey && view.drawable != null) { onResult?.invoke(true); return }
+        view.tag = requestKey
+        if (clean.isEmpty()) {
+            view.setImageDrawable(null)
+            onResult?.invoke(false)
+            return
+        }
+        cache.get(requestKey)?.let {
+            // Do not clear a cached bitmap first. That produces a black flash and a second
+            // invalidation during a hero LEFT/RIGHT step even though the image is ready now.
             view.setImageBitmap(it)
             onResult?.invoke(true)
             return
         }
+        view.setImageDrawable(null)
+        // A blurred lick of the artwork while the full frame is in flight. TMDB serves the same
+        // picture at 92 px for a few kilobytes, so the tile is never a black hole on a cold scroll.
+        tinyUrl(clean)?.let { small ->
+            val tinyKey = "$small@tiny"
+            val ready = cache.get(tinyKey)
+            if (ready != null) {
+                view.setImageBitmap(ready)
+            } else {
+                tinyPool.execute {
+                    val bmp = decode(small, 24)
+                    if (bmp != null) {
+                        cache.put(tinyKey, bmp)
+                        main.post { if (view.tag == requestKey) view.setImageBitmap(bmp) }
+                    }
+                }
+            }
+        }
 
         pool.execute {
             val bitmap = decode(clean, targetWidthPx)
-            if (bitmap != null) cache.put(clean, bitmap)
+            if (bitmap != null) cache.put(requestKey, bitmap)
             main.post {
-                if (view.tag == clean) {
+                if (view.tag == requestKey) {
                     if (bitmap != null) view.setImageBitmap(bitmap)
                     onResult?.invoke(bitmap != null)
                 }
             }
         }
+    }
+
+    /**
+     * The same picture at a size that is almost free. TMDB is the household's dominant source;
+     * anything else keeps its full URL and simply shows the gradient until it lands.
+     */
+    private fun tinyUrl(url: String): String? {
+        if (!url.contains("image.tmdb.org/t/p/")) return null
+        val small = tmdbSized.replace(url, "$1w92$3")
+        return if (small != url) small else null
+    }
+
+    private fun cacheKey(url: String, targetWidthPx: Int): String {
+        // Bucket widths so close layout measurements reuse a decode while a 360px atmosphere
+        // image and a 1100px hero still remain separate assets.
+        val bucket = ((targetWidthPx.coerceAtLeast(1) + 79) / 80) * 80
+        return "$url@$bucket"
     }
 
     private fun decode(url: String, targetWidthPx: Int): Bitmap? = try {

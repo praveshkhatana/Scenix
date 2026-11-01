@@ -1,0 +1,423 @@
+<!doctype html>
+<!-- Apple-TV-feel prototype for the native TV home — v4, structured exactly like the reference:
+     ONE full-screen backdrop ("the stage") carries everything — hero meta AND the first shelves
+     sit inside it, and the stage crossfades to each focused tile's artwork, blurring softly so
+     the wall stays readable. Names always under tiles · centered pill nav · lift + glowing rim focus.
+     Interactive: arrow keys drive it like a remote. Live data when served by the hub
+     (http://localhost:8791/ui/prototypes/atv-home.html); baked snapshot when opened as a file.
+     Modes: ?style=now (today's native home) · ?spec=1 (annotations). -->
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Scenix · Apple TV feel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>">
+<style>
+  :root{
+    --card-w: 420px; --card-h: 236px;          /* 16:9 scene cards */
+    --gap: 26px; --edge: 64px; --pitch: 64px; --r: 10px; --lift: 1.07;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{min-height:100vh;background:#000;color:#fff;overflow-x:hidden;
+    font-family:"SF Pro Display","SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  /* ---- the stage: one full-screen backdrop for the whole app; shelves live INSIDE it ---- */
+  #stageA,#stageB{position:fixed;inset:0;z-index:0;background-size:cover;background-position:center 18%;
+    opacity:0;transition:opacity 950ms ease, filter 950ms ease;filter:brightness(.72) saturate(1.15)}
+  #stageA.on,#stageB.on{opacity:1}
+  body.roaming #stageA,body.roaming #stageB{filter:blur(14px) brightness(.5) saturate(1.35)}
+  #veil{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:linear-gradient(90deg,rgba(0,0,0,.8) 0%,rgba(0,0,0,.28) 46%,rgba(0,0,0,0) 72%),
+               linear-gradient(180deg,rgba(0,0,0,.5) 0%,rgba(0,0,0,0) 22%,rgba(0,0,0,0) 52%,rgba(0,0,0,.72) 100%)}
+  /* ---- floating pill nav, centered over the stage (exactly like the reference) ---- */
+  header{position:fixed;top:26px;left:0;right:0;z-index:7;display:flex;justify-content:center;pointer-events:none}
+  nav.pill,nav.pill *{pointer-events:auto}
+  .wordmark{position:fixed;left:var(--edge);top:34px;height:22px;z-index:7;opacity:.9}
+  nav.pill{display:flex;gap:6px;align-items:center;background:rgba(40,44,52,.55);backdrop-filter:blur(24px);
+    border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:7px 10px}
+  nav.pill span{font-size:17px;font-weight:500;color:rgba(255,255,255,.72);padding:10px 22px;border-radius:999px}
+  nav.pill span.on{background:#f2f3f5;color:#111;font-weight:600}
+  nav.pill .ico{display:flex;align-items:center;padding:10px 14px;border-radius:999px;cursor:pointer;
+    color:rgba(255,255,255,.72)}
+  nav.pill .ico:hover{color:#fff;background:rgba(255,255,255,.1)}
+  nav.pill .ico svg{width:22px;height:22px}
+  nav.pill .sep{width:1px;height:26px;background:rgba(255,255,255,.16);margin:0 6px}
+  /* ---- profile lives at the END of the pill nav: tap it and the household switcher opens ---- */
+  .pfp{width:44px;height:44px;border-radius:50%;flex:none;margin-right:8px;
+    display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:#fff;
+    border:2px solid rgba(255,255,255,.55);cursor:pointer}
+  .pfp:hover{border-color:#fff;box-shadow:0 0 22px rgba(255,255,255,.3)}
+  .psheet{position:fixed;inset:0;z-index:30;background:rgba(8,9,12,.66);backdrop-filter:blur(16px);
+    display:none;place-items:center}
+  .psheet.on{display:grid}
+  .psheet h5{font-size:26px;font-weight:600;margin:0 0 30px;text-align:center;color:#fff}
+  .prow{display:flex;gap:38px}
+  .pitem{display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer}
+  .pitem .av{width:112px;height:112px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:44px;font-weight:700;color:#fff;border:3px solid rgba(255,255,255,.22)}
+  .pitem.cur .av{border-color:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.35),0 0 40px rgba(255,255,255,.25)}
+  .pitem b{font-size:16px;font-weight:600;color:#e8e8ea}
+  .pitem i{font-style:normal;font-size:13px;color:rgba(255,255,255,.55)}
+  /* ---- shelves: transparent rows on top of the stage ---- */
+  main{position:relative;z-index:2;padding-bottom:14vh}
+  .row{margin-bottom:var(--pitch)}
+  .row h3{margin:0 var(--edge) 16px;font-size:26px;font-weight:600;letter-spacing:-.012em}
+  .list{display:flex;gap:var(--gap);padding:10px 0 8px var(--edge);overflow-x:auto;
+    scrollbar-width:none;overscroll-behavior-x:contain}
+  .list::-webkit-scrollbar{display:none}
+  /* card = art + name ALWAYS underneath, as in the reference */
+  .tile{width:var(--card-w);flex:none}
+  .card{position:relative;width:var(--card-w);height:var(--card-h);border-radius:var(--r);overflow:hidden;
+    background:#141821;box-shadow:0 12px 30px rgba(0,0,0,.5);
+    transition:transform 280ms cubic-bezier(.2,.7,.3,1.18), box-shadow 280ms ease, filter 280ms ease}
+  .card .art{position:absolute;inset:-4% -6%;background-size:cover;background-position:center;
+    transition:transform 550ms cubic-bezier(.25,.6,.3,1)}
+  .card .prog{position:absolute;left:0;right:0;bottom:0;height:5px;background:rgba(0,0,0,.55)}
+  .card .prog i{display:block;height:100%;background:#fff;width:var(--p,0%)}
+  .under{padding:11px 2px 0;position:relative;z-index:2}
+  .under b{display:block;font-size:17.5px;font-weight:500;letter-spacing:-.01em;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .under i{display:block;margin-top:3px;font-style:normal;font-size:14.5px;color:rgba(255,255,255,.55);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rank{position:absolute;left:10px;bottom:-6px;font-size:112px;font-weight:800;line-height:.85;z-index:2;
+    color:transparent;-webkit-text-stroke:3px rgba(255,255,255,.85);text-shadow:0 8px 24px rgba(0,0,0,.5)}
+  .tile.portrait{width:calc(var(--card-h)*.68)}
+  .tile.portrait .card{width:calc(var(--card-h)*.68)}
+  .tile.portrait .rank{font-size:92px}
+  body.roaming .tile:not(.foc) .card{filter:brightness(.55) saturate(.8)}
+  .tile.foc .card{transform:scale(var(--lift));z-index:5;
+    box-shadow:0 40px 80px 10px rgba(0,0,0,.75),
+      0 0 0 1.5px rgba(255,255,255,.75),          /* hairline light rim */
+      0 0 34px 4px rgba(255,255,255,.20),         /* soft bloom off the rim */
+      0 0 60px 18px rgba(255,255,255,.07)}
+  .tile.foc .card .art{transform:translateX(var(--par,0px)) scale(1.04)}
+  .tile.foc .under b{font-weight:600}
+  .tile.slideon .card{outline:2px solid rgba(255,255,255,.55);outline-offset:3px}
+  .corner{position:absolute;top:10px;display:flex;gap:6px;z-index:3}
+  .corner.tl{left:10px}
+  .corner.tr{right:10px}
+  .badge.imdb{background:rgba(20,18,14,.72);border-color:rgba(246,198,33,.55);color:#f6c621}
+  .badge{padding:4px 8px;border-radius:6px;font-size:11.5px;font-weight:700;
+    letter-spacing:.05em;color:#fff;background:rgba(0,0,0,.62);border:1px solid rgba(255,255,255,.16);
+    backdrop-filter:blur(6px)}
+  /* the title lockup rides in the artwork, so the shelf reads from the couch */
+  .lockup{position:absolute;left:14px;right:14px;bottom:12px;z-index:2;
+    font-size:19px;font-weight:800;letter-spacing:.01em;color:#fff;
+    text-shadow:0 3px 12px rgba(0,0,0,.85),0 1px 3px rgba(0,0,0,.9)}
+  .lockup span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lockup.hasimg>span{visibility:hidden;position:absolute}   /* typed title only until the real logo arrives */
+  .lockup img{display:block;max-width:82%;max-height:34px;object-fit:contain;
+    filter:drop-shadow(0 3px 10px rgba(0,0,0,.9))}
+  /* ---- hero: a meta block ON the stage, not a bordered card — the shelves continue inside it ---- */
+  .hero{min-height:52vh;display:flex;align-items:flex-end;position:relative;padding-bottom:26px}
+  .hero .meta{padding-left:var(--edge);max-width:600px}
+  .hero h4{font-size:64px;font-weight:700;letter-spacing:.04em;line-height:1;margin-bottom:16px}
+  .hero .chips{display:flex;gap:10px;margin-bottom:16px}
+  .hero .chips span{font-size:14px;font-weight:600;color:#e8e8ea;background:rgba(255,255,255,.16);
+    border:1px solid rgba(255,255,255,.18);padding:5px 12px;border-radius:7px}
+  .hero .chips span.imdb{color:#f6c621;border-color:rgba(246,198,33,.5)}
+  .hero p{font-size:18px;font-weight:400;line-height:1.5;color:rgba(255,255,255,.9);max-width:520px;
+    margin-bottom:22px}
+  .cta{display:inline-flex;align-items:center;gap:10px;font-size:17.5px;font-weight:600;
+    background:rgba(255,255,255,.22);backdrop-filter:blur(10px);padding:14px 28px;border-radius:999px}
+  .dots{position:absolute;left:50%;transform:translateX(-50%);bottom:2px;display:flex;gap:8px;z-index:6}
+  .dots i{width:8px;height:8px;border-radius:99px;background:rgba(255,255,255,.35);transition:all 300ms ease}
+  .dots i.on{width:22px;background:#fff}
+  /* ---- "now" mode: today's native home, faithfully (320x180 poster tiles, caption inside,
+     red bar, flat instant ring) ---- */
+  body.now #stageA,body.now #stageB,body.now #veil,body.now .under,body.now .dots,body.now .chips,body.now .cta,body.now .badge,body.now .lockup,body.now .corner,body.now .pfp,body.now .ico,body.now .sep{display:none}
+  body.now{background:#0b0e13}
+  body.now header{position:static}
+  body.now .wordmark{position:static;height:25px}
+  body.now nav.pill{background:transparent;border:0;backdrop-filter:none;padding:0;gap:36px}
+  body.now nav.pill span{padding:0}
+  body.now nav.pill span.on{background:transparent;color:#fff}
+  body.now .hero{min-height:0;height:400px;margin:0 var(--edge);border-radius:14px;background-size:cover;
+    background-position:center 30%;align-items:flex-end;overflow:hidden}
+  body.now .hero .meta{padding:0 34px 26px;max-width:none;width:100%;
+    background:linear-gradient(180deg,transparent,rgba(0,0,0,.8))}
+  body.now .hero h4{font-size:34px;letter-spacing:0}
+  body.now .card{width:320px;height:180px;border-radius:6px}
+  body.now .tile{width:320px}
+  body.now .card .art{inset:0}
+  body.now .card::after{content:attr(data-t);position:absolute;left:0;right:0;bottom:0;padding:74px 14px 10px;
+    font-size:19px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    background:linear-gradient(180deg,transparent,rgba(0,0,0,.93))}
+  body.now .card .prog{height:6px;background:transparent}
+  body.now .card .prog i{background:rgba(229,9,20,.85)}
+  body.now .rank{font-size:100px;font-weight:800;color:#fff;-webkit-text-stroke:0;text-shadow:0 0 12px #000}
+  body.now .row h3{font-size:23px;font-weight:700}
+  body.now .tile:not(.foc) .card{filter:none}
+  body.now .tile.foc .card{transform:none;outline:3px solid rgba(255,255,255,.92);outline-offset:2px}
+  /* ---- spec mode ---- */
+  .mark{display:none;position:absolute;z-index:9;width:30px;height:30px;border-radius:99px;
+    background:#0b63f6;color:#fff;font-size:15px;font-weight:800;place-content:center;
+    box-shadow:0 8px 20px rgba(0,0,0,.5)}
+  .legend{display:none;position:fixed;z-index:9;right:40px;top:110px;width:436px;
+    background:rgba(9,12,16,.9);border:1px solid #2a3240;border-radius:14px;padding:18px 20px;
+    font-size:15.5px;line-height:1.95;color:#e8ecf2}
+  .legend b{color:#7fb0ff}
+  body.spec .mark{display:grid}
+  body.spec .legend{display:block}
+  @media (prefers-reduced-motion:reduce){
+    .card,.card .art,#stageA,#stageB{transition:none}
+  }
+</style></head>
+<body>
+<div id="stageA"></div><div id="stageB"></div><div id="veil"></div>
+<img class="wordmark" src="/ui/assets/scenix-wordmark.svg" alt="Scenix"
+  onerror="this.onerror=null;this.src='scenix-wordmark.svg'">
+<header><nav class="pill">
+  <div class="pfp" id="pfp" title="Who is watching — switch profile"></div>
+  <span class="on">Home</span><span>Movies</span><span>Series</span><span>Live TV</span>
+  <i class="sep"></i>
+  <div class="ico" title="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div>
+  <div class="ico" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.88 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.88.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.88v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg></div>
+</nav></header>
+<div class="psheet" id="psheet"><div><h5>Who is watching?</h5><div class="prow" id="prow"></div></div></div>
+<main id="main"></main>
+<script>
+const RAW=[{"title":"Action","items":[{"t":"Spider-Man: Brand New Day","bd":"https://images.metahub.space/background/medium/tt22084616/img","p":"https://images.metahub.space/poster/small/tt22084616/img","y":2026,"pr":28214,"du":8700000,"lg":"https://images.metahub.space/logo/medium/tt22084616/img","m":99,"nw":true,"rt":8.0,"ag":"16+"},{"t":"Hope","bd":"https://images.metahub.space/background/medium/tt27369017/img","p":"https://images.metahub.space/poster/small/tt27369017/img","y":2026,"pr":1067582,"du":9420000,"lg":"https://images.metahub.space/logo/medium/tt27369017/img","m":99,"nw":true,"rt":6.9,"ag":"16+"},{"t":"By Any Means","bd":"https://images.metahub.space/background/medium/tt34379051/img","p":"https://images.metahub.space/poster/small/tt34379051/img","y":2026,"pr":0,"du":6420000,"lg":"https://images.metahub.space/logo/medium/tt34379051/img","m":85,"nw":true,"rt":null,"ag":"16+"},{"t":"Disclosure Day","bd":"https://images.metahub.space/background/medium/tt15047880/img","p":"https://images.metahub.space/poster/small/tt15047880/img","y":2026,"pr":307573,"du":8760000,"lg":"https://images.metahub.space/logo/medium/tt15047880/img","m":99,"nw":true,"rt":6.4,"ag":"16+"},{"t":"The Weight","bd":"https://images.metahub.space/background/medium/tt10794054/img","p":"https://images.metahub.space/poster/small/tt10794054/img","y":2020,"pr":0,"du":6720000,"lg":"https://images.metahub.space/logo/medium/tt10794054/img","m":85,"nw":true,"rt":null,"ag":"16+"},{"t":"The End of Oak Street","bd":"https://images.metahub.space/background/medium/tt27165187/img","p":"https://images.metahub.space/poster/small/tt27165187/img","y":2026,"pr":0,"du":6000000,"lg":"https://images.metahub.space/logo/medium/tt27165187/img","m":85,"nw":true,"rt":6.5,"ag":"16+"},{"t":"The Death of Robin Hood","bd":"https://images.metahub.space/background/medium/tt32273171/img","p":"https://images.metahub.space/poster/small/tt32273171/img","y":2026,"pr":0,"du":7380000,"lg":"https://images.metahub.space/logo/medium/tt32273171/img","m":85,"nw":true,"rt":6.0,"ag":"16+"},{"t":"Runner","bd":"https://images.metahub.space/background/medium/tt31349844/img","p":"https://images.metahub.space/poster/small/tt31349844/img","y":2026,"pr":0,"du":5820000,"lg":"https://images.metahub.space/logo/medium/tt31349844/img","m":85,"nw":true,"rt":6.6,"ag":"16+"},{"t":"Mayday","bd":"https://images.metahub.space/background/medium/tt28014327/img","p":"https://images.metahub.space/poster/small/tt28014327/img","y":2026,"pr":0,"du":6660000,"lg":"https://images.metahub.space/logo/medium/tt28014327/img","m":85,"nw":true,"rt":6.9,"ag":"16+"}]},{"title":"Comedy","items":[{"t":"The Invite","bd":"https://images.metahub.space/background/medium/tt14173636/img","p":"https://images.metahub.space/poster/small/tt14173636/img","y":2026,"pr":0,"du":6420000,"lg":"https://images.metahub.space/logo/medium/tt14173636/img","m":67,"nw":true,"rt":7.5,"ag":"16+"},{"t":"Buddy","bd":"https://images.metahub.space/background/medium/tt37281055/img","p":"https://images.metahub.space/poster/small/tt37281055/img","y":2026,"pr":0,"du":5760000,"lg":"https://images.metahub.space/logo/medium/tt37281055/img","m":67,"nw":true,"rt":7.1,"ag":"16+"},{"t":"Ali G: Who Iz I?","bd":"https://images.metahub.space/background/medium/tt43655467/img","p":"https://images.metahub.space/poster/small/tt43655467/img","y":2026,"pr":0,"du":5340000,"lg":"https://images.metahub.space/logo/medium/tt43655467/img","m":58,"nw":true,"rt":null,"ag":"16+"},{"t":"The Muppet Show","bd":"https://images.metahub.space/background/medium/tt37969426/img","p":"https://images.metahub.space/poster/small/tt37969426/img","y":2026,"pr":0,"du":1920000,"lg":"https://images.metahub.space/logo/medium/tt37969426/img","m":58,"nw":true,"rt":8.0,"ag":"7+"},{"t":"Project Hail Mary","bd":"https://images.metahub.space/background/medium/tt12042730/img","p":"https://images.metahub.space/poster/small/tt12042730/img","y":2026,"pr":0,"du":9420000,"lg":"https://images.metahub.space/logo/medium/tt12042730/img","m":76,"nw":true,"rt":8.2,"ag":"16+"},{"t":"Hocus Pocus","bd":"https://images.metahub.space/background/medium/tt0107120/img","p":"https://images.metahub.space/poster/small/tt0107120/img","y":1993,"pr":0,"du":5760000,"lg":"https://images.metahub.space/logo/medium/tt0107120/img","m":57,"nw":true,"rt":6.9,"ag":"7+"},{"t":"Practical Magic 2","bd":"https://images.metahub.space/background/medium/tt32588798/img","p":"https://images.metahub.space/poster/small/tt32588798/img","y":2026,"pr":0,"du":7800000,"lg":"https://images.metahub.space/logo/medium/tt32588798/img","m":67,"nw":true,"rt":null,"ag":"16+"},{"t":"Runner","bd":"https://images.metahub.space/background/medium/tt31349844/img","p":"https://images.metahub.space/poster/small/tt31349844/img","y":2026,"pr":0,"du":5820000,"lg":"https://images.metahub.space/logo/medium/tt31349844/img","m":85,"nw":true,"rt":6.6,"ag":"16+"},{"t":"10 Things I Hate About You","bd":"https://images.metahub.space/background/medium/tt0147800/img","p":"https://images.metahub.space/poster/small/tt0147800/img","y":1999,"pr":0,"du":5820000,"lg":"https://images.metahub.space/logo/medium/tt0147800/img","m":66,"nw":true,"rt":7.4,"ag":"16+"}]},{"title":"Family","items":[{"t":"The Muppet Show","bd":"https://images.metahub.space/background/medium/tt37969426/img","p":"https://images.metahub.space/poster/small/tt37969426/img","y":2026,"pr":0,"du":1920000,"lg":"https://images.metahub.space/logo/medium/tt37969426/img","m":58,"nw":true,"rt":8.0,"ag":"7+"},{"t":"Hocus Pocus","bd":"https://images.metahub.space/background/medium/tt0107120/img","p":"https://images.metahub.space/poster/small/tt0107120/img","y":1993,"pr":0,"du":5760000,"lg":"https://images.metahub.space/logo/medium/tt0107120/img","m":57,"nw":true,"rt":6.9,"ag":"7+"},{"t":"Coraline","bd":"https://images.metahub.space/background/medium/tt0327597/img","p":"https://images.metahub.space/poster/small/tt0327597/img","y":2009,"pr":0,"du":6000000,"lg":"https://images.metahub.space/logo/medium/tt0327597/img","m":66,"nw":true,"rt":7.8,"ag":"7+"},{"t":"The Nightmare Before Christmas","bd":"https://images.metahub.space/background/medium/tt0107688/img","p":"https://images.metahub.space/poster/small/tt0107688/img","y":1993,"pr":0,"du":4560000,"lg":"https://images.metahub.space/logo/medium/tt0107688/img","m":66,"nw":true,"rt":7.9,"ag":"7+"},{"t":"Forgotten Island","bd":"https://images.metahub.space/background/medium/tt36583977/img","p":"https://images.metahub.space/poster/small/tt36583977/img","y":2026,"pr":0,"du":6540000,"lg":"https://images.metahub.space/logo/medium/tt36583977/img","m":85,"nw":true,"rt":7.7,"ag":"7+"},{"t":"Coyote vs. Acme","bd":"https://images.metahub.space/background/medium/tt1756855/img","p":"https://images.metahub.space/poster/small/tt1756855/img","y":2026,"pr":0,"du":6180000,"lg":"https://images.metahub.space/logo/medium/tt1756855/img","m":67,"nw":true,"rt":7.6,"ag":"7+"},{"t":"The Sheep Detectives","bd":"https://images.metahub.space/background/medium/tt32565993/img","p":"https://images.metahub.space/poster/small/tt32565993/img","y":2026,"pr":0,"du":6540000,"lg":"https://images.metahub.space/logo/medium/tt32565993/img","m":67,"nw":true,"rt":7.4,"ag":"13+"},{"t":"Toy Story 5","bd":"https://images.metahub.space/background/medium/tt29355505/img","p":"https://images.metahub.space/poster/small/tt29355505/img","y":2026,"pr":0,"du":6120000,"lg":"https://images.metahub.space/logo/medium/tt29355505/img","m":67,"nw":true,"rt":7.4,"ag":"7+"},{"t":"Harry Potter and the Sorcerer's Stone","bd":"https://images.metahub.space/background/medium/tt0241527/img","p":"https://images.metahub.space/poster/small/tt0241527/img","y":2001,"pr":0,"du":9120000,"lg":"https://images.metahub.space/logo/medium/tt0241527/img","m":66,"nw":true,"rt":7.7,"ag":"12+"}]},{"title":"Sci-Fi","items":[{"t":"Hope","bd":"https://images.metahub.space/background/medium/tt27369017/img","p":"https://images.metahub.space/poster/small/tt27369017/img","y":2026,"pr":1067582,"du":9420000,"lg":"https://images.metahub.space/logo/medium/tt27369017/img","m":99,"nw":true,"rt":6.9,"ag":"16+"},{"t":"Backrooms","bd":"https://images.metahub.space/background/medium/tt26657236/img","p":"https://images.metahub.space/poster/small/tt26657236/img","y":2026,"pr":0,"du":6660000,"lg":"https://images.metahub.space/logo/medium/tt26657236/img","m":76,"nw":true,"rt":6.7,"ag":"16+"},{"t":"Disclosure Day","bd":"https://images.metahub.space/background/medium/tt15047880/img","p":"https://images.metahub.space/poster/small/tt15047880/img","y":2026,"pr":307573,"du":8760000,"lg":"https://images.metahub.space/logo/medium/tt15047880/img","m":99,"nw":true,"rt":6.4,"ag":"16+"},{"t":"Project Hail Mary","bd":"https://images.metahub.space/background/medium/tt12042730/img","p":"https://images.metahub.space/poster/small/tt12042730/img","y":2026,"pr":0,"du":9420000,"lg":"https://images.metahub.space/logo/medium/tt12042730/img","m":76,"nw":true,"rt":8.2,"ag":"16+"},{"t":"The Prestige","bd":"https://images.metahub.space/background/medium/tt0482571/img","p":"https://images.metahub.space/poster/small/tt0482571/img","y":2006,"pr":0,"du":7860000,"lg":"https://images.metahub.space/logo/medium/tt0482571/img","m":84,"nw":true,"rt":8.5,"ag":"16+"},{"t":"Interstellar","bd":"https://images.metahub.space/background/medium/tt0816692/img","p":"https://images.metahub.space/poster/small/tt0816692/img","y":2014,"pr":0,"du":10140000,"lg":"https://images.metahub.space/logo/medium/tt0816692/img","m":75,"nw":true,"rt":8.7,"ag":"16+"},{"t":"Inception","bd":"https://images.metahub.space/background/medium/tt1375666/img","p":"https://images.metahub.space/poster/small/tt1375666/img","y":2010,"pr":0,"du":8880000,"lg":"https://images.metahub.space/logo/medium/tt1375666/img","m":75,"nw":true,"rt":8.8,"ag":"16+"},{"t":"The Hunger Games","bd":"https://images.metahub.space/background/medium/tt1392170/img","p":"https://images.metahub.space/poster/small/tt1392170/img","y":2012,"pr":0,"du":8520000,"lg":"https://images.metahub.space/logo/medium/tt1392170/img","m":84,"nw":true,"rt":7.2,"ag":"16+"},{"t":"The Thing","bd":"https://images.metahub.space/background/medium/tt0084787/img","p":"https://images.metahub.space/poster/small/tt0084787/img","y":1982,"pr":0,"du":6540000,"lg":"https://images.metahub.space/logo/medium/tt0084787/img","m":84,"nw":true,"rt":8.2,"ag":"16+"}]},{"title":"Horror","items":[{"t":"Obsession","bd":"https://images.metahub.space/background/medium/tt37287335/img","p":"https://images.metahub.space/poster/small/tt37287335/img","y":2026,"pr":0,"du":6540000,"lg":"https://images.metahub.space/logo/medium/tt37287335/img","m":67,"nw":true,"rt":7.8,"ag":"16+"},{"t":"The Cycle","bd":"https://images.metahub.space/background/medium/tt32358390/img","p":"https://images.metahub.space/poster/small/tt32358390/img","y":2026,"pr":0,"du":6660000,"lg":"https://images.metahub.space/logo/medium/tt32358390/img","m":67,"nw":true,"rt":null,"ag":"16+"},{"t":"Buddy","bd":"https://images.metahub.space/background/medium/tt37281055/img","p":"https://images.metahub.space/poster/small/tt37281055/img","y":2026,"pr":0,"du":5760000,"lg":"https://images.metahub.space/logo/medium/tt37281055/img","m":67,"nw":true,"rt":7.1,"ag":"16+"},{"t":"Hope","bd":"https://images.metahub.space/background/medium/tt27369017/img","p":"https://images.metahub.space/poster/small/tt27369017/img","y":2026,"pr":1067582,"du":9420000,"lg":"https://images.metahub.space/logo/medium/tt27369017/img","m":99,"nw":true,"rt":6.9,"ag":"16+"},{"t":"Backrooms","bd":"https://images.metahub.space/background/medium/tt26657236/img","p":"https://images.metahub.space/poster/small/tt26657236/img","y":2026,"pr":0,"du":6660000,"lg":"https://images.metahub.space/logo/medium/tt26657236/img","m":76,"nw":true,"rt":6.7,"ag":"16+"},{"t":"Weapons","bd":"https://images.metahub.space/background/medium/tt26581740/img","p":"https://images.metahub.space/poster/small/tt26581740/img","y":2025,"pr":0,"du":7740000,"lg":"https://images.metahub.space/logo/medium/tt26581740/img","m":76,"nw":true,"rt":7.4,"ag":"16+"},{"t":"Friday the 13th","bd":"https://images.metahub.space/background/medium/tt0080761/img","p":"https://images.metahub.space/poster/small/tt0080761/img","y":1980,"pr":0,"du":5700000,"lg":"https://images.metahub.space/logo/medium/tt0080761/img","m":75,"nw":true,"rt":6.3,"ag":"16+"},{"t":"Remain Calm","bd":"https://live.metahub.space/background/medium/tt49058294/img","p":"https://live.metahub.space/poster/small/tt49058294/img","y":0,"pr":0,"du":780000,"lg":"https://live.metahub.space/logo/medium/tt49058294/img","m":66,"nw":true,"rt":7.4,"ag":"16+"},{"t":"The Devils","bd":"https://images.metahub.space/background/medium/tt0066993/img","p":"https://images.metahub.space/poster/small/tt0066993/img","y":1971,"pr":0,"du":6720000,"lg":"https://images.metahub.space/logo/medium/tt0066993/img","m":66,"nw":true,"rt":7.7,"ag":"16+"}]},{"title":"Cartoons & Animation","items":[{"t":"Coraline","bd":"https://images.metahub.space/background/medium/tt0327597/img","p":"https://images.metahub.space/poster/small/tt0327597/img","y":2009,"pr":0,"du":6000000,"lg":"https://images.metahub.space/logo/medium/tt0327597/img","m":66,"nw":true,"rt":7.8,"ag":"7+"},{"t":"The Nightmare Before Christmas","bd":"https://images.metahub.space/background/medium/tt0107688/img","p":"https://images.metahub.space/poster/small/tt0107688/img","y":1993,"pr":0,"du":4560000,"lg":"https://images.metahub.space/logo/medium/tt0107688/img","m":66,"nw":true,"rt":7.9,"ag":"7+"},{"t":"Forgotten Island","bd":"https://images.metahub.space/background/medium/tt36583977/img","p":"https://images.metahub.space/poster/small/tt36583977/img","y":2026,"pr":0,"du":6540000,"lg":"https://images.metahub.space/logo/medium/tt36583977/img","m":85,"nw":true,"rt":7.7,"ag":"7+"},{"t":"Coyote vs. Acme","bd":"https://images.metahub.space/background/medium/tt1756855/img","p":"https://images.metahub.space/poster/small/tt1756855/img","y":2026,"pr":0,"du":6180000,"lg":"https://images.metahub.space/logo/medium/tt1756855/img","m":67,"nw":true,"rt":7.6,"ag":"7+"},{"t":"Toy Story 5","bd":"https://images.metahub.space/background/medium/tt29355505/img","p":"https://images.metahub.space/poster/small/tt29355505/img","y":2026,"pr":0,"du":6120000,"lg":"https://images.metahub.space/logo/medium/tt29355505/img","m":67,"nw":true,"rt":7.4,"ag":"7+"},{"t":"Avatar Aang: The Last Airbender","bd":"https://images.metahub.space/background/medium/tt18259538/img","p":"https://images.metahub.space/poster/small/tt18259538/img","y":2026,"pr":0,"du":5940000,"lg":"https://images.metahub.space/logo/medium/tt18259538/img","m":85,"nw":true,"rt":null,"ag":"7+"},{"t":"Shaun the Sheep: The Beast of Mossy Bottom","bd":"https://images.metahub.space/background/medium/tt36841161/img","p":"https://images.metahub.space/poster/small/tt36841161/img","y":2026,"pr":0,"du":4860000,"lg":"https://images.metahub.space/logo/medium/tt36841161/img","m":58,"nw":true,"rt":null,"ag":"7+"},{"t":"Moana","bd":"https://images.metahub.space/background/medium/tt3521164/img","p":"https://images.metahub.space/poster/small/tt3521164/img","y":2016,"pr":0,"du":6420000,"lg":"https://images.metahub.space/logo/medium/tt3521164/img","m":66,"nw":true,"rt":7.6,"ag":"7+"},{"t":"ParaNorman","bd":"https://images.metahub.space/background/medium/tt1623288/img","p":"https://images.metahub.space/poster/small/tt1623288/img","y":2012,"pr":0,"du":5580000,"lg":"https://images.metahub.space/logo/medium/tt1623288/img","m":66,"nw":true,"rt":7.0,"ag":"7+"}]}];
+const Q=new URLSearchParams(location.search);
+const NOW=Q.get('style')==='now';
+if(NOW)document.body.classList.add('now');
+function imdbVal(r){if(r==null)return null;                       // hub sends rating as {value,source} or a bare number
+  const n=Number(typeof r==='object'?r.value:r);
+  return Number.isFinite(n)&&n>0&&n<=10?n:null}
+function certOf(i){if(typeof i.maturity==='string'&&i.maturity)return i.maturity;
+  const a=Number(i.minAge)||0;return a>=18?'A':a>=7?a+'+':''}     // the hub knows minAge before it knows a board certificate
+function mapItem(i){return i.t!==undefined?i:{t:i.title,bd:i.backdrop||'',p:i.poster||'',y:i.year||0,
+  pr:(i.progress&&i.progress.positionMs)||0,du:i.durationMs||0,
+  lg:i.logo||'',m:i.match!=null?i.match:null,nw:!!i.isNew,rt:imdbVal(i.rating),ag:certOf(i)}}
+let rows=[];
+function prep(rs){
+  rows=rs.slice(0,6).filter(r=>(r.items||[]).some(i=>i.backdrop||i.poster||i.bd||i.p))
+    .map(r=>({title:r.title||'Featured on Scenix',items:r.items.map(mapItem).filter(i=>i.bd||i.p).slice(0,9)}));
+  if(!rows.length)throw new Error('empty feed');   // let the caller fall back to the snapshot
+  const cw=[];rows.forEach(r=>r.items.forEach(it=>{if(it.pr>0&&it.du)cw.push(it)}));
+  if(cw.length>=2)rows.splice(2,0,{title:'Keep watching',items:cw.slice(0,7)});
+  else if(rows.length>1)keepWatchingRow();
+}
+function ratingFor(it){return it.ag||''}                 // only a certificate the hub actually knows
+function imdbFor(it){return it.rt!=null?Number(it.rt).toFixed(1):null}   // the hub's separate IMDb rating field
+function tasteFor(it){return it.m!=null?Math.round(Number(it.m)):null}   // hub taste score; null = cold profile, show nothing
+function keepWatchingRow(){                      // demo progress labels when the hub has none
+  const src=rows[1]&&rows[1].items||[];
+  const pct=[75,40,62];
+  rows.splice(2,0,{title:'Keep watching',
+    items:src.slice(0,3).map((it,i)=>({...it,pr:pct[i],du:100}))});
+}
+function sub(it,rowTitle){
+  if(rowTitle.startsWith('Keep watching'))return 'Continue watching';
+  if(rowTitle.startsWith('Just added'))return 'Recently Added';
+  return it.y?String(it.y):'';
+}
+function artOf(it){return NOW?(it.p||it.bd):(it.bd||it.p)}
+function card(it,o={}){
+  const c=document.createElement('div');
+  c.className='card';c.dataset.t=it.t;
+  const tl=(o.isNew?'<span class="badge">New</span>':'')
+    +(o.match!=null?`<span class="badge">${o.match}%</span>`:'');
+  c.innerHTML=`<div class="art" style="background-image:url('${artOf(it)}')"></div>`
+    +(o.rank?`<span class="rank">${o.rank}</span>`:'')
+    +(tl?`<div class="corner tl">${tl}</div>`:'')
+    +((o.imdb||o.rating)?`<div class="corner tr">`
+      +(o.imdb?`<span class="badge imdb">★ ${o.imdb}</span>`:'')
+      +(o.rating?`<span class="badge">${o.rating}</span>`:'')+`</div>`:'')
+    +(it.lg?`<div class="lockup hasimg"><img src="${it.lg}" alt="" onerror="this.closest('.lockup').classList.remove('hasimg')"><span>${it.t}</span></div>`
+           :`<div class="lockup"><span>${it.t}</span></div>`)
+    +(o.prog?`<div class="prog" style="--p:${o.prog}%"><i></i></div>`:'');
+  c.dataset.img=it.bd||it.p;
+  return c;
+}
+function tile(it,o){
+  const t=document.createElement('div');
+  t.className='tile'+(o.rank?' portrait':'');
+  t.dataset.img=it.bd||it.p;                   // the stage engine reads the TILE's image
+  t.appendChild(card(it,o));
+  if(!NOW)t.insertAdjacentHTML('beforeend',`<div class="under"><b>${it.t}</b><i>${o.sub}</i></div>`);
+  return t;
+}
+/* ------------------------------ the stage ------------------------------ */
+/* one full-screen backdrop for the entire app: the shelves sit inside it, and it
+   crossfades to whatever tile holds focus — that's the Apple TV background effect */
+let stageTop=true;
+function setStage(img){
+  if(!img)return;
+  const top=document.getElementById(stageTop?'stageA':'stageB'),back=document.getElementById(stageTop?'stageB':'stageA');
+  top.style.backgroundImage=`url('${img}')`;top.classList.add('on');back.classList.remove('on');stageTop=!stageTop;
+}
+let heroIdx=0,heroEl=null;
+function setHero(i){
+  const items=rows[0].items;heroIdx=(i+items.length)%items.length;
+  const it=items[heroIdx];
+  heroEl.querySelector('.meta').innerHTML=
+    `<h4>${it.t}</h4><div class="chips"><span>${it.y||'Featured'}</span>`+
+    (imdbFor(it)?`<span class="imdb">★ ${imdbFor(it)}</span>`:'')+
+    (ratingFor(it)?`<span>${ratingFor(it)}</span>`:'')+
+    (tasteFor(it)!=null?`<span>${tasteFor(it)}% match</span>`:'')+
+    `<span>Scenix</span></div>
+     <p>New on Scenix — from your library and installed addons.</p>
+     <span class="cta">▶&ensp;Go to Show</span>`;
+  if(NOW)heroEl.style.backgroundImage=`url('${it.p||it.bd}')`;
+  document.querySelectorAll('.dots i').forEach((d,j)=>d.classList.toggle('on',j===heroIdx));
+  document.querySelectorAll('.tile[data-slide]').forEach(t=>t.classList.toggle('slideon',Number(t.dataset.slide)===heroIdx));
+  // the hero and its slide cards are ONE thing: whichever side moves, the other follows
+  const st=document.querySelector(`.tile[data-slide="${heroIdx}"]`);
+  if(st){const l=st.closest('.list');if(l)l.scrollTo({left:st.offsetLeft-(l.clientWidth-st.clientWidth)/2,behavior:'smooth'});}
+  if(ri===0)setStage(artOf(it));
+}
+function build(){
+  const main=document.getElementById('main');main.textContent='';
+  rows.forEach((r,idx)=>{
+    const row=document.createElement('section');
+    if(idx===0){
+      row.className='row hero';
+      heroEl=row;
+      row.insertAdjacentHTML('beforeend','<div class="meta"></div>'+
+        `<div class="dots">${r.items.map(()=>$='<i></i>').join('')}</div>`);
+      main.appendChild(row);
+      if(!NOW){
+        const fr=document.createElement('section');fr.className='row';
+        fr.innerHTML=`<h3>Featured on Scenix</h3>`;   // the hero's own slides, never a borrowed category name
+        const fl=document.createElement('div');fl.className='list';
+        r.items.forEach((it,j)=>{          // every slide gets a card: the dots and the row must match
+          const t=tile(it,{sub:it.y?String(it.y):'Featured',imdb:imdbFor(it),rating:ratingFor(it),match:tasteFor(it)});
+          t.dataset.slide=j;fl.appendChild(t);
+        });
+        fl.style.paddingRight='calc(50vw - var(--card-w)/2)';
+        fr.appendChild(fl);main.appendChild(fr);
+      }
+      setHero(0);
+      return;
+    }else{
+      row.className='row';
+      row.innerHTML=`<h3>${NOW?'Shelf':r.title}</h3>`;
+      const list=document.createElement('div');list.className='list';
+      r.items.slice(0,7).forEach((it,j)=>{
+        const rank=(r.title||'').startsWith('Top 10')?(j+1):0;
+        const isKW=(r.title||'').startsWith('Keep watching')&&it.pr&&it.du;
+        const prog=isKW?Math.round(it.pr/it.du*100):0;   // bar stays progress; % is taste
+        const isNew=!!it.nw;                              // one hub definition of New, not a row-title guess
+        list.appendChild(tile(it,{rank,prog,isKW,isNew,match:tasteFor(it),imdb:imdbFor(it),rating:ratingFor(it),sub:sub(it,r.title)}));
+      });
+      list.style.paddingRight='calc(50vw - var(--card-w)/2)';
+      row.appendChild(list);
+    }
+    main.appendChild(row);
+  });
+  arm();
+}
+/* ------------------------------ the remote ------------------------------ */
+let ri=0,ci=0,foc=null;
+function rowEls(){return document.querySelectorAll('.row')}
+function cards(r){return rowEls()[r]?rowEls()[r].querySelectorAll('.tile'):[]}
+function center(){
+  if(!foc)return;
+  const list=foc.closest('.list');
+  list.scrollTo({left:foc.offsetLeft-(list.clientWidth-foc.clientWidth)/2,behavior:'smooth'});
+  if(ri>=2){                                   // only deep shelves pull the page vertically;
+    const r=foc.querySelector('.card').getBoundingClientRect();   // the featured group is always fully on screen
+    if(r.top<120||r.bottom>innerHeight-80)
+      window.scrollTo({top:scrollY+r.top+r.height/2-innerHeight*.54,behavior:'smooth'});
+  }
+}
+function apply(dir,quiet){
+  if(foc)foc.classList.remove('foc');
+  const list=cards(ri);foc=list[Math.min(ci,list.length-1)];
+  if(!foc)return;
+  foc.classList.add('foc');
+  const art=foc.querySelector('.art');
+  if(dir&&art)art.style.setProperty('--par',(-dir*7)+'px');  // art leans against the travel
+  // the Featured row IS the hero section: walking it keeps the room lit; deeper shelves roam
+  if(ri>=2&&!quiet)document.body.classList.add('roaming');
+  else if(ri<2)document.body.classList.remove('roaming');
+  setStage(foc.dataset.img);
+  if(!quiet)center();
+  placeMarks();
+}
+function arm(){
+  ri=1;ci=0;                                   // there is no separate hero stop: focus starts ON the Featured row
+  if(slideRow())ci=Math.min(heroIdx,cards(1).length-1);
+  apply(0,true);setStage(artOf(rows[0].items[heroIdx]));
+}
+const slideRow=()=>!NOW&&ri===1&&cards(1).length&&cards(1)[0].dataset.slide!==undefined;
+addEventListener('keydown',(e)=>{
+  const k=e.key;
+  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(k))return;
+  e.preventDefault();
+  if(k==='ArrowUp'&&ri===1){                   // already in the hero section: ▲ just scrolls to the very top
+    window.scrollTo({top:0,behavior:'smooth'});placeMarks();return;
+  }
+  const len=cards(ri).length;
+  if(k==='ArrowLeft'&&ci>0){ci--;apply(-1)}
+  else if(k==='ArrowRight'&&ci<len-1){ci++;apply(1)}
+  else if(k==='ArrowDown'&&ri<rowEls().length-1){ri++;ci=Math.min(ci,cards(ri).length-1);apply(0)}
+  else if(k==='ArrowUp'){ri--;ci=Math.min(ci,cards(ri).length-1);apply(0)}
+  if(ri===1&&!NOW)window.scrollTo({top:0,behavior:'smooth'});   // entering the hero group always shows the whole hero
+  if(slideRow())setHero(ci);                     // wherever focus lands in the Featured row, the hero follows
+});
+addEventListener('scroll',placeMarks,{passive:true});
+
+/* ------------------------------ spec marks ------------------------------ */
+[1,2,3,4,5,6].forEach(n=>{const d=document.createElement('div');d.className='mark';d.dataset.n=n;d.textContent=n;
+  d.style.left=d.style.top='-999px';document.body.appendChild(d)});
+const lg=document.createElement('div');lg.className='legend';lg.innerHTML=
+ `<b>Matched to the Apple TV screenshots:</b><br>
+  <b>1</b>&ensp;names always UNDER the tile — title + grey subtitle, never inside the art<br>
+  <b>2</b>&ensp;hero: big title, chips, blurb, "Go to Show" pill, rotating with ◀▶ + dots; its slides appear as the first row's tiles<br>
+  <b>3</b>&ensp;centered floating pill nav over the stage<br>
+  <b>4</b>&ensp;ONE full-screen stage: the shelves live inside it, and it crossfades to the focused tile's art<br>
+  <b>5</b>&ensp;focus = lift + sleek glowing rim; neighbors dim so the stage color reads<br>
+  <b>6</b>&ensp;corner badges from the hub itself: New (<code>isNew</code>: released recently or recently added) and taste-match % (<code>match</code>, per-profile) top-left; IMDb ★ (<code>rating</code>) and certificate top-right; the title lockup rides in the art as the real <code>logo</code> asset, typed title as fallback`;
+document.body.appendChild(lg);
+function placeMarks(){
+  if(!document.body.classList.contains('spec')||!foc)return;
+  const el=foc.querySelector('.card'),r=el.getBoundingClientRect(),L=r.left+scrollX,T=r.top+scrollY;
+  const at=(i,x,y)=>{const d=document.querySelector(`.mark[data-n="${i}"]`);d.style.left=x+'px';d.style.top=y+'px'};
+  at(1,L,T+r.height+14);at(2,scrollX+90,scrollY+innerHeight*.45);at(3,innerWidth/2-16,scrollY+30);
+  at(4,scrollX+24,scrollY+innerHeight-90);at(5,L+14,T-42);at(6,L+r.width-30,T+12);
+}
+if(Q.get('spec'))document.body.classList.add('spec');
+
+/* ------------------------------ who is watching ------------------------------
+   The avatar in the top-right corner (like Apple TV) opens the household's
+   profile list; picking one re-pulls the home feed for that viewer — which is
+   what makes the taste-match % per-person instead of household mush. */
+let PROFILES=[],CUR=Q.get('profile')||'1001';
+function avStyle(p){
+  if(p.kind==='kids')return 'linear-gradient(135deg,#f97316,#facc15)';
+  const pal=[['#3b82f6','#8b5cf6'],['#8b5cf6','#ec4899'],['#ec4899','#f97316'],['#10b981','#3b82f6']];
+  const c=pal[Number(p.id)%pal.length];
+  return `linear-gradient(135deg,${c[0]},${c[1]})`;
+}
+function initials(p){return p.name.split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase()}
+function renderPfp(){
+  const el=document.getElementById('pfp'),me=PROFILES.find(p=>p.id===CUR);
+  if(me){el.textContent=initials(me);el.style.background=avStyle(me)}
+}
+function openSheet(){
+  const w=document.getElementById('prow');w.innerHTML='';
+  PROFILES.forEach(p=>{
+    const d=document.createElement('div');d.className='pitem'+(p.id===CUR?' cur':'');
+    d.innerHTML=`<div class="av" style="background:${avStyle(p)}">${initials(p)}</div><b>${p.name}</b><i>${p.kind==='kids'?'Kids profile':'Adult profile'}</i>`;
+    d.onclick=()=>{CUR=p.id;document.getElementById('psheet').classList.remove('on');renderPfp();loadHome()};
+    w.appendChild(d);
+  });
+  document.getElementById('psheet').classList.add('on');
+}
+document.getElementById('pfp').onclick=openSheet;
+document.getElementById('psheet').onclick=e=>{if(e.target.id==='psheet')e.target.classList.remove('on')};
+addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('psheet').classList.remove('on')});
+
+/* live hub data when served by the hub; baked snapshot when opened as a file.
+   1001 is the profile with watch history, so the taste-match numbers are real. */
+function loadHome(){
+  if(location.protocol.startsWith('file')){prep(RAW);build();}
+  else fetch('/app/v1/home?profile='+CUR).then(x=>x.json())
+    .then(d=>{prep(d.rows);build()}).catch(()=>{prep(RAW);build()});
+}
+const BOOT_PFP=location.protocol.startsWith('file')
+  ?Promise.resolve([{id:'1000',name:'Adult 1',kind:'adult'},{id:'1001',name:'Adult 2',kind:'adult'},
+                    {id:'1002',name:'Kid 1',kind:'kids'},{id:'1003',name:'Kid 2',kind:'kids'}])
+  :fetch('/app/v1/profiles').then(x=>x.json()).then(d=>d.profiles||[]).catch(()=>[]);
+BOOT_PFP.then(ps=>{PROFILES=ps;renderPfp();loadHome()});
+</script></body></html>

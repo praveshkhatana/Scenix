@@ -1,6 +1,7 @@
 package com.scenix.tv.core
 
 import android.content.res.AssetManager
+import android.animation.ValueAnimator
 import android.graphics.Color
 import android.util.Log
 import org.json.JSONObject
@@ -12,7 +13,9 @@ import java.io.InputStreamReader
  * Theme = one complete pack from `assets/theme-*.json`: colour and type tokens plus the `pack`
  * block that chooses the layout (full/split/centred hero), the rail shape (poster/landscape), the
  * card treatment (overlay/frame/glass), the focus effect (ring/glow/lift), the motion language and
- * the detail-page shape. The native screens ask [packString] rather than branching on a theme id, so
+ * the detail-page shape. [homeLayout] is the structural contract for the entire Home composition;
+ * it prevents a PS5 or Netflix pack from inheriting an Apple shell just because its token values
+ * happen to be similar. The native screens ask [packString] rather than branching on a theme id, so
  * a developer adds a pack by writing the JSON and one assets/themes.json row.
  *
  * The mockup is authored at 1920x1080 in pixels. Device pixels are those numbers times
@@ -64,11 +67,85 @@ class Theme private constructor(
     val focusDurationMs get() = focus.optInt("durationMs", 200)
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
 
+    /**
+     * Android TV exposes "remove animations" through the system animator scale.  A focus change
+     * must still be obvious in that mode, but it must settle immediately rather than leaving a
+     * half-lifted tile on screen.  Keeping this with the theme makes every native surface use the
+     * same accessibility contract.
+     */
+    val motionEnabled get() = ValueAnimator.areAnimatorsEnabled()
+
     // ---- the pack: what this theme is allowed to change beyond tokens ------------------------
     /** A pack choice, e.g. packString("hero", "full"). Unknown keys keep the classic behaviour. */
     fun packString(key: String, fallback: String): String =
         pack.optString(key, fallback).takeIf { it.isNotBlank() } ?: fallback
     fun packInt(key: String, fallback: Int): Int = pack.optInt(key, fallback)
+
+    /**
+     * The complete Home composition selected by a pack.  This is intentionally typed and validated
+     * rather than exposing `homeLayout` as another arbitrary string at every call site.
+     */
+    val homeLayout: HomeLayoutSpec get() = HomeLayoutSpec.from(pack)
+
+    /**
+     * The home billboard is a component rather than a screen-specific arrangement.  A theme pack
+     * can therefore describe its structure without Browse needing to know whether it is an Apple,
+     * Netflix, PS5, Roku, Clean, or Magnifier family.  Unknown values deliberately resolve to the
+     * long-standing full-bleed layout so a third-party pack cannot make Home unusable.
+     */
+    data class HeroLayout(
+        val style: String,
+        val alignment: String,
+        val heightPx: Int,
+        val copyMode: String,
+        val artworkMode: String,
+        val posterMode: String,
+        val dotsStyle: String,
+        val titleScale: Float,
+        val titleLines: Int,
+        val posterWidthPx: Int,
+        val posterHeightPx: Int,
+    ) {
+        val split: Boolean get() = style == "split" || copyMode == "side"
+        val centered: Boolean get() = alignment == "center" || style == "centred" || style == "centered"
+        val showArtwork: Boolean get() = artworkMode != "none"
+        val showPoster: Boolean get() = posterMode == "show" || (posterMode == "auto" && split)
+        val showDots: Boolean get() = dotsStyle != "none"
+    }
+
+    /**
+     * Optional pack keys:
+     * `heroCopy` (`overlay`/`side`), `heroArtwork` (`backdrop`/`none`),
+     * `heroPoster` (`auto`/`show`/`hide`), `heroDots` (`line`/`dot`/`none`),
+     * `heroTitleScale`, `heroTitleLines`, `heroPosterWidth`, and `heroPosterHeight`.
+     * They make a new theme declarative while retaining the JSON packs already in the field.
+     */
+    val heroLayout: HeroLayout
+        get() {
+            val style = heroStyle.trim().lowercase()
+            val alignment = heroAlign.trim().lowercase()
+            val copyMode = packString("heroCopy", if (style == "split") "side" else "overlay")
+                .trim().lowercase()
+            val artworkMode = packString("heroArtwork", "backdrop").trim().lowercase()
+            val posterMode = packString("heroPoster", if (style == "split") "show" else "hide")
+                .trim().lowercase()
+            val dotsStyle = packString("heroDots", "line").trim().lowercase()
+            val requestedHeight = heroHeightPx
+            val split = style == "split" || copyMode == "side"
+            return HeroLayout(
+                style = style,
+                alignment = alignment,
+                heightPx = if (split) requestedHeight else requestedHeight.coerceAtLeast(px(540f)),
+                copyMode = copyMode,
+                artworkMode = artworkMode,
+                posterMode = posterMode,
+                dotsStyle = dotsStyle,
+                titleScale = pack.optDouble("heroTitleScale", 1.0).toFloat().coerceIn(0.72f, 1.85f),
+                titleLines = packInt("heroTitleLines", 1).coerceIn(1, 3),
+                posterWidthPx = px(packInt("heroPosterWidth", 300).toFloat()),
+                posterHeightPx = px(packInt("heroPosterHeight", 450).toFloat()),
+            )
+        }
 
     val heroStyle get() = packString("hero", "full")
     val heroAlign get() = packString("heroAlign", "left")

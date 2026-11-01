@@ -4,7 +4,9 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Shader
+import android.graphics.drawable.ClipDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -23,6 +25,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
 
@@ -43,6 +46,8 @@ class BrowseActivity : Activity() {
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var loaded = false
     private var stage: Stage? = null
+    /** Last shelf card which changed the room. Avoids repeating backdrop work on the same card. */
+    private var roamingCard: View? = null
     private var heroItem: Item? = null
     // "" = Home; "movies"/"series" open the same surface filtered to a section. The pill stays on
     // screen across those switches, so one LEFT/RIGHT walks whole sections without a trip back.
@@ -63,6 +68,8 @@ class BrowseActivity : Activity() {
     // explicit: UP from the featured tiles lands on the bar, DOWN from the bar returns to the top.
     private var navAnchor: View? = null
     private var pillGroup: ViewGroup? = null
+    /** Ordered remote stops in the floating Apple-style navigation pill. */
+    private var pillStops: List<View> = emptyList()
     private var shelfListId = View.NO_ID
     private val clock = Handler(Looper.getMainLooper())
     private var rotationPaused = false
@@ -85,39 +92,84 @@ class BrowseActivity : Activity() {
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             lastKeyAt = android.os.SystemClock.elapsedRealtime()
-            // The top of the screen — the billboard or a Featured tile — answers UP with the nav pill,
-            // one press in, one press back down. Nested list geometry alone never routes there.
-            val anchor = navAnchor
-            // UP leaves the hero in the order the eye reads it: a Featured tile steps up onto the
-            // billboard's Play button, and a second press reaches the pill. Without that middle
-            // stop the Play button — and the carousel it drives — could not be reached at all.
-            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onFeaturedRail(currentFocus)) {
-                val play = browseAdapter?.heroPlay
-                if (play != null && play.isShown && play.requestFocus()) return true
+            val adapter = browseAdapter
+            val focus = currentFocus
+            val heroFamily = app.theme.homeLayout.hero
+            // Preview tiles live inside the billboard: UP is the one explicit step from a slide
+            // selector to its Play action, rather than a geometric jump to an unrelated shelf.
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP &&
+                heroFamily == HomeLayoutSpec.Hero.SHARED_SLIDER &&
+                adapter != null && isInside(adapter.heroSelector, focus)) {
+                adapter.heroPlay?.requestFocus()
+                return true
             }
-            if (anchor != null && event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(currentFocus)) {
+            // UP once more from the billboard reaches the navigation pill.  This preserves a
+            // simple, visible hierarchy: nav → hero action → featured slides → shelves.
+            val anchor = navAnchor
+            if (anchor != null && heroFamily != HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(focus)) {
                 anchor.requestFocus()
                 return true
             }
-            // DOWN out of the pill lands on the Featured tile the billboard is showing, not blindly
-            // on the first one — the banner and its tiles are one object, and entering it should
-            // stand on the slide you can see.
+            // DOWN out of the pill lands on the preview belonging to the visible hero slide. The
+            // tile is a carousel point, so entering the hero never drops the viewer into a second
+            // content rail.
             if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
                 slides.isNotEmpty() && isInside(pillGroup, currentFocus)) {
                 focusFeatured(heroPos.coerceIn(0, slides.size - 1))
                 return true
+            }
+            // The billboard itself needs to be a real carousel too.  Before this route existed,
+            // LEFT/RIGHT only worked after navigating down into its small Featured tiles, which
+            // made the large hero appear frozen.  A step updates the hero immediately and then
+            // lands focus on the matching tile, so subsequent remote presses remain predictable.
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
+                event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (heroFamily == HomeLayoutSpec.Hero.SHARED_SLIDER && slides.size > 1 && adapter != null &&
+                    isInside(adapter.heroRoot, focus) &&
+                    // The embedded preview strip is a real slider: it owns LEFT/RIGHT so focus
+                    // stays on its selected thumbnail. The Hero Play stop also supports arrows,
+                    // but returning focus to Play from a preview made the selector feel detached.
+                    !isInside(adapter.heroSelector, focus)) {
+                    stepHero(if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1)
+                    return true
+                }
             }
             // Vertical movement between shelves is routed by shelf position, not left to geometric
             // focus search. A row below the viewport is not laid out yet, so search could not find
             // it and fell back to the hero; after walking back up, DOWN was trapped on the billboard.
             if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN ||
                 event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP) {
-                val focus = currentFocus
-                val adapter = browseAdapter
                 if (focus != null && adapter != null && isInside(list, focus)) {
                     val down = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
                     val from = outerPositionOf(focus)
-                    if (focus === adapter.heroPlay || focus === adapter.heroRoot) {
+                    // The focused-hub surface owns the relationship between its system strip,
+                    // content tiles and Details action. Let its explicit next-focus graph answer
+                    // UP/DOWN rather than forcing the Apple carousel hierarchy onto it.
+                    if (heroFamily == HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                        isInside(adapter.heroRoot, focus)) {
+                        return super.dispatchKeyEvent(event)
+                    }
+                    if (heroFamily == HomeLayoutSpec.Hero.SHARED_SLIDER &&
+                        isInside(adapter.heroSelector, focus)) {
+                        // A selector is the bottom edge of the one Hero component. DOWN leaves the
+                        // slider for the first ordinary shelf; it must not re-enter itself.
+                        if (down) {
+                            moveVertical(1, focus)
+                            return true
+                        }
+                        adapter.heroPlay?.requestFocus()
+                        return true
+                    }
+                    if (isInside(adapter.heroRoot, focus)) {
+                        if (heroFamily == HomeLayoutSpec.Hero.CINEMA_BILLBOARD) {
+                            if (down) moveVertical(1, focus) else navAnchor?.requestFocus()
+                            return true
+                        }
+                        if (down && slides.isNotEmpty()) {
+                            focusFeatured(heroPos.coerceIn(0, slides.lastIndex))
+                            return true
+                        }
                         moveVertical(if (down) 1 else -1, focus)
                         return true
                     }
@@ -147,29 +199,30 @@ class BrowseActivity : Activity() {
         mark.alpha = if (hero.bottom > app.theme.px(96f)) 1f else 0f
     }
 
-    /** The Play button's focused face: the pack's pill, inset, inside a ring with a visible gap. */
-    private fun framedPill(): android.graphics.drawable.Drawable {
-        val theme = app.theme
-        val radius = theme.radius("button", 6f)
-        val gap = theme.px(5f)
-        val ring = Views.ring(theme.focusRingColor, radius, theme.px(3f))
-        return android.graphics.drawable.LayerDrawable(
-            arrayOf(Views.rounded(theme.brand, radius), ring)
-        ).apply { setLayerInset(0, gap, gap, gap, gap) }
-    }
-
     /**
      * The billboard's height. A pack may ask for a tall banner, but a banner that eats the whole
-     * page is a page with no shelves on it: at the household zoom a 720dp hero filled 1080p down to
-     * the last pixel and the Featured row was a sliver too short to lay out or focus. One shelf's
-     * heading and a strip of its tiles always stay in view.
+     * page is a page with no shelves on it: at the household zoom a 720dp hero filled 1080p down
+     * to the last pixel and the first shelf was a sliver too short to lay out or focus. One
+     * shelf's heading and a strip of its tiles always stay in view.
      */
-    private fun heroSlotHeight(split: Boolean): Int {
+    private fun heroSlotHeight(wantedPx: Int): Int {
         val theme = app.theme
-        val wanted = if (split) theme.heroHeightPx
-        else theme.heroHeightPx.coerceAtLeast(theme.px(540f))
         val room = resources.displayMetrics.heightPixels - theme.px(200f)
-        return wanted.coerceAtMost(maxOf(room, theme.px(420f)))
+        return wantedPx.coerceAtMost(maxOf(room, theme.px(420f)))
+    }
+
+    /** Advance the visible hero exactly one slide, wrapping like the Featured rail. */
+    private fun stepHero(delta: Int) {
+        if (slides.size < 2) return
+        // Direct-billboard packs deliberately use the CTA edges as their slider controls. Keep
+        // the remote on that same control after its title changes; snapping More Info back to Play
+        // would make Netflix navigation feel like a dropped or duplicated press.
+        val retainFocus = currentFocus
+        val next = Math.floorMod(heroPos + delta, slides.size)
+        // Do not move the outer shelf while the remote is changing a slide. A D-pad press should
+        // only change the hero, never make the whole page visibly jump.
+        onSlideFocused(next)
+        if (retainFocus?.requestFocus() != true) browseAdapter?.heroPlay?.requestFocus()
     }
 
     /** The outer-list position whose row contains [v], or -1 when it is not on a shelf. */
@@ -188,19 +241,23 @@ class BrowseActivity : Activity() {
      * view first; [focusShelfAt] retries until the rail has laid out, so a press cannot be swallowed.
      */
     private fun moveVertical(direction: Int, from: View) {
-        val adapter = browseAdapter ?: return
         val current = outerPositionOf(from)
         val x = screenCenterX(from)
         var target = current + direction
         if (current < 0) return
-        // Hero and Featured are one section: moving down out of the hero lands on its Featured row.
+        // The Hero selector is now inside the hero. Moving out of the top component lands on the
+        // first ordinary shelf at position one.
         if (current == 0 && direction > 0) target = 1
         val total = list.adapter?.itemCount ?: 0
         while (target in 0 until total) {
             if (target == 0) {
-                // Up from the first shelf does not need the hero's Play row; it lands on Featured.
-                target += direction
-                continue
+                // Each structural home defines its own re-entry point: Apple returns to its
+                // preview selector, Netflix to Play, and PS5 to the selected square tile.  The
+                // old code skipped position zero, which made UP from the first shelf feel dead.
+                val hero = list.findViewHolderForAdapterPosition(0) as? HeroHolder
+                if (hero?.surface?.focusEntry(heroPos) == true) return
+                if (hero == null) list.postDelayed({ moveVertical(direction, from) }, 45L)
+                return
             }
             if (focusShelfAt(target, x, 0)) return
             target += direction
@@ -229,7 +286,7 @@ class BrowseActivity : Activity() {
             }
             // The rail exists but its children are not measured yet; wait for the next frame.
         } else if (holder is HeroHolder) {
-            if (holder.play.requestFocus()) return true
+            if (holder.surface.primaryControl.requestFocus()) return true
         } else {
             // Keep the row's heading below the floating pill/wordmark. Scrolling it flush to the top
             // put "Browse by category" under "SCENIX", which read as two labels on top of each other.
@@ -274,8 +331,9 @@ class BrowseActivity : Activity() {
         return best
     }
 
-    private fun isInside(container: ViewGroup?, v: View?): Boolean {
+    private fun isInside(container: View?, v: View?): Boolean {
         if (container == null || v == null) return false
+        if (container === v) return true
         var p: android.view.ViewParent? = v.parent
         while (p != null) {
             if (p === container) return true
@@ -284,28 +342,11 @@ class BrowseActivity : Activity() {
         return false
     }
 
-    private fun onFeaturedRail(f: View?): Boolean {
-        if (f == null) return false
-        val rail = browseAdapter?.featuredRail ?: return false
-        var p: android.view.ViewParent? = f.parent
-        while (p != null) {
-            if (p === rail) return true
-            p = p.parent
-        }
-        return false
-    }
-
     private fun onTopRow(f: View?): Boolean {
         if (f == null || f === navAnchor) return false
         val adapter = browseAdapter ?: return false
-        if (f === adapter.heroPlay || f === adapter.heroRoot) return true
-        val rail = adapter.featuredRail ?: return false
-        var p: android.view.ViewParent? = f.parent
-        while (p != null) {
-            if (p === rail) return true
-            p = p.parent
-        }
-        return false
+        if (isInside(adapter.heroRoot, f)) return true
+        return isInside(adapter.heroSelector, f)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -332,9 +373,14 @@ class BrowseActivity : Activity() {
             return
         }
 
-        // Apple's scene pack puts one stage behind the whole screen: the shelves float on it, and the
-        // stage crossfades to whatever tile holds focus. Other packs keep the opaque page they had.
+        // An immersive scene uses a shared room behind the page. A PS5-style hub owns its own
+        // backdrop and compact utility strip instead, so it deliberately stays out of this host
+        // stage and does not inherit an Apple/Netflix application bar.
         val stageMode = app.theme.packString("stage", "off") == "focus"
+        val ownsHomeNavigation = app.theme.homeLayout.navigation in setOf(
+            HomeLayoutSpec.Navigation.UTILITY,
+            HomeLayoutSpec.Navigation.NONE,
+        )
         val content: ViewGroup = if (stageMode) FrameLayout(this) else LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
@@ -359,9 +405,10 @@ class BrowseActivity : Activity() {
             setBackgroundColor(if (stageMode) Color.TRANSPARENT else app.theme.bg)
             itemAnimator = null
             clipToPadding = false
-            // Under a floating bar the billboard runs to the top edge of the screen, so the rows
-            // must not be pushed down by a padding band — other packs keep their page padding.
-            setPadding(0, if (stageMode) 0 else app.theme.px(16f), 0, app.theme.px(64f))
+            clipChildren = false
+            // A surface that owns its own top controls (the console hub) begins at the display
+            // edge, exactly like a stage. Other packs reserve their host bar.
+            setPadding(0, if (stageMode || ownsHomeNavigation) 0 else app.theme.px(16f), 0, app.theme.px(64f))
         }
         shelfListId = View.generateViewId()
         list.id = shelfListId
@@ -380,6 +427,11 @@ class BrowseActivity : Activity() {
             content.addView(status, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)
             ).apply { gravity = Gravity.BOTTOM })
+        } else if (ownsHomeNavigation) {
+            // Ps5HomeLayout contains its own compact context and utility controls. Rendering a
+            // host topBar here was the source of the incorrect Apple-like navbar in that theme.
+            content.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            content.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)))
         } else {
             content.addView(topBar(false), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)
@@ -397,8 +449,8 @@ class BrowseActivity : Activity() {
     }
 
     /**
-     * The Apple scene stage: one full-screen backdrop for the whole screen, crossfading to the tile
-     * under the ring and dimming/blurring while the viewer walks the shelves. Two ImageViews are
+     * One intentionally soft backdrop for a pack that opts into `stage: focus`. It follows the
+     * Hero's preview selectors while ordinary shelf focus leaves it quiet. Two ImageViews are
      * enough for a crossfade; `front` is whichever one is currently opaque.
      */
     private inner class Stage {
@@ -414,12 +466,20 @@ class BrowseActivity : Activity() {
         private val veil = View(this@BrowseActivity).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.argb(120, 0, 0, 0), Color.argb(30, 0, 0, 0), Color.argb(215, 0, 0, 0))
+                // The artwork is atmosphere, not the reading surface. A pack owns this three-stop
+                // veil so a blue console scene remains blue instead of inheriting a black Apple
+                // wash, while the lower rails retain a stable, high-contrast reading field.
+                intArrayOf(
+                    app.theme.color("stageVeilTop", "rgba(0,0,0,0.43)"),
+                    app.theme.color("stageVeilMid", "rgba(0,0,0,0.75)"),
+                    app.theme.color("stageVeilBottom", "rgba(0,0,0,0.96)"),
+                )
             )
-            alpha = 0.84f
+            alpha = 0.96f
         }
         private var front = a
         private var current: String? = null
+        private var roaming = false
 
         init {
             frame.addView(a, FrameLayout.LayoutParams(
@@ -440,7 +500,10 @@ class BrowseActivity : Activity() {
             val incoming = if (front === a) b else a
             incoming.animate().cancel()
             incoming.alpha = 0f
-            BrowseImages.load(incoming, clean, app.theme.px(1100f)) { ok ->
+            // The stage is intentionally a low-resolution, RGB_565 atmosphere image. Upscaling
+            // this small sample behind the dark veil gives the background a soft blur while
+            // keeping a second full-HD decode out of every hero transition.
+            BrowseImages.load(incoming, clean, app.theme.px(360f).coerceIn(240, 420)) { ok ->
                 if (isFinishing || isDestroyed) return@load
                 if (!ok || current != clean) return@load
                 incoming.animate().alpha(1f).setDuration(320).withEndAction {
@@ -451,14 +514,13 @@ class BrowseActivity : Activity() {
         }
 
         fun setRoaming(roam: Boolean) {
-            // The room dims while the viewer walks the shelves — the veil and the dimmed
-            // neighbours land instantly, which is what the eye reads as the change. A frosted
-            // blur over the backdrop (RenderEffect) was tried and removed: on the emulator's
-            // translated GL it kept the whole window re-rendering for a beat after every hop
-            // (62 composited frames per walk vs 16) and the first blurred frame stalled a second
-            // and a half mid-step — exactly the freeze between the hero and the shelves. Apple's
-            // own billboard keeps the art sharp while browsing too.
-            veil.animate().alpha(if (roam) 1f else 0.84f).setDuration(350).start()
+            if (roaming == roam) return
+            roaming = roam
+            // The room dims while the viewer walks the shelves. The visual softness comes from the
+            // pre-sampled stage bitmap, not a live RenderEffect blur; that avoids re-rendering the
+            // full 1080p window on every D-pad hop.
+            veil.animate().cancel()
+            veil.alpha = if (roam) 1f else 0.96f
         }
     }
 
@@ -474,7 +536,9 @@ class BrowseActivity : Activity() {
                     val card = rail.getChildAt(k)
                     // A category plate is already a wash; dimming it to 58% lets the stage show
                     // through and reads as a poster behind the text. Keep plates opaque.
-                    if (card.tag == "genre") card.alpha = 1f else block(card)
+                    if (card.tag == "genre") {
+                        if (card.alpha != 1f) card.alpha = 1f
+                    } else block(card)
                 }
                 }
             }
@@ -482,22 +546,26 @@ class BrowseActivity : Activity() {
     }
 
     private fun onCardFocused(card: View, item: Item) {
+        if (roamingCard === card) return
+        roamingCard = card
         // The billboard is a header, not a carousel running under the viewer's hands. Once a shelf
         // tile has focus, the rotation timer must not rebind the featured row or re-render the
         // stage while the viewer is walking the rows.
         rotationPaused = true
-        // Walking away from the billboard takes its preview with you — but releasing the media
-        // player blocks the main thread for a beat, and doing it inside the keypress dropped half
-        // a second of frames between the hero and the shelves. The surface comes down now, which
-        // is all the eye sees; the release lands once the step has finished drawing.
-        clock.removeCallbacks(trailerTick)
-        clock.removeCallbacks(trailerRelease)
-        hideTrailerNow()
-        clock.postDelayed(trailerRelease, 250L)
+        // A focus-stage pack keeps one sampled room image behind its Hero rather than waking a
+        // trailer decoder on every remote stop. This is structural, not an Apple-only exception:
+        // PS5 and any future immersive pack opt in with `stage: focus` too.
+        if (stage == null) {
+            clock.removeCallbacks(trailerTick)
+            clock.removeCallbacks(trailerRelease)
+            hideTrailerNow()
+            clock.postDelayed(trailerRelease, 250L)
+        }
         val s = stage ?: return
-        showStageSoon(item.backdrop ?: item.poster ?: item.logo)
         s.setRoaming(true)
-        eachCard { it.alpha = if (it === card) 1f else 0.58f }
+        // The selected card has its own keyline/glow. Dimming every mounted card is a costly
+        // compositor churn on each D-pad press and fights a stage's deliberately blurred depth.
+        eachCard { if (it.alpha != 1f) it.alpha = 1f }
     }
 
     /**
@@ -505,16 +573,16 @@ class BrowseActivity : Activity() {
      * stays lit — walking the hero's own section is browsing the hero, not roaming the shelves.
      */
     private fun onSlideFocused(pos: Int) {
+        roamingCard = null
         rotationPaused = true
-        // Entering the hero's group always shows the whole hero: the banner and its tiles are one
-        // section, and a banner scrolled off the top breaks that. Snap rather than animate: a
-        // smooth scroll still running when the next DOWN arrives is one way the hero trapped focus.
-        if (list.computeVerticalScrollOffset() > 0) list.scrollToPosition(0)
+        // Focus must not re-position the vertical list. The former snap-to-top made DOWN from
+        // Play focus a Featured tile that was cut off below the viewport. The hero and its preview
+        // rail remain in the viewer's current composition; only their title-scoped state changes.
         setHero(pos)
         scheduleTrailer()
         val s = stage ?: return
         s.setRoaming(false)
-        eachCard { it.alpha = 1f }
+        eachCard { if (it.alpha != 1f) it.alpha = 1f }
     }
 
     /**
@@ -536,34 +604,30 @@ class BrowseActivity : Activity() {
         // Re-focusing the tile already on the billboard must not tear the trailer down and start it
         // again; that loop is a visible stutter every time the ring lands on the same slide.
         if (next == heroPos && heroItem === item) return
-        val prev = heroPos
         heroPos = next
         heroItem = item
         browseAdapter?.showSlide(heroPos)
-        browseAdapter?.syncFeaturedSlide(prev, heroPos)
-        stage?.show(item.backdrop ?: item.poster ?: item.logo)
-        // The trailer belongs to one slide at a time. Take the surface down now and let the decoder
-        // release after the step has drawn, as a card step does; stopping it inline blocks the frame.
-        clock.removeCallbacks(trailerTick)
-        clock.removeCallbacks(trailerRelease)
-        hideTrailerNow()
-        clock.postDelayed(trailerRelease, 250L)
+        if (stage != null) {
+            // The soft stage, hero copy, and one active preview tile change as one slide. Stage
+            // images are sampled at 360px off the main thread, so this remains cheap for Apple,
+            // PS5 and every future stage-driven pack.
+            stage?.show(item.backdrop ?: item.poster ?: item.logo)
+        } else {
+            clock.removeCallbacks(trailerTick)
+            clock.removeCallbacks(trailerRelease)
+            hideTrailerNow()
+            clock.postDelayed(trailerRelease, 250L)
+        }
     }
 
     private val trailerTick = Runnable { loadTrailer() }
-    /** A fast D-pad walk crosses several cards; only the one that settles should load a backdrop. */
-    private var stageShow: Runnable? = null
-
-    private fun showStageSoon(url: String?) {
-        stageShow?.let { clock.removeCallbacks(it) }
-        val r = Runnable { stage?.show(url) }
-        stageShow = r
-        clock.postDelayed(r, 55L)
-    }
-
     /** A preview starts a beat after attention settles on a slide, not mid-step. */
     private fun scheduleTrailer() {
         clock.removeCallbacks(trailerTick)
+        // A focus-stage pack is deliberately artwork-led. A sampled background establishes depth
+        // at a fraction of the decoder/compositor cost of a looping preview, so its carousel stays
+        // responsive across Apple, PS5 and future stage-driven packs.
+        if (stage != null) return
         if (app.theme.token("preview", "enabled", 1.0) <= 0.0) return
         val delay = app.theme.token("preview", "delayMs", 1500.0).toLong().coerceIn(300L, 5000L)
         clock.postDelayed(trailerTick, delay)
@@ -613,7 +677,7 @@ class BrowseActivity : Activity() {
                 }
                 // VideoView keeps its size callback to itself, but the raw player is here: the
                 // cover view learns the clip's shape from the player and measures itself to fill.
-                if (video is CoverVideoView) {
+                if (video is HeroCoverVideoView) {
                     mp.setOnVideoSizeChangedListener { _, w, h -> video.coverSize(w, h) }
                     if (mp.videoWidth > 0) video.coverSize(mp.videoWidth, mp.videoHeight)
                 }
@@ -641,11 +705,11 @@ class BrowseActivity : Activity() {
     }
 
     private fun onChromeFocused() {
+        roamingCard = null
         rotationPaused = true
         val s = stage ?: return
         s.setRoaming(false)
-        s.show(heroItem?.backdrop ?: heroItem?.poster)
-        eachCard { it.alpha = 1f }
+        eachCard { if (it.alpha != 1f) it.alpha = 1f }
     }
 
     private fun topBar(transparent: Boolean = false): View {
@@ -654,6 +718,10 @@ class BrowseActivity : Activity() {
         // font the television happens to ship.
         val brand = ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
+            // The mark is drawn from the owner's SVG in its brand red, then tinted from the active
+            // pack: Apple's is off-white, Netflix's red, PS5's blue. A fixed red wordmark on a
+            // white/blue pack read as a borrowed Netflix logo.
+            setColorFilter(theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }
@@ -694,10 +762,17 @@ class BrowseActivity : Activity() {
                 setPadding(theme.px(10f), theme.px(6f), theme.px(10f), theme.px(6f))
                 background = Views.rounded(theme.surface2, theme.px(999f), theme.px(1f), theme.line)
             }
-            pill.addView(profileDisc())
-            val homeTab = navTab("Home", active = section.isBlank()) { goTab("") }
-            val moviesTab = navTab("Movies", active = section == "movies") { goTab("movies") }
-            val seriesTab = navTab("Series", active = section == "series") { goTab("series") }
+            val pillProfile = profileDisc().apply { id = View.generateViewId() }
+            pill.addView(pillProfile)
+            val homeTab = navTab("Home", active = section.isBlank()) { goTab("") }.apply {
+                id = View.generateViewId()
+            }
+            val moviesTab = navTab("Movies", active = section == "movies") { goTab("movies") }.apply {
+                id = View.generateViewId()
+            }
+            val seriesTab = navTab("Series", active = section == "series") { goTab("series") }.apply {
+                id = View.generateViewId()
+            }
             pill.addView(homeTab)
             pill.addView(moviesTab)
             pill.addView(seriesTab)
@@ -720,18 +795,20 @@ class BrowseActivity : Activity() {
             // outlives a tab switch so the bar never changes shape mid-walk.
             liveTab = live
             live.visibility = if (liveSeen) View.VISIBLE else View.GONE
+            live.id = View.generateViewId()
             pill.addView(live)
             pill.addView(View(this).apply { setBackgroundColor(theme.line) },
                 LinearLayout.LayoutParams(theme.px(1f), theme.px(26f)).apply {
                     marginStart = theme.px(10f); marginEnd = theme.px(4f)
                 })
             // Search and Settings ride as icons in the pill, as Apple's bar and the prototype draw them.
-            pill.addView(navIcon(R.drawable.ic_nav_search, "Search") {
+            val searchIcon = navIcon(R.drawable.ic_nav_search, "Search") {
                 startActivity(
                     Intent(this@BrowseActivity, SearchActivity::class.java)
                         .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
                 )
-            })
+            }.apply { id = View.generateViewId() }
+            pill.addView(searchIcon)
             val gear = navIcon(R.drawable.ic_nav_settings, "Settings") {
                 startActivity(
                     Intent(this@BrowseActivity, SettingsActivity::class.java)
@@ -748,6 +825,19 @@ class BrowseActivity : Activity() {
             }
             pillGroup = pill
             pill.addView(gear)
+            // Focus search treats the 1px divider and the full-screen stage as valid geometry.
+            // The result was that RIGHT at the end of the tabs could fall into a shelf instead of
+            // reaching Search.  A TV navigation bar is an ordered remote path, so spell it out.
+            pillStops = ArrayList<View>().apply {
+                add(pillProfile)
+                add(homeTab)
+                add(moviesTab)
+                add(seriesTab)
+                add(live)
+                add(searchIcon)
+                add(gear)
+            }
+            wirePillFocus()
             bar.addView(pill, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { gravity = Gravity.CENTER })
@@ -755,18 +845,42 @@ class BrowseActivity : Activity() {
             for (i in 0 until pill.childCount) pill.getChildAt(i).nextFocusDownId = shelfListId
             return bar
         }
+        // Classic/Netflix navigation uses the wordmark as its Home stop.  It used to be only
+        // decoration, leaving `navAnchor` unset for these packs: UP from Hero Play then had no
+        // route at all.  Give it the same padded, explicit remote target as the rest of the bar.
+        val homeBrand = FrameLayout(this).apply {
+            id = View.generateViewId()
+            contentDescription = "Home"
+            isClickable = true
+            clipChildren = false
+            setPadding(theme.px(10f), theme.px(7f), theme.px(10f), theme.px(7f))
+            setOnClickListener { goTab("") }
+        }
+        // The wordmark itself has no opaque surface for Android to paint a keyline onto.  A
+        // FrameLayout lets Focus use its foreground, keeping the compact ring above the mark
+        // without letting a background child influence the bar's wrap-content measurement.
+        homeBrand.addView(brand, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        Focus.attach(homeBrand, homeBrand, app, theme.radius("button", 6f), scale = false, elevate = false,
+            onFocus = { if (it) onChromeFocused() })
+        val movies = navButton("Movies") { goTab("movies") }.apply { id = View.generateViewId() }
+        val series = navButton("Series") { goTab("series") }.apply { id = View.generateViewId() }
+        profile.id = View.generateViewId()
+        search.id = View.generateViewId()
+        settings.id = View.generateViewId()
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setPadding(theme.gutter, 0, theme.gutter, 0)
         bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
-        bar.addView(brand, LinearLayout.LayoutParams(theme.px(122f), theme.px(28f)))
+        bar.addView(homeBrand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(navButton("Movies") { goTab("movies") },
+        bar.addView(movies,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = theme.px(22f)
             })
-        bar.addView(navButton("Series") { goTab("series") },
+        bar.addView(series,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = theme.px(18f)
             })
@@ -779,6 +893,13 @@ class BrowseActivity : Activity() {
         bar.addView(settings, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = theme.px(28f)
         })
+        // Do not leave classic packs to geometric focus search.  The spacer occupies most of the
+        // bar, and on TV that made the Home/Play boundary impossible to traverse reliably.
+        navAnchor = homeBrand
+        pillGroup = bar
+        pillStops = listOf(homeBrand, movies, series, profile, search, settings)
+        wirePillFocus()
+        for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
         return bar
     }
 
@@ -818,42 +939,102 @@ class BrowseActivity : Activity() {
         return b
     }
 
-    /** A section of the pill. The one you are standing on wears the white face; the rest wait as text. */
+    /**
+     * A section of the pill.  The text lives in a child and the selected face on its container;
+     * a sibling paints the focus ring.  Painting focus directly onto a TextView was letting Android
+     * replace the pill's drawable and intermittently hide the label itself.
+     */
     private fun navTab(label: String, active: Boolean = false, action: () -> Unit): View {
-        return navButton(label, app.theme.px(4f), preAttach = if (active) {
-            { b ->
-                b.setTextColor(Color.BLACK)
-                b.background = Views.rounded(Color.argb(242, 242, 243, 245), app.theme.px(999f))
+        val theme = app.theme
+        val chip = FrameLayout(this).apply {
+            isFocusable = true
+            isClickable = true
+            contentDescription = label
+            clipChildren = false
+            setOnClickListener { action() }
+        }
+        chip.background = if (active) Views.rounded(theme.brand, theme.px(999f)) else null
+        val words = Views.text(app, "nav", 20f, if (active) theme.onBrand else theme.ink, label,
+            bold = true, gravity = Gravity.CENTER).apply {
+            // The content view never takes focus; focus belongs to the whole padded target.
+            isFocusable = false
+            isClickable = false
+            setPadding(theme.px(20f), theme.px(12f), theme.px(20f), theme.px(12f))
+        }
+        // A foreground drawable on this Android TV renderer can suppress child text after focus
+        // leaves it.  Keep the ring in a separately-sized sibling instead.
+        val focusPlate = View(this)
+        chip.addView(focusPlate, FrameLayout.LayoutParams(0, 0))
+        chip.addView(words, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        chip.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val lp = focusPlate.layoutParams
+            if (lp.width != chip.width || lp.height != chip.height) {
+                lp.width = chip.width
+                lp.height = chip.height
+                focusPlate.layoutParams = lp
             }
-        } else null, action = action)
+        }
+        Focus.attach(chip, focusPlate, app, theme.px(999f), scale = false, elevate = false,
+            onFocus = { focused ->
+                // Home's white selected state is semantic, not a focus effect. Give a focused
+                // selected tab a dark keyline so the remote target stays unambiguous.
+                if (focused && active) {
+                    focusPlate.background = Views.ring(Color.argb(225, 20, 21, 26), theme.px(999f), theme.px(3f))
+                }
+                if (focused) onChromeFocused()
+            })
+        chip.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = theme.px(4f) }
+        return chip
     }
 
-    /** The pill's icon actions: a tinted glyph on a round focus pad, same focus language as the tabs. */
+    /**
+     * The pill's icon actions.  The glyph is fixed inside a full remote target instead of using
+     * ImageView padding as both visual and focus geometry; that makes Search and Settings equal in
+     * size and gives their focus plate room to read.
+     */
     private fun navIcon(res: Int, desc: String, action: () -> Unit): View {
         val theme = app.theme
-        val iv = ImageView(this).apply {
-            setImageResource(res)
+        val hit = FrameLayout(this).apply {
+            isFocusable = true
+            isClickable = true
             contentDescription = desc
+            clipChildren = false
+            setOnClickListener { action() }
+        }
+        val glyph = ImageView(this).apply {
+            setImageResource(res)
             setColorFilter(theme.ink)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        iv.isFocusable = true
-        iv.isClickable = true
-        iv.setOnClickListener { action() }
-        // The icon gets the same explicit ring as the tabs: on a 30 px glyph a soft halo band is
-        // invisible, and "is the ring here or not" has to answer at a glance.
-        fun paintChrome(focused: Boolean) {
-            iv.background = if (focused) Views.rounded(
-                Color.argb(36, 255, 255, 255), theme.px(999f),
-                theme.px(2f), Color.argb(235, 255, 255, 255)) else null
+        val target = theme.px(56f)
+        val glyphSize = theme.px(26f)
+        val focusPlate = View(this)
+        hit.addView(focusPlate, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        hit.addView(glyph, FrameLayout.LayoutParams(glyphSize, glyphSize).apply {
+            gravity = Gravity.CENTER
+        })
+        Focus.attach(hit, focusPlate, app, theme.px(999f), scale = false, elevate = false,
+            onFocus = { focused ->
+                if (focused) {
+                    // Keep the glyph centred inside a real 56px hit target and draw its focus on
+                    // the separate plate, never over the icon itself.
+                    focusPlate.background = Views.ring(theme.focusRingColor, theme.px(999f), theme.px(2f))
+                }
+                if (focused) onChromeFocused()
+                hit.background = if (focused) Views.rounded(
+                    Color.argb(42, 255, 255, 255), theme.px(999f)
+                ) else null
+            })
+        hit.layoutParams = LinearLayout.LayoutParams(target, target).apply {
+            marginStart = theme.px(2f); marginEnd = theme.px(2f)
         }
-        paintChrome(false)
-        Focus.attach(iv, null, app, theme.px(9f), scale = false, elevate = false,
-            onFocus = { f -> if (f) onChromeFocused(); paintChrome(f) })
-        iv.layoutParams = LinearLayout.LayoutParams(theme.px(30f), theme.px(30f)).apply {
-            marginStart = theme.px(10f); marginEnd = theme.px(10f)
-        }
-        return iv
+        return hit
     }
 
     /** The household at the head of the pill: the profile's face when the hub has one, its initial otherwise. */
@@ -930,6 +1111,7 @@ class BrowseActivity : Activity() {
             // The pill's Live TV tab appears only for households whose hub actually carries it.
             liveSeen = rows.any { it.id == "live" || it.card == "channel" }
             liveTab?.visibility = if (liveSeen) View.VISIBLE else View.GONE
+            wirePillFocus()
             // Live has a whole tab and a wall of its own; the Home shelves are for films and shows,
             // so the old live strip is no longer parked on the front page.
             val others = rows.filter {
@@ -937,14 +1119,15 @@ class BrowseActivity : Activity() {
             }
             // The hub sometimes sends the hero as its own row and sometimes folds the featured
             // titles into the first shelf. Either way Home opens on a hero — the viewer's first
-            // sight on this set is the featured title, never a bare shelf head — and the hero's
-            // slides are exactly the tiles of the Featured row that sits under it.
+            // sight on this set is the featured title, never a bare shelf head. Its preview tiles
+            // now live *inside* the HeroComponent, so the data source does not become a duplicate
+            // Featured shelf below it.
             val maxSlides = app.theme.token("hero", "maxItems", 5.0).toInt().coerceAtLeast(1)
             val heroRow = rows.firstOrNull { it.id == "hero" }
             val shelves: List<BrowseRow>
             if (heroRow != null && heroRow.items.isNotEmpty()) {
                 slides = heroRow.items.take(maxSlides)
-                shelves = listOf(BrowseRow("featured", "Featured on Scenix", "poster", slides)) + others
+                shelves = others
             } else {
                 val first = others.firstOrNull()
                 if (first == null) {
@@ -952,11 +1135,22 @@ class BrowseActivity : Activity() {
                     shelves = others
                 } else {
                     slides = first.items.take(maxSlides)
-                    shelves = listOf(BrowseRow("featured", "Featured on Scenix", first.card, slides)) +
-                        others.drop(1)
+                    // If the first shelf supplied the hero, do not draw that same row again under
+                    // it. The hero owns its compact previews; subsequent rows remain browse rows.
+                    shelves = others.drop(1)
                 }
             }
             present(shelves)
+        }
+    }
+
+    /** Rebuild the ordered D-pad path after an optional pill action (such as Live TV) appears. */
+    private fun wirePillFocus() {
+        val stops = pillStops.filter { it.visibility == View.VISIBLE }
+        if (stops.isEmpty()) return
+        for (index in stops.indices) {
+            stops[index].nextFocusLeftId = stops[(index - 1).coerceAtLeast(0)].id
+            stops[index].nextFocusRightId = stops[(index + 1).coerceAtMost(stops.lastIndex)].id
         }
     }
 
@@ -976,7 +1170,9 @@ class BrowseActivity : Activity() {
             .sortedByDescending { it.match + if (it.isNew) 20 else 0 }
             .take(maxSlides)
         val out = ArrayList<BrowseRow>()
-        if (slides.isNotEmpty()) out.add(BrowseRow("featured", "Featured on $label", "poster", slides))
+        // HeroComponent owns the selected title's previews. A top-level Featured row would make
+        // the same items look like a second browse shelf and would give them a conflicting OK
+        // action, so it is deliberately not added to [out].
         // A rail shows eighteen tiles; `total` says what the shelf really holds, so See all appears
         // exactly when titles are waiting off-rail — and opens them.
         fun add(id: String, title: String, pool: List<Item>) {
@@ -1014,9 +1210,9 @@ class BrowseActivity : Activity() {
         list.adapter = adapter
         list.post { updateBrandFade() }
         list.postDelayed({ updateBrandFade() }, 600)
-        // The billboard follows the Featured tile under the ring. It does not run by itself: a
-        // timer that rotated the hero while the viewer walked the shelves re-rendered the stage and
-        // rebounded the featured tiles mid-step, which read as lag and fought focus.
+        // The billboard follows its own embedded preview tiles. It does not run by itself: a timer
+        // that rotated while the viewer walked the shelves re-rendered the stage mid-step, which
+        // read as lag and fought focus.
         clock.removeCallbacks(rotateHero)
         rotationPaused = true
         // Home opens on the billboard's Play button, the way a streaming service does: it is always
@@ -1034,14 +1230,20 @@ class BrowseActivity : Activity() {
                 if (lastKeyAt > homeAt) return
                 val held = currentFocus
                 if (held == null || !isInside(list, held)) {
-                    val target = adapter.heroPlay ?: adapter.focusFirstSlide() ?: firstFocusable(list)
-                    if (target?.isInTouchMode == true && !target.isFocusableInTouchMode) {
-                        target.isFocusableInTouchMode = true
+                    adapter.focusFirstSlide()
+                    val landed = currentFocus
+                    if (landed == null || !isInside(list, landed)) {
+                        // The profile gate is a tap, so Home can open in touch mode. A TV target
+                        // refuses focus there; make the landing control an exception for this one
+                        // request instead of leaving Home with no ring and a frozen hero.
+                        val target = adapter.heroPlay ?: firstFocusable(list)
+                        if (target?.isInTouchMode == true && !target.isFocusableInTouchMode) {
+                            target.isFocusableInTouchMode = true
+                        }
+                        target?.requestFocus()
                     }
-                    target?.requestFocus()
                 }
-                if (++tries < 10) list.postDelayed(this, 600)
-            }
+                if (++tries < 10) list.postDelayed(this, 600)            }
         }, 400)
     }
 
@@ -1090,7 +1292,6 @@ class BrowseActivity : Activity() {
 
     override fun onDestroy() {
         clock.removeCallbacks(rotateHero)
-        stageShow?.let { clock.removeCallbacks(it) }
         super.onDestroy()
     }
 
@@ -1103,15 +1304,14 @@ class BrowseActivity : Activity() {
         return null
     }
 
-    /** Move focus to a Featured tile by position, scrolling the rail if the tile is off-screen. */
-    private fun focusFeatured(pos: Int) {
-        val rail = browseAdapter?.featuredRailView() ?: return
-        rail.scrollToPosition(pos)
-        rail.post {
-            val target = rail.findViewHolderForAdapterPosition(pos)?.itemView
-                ?: rail.getChildAt(if (pos == 0) 0 else (rail.childCount - 1).coerceAtLeast(0))
-            target?.requestFocus()
-        }
+    /** Move focus to this structural Home surface's entry point for a slide. */
+    private fun focusFeatured(pos: Int, tries: Int = 0) {
+        val component = browseAdapter?.homeSurface() ?: return
+        // This route is normally fully laid out. Posting it unconditionally meant a rapid DOWN,
+        // DOWN from the pill saw the pill twice and dropped the second intent. Take focus in this
+        // frame whenever possible; only a cold/rebound hero needs the short layout retry.
+        if (component.focusEntry(pos)) return
+        if (tries < 8) component.root.postDelayed({ focusFeatured(pos, tries + 1) }, 32L)
     }
 
     /**
@@ -1201,39 +1401,21 @@ class BrowseActivity : Activity() {
         var heroRoot: View? = null
             private set
         private var heroHolder: HeroHolder? = null
-        // The rail whose tiles ARE the hero's slides; the hero follows its focused tile and the
-        // current slide keeps a rim even when focus walks away, so the two never drift apart.
-        var featuredCards: CardAdapter? = null
-            private set
-        var featuredRail: RecyclerView? = null
-            private set
+        /** Some surfaces expose an integrated selector rail; Netflix deliberately does not. */
+        val heroSelector: View? get() = heroHolder?.surface?.selectorRoot
 
-        /** There is no separate hero stop: a landing on Home stands on the Featured row, as Apple's does. */
-        fun focusFirstSlide(): View? = featuredRail?.getChildAt(0)
+        fun homeSurface(): HomeSurface? = heroHolder?.surface
 
-        fun heroVideo(): android.widget.VideoView? = heroHolder?.video
+        /** Each composition chooses its own entry stop: Apple preview, Netflix Play or PS5 tile. */
+        fun focusFirstSlide(): Boolean = heroHolder?.surface?.focusEntry(heroPos) ?: false
 
-        fun heroSubs(): TextView? = heroHolder?.subs
+        fun heroVideo(): android.widget.VideoView? = heroHolder?.surface?.videoView
 
-        fun featuredRailView(): RecyclerView? = featuredRail
+        fun heroSubs(): TextView? = heroHolder?.surface?.subtitleView
 
         fun showSlide(pos: Int) {
             heroPos = pos.coerceIn(0, slides.size - 1)
             heroHolder?.let { renderHero(it) }
-            // Keep the Featured rail's rim on the slide the billboard is showing, even when the ring
-            // stays on Play. Without this the hero changes and the row below still shows the old tile.
-            featuredRail?.let { rail ->
-                if (rail.childCount > 0) rail.smoothScrollToPosition(heroPos)
-            }
-        }
-
-        fun syncFeaturedSlide(prev: Int, next: Int) {
-            val rail = featuredCards ?: return
-            if (prev == next) return
-            // Rebind only the two tiles whose rim state changed; the rest of the shelf — and the
-            // ring's focus — stay exactly where they are.
-            if (prev in 0 until rail.itemCount) rail.notifyItemChanged(prev)
-            if (next in 0 until rail.itemCount) rail.notifyItemChanged(next)
         }
 
         override fun getItemCount(): Int = (if (hero != null) 1 else 0) + shelves.size
@@ -1244,162 +1426,50 @@ class BrowseActivity : Activity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val theme = app.theme
             return if (viewType == TYPE_HERO) {
-                val slot = FrameLayout(this@BrowseActivity)
-                val heroStyle = theme.heroStyle
-                val split = heroStyle == "split"
-                val centred = heroStyle == "centred" || heroStyle == "centered" || theme.heroAlign == "center"
-                slot.layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    heroSlotHeight(split)
+                // The typed pack contract selects a complete structural surface, not merely a
+                // paint treatment.  Its callbacks are the stable Browse responsibilities shared
+                // by every family: routes, the one active title index, and profile identity.
+                val surface = HomeSurfaceFactory.create(
+                    this@BrowseActivity,
+                    app,
+                    HomeSurfaceCallbacks(
+                        onOpen = ::openDetail,
+                        onSelected = ::onSlideFocused,
+                        onStep = ::stepHero,
+                        onHeroFocused = ::onChromeFocused,
+                        onSection = { target ->
+                            if (target == "live") {
+                                startActivity(
+                                    Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
+                                        .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+                                )
+                            } else goTab(target)
+                        },
+                        onProfile = {
+                            startActivity(
+                                Intent(this@BrowseActivity, ProfilesActivity::class.java)
+                                    .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
+                            )
+                        },
+                        onSearch = {
+                            startActivity(
+                                Intent(this@BrowseActivity, SearchActivity::class.java)
+                                    .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
+                            )
+                        },
+                        onSettings = {
+                            startActivity(
+                                Intent(this@BrowseActivity, SettingsActivity::class.java)
+                                    .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
+                            )
+                        },
+                    ),
                 )
-                val art = ImageView(this@BrowseActivity).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    setBackgroundColor(theme.surface2)
-                }
-                slot.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                // The trailer plays inside the banner, behind the words and the scrim, muted and
-                // looping — the home billboard's rule, not the player's. It fills the banner the way
-                // the backdrop does (cover, not letterbox), and it must not be a focus stop: the
-                // tile rows below are the conversation, not an invisible rectangle over the hero.
-                val video = CoverVideoView(this@BrowseActivity).apply {
-                    visibility = View.GONE
-                    setBackgroundColor(Color.TRANSPARENT)
-                    isFocusable = false
-                    isClickable = false
-                }
-                slot.addView(video, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-                ).apply { gravity = Gravity.CENTER })
-                val scrim = View(this@BrowseActivity).apply {
-                    background = if (split) GradientDrawable(
-                        GradientDrawable.Orientation.LEFT_RIGHT,
-                        intArrayOf(theme.bg, Color.TRANSPARENT)
-                    ) else GradientDrawable(
-                        GradientDrawable.Orientation.BOTTOM_TOP,
-                        intArrayOf(theme.bg, Color.TRANSPARENT)
-                    )
-                }
-                slot.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                // The trailer's subtitles, the same timed-text the player paints: only ever shown
-                // when the clip itself carries a caption track.
-                val subs = Views.text(app, "sub", 21f, Color.WHITE, "", bold = false,
-                    maxLines = 2, gravity = Gravity.CENTER)
-                subs.setPadding(theme.px(12f), theme.px(5f), theme.px(12f), theme.px(5f))
-                subs.background = Views.rounded(Color.argb(165, 0, 0, 0), theme.px(6f))
-                subs.visibility = View.GONE
-                slot.addView(subs, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    gravity = Gravity.BOTTOM or Gravity.CENTER
-                    bottomMargin = theme.px(118f)
-                    marginStart = theme.px(160f); marginEnd = theme.px(160f)
-                })
-                // Editorial packs put the poster in the frame and the words beside it; classic packs let
-                // the backdrop fill the screen and float the words over it. The poster view exists in
-                // both, hidden when the pack does not ask for it.
-                val poster = ImageView(this@BrowseActivity).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    setBackgroundColor(theme.surface2)
-                    visibility = if (split) View.VISIBLE else View.GONE
-                }
-                if (split) {
-                    slot.addView(poster, FrameLayout.LayoutParams(theme.px(300f), theme.px(450f)).apply {
-                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                        leftMargin = theme.gutter
-                    })
-                }
-                val words = LinearLayout(this@BrowseActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = when {
-                        centred -> Gravity.CENTER
-                        split -> Gravity.CENTER_VERTICAL or Gravity.START
-                        else -> Gravity.BOTTOM or Gravity.START
-                    }
-                    setPadding(
-                        if (split) theme.gutter + theme.px(340f) else theme.gutter,
-                        theme.px(32f), theme.gutter, theme.px(44f)
-                    )
-                }
-                val title = Views.text(app, "h1", 54f, theme.ink, "", bold = true,
-                    gravity = if (centred) Gravity.CENTER else Gravity.START)
-                val logo = ImageView(this@BrowseActivity).apply {
-                    scaleType = if (centred) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.FIT_START
-                    visibility = View.GONE
-                }
-                val meta = Views.text(app, "sub", 22f, theme.ink2, "",
-                    gravity = if (centred) Gravity.CENTER else Gravity.START)
-                val play = Views.text(app, "button", 22f, theme.onBrand, "Play", bold = true, gravity = Gravity.CENTER)
-                play.setPadding(theme.px(32f), theme.px(14f), theme.px(32f), theme.px(14f))
-                play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
-                play.isFocusable = true
-                // The profile gate is a touch target, so the TV can still be in touch mode when
-                // Home draws. A merely focusable view refuses focus in that mode, which is exactly
-                // how Home used to come up with no ring and a hero that ignored LEFT/RIGHT.
-                play.isFocusableInTouchMode = true
-                play.isClickable = true
-                Focus.attach(play, play, app, theme.radius("button", 6f), scale = true, elevate = true,
-                    onFocus = { if (it) onChromeFocused() },
-                    // The billboard is a carousel: left/right on its Play button changes the slide
-                    // instead of searching for a focus target that does not exist beside it.
-                    arrow = { code ->
-                        when (code) {
-                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { cycleHero(-1); true }
-                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { cycleHero(1); true }
-                            else -> false
-                        }
-                    })
-                // Focus.attach deliberately keeps TV targets out of touch mode. The landing target
-                // is the exception: the profile gate is a tap, so Home opens in touch mode, and a
-                // view that refuses focus then would leave the remote with nothing to move from.
-                play.isFocusableInTouchMode = true
-                // The pack's focus language is a scale, and a white pill on a dark banner barely
-                // shows it. Give the one control that owns the carousel an outline as well, with a
-                // gap so it reads as a ring rather than a thicker edge.
-                val restingPill = play.background
-                val packFocus = play.onFocusChangeListener
-                play.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
-                    packFocus?.onFocusChange(v, has)
-                    v.background = if (has) framedPill() else restingPill
-                }
-                words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(112f)).apply {
-                    bottomMargin = theme.px(6f)
-                    if (centred) gravity = Gravity.CENTER_HORIZONTAL
-                })
-                words.addView(title, LinearLayout.LayoutParams(
-                    if (centred) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ))
-                words.addView(meta, LinearLayout.LayoutParams(
-                    if (centred) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = theme.px(10f)
-                })
-                words.addView(play, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = theme.px(22f)
-                })
-                slot.addView(words, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                // The dots say how many slides the hero carries — and they match the Featured row
-                // tile for tile, because the row IS the hero's slide list laid out on the floor.
-                val dots = LinearLayout(this@BrowseActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    visibility = if (slides.size > 1) View.VISIBLE else View.GONE
-                }
-                for (i in slides.indices) {
-                    dots.addView(View(this@BrowseActivity), LinearLayout.LayoutParams(
-                        theme.px(10f), theme.px(10f)
-                    ).apply {
-                        leftMargin = theme.px(4f); rightMargin = theme.px(4f)
-                    })
-                }
-                slot.addView(dots, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    bottomMargin = theme.px(26f)
-                })
-                HeroHolder(slot, art, video, subs, poster, title, logo, meta, play, dots, split)
+                surface.root.layoutParams = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    heroSlotHeight(surface.preferredHeightPx),
+                )
+                HeroHolder(surface)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -1415,8 +1485,11 @@ class BrowseActivity : Activity() {
                     setItemViewCacheSize(16)
                     itemAnimator = null
                     isNestedScrollingEnabled = false
-                    setPadding(theme.gutter, theme.px(18f), theme.gutter, theme.px(26f))
+                    // 44px of clear space lets a lifted, glowing lockup remain fully visible;
+                    // the former 18px top inset clipped focus so it looked like an underline.
+                    setPadding(theme.gutter, theme.px(44f), theme.gutter, theme.px(44f))
                     clipToPadding = false
+                    clipChildren = false
                 }
                 box.addView(rail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 ShelfHolder(box, head, rail)
@@ -1428,66 +1501,30 @@ class BrowseActivity : Activity() {
                 if (slides.isEmpty()) return
                 heroHolder = holder
                 renderHero(holder)
-                val item = slides[heroPos]
-                heroPlay = holder.play
-                heroRoot = holder.itemView
-                holder.play.nextFocusUpId = navAnchor?.id ?: View.NO_ID
-                holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID
-                holder.play.setOnClickListener { openDetail(slides.getOrElse(heroPos) { item }) }
-                holder.itemView.setOnClickListener { openDetail(slides.getOrElse(heroPos) { item }) }
+                heroPlay = holder.surface.primaryControl
+                heroRoot = holder.surface.root
+                // A PS5-style surface owns its compact context strip; it becomes the return
+                // anchor rather than receiving a hidden/legacy host navbar target.
+                holder.surface.navigationAnchor?.let { navAnchor = it }
+                holder.surface.setNextFocusUp(
+                    (holder.surface.navigationAnchor ?: navAnchor)?.id ?: View.NO_ID,
+                )
             } else if (holder is ShelfHolder) {
                 val row = shelves[position - (if (hero != null) 1 else 0)]
                 holder.head.text = row.title
                 val cards = CardAdapter(row)
-                featuredCards = if (row.id == "featured") cards else null
-                featuredRail = if (row.id == "featured") holder.rail else featuredRail
                 holder.rail.adapter = cards
             }
         }
 
-        /** Paint the hero block with the current slide — title, facts, art and the dot strip. */
+        /** Render the active title inside the selected structural surface. */
         private fun renderHero(holder: HeroHolder) {
-            val item = slides.getOrNull(heroPos) ?: return
-            holder.title.text = item.title
-            holder.title.visibility = View.VISIBLE
-            holder.logo.visibility = View.GONE
-            val facts = ArrayList<String>()
-            if (item.match > 0) facts.add("${item.match}% match")
-            if (item.isNew) facts.add("New")
-            if (item.year > 0) facts.add(item.year.toString())
-            if (item.rating > 0) facts.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
-            if (item.maturity.isNotBlank()) facts.add(item.maturity)
-            item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
-            holder.meta.text = facts.joinToString(" · ")
-            // The banner shows the wide card — the same picture the stage carries — never a portrait
-            // poster stretched across the frame.
-            BrowseImages.load(holder.art, item.backdrop ?: item.poster, app.theme.px(1100f))
-            if (holder.split) BrowseImages.load(holder.poster, item.poster ?: item.backdrop, app.theme.px(420f))
-            if (!item.logo.isNullOrBlank()) {
-                holder.logo.visibility = View.VISIBLE
-                BrowseImages.load(holder.logo, item.logo, app.theme.px(560f)) { ok ->
-                    holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
-                    holder.title.visibility = if (ok) View.GONE else View.VISIBLE
-                }
-            }
-            // The slide under the ring sits as a long dash; the others wait as plain dots.
-            val theme = app.theme
-            for (i in 0 until holder.dots.childCount) {
-                val dot = holder.dots.getChildAt(i)
-                (dot.layoutParams as LinearLayout.LayoutParams).width =
-                    theme.px(if (i == heroPos) 26f else 10f)
-                dot.requestLayout()
-                dot.background = Views.rounded(
-                    if (i == heroPos) Color.WHITE else Color.argb(90, 255, 255, 255), theme.px(5f))
-            }
+            if (slides.isEmpty()) return
+            holder.surface.render(slides, heroPos)
         }
     }
 
-    private inner class HeroHolder(
-        view: View, val art: ImageView, val video: android.widget.VideoView, val subs: TextView,
-        val poster: ImageView, val title: TextView, val logo: ImageView,
-        val meta: TextView, val play: TextView, val dots: LinearLayout, val split: Boolean,
-    ) : RecyclerView.ViewHolder(view)
+    private inner class HeroHolder(val surface: HomeSurface) : RecyclerView.ViewHolder(surface.root)
 
     private inner class ShelfHolder(
         view: View, val head: TextView, val rail: RecyclerView,
@@ -1530,6 +1567,17 @@ class BrowseActivity : Activity() {
             card.isFocusableInTouchMode = true
             card.isClickable = true
             card.setBackgroundColor(if (frame) theme.surface else Color.TRANSPARENT)
+            // This transparent, oversized view is the focus treatment's canvas. It must be the
+            // first child so the artwork masks the centre of the halo; adding it last painted the
+            // former focus bands over the poster and caption.
+            val glowPad = theme.px(24f)
+            val ringOn = View(this@BrowseActivity)
+            card.clipChildren = false
+            card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = -glowPad
+                topMargin = -glowPad
+            })
             val art = ImageView(this@BrowseActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
@@ -1566,8 +1614,14 @@ class BrowseActivity : Activity() {
                 }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             } else if (glass) {
                 card.addView(View(this@BrowseActivity).apply {
-                    background = Views.rounded(Color.argb(150, 8, 10, 14),
-                        theme.radius("card", 6f), theme.px(1f), Color.argb(90, 255, 255, 255))
+                    // A console pack's glass is cool blue; a cinema pack can keep the neutral
+                    // dark plate. The card shape stays shared while colour remains declarative.
+                    background = Views.rounded(
+                        theme.color("glassSurface", "rgba(8,10,14,0.59)"),
+                        theme.radius("card", 6f),
+                        theme.px(1f),
+                        theme.color("glassLine", "rgba(255,255,255,0.35)"),
+                    )
                 }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(84f)).apply {
                     gravity = Gravity.BOTTOM
                     leftMargin = theme.px(8f); rightMargin = theme.px(8f); bottomMargin = theme.px(8f)
@@ -1655,37 +1709,58 @@ class BrowseActivity : Activity() {
             })
             val progress = android.widget.ProgressBar(this@BrowseActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 1000
-                progressDrawable = GradientDrawable().apply {
-                    setColor(Color.argb(210, 229, 9, 20))
-                    cornerRadius = theme.px(3f).toFloat()
+                // The prior bar was the old Netflix red hard-code.  In the Apple pack this is a
+                // quiet white playhead over a translucent track, matching the neutral controls.
+                val track = GradientDrawable().apply {
+                    setColor(Color.argb(84, 255, 255, 255))
+                    cornerRadius = theme.px(2f).toFloat()
+                }
+                val fill = ClipDrawable(GradientDrawable().apply {
+                    setColor(Color.argb(235, 255, 255, 255))
+                    cornerRadius = theme.px(2f).toFloat()
+                }, Gravity.LEFT, ClipDrawable.HORIZONTAL)
+                progressDrawable = LayerDrawable(arrayOf(track, fill)).apply {
+                    setId(0, android.R.id.background)
+                    setId(1, android.R.id.progress)
                 }
                 visibility = View.GONE
             }
-            card.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(6f)).apply {
+            card.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(4f)).apply {
                 gravity = Gravity.BOTTOM
                 bottomMargin = captionH
             })
-            val slideRing = if (featured) View(this@BrowseActivity).apply {
-                // The tile that the hero is currently showing wears a rim even when the ring is
-                // elsewhere — the prototype's slide-on outline, so the pair reads as one object.
-                background = Views.ring(Color.argb(140, 255, 255, 255), radius, theme.px(2f))
+            val slideState = if (featured) View(this@BrowseActivity).apply {
+                // Featured tiles are previews of the hero, not a second focus target. Apple gets
+                // one short active-slide marker; other packs retain their existing full rim.
+                background = if (theme.id == "scenix-apple") {
+                    // A black cradle keeps the white marker legible even over a bright poster;
+                    // this is state, not another card outline, so it cannot be mistaken for focus.
+                    LayerDrawable(arrayOf(
+                        Views.rounded(Color.argb(205, 0, 0, 0), theme.px(999f)),
+                        Views.rounded(Color.WHITE, theme.px(999f)),
+                    )).apply {
+                        val side = theme.px(11f)
+                        setLayerInset(1, side, theme.px(3f), side, theme.px(3f))
+                    }
+                } else {
+                    Views.ring(Color.argb(140, 255, 255, 255), radius, theme.px(2f))
+                }
                 visibility = View.GONE
             } else null
-            if (slideRing != null) card.addView(slideRing,
-                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
-                    gravity = Gravity.TOP
-                })
-            // The focus ring belongs to the ART, not to the caption under it: the ring view is an
-            // oversized transparent pad around the image, and the glow bands spill into that pad.
-            val glowPad = theme.px(26f)
-            val ringOn = View(this@BrowseActivity)
-            card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
-                gravity = Gravity.TOP or Gravity.START
-                leftMargin = -glowPad
-                topMargin = -glowPad
-            })
-            card.clipChildren = false
-            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideRing, imdb, cert, corner, chevron)
+            if (slideState != null) {
+                val markerLayout = if (theme.id == "scenix-apple") {
+                    FrameLayout.LayoutParams(theme.px(84f), theme.px(10f)).apply {
+                        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                        bottomMargin = captionH + theme.px(10f)
+                    }
+                } else {
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
+                        gravity = Gravity.TOP
+                    }
+                }
+                card.addView(slideState, markerLayout)
+            }
+            val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideState, imdb, cert, corner, chevron)
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
                 glowInset = glowPad,
                 // The hero's rail is a loop, not a corridor: walking off either end lands on the
@@ -1714,6 +1789,7 @@ class BrowseActivity : Activity() {
             }
             val item = row.items[position]
             holder.item = item
+            holder.itemView.contentDescription = itemAnnouncement(item)
             if (item.type == "genre") {
                 bindGenre(holder, item)
                 return
@@ -1725,23 +1801,41 @@ class BrowseActivity : Activity() {
             holder.sub.visibility = if (below) View.VISIBLE else View.GONE
             if (below) {
                 val sub = ArrayList<String>()
+                // Scene cards put their facts below the artwork; overlay and glass cards use the
+                // on-art badge/corner treatment instead. This is a card-layout decision, not a
+                // named-theme exception, so any future spacious pack inherits it cleanly.
+                if (ranked && below) sub.add("#${position + 1}")
+                if (below && item.isNew) sub.add("New")
                 if (item.year > 0) sub.add(item.year.toString())
                 if (item.match > 0) sub.add("${item.match}% match")
+                if (below && item.rating > 0) {
+                    sub.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
+                }
+                if (below && item.maturity.isNotBlank()) sub.add(item.maturity)
                 item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { sub.add(it) }
                 holder.sub.text = sub.joinToString(" · ")
             }
             holder.logo.visibility = View.GONE
             holder.logo.tag = item.identity + ":logo"
             val imdbR = if (item.rating > 0) String.format(java.util.Locale.US, "★ %.1f", item.rating) else ""
-            holder.imdb.text = imdbR
-            holder.imdb.visibility = if (imdbR.isNotEmpty()) View.VISIBLE else View.GONE
-            holder.cert.text = item.maturity
-            holder.cert.visibility = if (item.maturity.isNotBlank()) View.VISIBLE else View.GONE
-            holder.corner.visibility =
-                if (imdbR.isNotEmpty() || item.maturity.isNotBlank()) View.VISIBLE else View.GONE
+            if (below) {
+                // Scene lockups keep metadata under the image, not as competing on-art badges.
+                holder.imdb.visibility = View.GONE
+                holder.cert.visibility = View.GONE
+                holder.corner.visibility = View.GONE
+            } else {
+                holder.imdb.text = imdbR
+                holder.imdb.visibility = if (imdbR.isNotEmpty()) View.VISIBLE else View.GONE
+                holder.cert.text = item.maturity
+                holder.cert.visibility = if (item.maturity.isNotBlank()) View.VISIBLE else View.GONE
+                holder.corner.visibility =
+                    if (imdbR.isNotEmpty() || item.maturity.isNotBlank()) View.VISIBLE else View.GONE
+            }
             val facts = ArrayList<String>()
-            if (item.isNew) facts.add("NEW")
-            if (item.match > 0) facts.add("${item.match}% match")
+            if (!below) {
+                if (item.isNew) facts.add("NEW")
+                if (item.match > 0) facts.add("${item.match}% match")
+            }
             holder.badge.text = facts.joinToString(" · ")
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art,
@@ -1754,8 +1848,9 @@ class BrowseActivity : Activity() {
                     holder.name.visibility = if (ok && !below) View.GONE else View.VISIBLE
                 }
             }
-            if (ranked) {
+            if (ranked && !below) {
                 // A recycled tile may have worn the See all lockup; the rank column rides the left edge.
+                holder.num.visibility = View.VISIBLE
                 holder.num.setPadding(0, 0, 0, 0)
                 holder.num.layoutParams = FrameLayout.LayoutParams(theme.px(110f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
                     gravity = Gravity.START
@@ -1774,6 +1869,9 @@ class BrowseActivity : Activity() {
                 }
             } else {
                 holder.num.visibility = View.GONE
+                // Reset mutable text paint in case this holder later serves a genre or See all tile.
+                holder.num.paint.style = android.graphics.Paint.Style.FILL
+                holder.num.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
             }
             val p = item.progress
             if (p != null && p.watchedMs > 0L) {
@@ -1782,17 +1880,37 @@ class BrowseActivity : Activity() {
             } else {
                 holder.progress.visibility = View.GONE
             }
-            holder.slideRing?.visibility = if (position == heroPos) View.VISIBLE else View.GONE
+            // The marker is state, not focus: it stays on the preview belonging to the hero while
+            // the visible keyline/glow belongs only to the real D-pad target.
+            holder.slideState?.visibility = if (position == heroPos) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
             holder.itemView.tag = null
             holder.itemView.setOnClickListener {
                 if (item.isLive()) openLive(item) else openDetail(item)
             }
         }
 
+        /**
+         * Poster art is intentionally not announced: the card already has a short, useful label.
+         * This keeps TalkBack's D-pad walk aligned with the visual hierarchy instead of reading a
+         * title, badge, artwork and caption as four separate stops.
+         */
+        private fun itemAnnouncement(item: Item): String = buildString {
+            append(item.title)
+            if (item.year > 0) append(", ").append(item.year)
+            if (item.match > 0) append(", ").append(item.match).append("% match")
+            if (item.isLive()) append(", live")
+            append(", open details")
+        }
+
         /** The shelf's last tile: a quiet bordered card with a chevron disc and the words "See all". */
         private fun bindSeeAll(holder: CardHolder) {
             holder.item = null
             holder.itemView.tag = "see-all"
+            holder.itemView.contentDescription = "See all ${row.title}"
             // Cancel any in-flight poster/logo decode from the card this view used to hold; a
             // callback that still matches the old URL would paint over the See all lockup.
             holder.art.tag = "see-all:" + row.id
@@ -1807,6 +1925,7 @@ class BrowseActivity : Activity() {
             holder.corner.visibility = View.GONE
             holder.badge.visibility = View.GONE
             holder.progress.visibility = View.GONE
+            holder.slideState?.visibility = View.GONE
             holder.chevron.visibility = View.VISIBLE
             holder.num.visibility = View.VISIBLE
             holder.num.setPadding(0, 0, 0, 0)
@@ -1833,6 +1952,7 @@ class BrowseActivity : Activity() {
          */
         private fun bindGenre(holder: CardHolder, item: Item) {
             holder.itemView.tag = "genre"
+            holder.itemView.contentDescription = "Browse ${item.title}"
             var hash = 0
             for (c in item.title.lowercase()) hash = (hash * 31 + c.code) % 360
             val hue = hash.toFloat()
@@ -1855,7 +1975,7 @@ class BrowseActivity : Activity() {
             holder.badge.visibility = View.GONE
             holder.corner.visibility = View.GONE
             holder.progress.visibility = View.GONE
-            holder.slideRing?.visibility = View.GONE
+            holder.slideState?.visibility = View.GONE
             holder.chevron.visibility = View.GONE
             holder.num.visibility = View.VISIBLE
             holder.num.text = item.title
@@ -1890,38 +2010,10 @@ class BrowseActivity : Activity() {
     private inner class CardHolder(
         view: View, val art: ImageView, val name: TextView, val sub: TextView, val logo: ImageView,
         val badge: TextView, val num: TextView, val progress: android.widget.ProgressBar,
-        val slideRing: View?, val imdb: TextView, val cert: TextView, val corner: View,
+        val slideState: View?, val imdb: TextView, val cert: TextView, val corner: View,
         val chevron: ImageView,
     ) : RecyclerView.ViewHolder(view) {
         var item: Item? = null
-    }
-
-    /**
-     * A VideoView that fills its slot instead of letterboxing into it: once the clip reports its
-     * size, the view measures itself to the slot's cover scale and the slot clips the overflow —
-     * a trailer in the banner reads as the banner, not as a smaller rectangle inside it.
-     */
-    private class CoverVideoView(ctx: android.content.Context) : android.widget.VideoView(ctx) {
-        private var vw = 0
-        private var vh = 0
-
-        fun coverSize(w: Int, h: Int) {
-            vw = w
-            vh = h
-            if (w > 0 && h > 0) requestLayout()
-        }
-
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-            if (vw == 0 || vh == 0) return
-            // VideoView's own pass shrinks the view to fit the clip inside the slot, so the cover
-            // scale must come from the slot's MeasureSpec — not from what that pass left behind.
-            val boxW = MeasureSpec.getSize(widthMeasureSpec)
-            val boxH = MeasureSpec.getSize(heightMeasureSpec)
-            if (boxW <= 0 || boxH <= 0) return
-            val s = maxOf(boxW.toDouble() / vw, boxH.toDouble() / vh)
-            setMeasuredDimension((vw * s).toInt(), (vh * s).toInt())
-        }
     }
 
     companion object {

@@ -198,6 +198,17 @@ class SectionActivity : Activity() {
             }
             card.isFocusable = true
             card.isClickable = true
+            // Keep the halo underneath the image. A glow added after the caption paints opaque
+            // bands over the artwork instead of light around the lockup.
+            val glowPad = theme.px(24f)
+            val ringOn = View(this@SectionActivity)
+            card.clipChildren = false
+            card.addView(ringOn, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, artH + glowPad * 2
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = -glowPad; rightMargin = -glowPad; topMargin = -glowPad
+            })
             val art = ImageView(this@SectionActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
@@ -242,17 +253,6 @@ class SectionActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(10f); topMargin = theme.px(10f)
             })
-            // The focus ring belongs to the ART, not to the caption under it: the ring view is an
-            // oversized transparent pad around the image, and the glow bands spill into that pad.
-            val glowPad = theme.px(26f)
-            val ringOn = View(this@SectionActivity)
-            card.addView(ringOn, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, artH + glowPad * 2
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                topMargin = -glowPad
-            })
-            card.clipChildren = false
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
                 glowInset = glowPad)
             return CardHolder(card, art, name, sub, logo, badge)
@@ -263,13 +263,18 @@ class SectionActivity : Activity() {
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
             val facts = ArrayList<String>()
+            // A pack owns whether the new-release signal belongs beside the title or on the art.
+            // That is a visual hierarchy choice, not an Apple-only code path: a scene pack keeps
+            // it in the quiet metadata line while cinema/console packs reserve the line for facts.
+            val newLabel = theme.packString("cardNewLabel", "badge")
+            if (newLabel == "inline" && item.isNew) facts.add("New")
             if (item.year > 0) facts.add(item.year.toString())
             if (item.match > 0) facts.add("${item.match}% match")
             item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts.add(it) }
             holder.sub.text = facts.joinToString(" · ")
             holder.logo.visibility = View.GONE
             val bits = ArrayList<String>()
-            if (item.isNew) bits.add("NEW")
+            if (newLabel == "badge" && item.isNew) bits.add("NEW")
             holder.badge.text = bits.joinToString(" · ")
             holder.badge.visibility = if (bits.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art, item.poster ?: item.backdrop, theme.px(400f))

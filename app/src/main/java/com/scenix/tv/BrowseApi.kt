@@ -41,6 +41,9 @@ data class ProfileInfo(
     val languages: List<String> = emptyList(),
 )
 
+/** A face cached by the hub. The TV receives only the hub path, never an upstream image host. */
+data class AvatarChoice(val label: String, val image: String)
+
 /**
  * The native read path: Home, Detail, the player and the progress writes that keep Continue Watching
  * alive. The hub is still the source of truth — this only speaks the same `/app/v1` contract the web
@@ -229,6 +232,24 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** Cached character faces for the native profile editor. Empty is a valid offline answer. */
+    fun avatarCharacters(seed: String, done: (choices: List<AvatarChoice>?, error: String?) -> Unit) {
+        request("/app/v1/avatars/characters", "limit=24&seed=" + enc(seed), "GET", null, 15000) { root, _, error ->
+            val arr = root?.optJSONArray("characters")
+            if (arr == null) {
+                done(null, error ?: "The hub has no cached character faces yet")
+                return@request
+            }
+            val choices = ArrayList<AvatarChoice>()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val image = s(item, "image", s(item, "src", ""))
+                if (image.isNotBlank()) choices.add(AvatarChoice(s(item, "label", s(item, "name", "Avatar")), image))
+            }
+            done(choices, null)
+        }
+    }
+
     fun unlock(profileId: String, pin: String, done: (ok: Boolean, error: String?) -> Unit) {
         request(
             "/app/v1/profiles/${URLEncoder.encode(profileId, "UTF-8")}/unlock",
@@ -278,10 +299,24 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     fun meta(identity: String, profileId: String, done: (item: JSONObject?, error: String?) -> Unit) {
         val path = "/app/v1/meta/" + enc(identity)
         // A cold hub resolving an eight-season series through its addons can sit well past the old
-        // 20 s; a timeout there strands the player's Episodes menu on an empty list.
-        request(path, "profile=" + enc(profileId), "GET", null, 45000) { root, _, error ->
-            done(root?.optJSONObject("item") ?: root, error)
+        // 20 s; a timeout there strands the player's Episodes menu on an empty list. A 404 is also
+        // often a one-round-trip miss rather than a missing title: the row the person just tapped
+        // came from a catalogue the hub may still be resolving. One quiet retry turns "not found"
+        // into the detail page they asked for.
+        fun attempt(tries: Int) {
+            request(path, "profile=" + enc(profileId), "GET", null, 45000) { root, status, error ->
+                val item = root?.optJSONObject("item") ?: root
+                val missing = status == 404 || root?.optString("error") == "not found"
+                if (missing && tries < 1) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                        { attempt(tries + 1) }, 700L,
+                    )
+                    return@request
+                }
+                done(item, error)
+            }
         }
+        attempt(0)
     }
 
     /**

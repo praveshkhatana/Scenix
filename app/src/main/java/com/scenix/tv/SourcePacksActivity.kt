@@ -51,7 +51,7 @@ class SourcePacksActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(Color.rgb(20, 20, 20))
+            setBackgroundColor(app.theme.surface)
         }
         val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
