@@ -29,8 +29,9 @@ import com.scenix.tv.core.Views
  * circle at the foot, one yellow plate with key art BLEEDING out of its inner edge into the plate
  * — each carrying a soft standing shadow so it glows off the sheet; a row of
  * black chip pills naming the household's real shelves; and below the hero, the host's rails draw
- * chunky square captioned tiles. Focus is a thick black keyline — the same ink as everything else
- * — never a glow.
+ * chunky square captioned tiles. Focus is the pack's warm liquid-glass halo — filled soft plates
+ * rising off the tile with a bright keyline at its edge — never a black border (owner round 3: the
+ * thick ink keyline read as a hard box drawn on the page, not as light).
  */
 internal class KidsHomeLayout(
     context: Context,
@@ -77,6 +78,10 @@ internal class KidsHomeLayout(
     init {
         // Transparent: the host paints the sunshine stage across the entire screen behind this
         // composition and the rails below it; the yellow stage IS the page.
+        // Nothing in the hero band may crop the focus halos: the oversized canvases reach a
+        // glowInset past their tiles, and a clipped band looked like a cut-off hero section.
+        clipChildren = false
+        clipToPadding = false
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -209,9 +214,9 @@ internal class KidsHomeLayout(
             clipToPadding = false
         }
         val a = makeCard(fullArt = true)
-        cardA = a.first; artA = a.second.first; titleA = a.second.second
+        cardA = a.first; artA = a.third.first; titleA = a.third.second
         val b = makeCard(fullArt = false)
-        cardB = b.first; artB = b.second.first; titleB = b.second.second
+        cardB = b.first; artB = b.third.first; titleB = b.third.second
         cardRow.addView(cardA, LinearLayout.LayoutParams(0, theme.px(280f), 40f))
         cardRow.addView(cardB, LinearLayout.LayoutParams(0, theme.px(280f), 60f).apply {
             marginStart = theme.px(22f)
@@ -219,9 +224,13 @@ internal class KidsHomeLayout(
         content.addView(cardRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(280f),
         ).apply { topMargin = theme.px(20f) })
-        Focus.attach(cardA, cardA, app, theme.radius("card", 26f), scale = false, elevate = true,
+        // The halo stands on its own oversized canvas behind the art — the rail tiles' pattern —
+        // so the glow reaches past the card's edge instead of being cropped by it.
+        Focus.attach(cardA, a.second, app, theme.radius("card", 26f), scale = false,
+            elevate = false, glowInset = theme.focusGlowInset,
             onClick = { itemA?.let(callbacks.onOpen) })
-        Focus.attach(cardB, cardB, app, theme.radius("card", 26f), scale = false, elevate = true,
+        Focus.attach(cardB, b.second, app, theme.radius("card", 26f), scale = false,
+            elevate = false, glowInset = theme.focusGlowInset,
             onClick = { itemB?.let(callbacks.onOpen) })
 
         // --- black chip pills: the household's real shelves -------------------------------------
@@ -284,7 +293,10 @@ internal class KidsHomeLayout(
     /** fullArt = the backdrop covers the whole card, the title prints over its top and a black
      *  play circle sits at its foot; tinted = a yellow plate with key art bleeding from the inner
      *  edge, the title in ink and the same play circle at the foot, exactly as the mockup shows. */
-    private fun makeCard(fullArt: Boolean): Pair<FrameLayout, Pair<ImageView, TextView>> {
+    private fun makeCard(
+        fullArt: Boolean,
+    ): Triple<FrameLayout, View, Pair<ImageView, TextView>> {
+        val glowPad = theme.focusGlowInset
         val card = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
@@ -299,12 +311,25 @@ internal class KidsHomeLayout(
                     o.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 26f).toFloat())
                 }
             }
-            clipToOutline = true
+            // The card does NOT clip to that outline: a clipped card cropped the focus halo at the
+            // card's edge, so the hero section looked cut off on focus. The artwork rounds itself.
             // A soft standing shadow: the plate glows off the sheet, as in the reference.
             elevation = theme.px(16f).toFloat()
         }
+        val ringOn = View(context)
+        card.addView(ringOn, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        ).apply { setMargins(-glowPad, -glowPad, -glowPad, -glowPad) })
         val art = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
+            // The artwork rounds itself now that the card no longer clips — the plate keeps its
+            // rounded corners and the focus halo keeps its full reach outside them.
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 26f).toFloat())
+                }
+            }
         }
         val title = Views.text(app, "h2", 34f, Color.WHITE, "", bold = true, maxLines = 2)
         val playRow = LinearLayout(context).apply {
@@ -374,7 +399,7 @@ internal class KidsHomeLayout(
                 addView(artBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 54f))
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        return Pair(card, Pair(art, title))
+        return Triple(card, ringOn, Pair(art, title))
     }
 
     private fun makeChip(shelfId: String, label: String, active: Boolean): View {

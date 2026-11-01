@@ -1,14 +1,14 @@
 {
   "id": "scenix-kids",
   "brandMark": "S",
-  "_read": "Kids stage FULL-BLEED (the mockup's rounded frame was presentation only): the whole screen is sunshine yellow deepening toward the bottom; black brand circle top-left with its black tab pill welded beside it and a yellow search dot at the pill end; household avatar, gold bell and black name plate at right; two oversized feature cards (full-art with the title printed over it, and a yellow plate with key art bleeding from the inner edge); black chip pills; chunky square captioned tiles in the rails below; focus is a thick black keyline. An original Scenix composition; no marks or characters copied from any reference.",
+  "_read": "Kids stage FULL-BLEED (the mockup's rounded frame was presentation only): the whole screen is sunshine yellow deepening toward the bottom; black brand circle top-left with its black tab pill welded beside it and a yellow search dot at the pill end; household avatar and black name plate at right with a settings gear; two oversized feature cards (full-art with the title printed over it, and a yellow plate with key art bleeding from the inner edge); black chip pills; chunky square captioned tiles in the rails below; focus is a soft warm liquid-glass halo (bands alpha 30/80/200 of #FFDB6F) closed by a thin warm-dark keyline #A88200 — never a black border. An original Scenix composition; no marks or characters copied from any reference.",
   "canvas": {
     "width": 1920,
     "height": 1080
   },
   "colors": {
-    "bg": "#FFC93A",
-    "surface": "#FFD866",
+    "bg": "#F9BB12",
+    "surface": "#F9C905",
     "surface2": "#FFE18A",
     "line": "#E0B53A",
     "ink": "#141210",
@@ -43,8 +43,8 @@
     "numeralFill": "rgba(0,0,0,0)",
     "numeralStroke": "#FFFFFF",
     "panelScrim": "rgba(12,13,17,0.94)",
-    "panelRow": "rgba(255,255,255,0.08)",
-    "panelValue": "#FFFFFF",
+    "panelRow": "rgba(20,17,13,0.07)",
+    "panelValue": "#7A4E00",
     "surface3": "#FFEBAA",
     "border": "rgba(40,32,10,0.20)",
     "numeralFillRed": "#000000",
@@ -63,12 +63,15 @@
     "pillInk": "#9FB0C0",
     "inkOnCard": "#17202B",
     "panelTint": "#FFEDBE",
-    "cardTint": "#FFD866",
-    "stageYellow": "#FFC93A",
-    "stageDeep": "#F4B81E",
+    "cardTint": "#F9C905",
+    "stageYellow": "#F9BB12",
+    "stageDeep": "#F2B310",
     "accentYellow": "#FFD34E",
-    "listFill": "#FFEDBE",
-    "stageSheet": "#FFF3D0"
+    "listFill": "#FBD364",
+    "stageSheet": "#FBD364",
+    "modalPanel": "#FFF6DC",
+    "modalDim": "rgba(20,17,13,0.38)",
+    "focusGlow": "#FFDB6F"
   },
   "spacing": {
     "gutter": 72,
@@ -137,14 +140,20 @@
     "panelNote": 18
   },
   "focus": {
-    "ringWidth": 5,
+    "ringWidth": 3,
     "scale": 1.03,
     "durationMs": 130,
     "shadowElevation": 10,
     "glass": 0,
     "glassPad": 0,
-    "glowInset": 16,
-    "glowInsetSm": 12
+    "glowInset": 20,
+    "glowInsetSm": 14,
+    "glowAlphas": [
+      30,
+      80,
+      200
+    ],
+    "keylineColor": "#A88200"
   },
   "anim": {
     "cardFadeInMs": 220,
@@ -265,7 +274,7 @@
     "cleanHomeHeight": 620,
     "rows": "poster",
     "card": "below",
-    "focus": "ring",
+    "focus": "glow",
     "motion": "fade",
     "detail": "backdrop",
     "nav": "kids",
@@ -274,6 +283,7 @@
     "stage": "off",
     "rank": "outline",
     "featuredMarker": "rim",
-    "kidsHomeHeight": 470
+    "kidsHomeHeight": 500,
+    "focusColor": "#FFDB6F"
   }
 }

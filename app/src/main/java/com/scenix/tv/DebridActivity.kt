@@ -32,6 +32,9 @@ class DebridActivity : Activity() {
     private var settings: JSONObject? = null
     private var info: JSONObject? = null
     private var picker: View? = null
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
+    private var pickerReturn: View? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,7 +134,8 @@ class DebridActivity : Activity() {
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
         closePicker()
-        val layer = FrameLayout(this).apply { setBackgroundColor(Color.argb(190, 0, 0, 0)) }
+        pickerReturn = currentFocus ?: pickerReturn
+        val layer = FrameLayout(this).apply { setBackgroundColor(Screens.dimColor(app)) }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(26f), app.theme.px(20f), app.theme.px(26f), app.theme.px(20f))
@@ -162,6 +166,8 @@ class DebridActivity : Activity() {
     private fun closePicker() {
         picker?.let { (it.parent as? ViewGroup)?.removeView(it) }
         picker = null
+        pickerReturn?.requestFocus()
+        pickerReturn = null
     }
 
     private fun write(next: JSONObject, ok: String) {

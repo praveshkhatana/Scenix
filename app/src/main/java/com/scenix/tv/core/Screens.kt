@@ -68,7 +68,7 @@ object Screens {
         note: String,
         chevron: Boolean,
         onClick: () -> Unit,
-    ): LinearLayout {
+    ): View {
         val radius = listRadius(app)
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -102,8 +102,46 @@ object Screens {
                     leftMargin = app.theme.px(12f)
                 })
         }
-        Focus.attach(row, row, app, radius, scale = false, elevate = false)
-        return row
+        if (app.theme.focusStyle != "glow") {
+            Focus.attach(row, row, app, radius, scale = false, elevate = false)
+            return row
+        }
+        // A glow pack's row stands on its halo canvas, the rail tiles' pattern: the plate is often
+        // the same colour family as the glow, so a keyline drawn ON the plate had no state
+        // contrast at all. The canvas reaches past the row so the halo washes the page beside it
+        // and the keyline rings the plate from outside.
+        return haloRow(ctx, app, row, radius, onClick)
+    }
+
+    /**
+     * Wrap a row in a transparent oversized canvas and hand focus to the wrapper (glow packs).
+     * Public because screens that build their own row plate (profile rows with avatars) need the
+     * same focus treatment as `row()`.
+     */
+    fun haloRow(
+        ctx: Context,
+        app: AppContext,
+        row: android.view.View,
+        radius: Int,
+        onClick: (() -> Unit)? = null,
+    ): View {
+        val glowPad = app.theme.focusGlowInsetSm
+        val wrap = android.widget.FrameLayout(ctx).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        val ringOn = View(ctx)
+        wrap.addView(ringOn, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        ).apply { setMargins(-glowPad, -glowPad, -glowPad, -glowPad) })
+        row.isFocusable = false
+        row.isClickable = false
+        wrap.addView(row, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        Focus.attach(wrap, ringOn, app, radius, scale = false, elevate = false,
+            glowInset = glowPad, onClick = onClick)
+        return wrap
     }
 
     /** Adds a row to the list with the pack's own gap between rows. */
@@ -170,13 +208,20 @@ object Screens {
         return bar to status
     }
 
-    /** The panel a picker opens: the pack's modal radius and scrim, with its hairline edge. */
+    /** The panel a picker opens: the pack's modal radius and scrim, with its hairline edge.
+     *  `modalPanel` lets a light pack keep its page's light — a dark panel over a yellow page turns
+     *  the pack's ink-on-light text invisible, which is how the Kids settings options went unreadable. */
     fun modalFill(app: AppContext): GradientDrawable = Views.rounded(
-        app.theme.color("panelScrim", "#E6000000"),
+        app.theme.colorOr("modalPanel", app.theme.color("panelScrim", "#E6000000")),
         app.theme.radius("modal", 18f),
         maxOf(1, app.theme.px(1f)),
         app.theme.colorOr("listStroke", app.theme.line),
     )
+
+    /** The veil behind an open picker. Packs with a bright page dim gently, so the panel's own
+     *  surface and the page behind it both stay readable. */
+    fun dimColor(app: AppContext): Int =
+        app.theme.colorOr("modalDim", android.graphics.Color.argb(190, 0, 0, 0))
 
     /** One option inside an open picker. Selected rides the pack's value colour. */
     fun pickerRow(
@@ -185,7 +230,7 @@ object Screens {
         label: String,
         selected: Boolean,
         onClick: () -> Unit,
-    ): LinearLayout {
+    ): View {
         val radius = listRadius(app)
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -202,7 +247,17 @@ object Screens {
                 if (selected) app.theme.color("panelValue", "#F2C33A") else app.theme.ink,
                 "$tick  $label", bold = selected, maxLines = 1),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        Focus.attach(row, row, app, radius, scale = false, elevate = false)
+        // In a glow pack the row stands in the panel's own halo language; on a light panel a flat
+        // keyline disappears, so the row asks for the small inset the theme carries for controls.
+        // In a glow pack the row stands in the panel's own halo language; on a light panel a flat
+        // keyline disappears, so the row also rides a focus plate — the same tint the selected
+        // row carries — giving every picker option a visible, unambiguous focused state.
+        Focus.attach(row, row, app, radius, scale = false, elevate = false,
+            glowInset = app.theme.focusGlowInsetSm,
+            onFocus = { has ->
+                if (!selected) row.background =
+                    if (has) Views.rounded(app.theme.surface2, radius) else null
+            })
         return row
     }
 }

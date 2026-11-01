@@ -34,6 +34,9 @@ class LiveSettingsActivity : Activity() {
     private var settings: JSONObject? = null
     private var groups: JSONArray? = null
     private var picker: View? = null
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
+    private var pickerReturn: View? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -232,8 +235,9 @@ class LiveSettingsActivity : Activity() {
     ) {
         closePicker()
         val chosen = LinkedHashSet<String>(selected)
+        pickerReturn = currentFocus ?: pickerReturn
         val layer = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(190, 0, 0, 0))
+            setBackgroundColor(Screens.dimColor(app))
             isClickable = true
         }
         val panel = LinearLayout(this).apply {
@@ -338,6 +342,8 @@ class LiveSettingsActivity : Activity() {
         val layer = picker ?: return
         (layer.parent as? ViewGroup)?.removeView(layer)
         picker = null
+        pickerReturn?.requestFocus()
+        pickerReturn = null
     }
 
     override fun onBackPressed() {

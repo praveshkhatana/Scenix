@@ -48,12 +48,6 @@ object Focus {
         val ring: android.graphics.drawable.Drawable = when {
             style == "lift" && !liftControl -> Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
             liftControl -> Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(1, theme.focusRingPx))
-            style == "glow" && !scale -> {
-                // A halo is legible around artwork, but around a compact text button it spreads
-                // into neighbouring chrome. Controls get one crisp keyline instead, including
-                // white primary buttons whose focus must not disappear into their fill.
-                Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(2, theme.focusRingPx))
-            }
             style == "glow" && glowInset > 0 -> {
                 // The glow target is deliberately larger than the artwork and is inserted *behind*
                 // it.  Never build this from several thick strokes: every stroke has a hard inner
@@ -70,12 +64,15 @@ object Focus {
                 val near = (glowInset * 0.30f).toInt().coerceAtLeast(theme.px(4f))
                 val keyOutset = theme.px(3f).coerceAtMost(glowInset)
                 fun inset(outset: Int) = (glowInset - outset).coerceAtLeast(0)
+                val alphas = theme.focusGlowAlphas
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
                 val halo = LayerDrawable(arrayOf(
-                    Views.rounded(Color.argb(8, r, g, b), ringRadiusPx + outer),
-                    Views.rounded(Color.argb(12, r, g, b), ringRadiusPx + middle),
-                    Views.rounded(Color.argb(18, r, g, b), ringRadiusPx + near),
-                    Views.ring(Color.argb(224, r, g, b), ringRadiusPx + keyOutset,
-                        maxOf(1, theme.px(2f))),
+                    Views.rounded(Color.argb(alphas[0], r, g, b), ringRadiusPx + outer),
+                    Views.rounded(Color.argb(alphas[1], r, g, b), ringRadiusPx + middle),
+                    Views.rounded(Color.argb(alphas[2], r, g, b), ringRadiusPx + near),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + keyOutset, maxOf(1, theme.px(2f))),
                 ))
                 halo.setLayerInset(0, inset(outer), inset(outer), inset(outer), inset(outer))
                 halo.setLayerInset(1, inset(middle), inset(middle), inset(middle), inset(middle))
@@ -83,7 +80,11 @@ object Focus {
                 halo.setLayerInset(3, inset(keyOutset), inset(keyOutset), inset(keyOutset), inset(keyOutset))
                 halo
             }
-            style == "glow" -> Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(2, theme.focusRingPx))
+            // A compact control in a glow pack takes one crisp keyline in the glow colour — the same
+            // liquid rim as the artwork's halo, just without the halo, which would smear a text
+            // button into its neighbours. Never the black keyline: on a light pack it reads as a
+            // hard border, and the owner asked for glow, not ink.
+            style == "glow" -> Views.ring(theme.focusGlowColor, ringRadiusPx, maxOf(2, theme.focusRingPx))
             else -> Views.ring(ringColor, ringRadiusPx, ringWidth)
         }
         val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)

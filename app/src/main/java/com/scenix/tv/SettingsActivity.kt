@@ -43,6 +43,9 @@ class SettingsActivity : Activity() {
     private var globalRows: JSONObject? = null
     private var rowsCfg: JSONObject? = null
     private var picker: View? = null
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
+    private var pickerReturn: View? = null
     // The D-pad is trapped inside a picker: Android's default search treats the overlay as a plain
     // rectangle and can hand focus to a row behind it, which turned "pick a theme" into "open Live TV".
     private var pickerRows: List<View> = emptyList()
@@ -573,8 +576,9 @@ class SettingsActivity : Activity() {
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, current: String, onPick: (String) -> Unit) {
         closePicker()
+        pickerReturn = currentFocus ?: pickerReturn
         val layer = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(190, 0, 0, 0))
+            setBackgroundColor(Screens.dimColor(app))
             isClickable = true
         }
         val panel = LinearLayout(this).apply {
@@ -630,6 +634,8 @@ class SettingsActivity : Activity() {
     private fun closePicker() {
         picker?.let { root.removeView(it) }
         picker = null
+        pickerReturn?.requestFocus()
+        pickerReturn = null
         pickerRows = emptyList()
     }
 

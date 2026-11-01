@@ -85,6 +85,27 @@ class Theme private constructor(
     val focusGlowInsetSm get() = px(focus.optDouble("glowInsetSm", 16.0).toFloat())
 
     /**
+     * The three halo bands' intensities, outer to inner. The dark packs get away with a barely-
+     * there wash (8/12/18); a light pack sits on cream that swallows those alphas, so it raises
+     * them until the glow actually reads as a state change — measured from the reference, where
+     * the focused tile wears an opaque warm band around it.
+     */
+    val focusGlowAlphas: IntArray get() {
+        val a = focus.optJSONArray("glowAlphas")
+        return if (a == null || a.length() < 3) intArrayOf(8, 12, 18)
+        else intArrayOf(a.optInt(0, 8), a.optInt(1, 12), a.optInt(2, 18))
+    }
+
+    /**
+     * The thin ring that closes the halo just outside the art. A glow colour alone vanishes on a
+     * light sheet, so the reference closes its halo with a warm dark keyline — liquid-glass edge,
+     * never black ink. Packs that omit it keep the glow-coloured keyline.
+     */
+    val focusKeylineColor get(): Int =
+        if (focus.has("keylineColor")) parseColor(focus.optString("keylineColor")) else focusGlowColor
+    val focusKeylineExplicit get() = focus.has("keylineColor")
+
+    /**
      * Android TV exposes "remove animations" through the system animator scale.  A focus change
      * must still be obvious in that mode, but it must settle immediately rather than leaving a
      * half-lifted tile on screen.  Keeping this with the theme makes every native surface use the

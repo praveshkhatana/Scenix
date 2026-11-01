@@ -183,8 +183,15 @@ class ManageProfilesActivity : Activity() {
             })
         row.addView(words, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(Views.text(app, "meta", 19f, app.theme.ink2, "Edit ›", maxLines = 1, gravity = Gravity.END))
-        Focus.attach(row, row, app, Screens.listRadius(app), scale = false, elevate = false)
-        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        // Glow packs ring the plate from outside on the halo canvas; ring packs keep the flat
+        // keyline on the plate edge.
+        val stop: View = if (app.theme.focusStyle == "glow")
+            Screens.haloRow(this, app, row, Screens.listRadius(app))
+        else {
+            Focus.attach(row, row, app, Screens.listRadius(app), scale = false, elevate = false)
+            row
+        }
+        rows.addView(stop, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             bottomMargin = Screens.listGap(app)
         })
     }
