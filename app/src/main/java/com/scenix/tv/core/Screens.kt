@@ -2,6 +2,7 @@ package com.scenix.tv.core
 
 import android.content.Context
 import android.graphics.drawable.GradientDrawable
+import com.scenix.tv.GlassKit
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -28,11 +29,12 @@ object Screens {
      * you open Settings. The console pack gets its deep navy gradient; Apple and Netflix sit on
      * plain black, which is already their Home ground.
      */
-    fun wall(app: AppContext): GradientDrawable? = when (app.theme.homeLayout.hero) {
-        HomeLayoutSpec.Hero.DUAL_CARDS, HomeLayoutSpec.Hero.GLASS_CARDS -> GradientDrawable(
+    fun wall(app: AppContext): android.graphics.drawable.Drawable? = when (app.theme.homeLayout.hero) {
+        HomeLayoutSpec.Hero.DUAL_CARDS -> GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
             intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
         )
+        HomeLayoutSpec.Hero.GLASS_CARDS -> GlassKit.wall(app)
         HomeLayoutSpec.Hero.KIDS_STAGE -> GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(app.theme.color("stageYellow", "#FFC93A"), app.theme.color("stageDeep", "#F4B81E")),

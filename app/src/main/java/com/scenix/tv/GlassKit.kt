@@ -42,7 +42,10 @@ internal object GlassKit {
             isFocusable = true
             isClickable = true
             contentDescription = label
-            setPadding(theme.px(42f), theme.px(10f), theme.px(42f), theme.px(10f))
+            // segPad: the measured pill holds four words + the knob inside 425px — the words sit
+            // close together, unlike the roomier three-stop first pass that only matched by luck.
+            setPadding(theme.space("segPad", 24f), theme.px(10f),
+                theme.space("segPad", 24f), theme.px(10f))
             background = if (active) Views.rounded(
                 theme.color("pillActive", "rgba(255,255,255,0.08)"), theme.px(999f)) else null
         }
@@ -253,12 +256,49 @@ internal object GlassKit {
         return chip
     }
 
-    /** The wash every Glass page stands on: one soft photographic gradient, TL to BR. */
-    fun wall(app: AppContext): GradientDrawable {
+    /**
+     * The wash every Glass page stands on. The reference is a photographic wall, not a flat
+     * gradient: a field sample (2026-11-02) showed a cool dark band across the top, a dark left
+     * rim, a light drift across the chip/rail seam, and warm bokeh glows in the lower third.
+     * Approximated as the base TL→BR gradient plus soft radial blobs from the token
+     * "wallBlobs" ("x,y,r:color:alpha" triples, x/y/r in % of the stage) — original values,
+     * no copied assets, and the same drawable on Home, Detail and every Settings page.
+     */
+    fun wall(app: AppContext): android.graphics.drawable.Drawable {
         val theme = app.theme
-        return GradientDrawable(
+        val base = GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
             intArrayOf(theme.color("wallA", "#8FA3B2"), theme.color("wallB", "#9A918C")),
         )
+        val blobs = theme.packString("wallBlobs", "").split(";").mapNotNull { spec ->
+            val f = spec.trim().split(":")
+            if (f.size != 3) return@mapNotNull null
+            val g = f[0].split(",")
+            if (g.size != 3) return@mapNotNull null
+            try {
+                Triple(Triple(g[0].toFloat(), g[1].toFloat(), g[2].toFloat()),
+                    Color.parseColor(f[1]), f[2].toFloat())
+            } catch (e: Exception) { null }
+        }
+        if (blobs.isEmpty()) return base
+        return object : android.graphics.drawable.Drawable() {
+            private val paint = android.graphics.Paint()
+            override fun draw(canvas: android.graphics.Canvas) {
+                val w = bounds.width(); val h = bounds.height()
+                base.setBounds(0, 0, w, h); base.draw(canvas)
+                val m = maxOf(w, h).toFloat()
+                for ((pos, color, alpha) in blobs) {
+                    val cx = pos.first / 100f * w; val cy = pos.second / 100f * h
+                    val r = pos.third / 100f * m
+                    val a = (color and 0x00FFFFFF) or ((alpha * 255).toInt().coerceIn(0, 255) shl 24)
+                    paint.shader = android.graphics.RadialGradient(
+                        cx, cy, r, a, 0, android.graphics.Shader.TileMode.CLAMP)
+                    canvas.drawCircle(cx, cy, r, paint)
+                }
+            }
+            override fun setAlpha(alpha: Int) {}
+            override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+            override fun getOpacity() = android.graphics.PixelFormat.OPAQUE
+        }
     }
 }

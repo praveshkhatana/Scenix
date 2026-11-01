@@ -88,6 +88,7 @@
     "heroGap": 20,
     "chipHeight": 104,
     "chipGap": 34,
+    "segPad": 20,
     "posterWidth": 283,
     "posterHeight": 397,
     "posterGap": 21,
@@ -289,6 +290,7 @@
     "searchBadges": "show",
     "stage": "off",
     "rank": "outline",
-    "featuredMarker": "rim"
+    "featuredMarker": "rim",
+    "wallBlobs": "50,5,90:#465A69:0.22;-8,55,45:#3A4A55:0.20;108,25,42:#2E3E4A:0.25;52,66,55:#BEC8D2:0.15;40,92,28:#FFEFC8:0.35;18,97,22:#F2EDD9:0.30;80,84,22:#FFBE78:0.28;30,83,20:#96BEE6:0.22"
   }
 }

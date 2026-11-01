@@ -431,10 +431,12 @@ class BrowseActivity : Activity() {
         // wall is the whole page's background — fixed behind the rails while they scroll —
         // not a hero-slot backdrop with a seam where the hero ends.
         val fullWall: android.graphics.drawable.Drawable? = when (app.theme.homeLayout.hero) {
-            HomeLayoutSpec.Hero.DUAL_CARDS, HomeLayoutSpec.Hero.GLASS_CARDS -> GradientDrawable(
+            HomeLayoutSpec.Hero.DUAL_CARDS -> GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
             )
+            // One shared wash component — the same drawable Home, Detail and Settings paint.
+            HomeLayoutSpec.Hero.GLASS_CARDS -> GlassKit.wall(app)
             HomeLayoutSpec.Hero.KIDS_STAGE -> {
                 // The reference is not flat sunshine: the page edge keeps a saturated yellow rim,
                 // while the whole content sits on one huge lighter-yellow sheet with soft corners.

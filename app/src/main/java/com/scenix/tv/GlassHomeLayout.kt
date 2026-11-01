@@ -94,9 +94,15 @@ internal class GlassHomeLayout(
             background = Views.rounded(theme.color("pill", "rgba(8,16,28,0.86)"), theme.px(999f))
             setPadding(theme.px(6f), theme.px(6f), theme.px(6f), theme.px(6f))
         }
-        listOf("Movies" to "movies", "Series" to "series", "Live" to "live")
-            .forEachIndexed { index, (label, route) ->
-                val stop = GlassKit.segment(context, app, label, index == 0) {
+        // Measured: the pill carries FOUR section words (Home lit on the reference) plus the knob
+        // inside 425px — words set close, not the wide 3-stop spacing of the first pass.
+        // goTab("") returns to the unfiltered home; the section is baked in because switching
+        // sections rebuilds this page, so the pill always paints where you actually stand.
+        val standing = (context as? BrowseActivity)?.intent
+            ?.getStringExtra(BrowseActivity.EXTRA_TAB).orEmpty()
+        listOf("Home" to "", "Movies" to "movies", "Series" to "series", "Live" to "live")
+            .forEach { (label, route) ->
+                val stop = GlassKit.segment(context, app, label, route == standing) {
                     callbacks.onSection(route)
                 }
                 pillStops += stop
@@ -228,7 +234,7 @@ internal class GlassHomeLayout(
             (resources.displayMetrics.widthPixels - theme.gutter * 2 -
                 gap * (shelvesTake.size - 1)) / shelvesTake.size
         shelvesTake.forEachIndexed { index, (id, label) ->
-            val chip = GlassKit.chip(context, app, label.trim().removePrefix("New on "),
+            val chip = GlassKit.chip(context, app, chipLabel(label),
                 index == 0, chipH) { callbacks.onShelf(id) }
             val lp = LinearLayout.LayoutParams(chipW, chipH)
             if (chipRow.childCount > 0) lp.marginStart = gap
@@ -236,6 +242,22 @@ internal class GlassHomeLayout(
         }
         cardA.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
+    }
+
+    /** Theme content rule (deviation D6): the frost chips are equal-width ~228px and the hub's
+     * conversational shelf names ("Top 10 in this house") truncate mid-word at ~228px. The chip
+     * keeps its leading promise and drops the conversational tail; it still names the shelf it
+     * jumps to — content adaptation, not a layout excuse (deviation log D6). */
+    private fun chipLabel(raw: String): String {
+        var s = raw.trim().removePrefix("New on ")
+        if (s.contains("continue", true)) s = "Continue"
+        if (s.contains("because you", true)) s = "Because you"
+        if (s.contains("more like", true)) s = "More like"
+        if (s.contains("acclaim", true)) s = "Acclaimed"
+        s = s.replace(Regex("(?i)^(\\S+)\\s(movies|classics|cinema|films|shows|collection|specials)\\b.*"), "$1")
+        s = s.replace(Regex("(?i)\\s+(in|on|to|by|from|for|of|that|with|you)\\s.*"), "")
+        if (s.length > 14) s = s.take(13).trimEnd() + "…"
+        return s
     }
 
     /** The header pill prints the signed-in profile's name beside its face. */
