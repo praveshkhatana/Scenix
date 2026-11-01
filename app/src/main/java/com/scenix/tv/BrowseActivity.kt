@@ -145,10 +145,11 @@ class BrowseActivity : Activity() {
                 if (focus != null && adapter != null && isInside(list, focus)) {
                     val down = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
                     val from = outerPositionOf(focus)
-                    // The focused-hub surface owns the relationship between its system strip,
-                    // content tiles and Details action. Let its explicit next-focus graph answer
-                    // UP/DOWN rather than forcing the Apple carousel hierarchy onto it.
-                    if (heroFamily == HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                    // The focused-hub and dual-card surfaces own the relationship between their
+                    // navigation strip, content tiles and actions. Let their explicit next-focus
+                    // graph answer UP/DOWN rather than forcing the Apple carousel hierarchy on them.
+                    if (heroFamily in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
+                            HomeLayoutSpec.Hero.DUAL_CARDS) &&
                         isInside(adapter.heroRoot, focus)) {
                         return super.dispatchKeyEvent(event)
                     }
@@ -1178,8 +1179,10 @@ class BrowseActivity : Activity() {
             // The console-style rail IS the home screen: two lonely tiles read as a broken strip,
             // while the reference's launch rail spans the screen. When the hub's featured row is
             // thin, the rail borrows the next titles the household actually has — real items, no
-            // invention — and the shelf below still shows them in full.
-            if (app.theme.homeLayout.hero == HomeLayoutSpec.Hero.FOCUSED_HUB &&
+            // invention — and the shelf below still shows them in full. The dual-card pack needs
+            // the same guarantee: two distinct titles, never one duplicated across both cards.
+            if (app.theme.homeLayout.hero in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
+                    HomeLayoutSpec.Hero.DUAL_CARDS) &&
                 slides.size in 1 until maxSlides) {
                 val seen = slides.mapTo(HashSet()) { it.identity.ifBlank { it.title } }
                 for (row in others) {
@@ -1518,6 +1521,13 @@ class BrowseActivity : Activity() {
                                     .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
                             )
                         },
+                        onShelf = { shelfId ->
+                            // A Clean chip is a shortcut into the real page below, not a fake tab.
+                            val index = shelves.indexOfFirst { it.id == shelfId }
+                            if (index >= 0) {
+                                list.smoothScrollToPosition(index + (if (hero != null) 1 else 0))
+                            }
+                        },
                     ),
                 )
                 surface.root.layoutParams = RecyclerView.LayoutParams(
@@ -1564,6 +1574,7 @@ class BrowseActivity : Activity() {
                 holder.surface.setNextFocusUp(
                     (holder.surface.navigationAnchor ?: navAnchor)?.id ?: View.NO_ID,
                 )
+                holder.surface.setChips(shelves.map { it.id to it.title })
             } else if (holder is ShelfHolder) {
                 val row = shelves[position - (if (hero != null) 1 else 0)]
                 holder.head.text = row.title

@@ -34,6 +34,8 @@ internal interface HomeSurface {
     fun setNextFocusUp(id: Int)
     /** Home's initial/re-entry focus stop for the current title. */
     fun focusEntry(activeIndex: Int): Boolean
+    /** Shelf titles a composition may mirror as in-page shortcuts (Clean's chip row). */
+    fun setChips(shelves: List<Pair<String, String>>) {}
 }
 
 /**
@@ -50,6 +52,8 @@ internal data class HomeSurfaceCallbacks(
     val onProfile: () -> Unit,
     val onSearch: () -> Unit,
     val onSettings: () -> Unit,
+    /** Jump the outer list to the shelf a chip names; surfaces that own their rails ignore it. */
+    val onShelf: (String) -> Unit = {},
 )
 
 /**
@@ -83,6 +87,19 @@ internal object HomeSurfaceFactory {
                         onProfile = callbacks.onProfile,
                         onSearch = callbacks.onSearch,
                         onSettings = callbacks.onSettings,
+                    ),
+                ),
+            )
+            HomeLayoutSpec.Hero.DUAL_CARDS -> CleanSurface(
+                CleanHomeLayout(
+                    context,
+                    app,
+                    CleanHomeLayout.Callbacks(
+                        onOpen = callbacks.onOpen,
+                        onSection = callbacks.onSection,
+                        onProfile = callbacks.onProfile,
+                        onSearch = callbacks.onSearch,
+                        onShelf = callbacks.onShelf,
                     ),
                 ),
             )
@@ -148,4 +165,18 @@ private class Ps5Surface(private val view: Ps5HomeLayout) : HomeSurface {
         view.focusTile(activeIndex)
         return true
     }
+}
+
+private class CleanSurface(private val view: CleanHomeLayout) : HomeSurface {
+    override val root: View get() = view.root
+    override val primaryControl: View get() = view.primaryControl
+    override val navigationAnchor: View? get() = view.navigationAnchor
+    override val selectorRoot: View? get() = null
+    override val preferredHeightPx: Int get() = view.preferredHeightPx
+
+    override fun render(slides: List<Item>, activeIndex: Int) = view.render(slides, activeIndex)
+    override fun setNextFocusUp(id: Int) = view.setNextFocusUp(id)
+    override fun setChips(shelves: List<Pair<String, String>>) = view.setChips(shelves)
+
+    override fun focusEntry(activeIndex: Int): Boolean = view.focusEntry(activeIndex)
 }

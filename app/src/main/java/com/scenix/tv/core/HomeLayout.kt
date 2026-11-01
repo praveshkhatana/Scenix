@@ -63,6 +63,8 @@ data class HomeLayoutSpec(
         CINEMA_BILLBOARD,
         /** Focused content hub: the selected large tile is the stage and the rail is the navigator. */
         FOCUSED_HUB,
+        /** Two glass feature cards side by side above a chip row; a light, calm composition. */
+        DUAL_CARDS,
         /** No billboard: content begins with the primary browse surface. */
         NONE,
     }
@@ -116,6 +118,7 @@ data class HomeLayoutSpec(
         private fun hero(value: String) = when (normalized(value)) {
             "cinema", "cinema-billboard", "billboard" -> Hero.CINEMA_BILLBOARD
             "hub", "focused-hub", "focus-hub" -> Hero.FOCUSED_HUB
+            "dual", "dual-cards", "clean-cards" -> Hero.DUAL_CARDS
             "none", "off", "grid" -> Hero.NONE
             else -> Hero.SHARED_SLIDER
         }
@@ -138,7 +141,8 @@ data class HomeLayoutSpec(
         private fun defaultHero(family: Family) = when (family) {
             Family.NETFLIX_CINEMA -> "cinema-billboard"
             Family.PS5_HUB -> "focused-hub"
-            Family.ROKU_GRID, Family.CLEAN -> "none"
+            Family.CLEAN -> "dual-cards"
+            Family.ROKU_GRID -> "none"
             else -> "shared-slider"
         }
 
