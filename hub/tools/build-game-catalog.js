@@ -3,8 +3,12 @@
  *   node hub/tools/build-game-catalog.js
  *
  * - ported2browser.json is scraped by hand (the site hides behind a human check); this script
- *   only post-processes it.
- * - poki.json comes from the homepage HTML (featured cards, stable markup).
+ *   only post-processes it. The recipe, last run 2026-11-01 for all 296 titles: in an in-app
+ *   browser tab on the site, fetch `/?tab=az&page=N` pages collecting /ports/<ULID> hrefs until a
+ *   page adds none, then fetch each /ports/<ULID> and read h1, a.play[href],
+ *   li.ctl[title="Keyboard|Gamepad|Touch: supported"], meta[property="og:image"], .tags > *.
+ * - poki.json comes from the homepage HTML (featured cards, stable markup). Poki itself is not
+ *   shelved by core/games.js — its SDK refuses emulated GPUs before inserting a game iframe.
  * - crazygames.json comes from fetching known popular slugs; a slug that no longer resolves is
  *   dropped, so the list can be re-run whenever it rots. */
 const fs = require('fs');
@@ -78,7 +82,7 @@ const CG_SLUGS = ['smash-karts', 'moto-x3m', 'shellshockersio', 'agario', 'uno-o
   'drift-hunters', 'eaglecraft', 'fancy-pants-adventures', 'fall-stadium-last-man-standing', 'getaway-shootout',
   'hole-io', 'maker-mania', 'mountain-driving', 'paint-fun', 'park-master', 'rocket-league-2d', 'speed-racing-3',
   'stickman-archer', 'super-sauce', 'tadpol.io', 'the-next-wooden-door', 'tiny-fishing', 'tube-jumpers',
-  'wheely', 'winter-dimensions', 'zombs-royale', 'city-rider', 'deers-logic'];
+  'wheely', 'winter-dimensions', 'zombs-royale', 'city-rider', 'deers-logic', 'traffic-rider-vvq'];
 async function buildCrazy() {
   const out = [];
   for (const slug of CG_SLUGS) {
@@ -87,8 +91,14 @@ async function buildCrazy() {
     const title = (/og:title" content="([^"]+)"/.exec(r.body) || [])[1];
     const img = (/og:image" content="([^"]+)"/.exec(r.body) || [])[1];
     if (!title || /no longer available/i.test(r.body)) continue;
-    out.push({ id: 'cg-' + slug, title: title.replace(/ - Crazy Games.*$/, ''), slug,
-      playUrl: 'https://games.crazygames.com/en_US/' + slug + '/index.html', poster: img });
+    // og:title arrives as "<Name> 🏎️ Play on CrazyGames" — keep the name, drop the marketing tail.
+    const clean = title.replace(/(Play on )?Crazy\s*Games.*$/i, '').replace(/[\s\p{Extended_Pictographic}]+$/u, '').trim();
+    out.push({ id: 'cg-' + slug, title: clean || title, slug,
+      playUrl: 'https://games.crazygames.com/en_US/' + slug + '/index.html', poster: img,
+      // The CrazyGames wrapper never finishes booting inside Android's WebView bundle; the
+      // embedded Gecko engine (the coi container) hosts it. The flag names the container now,
+      // and GameActivity's "built multithreaded" notice only fires where a canvas truly lacks SAB.
+      coi: true });
     console.log('  cg ok:', slug);
   }
   fs.writeFileSync(path.join(dataDir, 'crazygames.json'), JSON.stringify(out, null, 1));

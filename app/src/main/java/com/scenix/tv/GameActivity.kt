@@ -49,6 +49,7 @@ class GameActivity : Activity() {
     private lateinit var errorBox: LinearLayout
     private lateinit var hud: LinearLayout
     private lateinit var padChip: TextView
+    private lateinit var loader: GameLoader
     private val main = Handler(Looper.getMainLooper())
     private var url = ""
     private var fallbackUrl = ""
@@ -73,6 +74,9 @@ class GameActivity : Activity() {
         val theme = app.theme
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
+        // Devtools on the built-in browser: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`
+        // and the portal's live DOM is inspectable — the only way to see what a portal page really does.
+        WebView.setWebContentsDebuggingEnabled(true)
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -95,10 +99,14 @@ class GameActivity : Activity() {
                 override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                     status.visibility = View.VISIBLE
                     errorBox.visibility = View.GONE
+                    loader.show()
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
                     status.visibility = View.GONE
+                    // The page is up but a web arcade game still streams its engine and art after
+                    // load — the wordmark keeps sweeping until the stage itself lands.
+                    loader.loop()
                     // Poki and friends wrap the game in tiles, nav pills and late popups a kid
                     // shouldn't reach: carve the page down to the game's own container.
                     carve(view)
@@ -148,15 +156,27 @@ class GameActivity : Activity() {
                     }
                 }
             }
+
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, progress: Int) {
+                    // Real page-load progress paints the wordmark fill honestly, up to 95% —
+                    // Chromium reports 100 the moment the document settles, long before the game does.
+                    if (progress > 0) loader.setProgress(Math.min(progress, 95) / 100f)
+                }
+            }
         }
         root.addView(web, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
+        loader = GameLoader(app)
+        loader.attach(root)
+        loader.show()
+
         status = Views.text(app, "sub", 24f, theme.ink2, "Loading $titleText…", gravity = Gravity.CENTER)
         root.addView(status, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(80f)
-        ).apply { gravity = Gravity.CENTER })
+        ).apply { gravity = Gravity.CENTER; topMargin = theme.px(150f) })
 
         errorBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -237,6 +257,7 @@ class GameActivity : Activity() {
         errLine.text = msg
         errorBox.visibility = View.VISIBLE
         status.visibility = View.GONE
+        loader.finish()
         retryBtn?.requestFocus()
     }
 
@@ -271,7 +292,11 @@ class GameActivity : Activity() {
             override fun run() {
                 if (++passes > 60) return
                 view.evaluateJavascript(CARVE_JS) { r ->
-                    if (r?.contains("carved") == true) ++carved else ++misses
+                    if (r?.contains("carved") == true) {
+                        ++carved
+                        // The game's own frame is on screen — the wordmark hands the stage over to it.
+                        loader.finish()
+                    } else ++misses
                     // A portal that never puts any game frame on screen at all (Poki on some
                     // engines): after half a minute say so instead of sitting black forever.
                     if (misses == 10 && carved == 0)
@@ -470,7 +495,10 @@ class GameActivity : Activity() {
    for(var j=0;j<chain.length;j++)chain[j].setAttribute('data-scn','keep');
    function hideOff(parent,keep){var s=parent.children;
      for(var k=0;k<s.length;k++)if(s[k]!==keep){s[k].style.setProperty('display','none','important');hid.push(s[k]);}}
-   hideOff(doc.body,chain[0]);
+   // The chain runs html→body→…→stage, so the pair loop already trims every level including
+   // body's other children. A separate hideOff(body, chain[0]) here asked body to keep the
+   // <html> element — never one of its children — and hid every child of body: the game's own
+   // wrapper included. That is the blank Subway Surfers screen.
    for(var l=0;l<chain.length-1;l++)hideOff(chain[l],chain[l+1]);
    if(isMain){
     doc.documentElement.style.setProperty('background','#000','important');

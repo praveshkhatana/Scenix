@@ -62,10 +62,15 @@ class CoiGameActivity : Activity() {
     private var carvedPasses = 0
     private var missStreak = 0
     private var stallTold = false
-    private var backArmed = false
     private var sawCanvasAt = 0L
     private var hint: TextView? = null
     private var hintTold = false
+    private lateinit var loader: GameLoader
+    private var hud: LinearLayout? = null
+    private var padChip: TextView? = null
+    private var connectBtn: View? = null
+    private var hudVisible = false
+    private val hidHud = Runnable { hideHud() }
     // The same sweep message can reach report() twice (stock delegate path + raw dispatcher
     // path); the background stamps a sequence number on every message, so act on each once.
     private val reportedSeqs = LinkedHashMap<String, Unit>()
@@ -107,10 +112,14 @@ class CoiGameActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
+        loader = GameLoader(app)
+        loader.attach(root)
+        loader.show()
+
         status = Views.text(app, "sub", 24f, theme.ink2, "Loading $titleText…", gravity = Gravity.CENTER)
         root.addView(status, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(80f)
-        ).apply { gravity = Gravity.CENTER })
+        ).apply { gravity = Gravity.CENTER; topMargin = theme.px(150f) })
 
         hint = Views.text(app, "sub", 22f, theme.ink2, "Press any button on the remote to start", gravity = Gravity.CENTER).apply {
             visibility = View.GONE
@@ -146,6 +155,14 @@ class CoiGameActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
         errLine = errText
+
+        // The same bar the WebView player gives: back brings it up — what this game needs,
+        // a way to pair a controller, and how to leave.
+        val bar = buildHud()
+        bar.visibility = View.GONE
+        root.addView(bar, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(132f)
+        ).apply { gravity = Gravity.TOP })
 
         setContentView(root)
         gecko.requestFocus()
@@ -269,16 +286,28 @@ class CoiGameActivity : Activity() {
                     hintTold = false
                     painted = false
                     openedAt = System.currentTimeMillis()
+                    loader.show()
                 }
             }
 
+            override fun onProgressChange(session: GeckoSession, progress: Int) {
+                main.post { loader.setProgress(Math.min(progress, 95) / 100f) }
+            }
+
             override fun onPageStop(session: GeckoSession, success: Boolean) {
-                main.post { if (painted || !success) status.visibility = View.GONE }
+                main.post {
+                    if (painted || !success) status.visibility = View.GONE
+                    // Page settled but a first play still streams its core and ROM — keep the
+                    // wordmark sweeping until the game's own canvas lands on the stage.
+                    if (success) loader.loop()
+                }
             }
         }
         s.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onFirstContentfulPaint(session: GeckoSession) {
                 painted = true
+                // The portal's chrome painting is not the game starting — the wordmark hands over
+                // when the carve sweep reports a real game canvas, and stays sweeping until then.
                 main.post { status.visibility = View.GONE }
             }
 
@@ -448,6 +477,8 @@ class CoiGameActivity : Activity() {
                 carvedPasses = if (res == "carved") { missStreak = 0; carvedPasses + 1 } else carvedPasses
                 missStreak = if (res == "carved") 0 else missStreak + 1
                 if (c?.get("canvas")?.toString() == "true") {
+                    // The game's own stage is up — the wordmark hands over here, not at page paint.
+                    main.post { loader.finish() }
                     if (sawCanvasAt == 0L && !hintTold) {
                         // The loader finished and the stage is up, but these cores only wake
                         // for a first real key press (browser audio-unlock) — say so over the
@@ -500,22 +531,111 @@ class CoiGameActivity : Activity() {
         errLine.text = msg
         errorBox.visibility = View.VISIBLE
         status.visibility = View.GONE
+        loader.finish()
     }
 
-    /** Back twice leaves; the first press only says so, so nobody quits a game by accident. */
+    /** Back is a game's most dangerous button: the first press brings up the bar, one more leaves. */
     override fun onBackPressed() {
-        if (errorBox.visibility == View.VISIBLE || backArmed) finish()
-        else {
-            backArmed = true
-            toast("Press Back again to leave the game")
-            main.postDelayed({ backArmed = false }, 3000)
+        when {
+            errorBox.visibility == View.VISIBLE -> finish()
+            !hudVisible -> showHud()
+            else -> finish()
         }
     }
 
-    /** Any remote key answers the "press any button to start" hint — take it away on the first one. */
+    /** The bar back presses summon: what this game needs, how to pair it, how to leave. */
+    private fun buildHud(): LinearLayout {
+        val theme = app.theme
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(theme.gutter, 0, theme.gutter, 0)
+            background = Views.rounded(Color.argb(216, 6, 6, 8), theme.px(14f))
+        }
+        bar.addView(Views.text(app, "rowTitle", 25f, theme.ink, titleText, bold = true, maxLines = 1),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val chip = Views.text(app, "meta", 16f, theme.ink2, "", maxLines = 1)
+        bar.addView(chip, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { marginEnd = theme.px(26f) })
+        padChip = chip
+        val connect = Views.text(app, "meta", 16f, Color.WHITE, "Connect controller", bold = true)
+        connect.setPadding(theme.px(22f), theme.px(11f), theme.px(22f), theme.px(11f))
+        connect.background = Views.rounded(theme.surface2, theme.px(9f))
+        connect.isFocusable = true
+        Focus.attach(connect, connect, app, theme.px(9f), scale = false, elevate = false,
+            onClick = { pairController() })
+        bar.addView(connect)
+        connectBtn = connect
+        bar.addView(Views.text(app, "meta", 15f, theme.ink3, "Back again to exit").apply {
+            setPadding(theme.px(22f), 0, 0, 0)
+        })
+        hud = bar
+        return bar
+    }
+
+    private fun showHud() {
+        val bar = hud ?: return
+        hudVisible = true
+        bar.alpha = 0f
+        bar.visibility = View.VISIBLE
+        bar.animate().alpha(1f).setDuration(140).start()
+        updatePadChip()
+        connectBtn?.requestFocus()
+        main.removeCallbacks(hidHud)
+        main.postDelayed(hidHud, 7000)
+    }
+
+    private fun hideHud() {
+        val bar = hud ?: return
+        if (!hudVisible) return
+        hudVisible = false
+        main.removeCallbacks(hidHud)
+        bar.animate().alpha(0f).setDuration(140).withEndAction { bar.visibility = View.GONE }.start()
+        gecko.requestFocus()
+    }
+
+    /** The TV's own Bluetooth screen — the only place a DualSense or Xbox pad can be put into range. */
+    private fun pairController() {
+        try {
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        } catch (t: Throwable) {
+            try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (u: Throwable) {
+                toast("Open Bluetooth settings in Android to pair a controller")
+            }
+        }
+    }
+
+    private fun updatePadChip() {
+        val chip = padChip ?: return
+        val theme = app.theme
+        val pads = controllers()
+        chip.text = if (pads.isEmpty())
+            if (padReady) "No controller yet — remote plays menus" else "Plays with the remote"
+        else "Controller connected ✓"
+        chip.setTextColor(if (pads.isEmpty()) theme.ink2 else theme.ink)
+    }
+
+    private fun controllers(): List<android.view.InputDevice> {
+        val gamepad = android.view.InputDevice.SOURCE_GAMEPAD
+        return try {
+            android.view.InputDevice.getDeviceIds().toList().mapNotNull { id: Int ->
+                try { inputMgr.getInputDevice(id) } catch (t: Throwable) { null }
+            }.filter { d: android.view.InputDevice ->
+                (d.sources and gamepad) == gamepad && !d.name.contains("virtual", true)
+            }
+        } catch (t: Throwable) { emptyList() }
+    }
+
+    /** Remote keys keep the bar up, and any key answers the "press any button to start" hint. */
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (event.action == android.view.KeyEvent.ACTION_DOWN && hint?.visibility == View.VISIBLE)
-            hint?.visibility = View.GONE
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            if (hudVisible) {
+                main.removeCallbacks(hidHud)
+                main.postDelayed(hidHud, 7000)
+            }
+            if (hint?.visibility == View.VISIBLE) hint?.visibility = View.GONE
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -534,12 +654,18 @@ class CoiGameActivity : Activity() {
                         if (d != null && (d.sources and android.view.InputDevice.SOURCE_GAMEPAD) != 0 &&
                             !d.name.contains("virtual", true)) {
                             toast("${d.name} connected — the game should hear it now")
+                            if (hudVisible) updatePadChip()
                         }
                     }
                 }
 
                 override fun onInputDeviceRemoved(id: Int) {
-                    main.post { toast("Controller disconnected") }
+                    main.post {
+                        if (controllers().isEmpty()) {
+                            toast("Controller disconnected")
+                            if (hudVisible) updatePadChip()
+                        }
+                    }
                 }
 
                 override fun onInputDeviceChanged(id: Int) {}

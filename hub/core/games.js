@@ -1,9 +1,10 @@
 /* core/games.js — the Game mode catalogue.
 
-   Three sources ship built-in, as static data files built by tools/build-game-catalog.js:
+   Two sources ship built-in, as static data files built by tools/build-game-catalog.js:
      data/games/ported2browser.json  AAA and console titles ported to the browser
-     data/games/poki.json            the Poki web arcade
      data/games/crazygames.json      the CrazyGames web arcade
+   (poki.json exists on disk but is not shelved — see builtinRows for why.)
+   Plus data/games/curated.json — the owner's highlighted titles, kept by hand and shown first.
    They are seeds, not a closed list: any add-on the household installs may carry games too. An
    installed external add-on is asked for `<base>/games.json`, which answers in exactly the shape
    this endpoint returns — `{ rows: [ { title, items: [ { id,title,poster,playUrl,pad,… } ] } ] }` —
@@ -71,9 +72,13 @@ const dedupe = (items) => [...new Map(items.map((i) => [i.title.toLowerCase(), i
 
 async function builtinRows() {
   const p2b = load('ported2browser.json').map((g) => card(g, 'p2b'));
-  const poki = load('poki.json').map((g) => card(g, 'poki'));
   const crazy = load('crazygames.json').map((g) => card(g, 'crazy'));
   const out = [];
+
+  // The household's highlighted games sit above everything: hand-picked by the owner
+  // (curated.json), shown once however they arrive.
+  const curated = load('curated.json').map((g) => card(g, 'curated'));
+  if (curated.length) out.push({ id: 'games-highlight', title: 'Highlighted', card: 'game', items: curated });
 
   // The marquee shelf: the biggest ports that answer a controller, fighting/racing/action first —
   // the genres where a gamepad is the whole point.
@@ -103,9 +108,12 @@ async function builtinRows() {
   shelf('games-retro', 'Retro & arcade', p2b.filter((g) => g.tags.some((t) => /retro|arcade|puzzle/i.test(t))));
   shelf('games-everything', 'Every port', [...p2b]);
 
-  // The web arcades get one shelf each: the popular rotation is a different promise than the ports.
+  // The web arcade gets one shelf: the popular rotation is a different promise than the ports.
+  // (Poki is not shelved: its SDK probes WebGL VENDOR/RENDERER and silently refuses the emulated
+  // GPUs of TV boxes before it ever inserts a game iframe — a blank screen we cannot fix from
+  // outside. Subway Surfers, the one title people ask for, ships in curated.json via a
+  // GameDistribution embed instead.)
   if (crazy.length >= 4) out.push({ id: 'games-crazy', title: 'Web arcade · CrazyGames', card: 'game', items: crazy.slice(0, 30), total: crazy.length });
-  if (poki.length >= 4) out.push({ id: 'games-poki', title: 'Web arcade · Poki', card: 'game', items: poki.slice(0, 30), total: poki.length });
 
   return out;
 }
