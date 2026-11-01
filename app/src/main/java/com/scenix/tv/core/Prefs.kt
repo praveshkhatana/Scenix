@@ -32,6 +32,16 @@ class Prefs(context: Context) {
     fun hevcBlocked(): Boolean = sp.getBoolean(KEY_HEVC_BLOCKED, false)
     fun setHevcBlocked(blocked: Boolean) = sp.edit().putBoolean(KEY_HEVC_BLOCKED, blocked).apply()
 
+    // ---- auto-update (core/Updates.kt) -----------------------------------------------------
+    // On by default: a TV nobody thinks to update is a TV that quietly falls behind. The prompt
+    // itself is still the person's decision — the check finds a build, the remote presses Install.
+    fun autoUpdate(): Boolean = sp.getBoolean(KEY_AUTO_UPDATE, true)
+    fun setAutoUpdate(on: Boolean) = sp.edit().putBoolean(KEY_AUTO_UPDATE, on).apply()
+
+    /** When the last update check ran, so boot checks cost at most one GitHub call a day. */
+    fun lastUpdateCheck(): Long = sp.getLong(KEY_LAST_UPDATE_CHECK, 0L)
+    fun setLastUpdateCheck(at: Long) = sp.edit().putLong(KEY_LAST_UPDATE_CHECK, at).apply()
+
     // ---- hub -----------------------------------------------------------------------------
     fun hubUrl(fallback: String): String = sp.getString(KEY_HUB, null)?.takeIf { it.isNotBlank() } ?: fallback
     fun setHubUrl(url: String) = sp.edit().putString(KEY_HUB, url.trim()).apply()
@@ -170,6 +180,8 @@ class Prefs(context: Context) {
         private const val KEY_DISCOVERED = "discovered_hubs"
         private const val KEY_THEME = "theme"
         private const val KEY_HEVC_BLOCKED = "hevc_blocked"
+        private const val KEY_AUTO_UPDATE = "auto_update"
+        private const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         private const val KEY_TOKEN = "hub_token"
         private const val KEY_PROFILE_UNLOCKED = "profile_unlocked"
         private const val KEY_PROFILE_UNLOCKED_AT = "profile_unlocked_at"

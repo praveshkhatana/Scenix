@@ -11,6 +11,9 @@
     <!-- The multicast lock is what lets a hub's LAN announcement reach this TV at all; without it
          most Wi-Fi firmwares drop group traffic. Held only for the length of one search. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Auto-update hands a downloaded APK to the package installer (core/Updates.kt). The person
+         holding the remote still confirms on Android's own screen; this only allows that handoff. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- TV-only: this app is never a phone app. -->
     <uses-feature android:name="android.software.leanback" android:required="true" />
@@ -220,6 +223,19 @@
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- The only file this app shares with another app: an update APK it downloaded, handed to
+             the package installer through this provider (core/Updates.kt). Android 7+ refuses a
+             file:// URI for installs, so the handoff must ride a content:// grant. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

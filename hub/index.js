@@ -630,6 +630,7 @@ function makeCtx(profile, metaBudget) {
         // on that.
         if (item.type === 'series') {
           item.progress = store.progressFor(ctx.profile.id, item.identity);
+          item.inList = store.inList(ctx.profile.id, item.identity);
           const ep = episodeOf(item, null, null);
           if (ep) item.streamId = episodeStreamId(item, ep);
         }
@@ -666,7 +667,10 @@ function makeCtx(profile, metaBudget) {
         if (it) parts.push(it);
       }
       const item = merge.mergeItems(parts, registry.priorities);
-      if (item) item.progress = store.progressFor(ctx.profile.id, item.identity);
+      if (item) {
+        item.progress = store.progressFor(ctx.profile.id, item.identity);
+        item.inList = store.inList(ctx.profile.id, item.identity);
+      }
       return item;
     },
   };
@@ -725,6 +729,9 @@ async function pipeline(items, ctx) {
     }
     if (!it) continue;
     it.progress = ctx.store.progressFor(ctx.profile.id, it.identity);
+    // Whether THIS profile has saved it. One in-memory set lookup per item — every card, row and
+    // detail page on every screen (app and browser) can then speak the truth about My List.
+    it.inList = ctx.store.inList(ctx.profile.id, it.identity);
     kept.push(it);
   }
   return kept;
@@ -4610,6 +4617,43 @@ async function handle(req, res) {
       }
       if (!stream) stream = readahead.live(); // a client that has not learned to name its copy yet
       return send(res, 200, { ok: true, identity: body.identity, progress, stream });
+    }
+
+    // "Remove from Continue watching" — the tile goes, the position stays (see core/store.js).
+    // Any later progress post brings the title back, so resuming re-arms the row by itself.
+    if (path === '/app/v1/progress/dismiss' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body || !body.identity) return send(res, 400, { error: 'identity required' });
+      const who = body.profile || body.profileId || 'default';
+      const done = store.dismissProgress(who, body.identity);
+      return send(res, 200, { ok: true, dismissed: done, identity: body.identity });
+    }
+
+    // "Start over": the record is rewound to never-started, so the detail button says Play again
+    // and the Continue bar empties. The screen does this BEFORE seeking, so a resumed viewer is not
+    // left with a hub that thinks they are at 0:00 while they watch from 40:00.
+    if (path === '/app/v1/progress/reset' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body || !body.identity) return send(res, 400, { error: 'identity required' });
+      const who = body.profile || body.profileId || 'default';
+      const fresh = store.resetProgress(who, body.identity);
+      return send(res, 200, { ok: true, progress: fresh, identity: body.identity });
+    }
+
+    // My List, on the hub: the living room's list IS the bedroom's list and the browser's list.
+    // GET answers the whole array (the app caches it per profile), POST adds or removes.
+    if (path === '/app/v1/list' && req.method === 'GET') {
+      const who = u.searchParams.get('profile') || u.searchParams.get('profileId') || 'default';
+      return send(res, 200, { profile: who, ids: store.myListIds(who, 400) });
+    }
+    if (path === '/app/v1/list' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body || !body.identity) return send(res, 400, { error: 'identity required' });
+      const who = body.profile || body.profileId || 'default';
+      const on = body.add === undefined ? !store.inList(who, body.identity) : Boolean(body.add);
+      if (on) store.listAdd(who, body.identity); else store.listRemove(who, body.identity);
+      return send(res, 200, { ok: true, identity: body.identity, inList: on,
+        ids: store.myListIds(who, 400) });
     }
 
     return send(res, 404, { error: 'not found', path });

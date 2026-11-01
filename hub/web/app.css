@@ -287,6 +287,15 @@ ul { list-style: none; }
 
 .foc { z-index: 30; }
 
+/* A dismissed Continue tile: fade and collapse out of the rail, then it is removed. The row does
+   not reflow in one hard jump — the strip contracts as the card leaves it. */
+.card.gone {
+  opacity: 0;
+  transform: scale(.85);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
 .card.foc {
   transform: scale(var(--focus-scale));
   box-shadow: 0 0 0 var(--ring-w) var(--focus-ring),

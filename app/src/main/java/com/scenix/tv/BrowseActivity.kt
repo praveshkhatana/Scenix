@@ -27,6 +27,7 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.Updates
 import com.scenix.tv.core.Views
 
 /**
@@ -446,6 +447,24 @@ class BrowseActivity : Activity() {
             }
         })
         load()
+        maybeCheckUpdate()
+    }
+
+    /**
+     * Auto-update, quietly: with the Settings switch on, the shell asks the project's GitHub
+     * releases at most once a day. Finding a build is the app's job; installing it is always the
+     * person's — the dialog offers, Android's installer confirms. (core/Updates.kt)
+     */
+    private fun maybeCheckUpdate() {
+        val local = (application as ScenixApp).prefs
+        if (!local.autoUpdate()) return
+        val now = System.currentTimeMillis()
+        if (now - local.lastUpdateCheck() < 20L * 3600_000L) return
+        local.setLastUpdateCheck(now)
+        Updates.check(this) { rel, _ ->
+            if (rel == null || isFinishing || isDestroyed) return@check
+            runOnUiThread { Updates.offer(this, rel) }
+        }
     }
 
     /**
@@ -1573,8 +1592,13 @@ class BrowseActivity : Activity() {
         private val radius = theme.radius("card", 6f)
         // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
         private val seeAll = !featured && row.total > row.items.size
+        // Continue is the one shelf a viewer can clean up in place: long-press removes the tile and
+        // the hub marks the record dismissed (the position survives; pressing the title re-arms it).
+        // The mutable copy exists so the removal animates without re-reading Home.
+        private val dismissible = row.id == "continue"
+        private val shown: MutableList<Item> = row.items.toMutableList()
 
-        override fun getItemCount(): Int = row.items.size + if (seeAll) 1 else 0
+        override fun getItemCount(): Int = shown.size + if (seeAll) 1 else 0
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             val card = FrameLayout(this@BrowseActivity)
@@ -1802,16 +1826,39 @@ class BrowseActivity : Activity() {
         }
 
         override fun onBindViewHolder(holder: CardHolder, position: Int) {
-            if (seeAll && position >= row.items.size) {
+            if (seeAll && position >= shown.size) {
                 bindSeeAll(holder)
                 return
             }
-            val item = row.items[position]
+            val item = shown[position]
             holder.item = item
             holder.itemView.contentDescription = itemAnnouncement(item)
             if (item.type == "genre") {
                 bindGenre(holder, item)
                 return
+            }
+            // Long-press a Continue tile to take it off Home. Every theme passes through this
+            // adapter, so the behaviour is the app's, not a pack's.
+            if (dismissible && item.progress != null) {
+                holder.itemView.isLongClickable = true
+                holder.itemView.setOnLongClickListener {
+                    val at = holder.bindingAdapterPosition
+                    if (at in shown.indices) {
+                        api.dismiss(profileId, item.identity) { }
+                        shown.removeAt(at)
+                        notifyItemRemoved(at)
+                        notifyItemRangeChanged(at, shown.size - at)
+                        android.widget.Toast.makeText(
+                            this@BrowseActivity,
+                            "Removed from Continue watching — pressing the title brings it back",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    true
+                }
+            } else {
+                holder.itemView.setOnLongClickListener(null)
+                holder.itemView.isLongClickable = false
             }
             holder.chevron.visibility = View.GONE
             if (featured) holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID

@@ -17,6 +17,7 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.Theme
+import com.scenix.tv.core.Updates
 import com.scenix.tv.core.Views
 import org.json.JSONArray
 import org.json.JSONObject
@@ -174,6 +175,32 @@ class SettingsActivity : Activity() {
         }
         addRow("Profiles", "Switch person", "The native who's-watching gate") {
             startActivity(Intent(this, ProfilesActivity::class.java))
+        }
+        // Auto-update (core/Updates.kt): the builds live as GitHub Releases on the project repo.
+        // The check is the app's; the install is always the person's — the dialog offers, Android
+        // confirms, nothing is ever swapped under a viewer mid-frame.
+        addRow("Auto-update", if (app.prefs.autoUpdate()) "On" else "Off",
+            "Look for a new Scenix build when the app starts — you always confirm the install") {
+            app.prefs.setAutoUpdate(!app.prefs.autoUpdate())
+            paint()
+        }
+        addRow("Check for updates",
+            "v${Updates.currentVersionName(this)} (${Updates.currentVersionCode(this)})",
+            "The newest build published on the Scenix GitHub releases") {
+            Updates.check(this) { rel, error ->
+                if (isFinishing || isDestroyed) return@check
+                runOnUiThread {
+                    when {
+                        rel != null -> Updates.offer(this, rel)
+                        error != null -> android.widget.Toast.makeText(
+                            this, "Update check failed: $error", android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                        else -> android.widget.Toast.makeText(
+                            this, "This is the newest build", android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
         }
         // The admin areas are a separate door from the profile PINs. With no admin lock set, a kids
         // profile does not see them at all (the default-safe state). Once the household turns the lock

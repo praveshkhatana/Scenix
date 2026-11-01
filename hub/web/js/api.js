@@ -103,6 +103,14 @@ export const api = {
   play: (body) => request('/app/v1/play', { method: 'POST', body, timeout: 30000 }),
   switchSource: (body) => request('/app/v1/switch', { method: 'POST', body, timeout: 30000 }),
   progress: (body) => request('/app/v1/progress', { method: 'POST', body, timeout: 6000 }),
+  // Continue watching management: dismiss hides the tile (the position survives, and pressing the
+  // title again brings it back); reset rewinds a title to never-started.
+  dismiss: (body) => request('/app/v1/progress/dismiss', { method: 'POST', body, timeout: 6000 }),
+  resetProgress: (body) => request('/app/v1/progress/reset', { method: 'POST', body, timeout: 6000 }),
+  // My List lives on the hub, so the living room and the browser read the same shelf.
+  myList: (profile) => request(`/app/v1/list?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
+  setMyList: (profile, identity, add) => request('/app/v1/list',
+    { method: 'POST', body: { profile, identity, add }, timeout: 6000 }),
   prefs: (profile) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
   // The hub's POST reads the profile from the body (the native client has always sent it there); the
   // query is for a reader. Sending only the query made every write from this page answer `400 profile

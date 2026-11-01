@@ -133,11 +133,34 @@ export function screen(ctx, identity) {
     icon(on ? 'check' : 'plus'), on ? 'In My List' : 'My List');
     focus.focusable(listBtn);
 
+    // A title already started gets the honest second choice next to Resume — the Netflix
+    // "Start over", kept visible instead of buried, because "continue & watch from beginning"
+    // is the exact thing people ask for mid-film. It rewinds the hub's record, then plays.
+    let restartBtn = null;
+    if (prog && prog.positionMs > 5000) {
+      restartBtn = el('button', { class: 'btn big ghost', type: 'button',
+        'aria-label': 'Start over from the beginning',
+        onclick: () => {
+          api.resetProgress({ profile: session.profile && session.profile.id, identity: item.identity })
+            .catch(() => {});
+          item.progress = null;
+          clear(playBtn);
+          playBtn.appendChild(icon('play', { solid: true }));
+          playBtn.appendChild(el('span', { text: item.live ? 'Watch live' : 'Play' }));
+          restartBtn.remove();
+          const rl = dh.querySelector('.resume-line');
+          if (rl) rl.remove();
+        } },
+      icon('refresh'), 'Start over');
+      focus.focusable(restartBtn);
+    }
+
     const infoBtn = el('button', { class: 'round', type: 'button', 'aria-label': 'What this hub knows',
       title: 'What this hub knows', onclick: () => showRecord() }, icon('info'));
     focus.focusable(infoBtn);
 
-    dh.appendChild(el('div', { class: 'detail-actions' }, playBtn, listBtn, infoBtn));
+    dh.appendChild(el('div', { class: 'detail-actions' },
+      ...(restartBtn ? [playBtn, restartBtn, listBtn, infoBtn] : [playBtn, listBtn, infoBtn])));
 
     // Netflix shows where you stopped right under the buttons: a thin track with the watched part filled
     // in brand red. The Play button already says "Resume · N left"; this is the wordless version of it.

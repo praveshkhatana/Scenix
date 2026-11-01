@@ -310,7 +310,8 @@ class DetailActivity : Activity() {
         val first = if (episodes != null && episodes.length() > 0) episodes.optJSONObject(0) else null
         val playSeason = if (resumeSeason > 0) resumeSeason else first?.optInt("season", 0) ?: 0
         val playEpisode = if (resumeEpisode > 0) resumeEpisode else first?.optInt("episode", 0) ?: 0
-        val playText = if ((progress?.optLong("positionMs", 0L) ?: 0L) > 0L) "Resume" else "Play"
+        val posMs = progress?.optLong("positionMs", 0L) ?: 0L
+        val playText = if (posMs > 0L) "Resume" else "Play"
         val play = Views.text(app, "button", 23f, theme.onBrand, playText, bold = true, gravity = Gravity.CENTER)
         play.setPadding(theme.px(38f), theme.px(16f), theme.px(38f), theme.px(16f))
         play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
@@ -319,9 +320,36 @@ class DetailActivity : Activity() {
         play.setOnClickListener { startPlay(playSeason, playEpisode) }
         Focus.attach(play, play, app, theme.radius("button", 6f), scale = false, elevate = false)
         actions.addView(play, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        // My List: the same per-household set the web UI keeps, held on this TV's prefs. OK toggles
-        // it in place; the button says which side of the line the title is on.
-        var onList = app.prefs.myList(profileId).contains(identity)
+        // A title already started gets the honest second choice: Resume keeps the playhead, Start
+        // over rewinds the hub's record and opens at zero. Visible, not buried under a long-press —
+        // "watch from the beginning" is what people ask for mid-film.
+        if (posMs > 0L) {
+            val restart = Views.text(app, "button", 23f, theme.ink, "↺ Start over", bold = true, gravity = Gravity.CENTER)
+            restart.setPadding(theme.px(28f), theme.px(16f), theme.px(28f), theme.px(16f))
+            restart.background = Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            restart.isFocusable = true
+            restart.isClickable = true
+            restart.setOnClickListener {
+                // Rewind the hub FIRST, then play: a record that still says 40:00 while the viewer
+                // watches from 0:00 is the lie the next Continue tile would print.
+                api.resetProgress(profileId, identity) { }
+                progress?.put("positionMs", 0L)
+                progress?.put("watchedMs", 0L)
+                progress?.remove("dismissedAt")
+                play.text = "Play"
+                actions.removeView(restart)
+                startPlay(playSeason, playEpisode, fromStart = true)
+            }
+            Focus.attach(restart, restart, app, theme.radius("button", 6f), scale = false, elevate = false)
+            actions.addView(restart, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = theme.px(16f)
+            })
+        }
+        // My List lives on the hub (data/list.json), so the living room's shelf IS the bedroom's
+        // and the browser's. The hub already stamped this title's truth into record.inList; the
+        // TV's prefs keep a copy for the moment the hub is briefly away. OK toggles in place.
+        var onList = if (record.has("inList")) record.optBoolean("inList")
+        else app.prefs.myList(profileId).contains(identity)
         val listBtn = Views.text(app, "button", 23f, theme.ink,
             if (onList) "✓ In My List" else "+ My List", bold = true, gravity = Gravity.CENTER)
         listBtn.setPadding(theme.px(28f), theme.px(16f), theme.px(28f), theme.px(16f))
@@ -329,11 +357,21 @@ class DetailActivity : Activity() {
         listBtn.isFocusable = true
         listBtn.isClickable = true
         listBtn.setOnClickListener {
-            val ids = app.prefs.myList(profileId)
-            if (!ids.remove(identity)) ids.add(identity)
-            app.prefs.setMyList(profileId, ids)
-            onList = ids.contains(identity)
+            // Optimistic: the button flips this frame. The POST confirms; a failed POST flips back.
+            onList = !onList
             listBtn.text = if (onList) "✓ In My List" else "+ My List"
+            val ids = app.prefs.myList(profileId)
+            if (onList) { if (!ids.contains(identity)) ids.add(identity) } else ids.remove(identity)
+            app.prefs.setMyList(profileId, ids)
+            api.setMyList(profileId, identity, onList) { confirmed ->
+                if (confirmed != onList) {
+                    onList = confirmed
+                    runOnUiThread { listBtn.text = if (onList) "✓ In My List" else "+ My List" }
+                    val back = app.prefs.myList(profileId)
+                    if (onList) { if (!back.contains(identity)) back.add(identity) } else back.remove(identity)
+                    app.prefs.setMyList(profileId, back)
+                }
+            }
         }
         Focus.attach(listBtn, listBtn, app, theme.radius("button", 6f), scale = false, elevate = false)
         actions.addView(listBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -857,7 +895,7 @@ class DetailActivity : Activity() {
         renderSeason(selectedSeason)
     }
 
-    private fun startPlay(season: Int, episode: Int) {
+    private fun startPlay(season: Int, episode: Int, fromStart: Boolean = false) {
         val record = item ?: return
         val progress = record.optJSONObject("progress")
         val progressEpisode = progress?.optJSONObject("episode")
@@ -866,7 +904,7 @@ class DetailActivity : Activity() {
         val sameEpisode = season > 0 && episode > 0 &&
             progressEpisode?.optInt("season", 0) == season &&
             progressEpisode?.optInt("episode", 0) == episode
-        val position = if ((season <= 0 && episode <= 0) || sameEpisode) {
+        val position = if (fromStart) 0L else if ((season <= 0 && episode <= 0) || sameEpisode) {
             progress?.optLong("positionMs", 0L) ?: 0L
         } else 0L
         val advisories = ArrayList<String>()

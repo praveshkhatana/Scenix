@@ -43,6 +43,7 @@ class LocalHub private constructor(context: Context) {
     private val profilesFile = File(data, "profiles.json")
     private val libraryFile = File(data, "library.json")
     private val progressFile = File(data, "progress.json")
+    private val listFile = File(data, "list.json")
     private val prefStore = File(data, "profile-prefs.json")
 
     // ---- the owner's settings -----------------------------------------------------------------
@@ -1367,6 +1368,75 @@ class LocalHub private constructor(context: Context) {
         JSONObject().put("ok", true).put("identity", identity)
     }
 
+    /**
+     * "Remove from Continue watching": keep the position, hide the tile. [forWhoPut] rebuilds the
+     * entry on the next progress post, so pressing the title again re-arms the row — the same
+     * contract the remote hub runs (core/store.js).
+     */
+    fun dismissJson(body: JSONObject): JSONObject = synchronized(lock) {
+        val who = s(body, "profile", "default").ifBlank { "default" }
+        val identity = s(body, "identity", "")
+        if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        val root = readJson(progressFile)
+        val forWho = root.optJSONObject(who) ?: return JSONObject().put("ok", true).put("dismissed", false)
+        val entry = forWho.optJSONObject(identity) ?: return JSONObject().put("ok", true).put("dismissed", false)
+        entry.put("dismissedAt", System.currentTimeMillis())
+        root.put(who, forWho)
+        writeJson(progressFile, root)
+        JSONObject().put("ok", true).put("dismissed", true).put("identity", identity)
+    }
+
+    /** "Start over": rewind the record to never-started. Run before seeking, exactly like the hub. */
+    fun resetProgressJson(body: JSONObject): JSONObject = synchronized(lock) {
+        val who = s(body, "profile", "default").ifBlank { "default" }
+        val identity = s(body, "identity", "")
+        if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        val root = readJson(progressFile)
+        val forWho = root.optJSONObject(who) ?: JSONObject()
+        val cur = forWho.optJSONObject(identity)
+        val fresh = JSONObject()
+            .put("positionMs", 0L).put("watchedMs", 0L).put("updatedAt", System.currentTimeMillis())
+            .put("episode", cur?.opt("episode") ?: JSONObject.NULL)
+        forWho.put(identity, fresh)
+        root.put(who, forWho)
+        writeJson(progressFile, root)
+        JSONObject().put("ok", true).put("identity", identity).put("progress", fresh)
+    }
+
+    // ---- My List, on this box (standalone mode speaks the same /app/v1/list contract as the hub) --
+
+    fun listJson(profileId: String?): JSONObject = synchronized(lock) {
+        val who = profileId?.ifBlank { "default" } ?: "default"
+        JSONObject().put("profile", who).put("ids", readJson(listFile).optJSONArray(who) ?: JSONArray())
+    }
+
+    fun listPostJson(body: JSONObject): JSONObject = synchronized(lock) {
+        val who = s(body, "profile", "default").ifBlank { "default" }
+        val identity = s(body, "identity", "")
+        if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        val root = readJson(listFile)
+        val ids = root.optJSONArray(who) ?: JSONArray()
+        val was = indexOfIdentity(ids, identity) >= 0
+        val on = if (body.has("add")) body.optBoolean("add") else !was
+        if (on) {
+            if (!was) ids.put(0, identity)
+        } else if (was) {
+            val next = JSONArray()
+            for (i in 0 until ids.length()) if (i != indexOfIdentity(ids, identity)) next.put(ids.optString(i))
+            root.put(who, next)
+            writeJson(listFile, root)
+            return JSONObject().put("ok", true).put("identity", identity).put("inList", false).put("ids", next)
+        }
+        root.put(who, ids)
+        writeJson(listFile, root)
+        JSONObject().put("ok", true).put("identity", identity).put("inList", on).put("ids", ids)
+    }
+
+    private fun indexOfIdentity(ids: JSONArray, identity: String): Int {
+        for (i in 0 until ids.length()) if (ids.optString(i) == identity) return i
+        return -1
+    }
+
     /** Drop every cached addon answer — what "Clear cached copies" in Settings does. */
     fun clearAddonCache() = addons.clearCache()
 
@@ -1446,7 +1516,8 @@ class LocalHub private constructor(context: Context) {
     private fun buildRows(profileId: String?): List<LocalRow> {
         val out = ArrayList<LocalRow>()
 
-        // Continue watching: what this profile stopped, most recently stopped first.
+        // Continue watching: what this profile stopped, most recently stopped first. A tile the
+        // viewer dismissed (dismissedAt) stays out until the next progress post rebuilds the entry.
         val who = profileId ?: "default"
         val progress = readJson(progressFile).optJSONObject(who)
         if (progress != null && progress.length() > 0) {
@@ -1455,10 +1526,23 @@ class LocalHub private constructor(context: Context) {
             for (k in progress.keys()) names.add(k)
             names.sortByDescending { progress.optJSONObject(it)?.optLong("updatedAt") ?: 0L }
             for (identity in names.take(ROW_MAX)) {
+                if ((progress.optJSONObject(identity)?.optLong("dismissedAt", 0L) ?: 0L) > 0L) continue
                 val seed = seedFromLibrary(identity) ?: continue
                 Progress.from(progress.optJSONObject(identity))?.let { items.add(seed.copy(progress = it)) }
             }
             if (items.isNotEmpty()) out.add(LocalRow("continue", "Continue watching", "continue", 5, "all", items))
+        }
+
+        // My List: the shelf this person stocked themselves, newest first, same order the hub's
+        // rows/mylist.js sends.
+        val listIds = readJson(listFile).optJSONArray(who)
+        if (listIds != null && listIds.length() > 0) {
+            val items = ArrayList<Item>()
+            for (i in 0 until minOf(listIds.length(), ROW_MAX)) {
+                val seed = seedFromLibrary(listIds.optString(i)) ?: continue
+                items.add(seed)
+            }
+            if (items.isNotEmpty()) out.add(LocalRow("mylist", "My List", "poster", 12, "all", items))
         }
 
         // Recently added: this app's own memory of what it has put on a shelf, newest first.

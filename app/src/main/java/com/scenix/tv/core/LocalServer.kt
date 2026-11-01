@@ -134,6 +134,26 @@ class LocalServer private constructor(
                 else res.json(200, hub.progressJson(o))
             }
 
+            path == "/app/v1/progress/dismiss" -> {
+                val o = parse(body)
+                if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
+                else res.json(200, hub.dismissJson(o))
+            }
+
+            path == "/app/v1/progress/reset" -> {
+                val o = parse(body)
+                if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
+                else res.json(200, hub.resetProgressJson(o))
+            }
+
+            path == "/app/v1/list" -> {
+                if (method == "POST") {
+                    val o = parse(body)
+                    if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
+                    else res.json(200, hub.listPostJson(o))
+                } else res.json(200, hub.listJson(query["profile"] ?: query["profileId"]))
+            }
+
             path == "/app/v1/prefs" -> {
                 val o = parse(body)
                 when {

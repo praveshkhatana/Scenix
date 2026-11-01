@@ -373,6 +373,43 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
 
     /**
+     * "Remove from Continue watching": the tile leaves Home, the position stays. Pressing the title
+     * again posts progress and the row re-arms by itself (hub core/store.js).
+     */
+    fun dismiss(profileId: String, identity: String, done: (ok: Boolean) -> Unit = { }) =
+        request("/app/v1/progress/dismiss", "", "POST",
+            JSONObject().put("profile", profileId).put("identity", identity), 6000) { root, _, _ ->
+            done(root?.optBoolean("dismissed", false) ?: false)
+        }
+
+    /** "Start over": the hub rewinds its record to never-started. Run BEFORE seeking to 0. */
+    fun resetProgress(profileId: String, identity: String, done: (ok: Boolean) -> Unit = { }) =
+        request("/app/v1/progress/reset", "", "POST",
+            JSONObject().put("profile", profileId).put("identity", identity), 6000) { root, _, _ ->
+            done(root?.optBoolean("ok", false) ?: false)
+        }
+
+    /**
+     * My List, on the hub: one shelf for every screen in the house. GET answers the whole array so
+     * the app can cache it per profile; POST adds or removes one identity.
+     */
+    fun myList(profileId: String, done: (ids: List<String>?, error: String?) -> Unit) {
+        val query = if (profileId.isBlank()) "" else "profile=" + enc(profileId)
+        request("/app/v1/list", query, "GET", null, 6000) { root, _, error ->
+            val arr = root?.optJSONArray("ids")
+            val ids = ArrayList<String>()
+            if (arr != null) for (i in 0 until arr.length()) ids.add(arr.optString(i))
+            done(if (error == null) ids else null, error)
+        }
+    }
+
+    fun setMyList(profileId: String, identity: String, add: Boolean, done: (inList: Boolean) -> Unit = { }) =
+        request("/app/v1/list", "", "POST",
+            JSONObject().put("profile", profileId).put("identity", identity).put("add", add), 6000) { root, _, _ ->
+            done(root?.optBoolean("inList", add) ?: add)
+        }
+
+    /**
      * `GET /app/v1/trailer/<identity>` — the hub looks the clip up on its own box and answers a
      * playable URL. The proxied form is preferred: a signed clip demands headers a bare player
      * will not replay, and the hub proxy replays them.

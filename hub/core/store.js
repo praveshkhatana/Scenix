@@ -3,7 +3,8 @@
  * core/store.js — the hub's only memory across restarts. JSON files under hub/data/.
  *
  *   data/library.json    { "<identity>": <addedAt ms> }   first time the hub ever saw that identity
- *   data/progress.json   { "<profile>": { "<identity>": { positionMs, watchedMs, updatedAt } } }
+ *   data/progress.json   { "<profile>": { "<identity>": { positionMs, watchedMs, updatedAt, dismissedAt? } } }
+ *   data/list.json       { "<profile>": ["<identity>", …] } that profile's My List, newest first
  *   data/profiles.json   optional runtime override of hub/profiles.json (merged by profile id)
  *   hub/profiles.json    the household itself - NOT in the repo (real names), so hub/profiles.example.json
  *                        (generic ids) ships instead and is the fallback when the real one is absent
@@ -41,6 +42,7 @@ class Store {
     this.dataDir = path.join(root, 'data');
     this.libraryFile = path.join(this.dataDir, 'library.json');
     this.progressFile = path.join(this.dataDir, 'progress.json');
+    this.listFile = path.join(this.dataDir, 'list.json');
     this.profilesSeedFile = path.join(root, 'profiles.json');
     this.profilesExampleFile = path.join(root, 'profiles.example.json');
     this.profilesFile = path.join(this.dataDir, 'profiles.json');
@@ -48,6 +50,7 @@ class Store {
 
     this.library = readJson(this.libraryFile, {}); // identity -> addedAt(ms)
     this.progress = readJson(this.progressFile, {}); // profile -> identity -> progress
+    this.list = readJson(this.listFile, {}); // profile -> [identity, …] newest first
     this._dirty = new Set();
     this._timer = null;
     this._profiles = null;
@@ -130,10 +133,81 @@ class Store {
   continueIdentities(profileId, limit = 20) {
     const p = this.progress[String(profileId)] || {};
     return Object.entries(p)
-      .filter(([, v]) => (v.watchedMs > 0 || v.positionMs > 0))
+      // A tile the viewer dismissed from Continue watching stays out — but only until they press
+      // the title again: setProgress clears dismissedAt, so resuming re-arms the row, position and
+      // all. That is the Netflix semantic: "get this off my home", not "erase that I ever watched it".
+      .filter(([, v]) => (v.watchedMs > 0 || v.positionMs > 0) && !v.dismissedAt)
       .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0))
       .slice(0, limit)
       .map(([identity]) => identity);
+  }
+
+  /**
+   * "Remove from Continue watching": keep the position (they may press the title tomorrow), stop
+   * the tile from standing on the home page. Re-arm happens by watching: any real progress post
+   * clears the flag, exactly like the shelf a Netflix title hops back onto after one more episode.
+   */
+  dismissProgress(profileId, identity) {
+    const pkey = String(profileId); const ikey = String(identity);
+    const cur = (this.progress[pkey] || {})[ikey];
+    if (!cur) return false;
+    cur.dismissedAt = Date.now();
+    this._markDirty('progress');
+    return true;
+  }
+
+  // ---- My List per profile ------------------------------------------------------------------------
+  //
+  // On the hub, not on the screen: a list you build in the living room is a lie if the bedroom TV
+  // and the browser say it is empty. The array is newest-first so the row reads like the shelf a
+  // person just stocked.
+
+  myListIds(profileId, limit = 200) {
+    const ids = Array.isArray(this.list[String(profileId)]) ? this.list[String(profileId)] : [];
+    return ids.slice(0, limit);
+  }
+
+  inList(profileId, identity) {
+    const ids = Array.isArray(this.list[String(profileId)]) ? this.list[String(profileId)] : [];
+    return ids.includes(String(identity));
+  }
+
+  /** Put (or keep) a title in the list. Returns whether this call changed anything. */
+  listAdd(profileId, identity) {
+    if (!identity) return false;
+    const pkey = String(profileId); const ikey = String(identity);
+    const ids = Array.isArray(this.list[pkey]) ? this.list[pkey] : (this.list[pkey] = []);
+    if (ids.includes(ikey)) return false;
+    ids.unshift(ikey);
+    if (ids.length > 1000) this.list[String(profileId)] = ids.slice(0, 1000);
+    this._markDirty('list');
+    return true;
+  }
+
+  listRemove(profileId, identity) {
+    const pkey = String(profileId);
+    const ids = Array.isArray(this.list[pkey]) ? this.list[pkey] : [];
+    const at = ids.indexOf(String(identity));
+    if (at < 0) return false;
+    ids.splice(at, 1);
+    this._markDirty('list');
+    return true;
+  }
+
+  /**
+   * Rewind a title to "never started": the Resume button becomes Play again, the row tile's bar
+   * empties, and a dismissed tile re-arms if it had been hidden. Watched time for the record is
+   * zeroed too — starting over means the record starts over.
+   */
+  resetProgress(profileId, identity) {
+    const pkey = String(profileId); const ikey = String(identity);
+    const cur = (this.progress[pkey] || {})[ikey];
+    if (!cur) return null;
+    this.progress[pkey][ikey] = {
+      positionMs: 0, watchedMs: 0, updatedAt: Date.now(), episode: cur.episode || null,
+    };
+    this._markDirty('progress');
+    return this.progress[pkey][ikey];
   }
 
   // ---- profiles -----------------------------------------------------------------------------------
@@ -289,6 +363,7 @@ class Store {
     try {
       if (what.has('library')) writeJsonAtomic(this.libraryFile, this.library);
       if (what.has('progress')) writeJsonAtomic(this.progressFile, this.progress);
+      if (what.has('list')) writeJsonAtomic(this.listFile, this.list);
       this.writes++;
     } catch (e) {
       console.error(new Date().toISOString(), 'store flush failed:', e.message);

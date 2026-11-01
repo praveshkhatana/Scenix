@@ -13,6 +13,7 @@
  */
 
 import { el, clear, posterImg, imageUrl, prefersReducedMotion } from '/ui/js/dom.js';
+import { api } from '/ui/js/api.js';
 import { icon } from '/ui/js/icons.js';
 import { focusable, getFocus } from '/ui/js/focus.js';
 import { runtime, timeLeft, episodeLabel, langList, since } from '/ui/js/format.js';
@@ -87,12 +88,44 @@ function quickActions(item, ctx) {
   const listOn = inMyList(item.identity);
   const btn = (name, cls, label, fn) => el('button', {
     class: `r ${cls || ''}`, type: 'button', title: label, 'aria-label': label,
-    onclick: (e) => { e.stopPropagation(); fn(item); },
+    onclick: (e) => { e.stopPropagation(); fn(item, e.currentTarget); },
   }, icon(name, { solid: name === 'play' }));
-  return el('div', { class: 'exp' },
+  const acts = [
     btn('play', 'w', 'Play', ctx.play),
     btn(listOn ? 'check' : 'plus', '', listOn ? 'Remove from My list' : 'Add to My list', ctx.list),
-    btn('info', '', 'More info', ctx.open));
+    btn('info', '', 'More info', ctx.open),
+  ];
+  // Continue watching is the one shelf a viewer is allowed to clean up in place. Dismiss hides the
+  // tile; the position survives, and pressing the title again brings the row back (core/store.js).
+  if (ctx.row && ctx.row.id === 'continue' && item.progress) {
+    acts.push(btn('close', '', 'Remove from Continue watching', (it, b) => {
+      api.dismiss({ profile: session.profile && session.profile.id, identity: it.identity }).catch(() => {});
+      const cardNode = b && b.closest ? b.closest('.card') : null;
+      if (cardNode) {
+        // The remote may be standing on this very card; step it sideways before the tile vanishes,
+        // or the whole page loses focus and the d-pad goes dead.
+        if (cardNode.classList.contains('foc')) {
+          const list = cardNode.parentNode;
+          const next = list && (cardNode.nextElementSibling || cardNode.previousElementSibling);
+          if (next && next.classList) { next.classList.add('foc'); }
+        }
+        cardNode.classList.add('gone');
+        setTimeout(() => {
+          cardNode.remove();
+          const list = cardNode.closest && cardNode.parentNode;
+          const rowNode = list && list.closest ? list.closest('.row') : null;
+          if (list && !list.querySelector('.card') && rowNode) rowNode.remove();
+        }, 180);
+      }
+      // The header and any other surface read the same session state; make them agree now.
+      if (session.home && session.home.rows) {
+        for (const r of session.home.rows) {
+          if (r.id === 'continue') r.items = (r.items || []).filter((x) => x.identity !== it.identity);
+        }
+      }
+    }));
+  }
+  return el('div', { class: 'exp' }, acts);
 }
 
 /**
