@@ -94,8 +94,17 @@
         for (var j = 0; j < chain.length; j++) chain[j].setAttribute("data-scn", "keep");
         function hideOff(parent, keep) {
           var s = parent.children;
-          for (var k = 0; k < s.length; k++)
-            if (s[k] !== keep) { s[k].style.setProperty("display", "none", "important"); hid.push(s[k]); }
+          for (var k = 0; k < s.length; k++) {
+            var c = s[k];
+            if (c === keep) continue;
+            // The loader's status line ("Downloading core… 45%") is feedback the child needs
+            // while a first launch pulls tens of MB — it is not portal chrome.
+            var t = "";
+            try { t = (c.textContent || "").replace(/\s+/g, " ").trim(); } catch (x) {}
+            if (t && t.length < 48 && !c.querySelector("canvas,iframe,video") &&
+                /down|loading|extract|install|verif|buffer|memory|insert|pause|started|ready/i.test(t)) continue;
+            c.style.setProperty("display", "none", "important"); hid.push(c);
+          }
         }
         // Walk the chain pairs: at each level keep only the child that leads to the game.
         // (chain[0] is the root itself — passing it as the keeper under body hid everything,

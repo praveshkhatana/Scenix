@@ -64,6 +64,8 @@ class CoiGameActivity : Activity() {
     private var stallTold = false
     private var backArmed = false
     private var sawCanvasAt = 0L
+    private var hint: TextView? = null
+    private var hintTold = false
     // The same sweep message can reach report() twice (stock delegate path + raw dispatcher
     // path); the background stamps a sequence number on every message, so act on each once.
     private val reportedSeqs = LinkedHashMap<String, Unit>()
@@ -108,6 +110,13 @@ class CoiGameActivity : Activity() {
         status = Views.text(app, "sub", 24f, theme.ink2, "Loading $titleText…", gravity = Gravity.CENTER)
         root.addView(status, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(80f)
+        ).apply { gravity = Gravity.CENTER })
+
+        hint = Views.text(app, "sub", 22f, theme.ink2, "Press any button on the remote to start", gravity = Gravity.CENTER).apply {
+            visibility = View.GONE
+        }
+        root.addView(hint, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(60f)
         ).apply { gravity = Gravity.CENTER })
 
         errorBox = LinearLayout(this).apply {
@@ -256,6 +265,8 @@ class CoiGameActivity : Activity() {
                 main.post {
                     status.visibility = View.VISIBLE
                     errorBox.visibility = View.GONE
+                    hint?.visibility = View.GONE
+                    hintTold = false
                     painted = false
                     openedAt = System.currentTimeMillis()
                 }
@@ -436,12 +447,22 @@ class CoiGameActivity : Activity() {
                 val res = c?.get("res")?.toString() ?: m["val"]?.toString()
                 carvedPasses = if (res == "carved") { missStreak = 0; carvedPasses + 1 } else carvedPasses
                 missStreak = if (res == "carved") 0 else missStreak + 1
-                if (c?.get("canvas")?.toString() == "true") sawCanvasAt = System.currentTimeMillis()
+                if (c?.get("canvas")?.toString() == "true") {
+                    if (sawCanvasAt == 0L && !hintTold) {
+                        // The loader finished and the stage is up, but these cores only wake
+                        // for a first real key press (browser audio-unlock) — say so over the
+                        // black canvas instead of leaving a dead-looking screen. The hint
+                        // stays until a key actually arrives (dispatchKeyEvent) or a reload.
+                        hintTold = true
+                        main.post { hint?.visibility = View.VISIBLE }
+                    }
+                    sawCanvasAt = System.currentTimeMillis()
+                }
                 // The stage can be "carved" (the game frame pinned) while the game itself never
                 // boots behind it — the canvas is the only honest signal that it did.
-                if (!stallTold && sawCanvasAt == 0L && System.currentTimeMillis() - openedAt > 30000) {
+                if (!stallTold && sawCanvasAt == 0L && System.currentTimeMillis() - openedAt > 45000) {
                     stallTold = true
-                    toast("This portal hasn't started its game on this TV — try another title.")
+                    toast("Still getting this game ready — the first play downloads it. Give it a minute, or try another title.")
                 }
             }
         }
@@ -489,6 +510,13 @@ class CoiGameActivity : Activity() {
             toast("Press Back again to leave the game")
             main.postDelayed({ backArmed = false }, 3000)
         }
+    }
+
+    /** Any remote key answers the "press any button to start" hint — take it away on the first one. */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && hint?.visibility == View.VISIBLE)
+            hint?.visibility = View.GONE
+        return super.dispatchKeyEvent(event)
     }
 
     // ── Controllers ────────────────────────────────────────────────────────────────────────────
