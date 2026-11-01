@@ -103,6 +103,19 @@ internal object HomeSurfaceFactory {
                     ),
                 ),
             )
+            HomeLayoutSpec.Hero.KIDS_STAGE -> KidsSurface(
+                KidsHomeLayout(
+                    context,
+                    app,
+                    KidsHomeLayout.Callbacks(
+                        onOpen = callbacks.onOpen,
+                        onSection = callbacks.onSection,
+                        onProfile = callbacks.onProfile,
+                        onSearch = callbacks.onSearch,
+                        onShelf = callbacks.onShelf,
+                    ),
+                ),
+            )
             else -> AppleSceneSurface(
                 HeroComponent(
                     context,
@@ -168,6 +181,20 @@ private class Ps5Surface(private val view: Ps5HomeLayout) : HomeSurface {
 }
 
 private class CleanSurface(private val view: CleanHomeLayout) : HomeSurface {
+    override val root: View get() = view.root
+    override val primaryControl: View get() = view.primaryControl
+    override val navigationAnchor: View? get() = view.navigationAnchor
+    override val selectorRoot: View? get() = null
+    override val preferredHeightPx: Int get() = view.preferredHeightPx
+
+    override fun render(slides: List<Item>, activeIndex: Int) = view.render(slides, activeIndex)
+    override fun setNextFocusUp(id: Int) = view.setNextFocusUp(id)
+    override fun setChips(shelves: List<Pair<String, String>>) = view.setChips(shelves)
+
+    override fun focusEntry(activeIndex: Int): Boolean = view.focusEntry(activeIndex)
+}
+
+private class KidsSurface(private val view: KidsHomeLayout) : HomeSurface {
     override val root: View get() = view.root
     override val primaryControl: View get() = view.primaryControl
     override val navigationAnchor: View? get() = view.navigationAnchor

@@ -149,7 +149,8 @@ class BrowseActivity : Activity() {
                     // navigation strip, content tiles and actions. Let their explicit next-focus
                     // graph answer UP/DOWN rather than forcing the Apple carousel hierarchy on them.
                     if (heroFamily in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
-                            HomeLayoutSpec.Hero.DUAL_CARDS) &&
+                            HomeLayoutSpec.Hero.DUAL_CARDS,
+                            HomeLayoutSpec.Hero.KIDS_STAGE) &&
                         isInside(adapter.heroRoot, focus)) {
                         return super.dispatchKeyEvent(event)
                     }
@@ -1182,7 +1183,8 @@ class BrowseActivity : Activity() {
             // invention — and the shelf below still shows them in full. The dual-card pack needs
             // the same guarantee: two distinct titles, never one duplicated across both cards.
             if (app.theme.homeLayout.hero in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
-                    HomeLayoutSpec.Hero.DUAL_CARDS) &&
+                    HomeLayoutSpec.Hero.DUAL_CARDS,
+                    HomeLayoutSpec.Hero.KIDS_STAGE) &&
                 slides.size in 1 until maxSlides) {
                 val seen = slides.mapTo(HashSet()) { it.identity.ifBlank { it.title } }
                 for (row in others) {

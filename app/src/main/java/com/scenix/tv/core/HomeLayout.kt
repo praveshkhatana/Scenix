@@ -40,6 +40,7 @@ data class HomeLayoutSpec(
         PS5_HUB,
         ROKU_GRID,
         CLEAN,
+        KIDS,
         MAGNIFIER,
     }
 
@@ -65,6 +66,8 @@ data class HomeLayoutSpec(
         FOCUSED_HUB,
         /** Two glass feature cards side by side above a chip row; a light, calm composition. */
         DUAL_CARDS,
+        /** A bright stage with black pill navigation and two feature cards for young households. */
+        KIDS_STAGE,
         /** No billboard: content begins with the primary browse surface. */
         NONE,
     }
@@ -104,6 +107,7 @@ data class HomeLayoutSpec(
             "ps5", "ps5-hub", "console", "console-hub" -> Family.PS5_HUB
             "roku", "roku-grid", "grid" -> Family.ROKU_GRID
             "clean", "minimal" -> Family.CLEAN
+            "kids" -> Family.KIDS
             "magnifier", "accessible", "large" -> Family.MAGNIFIER
             else -> Family.LEGACY
         }
@@ -119,6 +123,7 @@ data class HomeLayoutSpec(
             "cinema", "cinema-billboard", "billboard" -> Hero.CINEMA_BILLBOARD
             "hub", "focused-hub", "focus-hub" -> Hero.FOCUSED_HUB
             "dual", "dual-cards", "clean-cards" -> Hero.DUAL_CARDS
+            "kids", "kids-stage" -> Hero.KIDS_STAGE
             "none", "off", "grid" -> Hero.NONE
             else -> Hero.SHARED_SLIDER
         }
@@ -134,7 +139,7 @@ data class HomeLayoutSpec(
             Family.NETFLIX_CINEMA -> "top-bar"
             Family.PS5_HUB -> "utility"
             Family.ROKU_GRID -> "top-bar"
-            Family.CLEAN, Family.MAGNIFIER -> "none"
+            Family.CLEAN, Family.KIDS, Family.MAGNIFIER -> "none"
             else -> "pack"
         }
 
@@ -142,6 +147,7 @@ data class HomeLayoutSpec(
             Family.NETFLIX_CINEMA -> "cinema-billboard"
             Family.PS5_HUB -> "focused-hub"
             Family.CLEAN -> "dual-cards"
+            Family.KIDS -> "kids-stage"
             Family.ROKU_GRID -> "none"
             else -> "shared-slider"
         }
