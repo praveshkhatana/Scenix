@@ -150,6 +150,7 @@ class BrowseActivity : Activity() {
                     // graph answer UP/DOWN rather than forcing the Apple carousel hierarchy on them.
                     if (heroFamily in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
                             HomeLayoutSpec.Hero.DUAL_CARDS,
+                            HomeLayoutSpec.Hero.GLASS_CARDS,
                             HomeLayoutSpec.Hero.KIDS_STAGE) &&
                         isInside(adapter.heroRoot, focus)) {
                         return super.dispatchKeyEvent(event)
@@ -222,6 +223,38 @@ class BrowseActivity : Activity() {
         val theme = app.theme
         val room = resources.displayMetrics.heightPixels - theme.px(200f)
         return wantedPx.coerceAtMost(maxOf(room, theme.px(420f)))
+    }
+
+    /**
+     * The Glass caption line: "● 7.8 · 2023" — an accent dot welded to the rating, the year
+     * quieter after it, exactly as the reference prints it under every poster.
+     */
+    private fun captionDotLine(item: Item): CharSequence {
+        val theme = app.theme
+        val sb = android.text.SpannableStringBuilder()
+        val rating = when {
+            item.rating > 0 -> String.format(java.util.Locale.US, "%.1f", item.rating)
+            item.match > 0 -> "${item.match}%"
+            else -> null
+        }
+        if (rating != null) {
+            sb.append("●")
+            sb.setSpan(android.text.style.ForegroundColorSpan(theme.color("match", "#EF9F42")),
+                0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.append(" ").append(rating)
+            sb.setSpan(android.text.style.ForegroundColorSpan(theme.color("captionInk", "#EAF1F6")),
+                2, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (item.year > 0) sb.append("   ").append(item.year.toString())
+        } else if (item.year > 0) {
+            sb.append(item.year.toString())
+        }
+        if (item.isNew) {
+            if (sb.isNotEmpty()) sb.append("   ")
+            sb.append("New")
+            sb.setSpan(android.text.style.ForegroundColorSpan(theme.color("match", "#EF9F42")),
+                sb.length - 3, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return sb
     }
 
     /** Advance the visible hero exactly one slide, wrapping like the Featured rail. */
@@ -398,7 +431,7 @@ class BrowseActivity : Activity() {
         // wall is the whole page's background — fixed behind the rails while they scroll —
         // not a hero-slot backdrop with a seam where the hero ends.
         val fullWall: android.graphics.drawable.Drawable? = when (app.theme.homeLayout.hero) {
-            HomeLayoutSpec.Hero.DUAL_CARDS -> GradientDrawable(
+            HomeLayoutSpec.Hero.DUAL_CARDS, HomeLayoutSpec.Hero.GLASS_CARDS -> GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
             )
@@ -1215,6 +1248,7 @@ class BrowseActivity : Activity() {
             // the same guarantee: two distinct titles, never one duplicated across both cards.
             if (app.theme.homeLayout.hero in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
                     HomeLayoutSpec.Hero.DUAL_CARDS,
+                    HomeLayoutSpec.Hero.GLASS_CARDS,
                     HomeLayoutSpec.Hero.KIDS_STAGE) &&
                 slides.size in 1 until maxSlides) {
                 val seen = slides.mapTo(HashSet()) { it.identity.ifBlank { it.title } }
@@ -1582,7 +1616,7 @@ class BrowseActivity : Activity() {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    setPadding(0, theme.px(18f), 0, 0)
+                    setPadding(0, theme.space("railTopGap", 18f), 0, 0)
                 }
                 // Packs that print rails on a light wallpaper override these two colours in the
                 // pack JSON; every other pack keeps reading them in its own ink.
@@ -1597,7 +1631,7 @@ class BrowseActivity : Activity() {
                     isNestedScrollingEnabled = false
                     // 44px of clear space lets a lifted, glowing lockup remain fully visible;
                     // the former 18px top inset clipped focus so it looked like an underline.
-                    setPadding(theme.gutter, theme.px(44f), theme.gutter, theme.px(44f))
+                    setPadding(theme.gutter, theme.space("railGlowPad", 44f), theme.gutter, theme.space("railGlowPad", 44f))
                     clipToPadding = false
                     clipChildren = false
                 }
@@ -1656,12 +1690,17 @@ class BrowseActivity : Activity() {
         // Apple's scene cards keep the name under the art instead of over it.
         private val below = theme.cardStyle == "below"
         private val captionH = when {
-            below -> theme.px(62f)
+            below -> theme.space("captionBlock", 62f)
             frame -> theme.px(56f)
             else -> 0
         }
-        private val cardW = theme.px(if (landscape) 480f else if (poster) 280f else 320f)
-        private val cardH = theme.px(if (landscape) 270f else if (poster) 420f else 180f)
+        // A pack may resize the poster lockup from its spacing tokens (Glass replicates the
+        // reference's 264×373 tiles at 27px gaps); packs that omit the keys keep the classic
+        // geometry byte for byte.
+        private val cardW = if (poster) theme.space("posterWidth", if (landscape) 480f else 280f)
+                            else theme.px(320f)
+        private val cardH = if (poster) theme.space("posterHeight", if (landscape) 270f else 420f)
+                            else theme.px(180f)
         private val radius = theme.radius("card", 6f)
         // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
         private val seeAll = !featured && row.total > row.items.size
@@ -1672,7 +1711,7 @@ class BrowseActivity : Activity() {
             val card = FrameLayout(this@BrowseActivity)
             card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH).apply {
                 // Apple's shelves breathe; tiles never touch each other.
-                marginEnd = theme.px(26f)
+                marginEnd = theme.space("posterGap", 26f)
             }
             card.isFocusable = true
             card.isFocusableInTouchMode = true
@@ -1762,7 +1801,7 @@ class BrowseActivity : Activity() {
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
                 bottomMargin = when {
-                    below -> theme.px(26f)
+                    below -> theme.space("captionNameBottom", 26f)
                     frame -> theme.px(8f)
                     else -> 0
                 }
@@ -1928,20 +1967,26 @@ class BrowseActivity : Activity() {
             holder.name.visibility = View.VISIBLE
             holder.sub.visibility = if (below) View.VISIBLE else View.GONE
             if (below) {
-                val sub = ArrayList<String>()
-                // Scene cards put their facts below the artwork; overlay and glass cards use the
-                // on-art badge/corner treatment instead. This is a card-layout decision, not a
-                // named-theme exception, so any future spacious pack inherits it cleanly.
-                if (ranked && below) sub.add("#${position + 1}")
-                if (below && item.isNew) sub.add("New")
-                if (item.year > 0) sub.add(item.year.toString())
-                if (item.match > 0) sub.add("${item.match}% match")
-                if (below && item.rating > 0) {
-                    sub.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
+                if (theme.packString("captionMeta", "") == "dot") {
+                    // The glass reference prints "● 7.8 · 2023": an accent dot welded to the
+                    // rating, the year quieter behind it. One shared format for the whole pack.
+                    holder.sub.text = captionDotLine(item)
+                } else {
+                    val sub = ArrayList<String>()
+                    // Scene cards put their facts below the artwork; overlay and glass cards use the
+                    // on-art badge/corner treatment instead. This is a card-layout decision, not a
+                    // named-theme exception, so any future spacious pack inherits it cleanly.
+                    if (ranked && below) sub.add("#${position + 1}")
+                    if (below && item.isNew) sub.add("New")
+                    if (item.year > 0) sub.add(item.year.toString())
+                    if (item.match > 0) sub.add("${item.match}% match")
+                    if (below && item.rating > 0) {
+                        sub.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
+                    }
+                    if (below && item.maturity.isNotBlank()) sub.add(item.maturity)
+                    item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { sub.add(it) }
+                    holder.sub.text = sub.joinToString(" · ")
                 }
-                if (below && item.maturity.isNotBlank()) sub.add(item.maturity)
-                item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { sub.add(it) }
-                holder.sub.text = sub.joinToString(" · ")
             }
             holder.logo.visibility = View.GONE
             holder.logo.tag = item.identity + ":logo"

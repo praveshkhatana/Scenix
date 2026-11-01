@@ -29,7 +29,7 @@ object Screens {
      * plain black, which is already their Home ground.
      */
     fun wall(app: AppContext): GradientDrawable? = when (app.theme.homeLayout.hero) {
-        HomeLayoutSpec.Hero.DUAL_CARDS -> GradientDrawable(
+        HomeLayoutSpec.Hero.DUAL_CARDS, HomeLayoutSpec.Hero.GLASS_CARDS -> GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
             intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
         )

@@ -42,6 +42,7 @@ data class HomeLayoutSpec(
         CLEAN,
         KIDS,
         MAGNIFIER,
+        GLASS,
     }
 
     /** The global Home route is intentionally separate from the visible control treatment. */
@@ -66,6 +67,8 @@ data class HomeLayoutSpec(
         FOCUSED_HUB,
         /** Two glass feature cards side by side above a chip row; a light, calm composition. */
         DUAL_CARDS,
+        /** The measured liquid-glass replica: tinted specular plates on a photo wash, chip rail, captioned posters. */
+        GLASS_CARDS,
         /** A bright stage with black pill navigation and two feature cards for young households. */
         KIDS_STAGE,
         /** No billboard: content begins with the primary browse surface. */
@@ -107,6 +110,7 @@ data class HomeLayoutSpec(
             "ps5", "ps5-hub", "console", "console-hub" -> Family.PS5_HUB
             "roku", "roku-grid", "grid" -> Family.ROKU_GRID
             "clean", "minimal" -> Family.CLEAN
+            "glass", "liquid-glass" -> Family.GLASS
             "kids" -> Family.KIDS
             "magnifier", "accessible", "large" -> Family.MAGNIFIER
             else -> Family.LEGACY
@@ -123,6 +127,7 @@ data class HomeLayoutSpec(
             "cinema", "cinema-billboard", "billboard" -> Hero.CINEMA_BILLBOARD
             "hub", "focused-hub", "focus-hub" -> Hero.FOCUSED_HUB
             "dual", "dual-cards", "clean-cards" -> Hero.DUAL_CARDS
+            "glass", "glass-cards", "liquid-glass" -> Hero.GLASS_CARDS
             "kids", "kids-stage" -> Hero.KIDS_STAGE
             "none", "off", "grid" -> Hero.NONE
             else -> Hero.SHARED_SLIDER
@@ -139,7 +144,7 @@ data class HomeLayoutSpec(
             Family.NETFLIX_CINEMA -> "top-bar"
             Family.PS5_HUB -> "utility"
             Family.ROKU_GRID -> "top-bar"
-            Family.CLEAN, Family.KIDS, Family.MAGNIFIER -> "none"
+            Family.CLEAN, Family.KIDS, Family.MAGNIFIER, Family.GLASS -> "none"
             else -> "pack"
         }
 
@@ -147,6 +152,7 @@ data class HomeLayoutSpec(
             Family.NETFLIX_CINEMA -> "cinema-billboard"
             Family.PS5_HUB -> "focused-hub"
             Family.CLEAN -> "dual-cards"
+            Family.GLASS -> "glass-cards"
             Family.KIDS -> "kids-stage"
             Family.ROKU_GRID -> "none"
             else -> "shared-slider"

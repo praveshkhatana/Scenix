@@ -92,11 +92,39 @@ internal object HomeSurfaceFactory {
                     ),
                 ),
             )
+            HomeLayoutSpec.Hero.GLASS_CARDS -> GlassSurface(
+                GlassHomeLayout(
+                    context,
+                    app,
+                    GlassHomeLayout.Callbacks(
+                        onOpen = callbacks.onOpen,
+                        onSection = callbacks.onSection,
+                        onProfile = callbacks.onProfile,
+                        onSearch = callbacks.onSearch,
+                        onSettings = callbacks.onSettings,
+                        onShelf = callbacks.onShelf,
+                    ),
+                ),
+            )
             HomeLayoutSpec.Hero.DUAL_CARDS -> CleanSurface(
                 CleanHomeLayout(
                     context,
                     app,
                     CleanHomeLayout.Callbacks(
+                        onOpen = callbacks.onOpen,
+                        onSection = callbacks.onSection,
+                        onProfile = callbacks.onProfile,
+                        onSearch = callbacks.onSearch,
+                        onSettings = callbacks.onSettings,
+                        onShelf = callbacks.onShelf,
+                    ),
+                ),
+            )
+            HomeLayoutSpec.Hero.GLASS_CARDS -> GlassSurface(
+                GlassHomeLayout(
+                    context,
+                    app,
+                    GlassHomeLayout.Callbacks(
                         onOpen = callbacks.onOpen,
                         onSection = callbacks.onSection,
                         onProfile = callbacks.onProfile,
@@ -185,6 +213,21 @@ private class Ps5Surface(private val view: Ps5HomeLayout) : HomeSurface {
 }
 
 private class CleanSurface(private val view: CleanHomeLayout) : HomeSurface {
+    override val root: View get() = view.root
+    override val primaryControl: View get() = view.primaryControl
+    override val navigationAnchor: View? get() = view.navigationAnchor
+    override val selectorRoot: View? get() = null
+    override val preferredHeightPx: Int get() = view.preferredHeightPx
+
+    override fun render(slides: List<Item>, activeIndex: Int) = view.render(slides, activeIndex)
+    override fun setNextFocusUp(id: Int) = view.setNextFocusUp(id)
+    override fun setChips(shelves: List<Pair<String, String>>) = view.setChips(shelves)
+    override fun setProfile(name: String, avatarUrl: String?) = view.setProfile(name, avatarUrl)
+
+    override fun focusEntry(activeIndex: Int): Boolean = view.focusEntry(activeIndex)
+}
+
+private class GlassSurface(private val view: GlassHomeLayout) : HomeSurface {
     override val root: View get() = view.root
     override val primaryControl: View get() = view.primaryControl
     override val navigationAnchor: View? get() = view.navigationAnchor
