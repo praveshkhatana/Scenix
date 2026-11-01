@@ -92,7 +92,7 @@ async function buildCrazy() {
     const img = (/og:image" content="([^"]+)"/.exec(r.body) || [])[1];
     if (!title || /no longer available/i.test(r.body)) continue;
     // og:title arrives as "<Name> 🏎️ Play on CrazyGames" — keep the name, drop the marketing tail.
-    const clean = title.replace(/(Play on )?Crazy\s*Games.*$/i, '').replace(/[\s\p{Extended_Pictographic}]+$/u, '').trim();
+    const clean = title.replace(/(Play on )?Crazy\s*Games.*$/i, '').replace(/[\s\p{Extended_Pictographic}\uFE0F\u200D]+$/u, '').trim();
     out.push({ id: 'cg-' + slug, title: clean || title, slug,
       playUrl: 'https://games.crazygames.com/en_US/' + slug + '/index.html', poster: img,
       // The CrazyGames wrapper never finishes booting inside Android's WebView bundle; the
