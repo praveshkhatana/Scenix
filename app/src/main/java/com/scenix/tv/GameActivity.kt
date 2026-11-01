@@ -59,6 +59,9 @@ class GameActivity : Activity() {
     private var padReady = false
     private var desktopUa = false
     private var hudVisible = false
+    // True from the first pass that found the game's stage: the remote becomes a finger only
+    // once there is a stage to touch.
+    private var stageUp = false
     private var hidHud = Runnable { hideHud() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,6 +127,10 @@ class GameActivity : Activity() {
                     // Poki and friends wrap the game in tiles, nav pills and late popups a kid
                     // shouldn't reach: carve the page down to the game's own container.
                     carve(view)
+                    // Portal games play with finger swipes; a TV remote has no fingers. The remote
+                    // becomes one: arrows are swipes and OK a tap on the biggest canvas — only when
+                    // the page itself left the key unconsumed, so keyboard-native games are untouched.
+                    view.evaluateJavascript(REMOTE_JS) { }
                     // The catalog flags ports whose own servers demand cross-origin isolation: those
                     // are multithreaded builds, and Android WebView never grants SharedArrayBuffer in
                     // any version. A single-threaded mirror gets its one hop first; otherwise say so
@@ -154,6 +161,7 @@ class GameActivity : Activity() {
                     view: WebView, request: WebResourceRequest, error: WebResourceError,
                 ) {
                     if (!request.isForMainFrame) return
+                    android.util.Log.i("ScenixGame", "loaderror ${request.url} ${error.errorCode}")
                     if (!switchToBackup("This game could not be reached")) {
                         showError("This game could not be reached — ${error.description}")
                     }
@@ -306,8 +314,10 @@ class GameActivity : Activity() {
             override fun run() {
                 if (++passes > 60) return
                 view.evaluateJavascript(CARVE_JS) { r ->
+                    android.util.Log.i("ScenixGame", "carve p=$passes res=${r?.take(60)}")
                     if (r?.contains("carved") == true) {
                         ++carved
+                        stageUp = true
                         // The game's own frame is on screen — the wordmark hands the stage over to it.
                         loader.finish()
                     } else ++misses
@@ -320,8 +330,10 @@ class GameActivity : Activity() {
                     }
                     // A portal that never puts any game frame on screen at all (Poki on some
                     // engines): after half a minute say so instead of sitting black forever.
-                    if (misses == 10 && carved == 0)
+                    if (misses == 10 && carved == 0) {
+                        android.util.Log.i("ScenixGame", "never started")
                         toast("This portal hasn't started its game on this TV — try another title.")
+                    }
                     main.postDelayed(this, if (carved > 0) 5000 else 3000)
                 }
             }
@@ -354,7 +366,53 @@ class GameActivity : Activity() {
             main.removeCallbacks(hidHud)
             main.postDelayed(hidHud, 7000)
         }
+        // The remote as a finger. Portal games are built for thumbs: they watch touch, not keys,
+        // and the game often lives in a frame our script can't even see into. So once the stage
+        // is up and the bar is away, a remote swipe becomes a real MotionEvent on the WebView
+        // (trusted, crosses into any frame) and OK becomes a tap. Keys are consumed, not sent —
+        // a game gets one input language, not two at once. Emulator/console ports read real
+        // gamepads through the Gamepad API; those keep working untouched.
+        if (!hudVisible && stageUp && !isFinishing) {
+            val k = event.keyCode
+            if (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN ||
+                k == KeyEvent.KEYCODE_DPAD_CENTER) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) finger(k)
+                return true
+            }
+        }
         return super.dispatchKeyEvent(event)
+    }
+
+    /** One finger gesture along the WebView: swipe for arrows, tap for OK. */
+    private fun finger(k: Int) {
+        val w = web.width.toFloat()
+        val h = web.height.toFloat()
+        val cx = w / 2f
+        val cy = h / 2f
+        val dx = minOf(w * 0.22f, 260f)
+        val dy = minOf(h * 0.22f, 260f)
+        val points: Array<FloatArray> = when (k) {
+            KeyEvent.KEYCODE_DPAD_CENTER -> arrayOf(floatArrayOf(cx, cy), floatArrayOf(cx, cy))
+            KeyEvent.KEYCODE_DPAD_LEFT -> Array(5) { i -> floatArrayOf(cx + dx - dx * 2 * i / 4f, cy) }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> Array(5) { i -> floatArrayOf(cx - dx + dx * 2 * i / 4f, cy) }
+            KeyEvent.KEYCODE_DPAD_UP -> Array(5) { i -> floatArrayOf(cx, cy + dy - dy * 2 * i / 4f) }
+            else -> Array(5) { i -> floatArrayOf(cx, cy - dy + dy * 2 * i / 4f) }
+        }
+        val t0 = android.os.SystemClock.uptimeMillis()
+        for (step in points.indices) {
+            val p = points[step]
+            val last = step == points.size - 1
+            val what = when {
+                step == 0 -> android.view.MotionEvent.ACTION_DOWN
+                last && points.size == 2 -> android.view.MotionEvent.ACTION_UP  // a tap: hold 70ms
+                last -> android.view.MotionEvent.ACTION_UP
+                else -> android.view.MotionEvent.ACTION_MOVE
+            }
+            val delay = if (last && points.size == 2) 70L else step * 30L
+            val ev = android.view.MotionEvent.obtain(t0, t0 + delay, what, p[0], p[1], 0)
+            main.postDelayed({ web.dispatchTouchEvent(ev) }, delay)
+        }
     }
 
     /**
@@ -481,6 +539,54 @@ class GameActivity : Activity() {
         const val EXTRA_FALLBACK = "fallback"
         const val EXTRA_COI = "coi"
         const val EXTRA_DESKTOP_UA = "desktop_ua"
+
+        /**
+         * The remote as a finger: arrows become swipes across the biggest canvas and OK a tap on
+         * its centre — but only when the page left the key unconsumed, so games that already read
+         * the keyboard keep their own hands. The Gecko twin lives in scenix-carve/fake.js; change
+         * both together. Idempotent.
+         */
+        const val REMOTE_JS = """
+(function(){
+ if(window.__scenixRemote)return;window.__scenixRemote=1;
+ var last=0;
+ function stage(){var best=null,area=0;
+  try{var cs=document.querySelectorAll('canvas');
+   for(var i=0;i<cs.length;i++){var r=cs[i].getBoundingClientRect();var a=r.width*r.height;
+    if(a>area){area=a;best=cs[i];}}}catch(e){}
+  return best||document.body||document.documentElement;}
+ function T(el,x,y){try{return new Touch({identifier:1,target:el,clientX:x,clientY:y});}catch(e){return null;}}
+ function fire(el,kind,x,y){try{var t=T(el,x,y);if(!t)return;
+  el.dispatchEvent(new TouchEvent(kind,{bubbles:true,cancelable:true,
+   touches:kind==='touchend'?[]:[t],targetTouches:kind==='touchend'?[]:[t],changedTouches:[t]}));}catch(e){}}
+ window.addEventListener('keydown',function(e){
+  if(e.repeat)return;var k=e.key;
+  if(k!=='ArrowLeft'&&k!=='ArrowRight'&&k!=='ArrowUp'&&k!=='ArrowDown'&&k!=='Enter')return;
+  setTimeout(function(){
+   if(e.defaultPrevented)return;
+   var now=Date.now();if(now-last<180)return;last=now;
+   try{
+    var el=stage(),r=el.getBoundingClientRect();
+    if(k==='Enter'){var cx0=r.left+r.width/2,cy0=r.top+r.height/2;
+     fire(el,'touchstart',cx0,cy0);setTimeout(function(){fire(el,'touchend',cx0,cy0);},60);return;}
+    var cx=r.left+r.width/2,cy=r.top+r.height/2;
+    var dx=Math.min(r.width*0.3,220),dy=Math.min(r.height*0.3,220);
+    var p=[cx,cy];
+    if(k==='ArrowLeft')p=[cx+dx,cy,cx-dx,cy];
+    if(k==='ArrowRight')p=[cx-dx,cy,cx+dx,cy];
+    if(k==='ArrowUp')p=[cx,cy+dy,cx,cy-dy];
+    if(k==='ArrowDown')p=[cx,cy-dy,cx,cy+dy];
+    fire(el,'touchstart',p[0],p[1]);
+    for(var i=1;i<=4;i++)(function(i){setTimeout(function(){
+      var x=p[0]+(p[2]-p[0])*i/4,y=p[1]+(p[3]-p[1])*i/4;
+      fire(el,'touchmove',x,y);
+      if(i===4)fire(el,'touchend',x,y);
+    },i*30);})(i);
+   }catch(t){}
+  },0);
+ },true);
+})();
+"""
 
         /**
          * Keep only the path to the page's biggest visible game frame and pin its stage full-screen.

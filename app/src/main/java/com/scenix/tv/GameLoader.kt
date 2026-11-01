@@ -1,26 +1,25 @@
 package com.scenix.tv
 
-import android.graphics.Rect
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.ImageView
 import com.scenix.tv.core.AppContext
 
 /**
- * The game player's preloader: the Scenix wordmark itself, filling left-to-right like a bar.
+ * The game player's preloader: a plain themed progress bar, nothing branded.
  *
  * A determinate source (a page's own load progress) paints the fill honestly; while a first play
- * downloads its core and ROM there is no progress to read, so the fill loops — the screen says
- * "this is loading" in the same shape either way. On the first painted frame of the game the fill
- * completes and the whole mark fades out.
+ * downloads its core there is no progress to read, so the bar sweeps a partial fill across itself.
+ * On the first painted frame of the game the fill completes and the bar fades out.
  */
 class GameLoader(private val app: AppContext) {
 
     private val main = Handler(Looper.getMainLooper())
-    private val lit: ImageView
+    private val fill: View
     private val box: FrameLayout
     private var p = 0f
     private var loop: Runnable? = null
@@ -28,27 +27,25 @@ class GameLoader(private val app: AppContext) {
 
     init {
         val theme = app.theme
-        val w = theme.px(460f)
-        val h = theme.px(150f)
+        val w = theme.px(340f)
+        val h = theme.px(7f)
         box = FrameLayout(app.app).apply { visibility = View.GONE }
-        // The wordmark drawn once dim and once bright, the bright copy clipped to the fill width.
-        // Both share the exact vector the rest of the app uses — the logo IS the progress bar.
-        val dim = ImageView(app.app).apply {
-            setImageResource(R.drawable.scenix_wordmark)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            imageAlpha = 70
-        }
-        lit = ImageView(app.app).apply {
-            setImageResource(R.drawable.scenix_wordmark)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        box.addView(dim, FrameLayout.LayoutParams(w, h).apply {
-            gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
-            bottomMargin = theme.px(90f)
+        box.addView(View(app.app).apply {
+            background = GradientDrawable().apply {
+                setColor(Color.argb(90, 255, 255, 255))
+                cornerRadius = h / 2f
+            }
+        }, FrameLayout.LayoutParams(w, h).apply {
+            gravity = Gravity.CENTER
         })
-        box.addView(lit, FrameLayout.LayoutParams(w, h).apply {
-            gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
-            bottomMargin = theme.px(90f)
+        fill = View(app.app).apply {
+            background = GradientDrawable().apply {
+                setColor(theme.brand)
+                cornerRadius = h / 2f
+            }
+        }
+        box.addView(fill, FrameLayout.LayoutParams(w, h).apply {
+            gravity = Gravity.CENTER
         })
     }
 
@@ -75,7 +72,7 @@ class GameLoader(private val app: AppContext) {
         apply()
     }
 
-    /** No real progress to read (core still downloading): the fill sweeps across on its own. */
+    /** No real progress to read (core still downloading): a partial fill sweeps across. */
     fun loop() {
         if (finished || loop != null) return
         val started = System.currentTimeMillis()
@@ -83,7 +80,7 @@ class GameLoader(private val app: AppContext) {
             override fun run() {
                 if (finished) return
                 val t = ((System.currentTimeMillis() - started) % 2600) / 2600f
-                p = t
+                p = if (t < 0.5f) t * 1.4f else 0.7f
                 apply()
                 main.postDelayed(this, 60)
             }
@@ -92,7 +89,7 @@ class GameLoader(private val app: AppContext) {
         main.post(r)
     }
 
-    /** The game painted: complete the fill, then fade the whole mark out. */
+    /** The game painted: complete the fill, then fade the bar out. */
     fun finish() {
         if (finished) return
         finished = true
@@ -109,13 +106,9 @@ class GameLoader(private val app: AppContext) {
     }
 
     private fun apply() {
-        val w = lit.width
-        if (w <= 0) { lit.post { applyQuiet() }; return }
-        lit.clipBounds = Rect(0, 0, (w * p).toInt(), lit.height)
-    }
-
-    private fun applyQuiet() {
-        if (finished || lit.width <= 0) return
-        lit.clipBounds = Rect(0, 0, (lit.width * p).toInt(), lit.height)
+        val w = fill.width
+        if (w <= 0) { fill.post { if (!finished && fill.width > 0) apply() }; return }
+        fill.scaleX = p
+        fill.pivotX = 0f
     }
 }

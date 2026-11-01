@@ -47,6 +47,25 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
         applyLaunchSwitches()
 
+        // QA direct-play: `am start -n com.scenix.tv/.MainActivity --es qa_url <url> [--es qa_title t]
+        // [--ez qa_coi true] [--ez qa_pad true] [--ez qa_ua true]` opens one game in its own player.
+        // The players aren't exported; this is the door the per-game load sweep walks through.
+        intent.getStringExtra("qa_url")?.let { u ->
+            if (u.isNotBlank()) {
+                val play = if (intent.getBooleanExtra("qa_coi", false))
+                    android.content.Intent(this, CoiGameActivity::class.java)
+                else android.content.Intent(this, GameActivity::class.java)
+                play.putExtra(GameActivity.EXTRA_URL, u)
+                    .putExtra(GameActivity.EXTRA_TITLE, intent.getStringExtra("qa_title") ?: "")
+                    .putExtra(GameActivity.EXTRA_FALLBACK, intent.getStringExtra("qa_fallback") ?: "")
+                    .putExtra(GameActivity.EXTRA_PAD, intent.getBooleanExtra("qa_pad", false))
+                    .putExtra(GameActivity.EXTRA_DESKTOP_UA, intent.getBooleanExtra("qa_ua", false))
+                startActivity(play)
+                finish()
+                return
+            }
+        }
+
         root = FrameLayout(this)
         root.setBackgroundColor(ctx.theme.bg)
         setContentView(root)
