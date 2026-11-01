@@ -1175,6 +1175,21 @@ class BrowseActivity : Activity() {
                     shelves = others.drop(1)
                 }
             }
+            // The console-style rail IS the home screen: two lonely tiles read as a broken strip,
+            // while the reference's launch rail spans the screen. When the hub's featured row is
+            // thin, the rail borrows the next titles the household actually has — real items, no
+            // invention — and the shelf below still shows them in full.
+            if (app.theme.homeLayout.hero == HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                slides.size in 1 until maxSlides) {
+                val seen = slides.mapTo(HashSet()) { it.identity.ifBlank { it.title } }
+                for (row in others) {
+                    if (slides.size >= maxSlides) break
+                    slides = slides + row.items.filter {
+                        (!it.backdrop.isNullOrBlank() || !it.poster.isNullOrBlank()) &&
+                            seen.add(it.identity.ifBlank { it.title })
+                    }.take(maxSlides - slides.size)
+                }
+            }
             present(shelves)
         }
     }
