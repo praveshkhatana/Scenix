@@ -835,14 +835,16 @@ function rowVisible(row, profile) {
   return scope === 'all' || scope === 'adult';
 }
 
-async function buildRow(row, ctx, budgetMs) {
+async function buildRow(row, ctx, budgetMs, maxOverride) {
   const raw = await withBudget(
     Promise.resolve().then(() => row.build(ctx)), budgetMs || ROW_BUDGET_MS, [], 'row ' + row.id,
   );
   const items = await pipeline(raw || [], ctx);
   rememberItems(items);
-  // Trim after the rules: a row may hand back more candidates than it wants on screen.
-  return items.slice(0, row.max || ROW_MAX);
+  // Trim after the rules: a row may hand back more candidates than it wants on screen. The section
+  // page ("See all") passes a larger cap than the home rail: the rail is a preview, the section is
+  // the shelf, and a category page that stops where the rail stopped is the "limited content" bug.
+  return items.slice(0, maxOverride || row.max || ROW_MAX);
 }
 
 /**
@@ -855,6 +857,9 @@ const ADULT_ROW_ID = 'latenight';
 // The first screen is a preview, not the whole shelf. Eighteen cards fit two screens of a TV row and
 // keep the home payload (and the DOM the WebView must build) roughly a third smaller than thirty.
 const HOME_ROW_MAX = Number(process.env.HOME_ROW_MAX || 18);
+// The section page a "See all" tile opens is the shelf itself, not the rail: deeper, but bounded,
+// so one page can never ask an addon for its entire catalogue.
+const SECTION_MAX = Number(process.env.SECTION_MAX || 120);
 function generalItems(rowId, items) {
   if (!Array.isArray(items)) return items;
   if (rowId === ADULT_ROW_ID) return items;
@@ -3967,9 +3972,15 @@ async function handle(req, res) {
           // `total` rides along with the trimmed shelf: a row that shows its eighteen delivered titles is
           // not hiding anything, and the web stops drawing a See-all tile on it. A row trimmed from a
           // longer answer says so honestly.
+          // A row that can read the viewer's own history writes its headline per request —
+          // "Because you watched City Hunter", not a template. `label` falls back to the static
+          // title when it has nothing to say, so every consumer still always receives a string.
+          const title = typeof row.label === 'function'
+            ? (await Promise.resolve(row.label(ctx)).catch(() => null)) || row.title
+            : row.title;
           return {
             id: row.id,
-            title: row.title,
+            title,
             card: row.card,
             order: row.order,
             scope: row.scope || 'all',
@@ -4026,10 +4037,13 @@ async function handle(req, res) {
         return send(res, 403, { error: 'row not for this profile', rowId: row.id, scope: row.scope });
       }
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
-      const items = generalItems(row.id, await buildRow(row, ctx));
+      const items = generalItems(row.id, await buildRow(row, ctx, undefined, SECTION_MAX));
       await taste.decorate(ctx, items);
+      const title = typeof row.label === 'function'
+        ? (await Promise.resolve(row.label(ctx)).catch(() => null)) || row.title
+        : row.title;
       return send(res, 200, {
-        id: row.id, title: row.title, card: row.card, order: row.order, scope: row.scope || 'all',
+        id: row.id, title, card: row.card, order: row.order, scope: row.scope || 'all',
         items,
       });
     }
@@ -4068,8 +4082,9 @@ async function handle(req, res) {
       const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
       const ctx = makeCtx(profile, SEARCH_BUDGET_MS);
       // A category is a genre query, not a title-word search: "Crime" must bring crime films, not
-      // films whose name happens to contain Crime. The library the hub already holds is the first
-      // answer; only when it has nothing do we wait on the addons' own genre catalogues.
+      // films whose name happens to contain Crime. And a category page must hold the CATEGORY, not
+      // one page of one addon: the cached library answers instantly AND the addons' live genre
+      // shelves are always asked alongside it, so the grid keeps going past the first cached page.
       const local = await Promise.race([
         ctx.library().catch(() => []),
         new Promise((resolve) => {
@@ -4079,10 +4094,24 @@ async function handle(req, res) {
       ]);
       const want = genre.toLowerCase();
       const held = (local || []).filter((it) => (it.genres || [])
-        .some((g) => String(g).toLowerCase() === want)).slice(0, SEARCH_MAX * 2);
-      const raw = held.length ? held
-        : await shelves.genreTitles(genre, { limit: SEARCH_MAX * 2, budget: SEARCH_BUDGET_MS });
-      const items = generalItems('genre', await pipeline(raw || [], ctx)).slice(0, SEARCH_MAX);
+        .some((g) => String(g).toLowerCase() === want));
+      // A tile carries a slug ("sci-fi"); addons match their genre word exactly ("Sci-Fi"). The
+      // library's own spelling resolves the tile back to the word the addons actually filter on.
+      let display = genre;
+      for (const it of held.slice(0, 40)) {
+        const exact = (it.genres || []).find((g) => String(g).toLowerCase() === want);
+        if (exact) { display = String(exact); break; }
+      }
+      // A canonical tile with nothing cached yet: the tile's slug still has to become the word the
+      // addons filter on, or the page answers zero for a spelling mismatch and not for an absence.
+      if (!held.length) display = shelves.resolveGenreName(genre);
+      // The cache answers now and the addons answer too — always both. A category page that only
+      // reads the cache is one addon's first page wearing a genre's clothes; the live genre shelves
+      // are what makes the grid deep enough to keep scrolling.
+      const live = await shelves.genreTitles(ctx, display,
+        { limit: SEARCH_MAX * 3, budget: SEARCH_BUDGET_MS }).catch(() => []);
+      const raw = merge.dedupe([...held, ...(live || [])], registry.priorities);
+      const items = generalItems('genre', await pipeline(raw, ctx)).slice(0, SEARCH_MAX * 4);
       rememberItems(items);
       await taste.decorate(ctx, items);
       return send(res, 200, { genre, items });
