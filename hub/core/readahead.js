@@ -155,6 +155,9 @@ class Copy {
     this.queue = [];           // pieces that landed out of order, waiting for the hole before them
     this.chunkFails = 0;
     this.nextRetryAt = 0;
+    // Where the last off-book (probe / gap) read ended, so a chain of them is recognised as playback.
+    this.sideEnd = null;
+    this.sideAt = 0;
     // A host that cuts one of our ranged reads has not refused the film: the read is re-issued after a
     // short backoff, and a screen watching a healthy body must not be told otherwise. `givenUp` is the
     // state that means "this copy will not answer", and only that state may cut a delivery short.
@@ -207,6 +210,12 @@ class Copy {
     this.base = Math.max(0, at);
     this.pos = this.base;
     this.cursor = this.base;
+    // The anchor is what `trim` keeps bytes ahead of while nobody is reading. Left at the offset the
+    // previous fill was anchored to, it sits hundreds of megabytes in front of this new window and the
+    // very next trim discards every chunk this seek just started — measured tonight, a resume to byte 0
+    // lost its first 4 MB to a stale anchor left by a measurement 431 MB away, and the screen's head read
+    // fell off the back of the window.
+    this.anchor = this.base;
     this.eof = false;
     this.error = null;
     this.givenUp = false;
@@ -580,6 +589,9 @@ class Copy {
     // cushion is full scores a capped window, which is the honest report of a copy already sitting in
     // RAM, and is never mistaken for 0 Mbps.
     const low = this.readers.size ? this.front() : this.anchor;
+    // Never above the window itself: an anchor from a fill that has since been replaced must not be able
+    // to eat the whole cushion.
+    if (low > this.base) this.anchor = this.base;
     while (this.chunks.length && this.chunks[0].start + this.chunks[0].buf.length <= low) {
       this.base = this.chunks[0].start + this.chunks[0].buf.length;
       this.chunks.shift();
@@ -960,9 +972,17 @@ const BODY_WAIT_MS = 5 * 60e3;
  */
 function isProbe(copy, want, c) {
   const span = want.end != null ? want.end - want.begin : null;
-  if (span != null && span >= 0 && span <= Math.max(8 * MB, c.chunkBytes * 2)) return true;
+  // A container reader asks for a mouthful of index at a time — tens of kilobytes to a few hundred. A
+  // bounded read of a megabyte or more is a screen asking for picture, and answering that off to one
+  // socket instead of moving the cushion was measured at 0.28 Mbps on this host against a 0.43 Mbps
+  // file: the film starved in plain sight while the window sat parked at the head, still "buffered".
+  if (span != null && span >= 0 && span <= Math.max(1 * MB, c.chunkBytes / 4)) return true;
   const size = Number(copy.fileSize);
-  if (Number.isFinite(size) && size > 0 && want.begin >= size - Math.max(16 * MB, c.chunkBytes * 4)) return true;
+  if (Number.isFinite(size) && size > 0 && want.begin >= size - Math.max(16 * MB, c.chunkBytes * 4)) {
+    // Sitting on the end of a known-length file is the seek head. But a long tail read there is the last
+    // minutes of a film, and that belongs in the cushion like any other picture.
+    return span == null || span <= Math.max(4 * MB, c.chunkBytes);
+  }
   return false;
 }
 
@@ -1007,6 +1027,10 @@ function sideRead(res, copy, want, t0) {
         if (done) return;
         done = true;
         up.destroy();
+        // Remember the far end of what we just delivered off-book: the next request that starts here is
+        // a continuation, not a probe.
+        copy.sideEnd = from + bytes;
+        copy.sideAt = Date.now();
         if (!res.writableEnded) { try { res.end(); } catch (e) { /* gone */ } }
         const secs = Math.max(0.001, (Date.now() - t0) / 1000);
         log(cause === 'eof' ? 'PROXY END' : 'PROXY CUT', copy.tag(), 'phase=body', 'cause=' + cause,
@@ -1075,7 +1099,12 @@ async function serve(req, res, who, opts = {}) {
   // that is small and outside the window is answered with one throwaway ranged read from the host, and the
   // window the screen is actually watching stays where it is. A real seek — an open-ended range far from
   // the window — still moves it, because then the viewer has genuinely moved.
-  if (!insideWindow(offset) && isProbe(copy, want, c)
+  // …unless the screen is doing it repeatedly. A chain of bounded reads that each begin where the last one
+  // ended is not an index peek, it is a player eating the film in mouthfuls; answer two mouthfuls from the
+  // host and then move the cushion behind the next one, or the fill never gets where the viewer is.
+  const continues = copy.sideEnd != null && Date.now() - copy.sideAt < 30000
+    && Math.abs(offset - copy.sideEnd) <= Math.max(1 * MB, c.chunkBytes / 4);
+  if (!insideWindow(offset) && !continues && isProbe(copy, want, c)
       && (copy.readers.size || copy.isActive() || isWatched(copy))) {
     return await sideRead(res, copy, want, t0);
   }
