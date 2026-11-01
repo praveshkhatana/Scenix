@@ -247,7 +247,11 @@ class Copy {
     if (!this.readers.size) this.anchor = this.sliding ? at : at;
     let u;
     try { u = new URL(this.url); } catch (e) { this.error = 'bad engine url'; return; }
-    const req = http.get(u, { headers: { Range: 'bytes=' + at + '-' }, agent: false, timeout: 120000 }, (got) => {
+    // A live HLS playlist can hand us an https origin to keep pulling from, and this same copy then
+    // reopens readers against it all evening. http.get on an https URL doesn't fail politely — it
+    // throws and takes the whole hub with it, so the library is chosen from the URL, not the habit.
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.get(u, { headers: { Range: 'bytes=' + at + '-' }, agent: false, timeout: 120000 }, (got) => {
       const cr = got.headers && got.headers['content-range'];
       if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) this.fileSize = Number(m[1]); }
       if (got.statusCode === 416 || got.statusCode >= 400) {
