@@ -1,7 +1,7 @@
 {
   "id": "scenix-clean",
   "brandMark": "S",
-  "_read": "Clean glass pack: a light frosted panel on a soft wallpaper wash, a dark centred pill nav with the search target built in, two feature cards, glass shelf chips and captioned poster rails. An original Scenix composition; no marks or assets copied from any reference.",
+  "_read": "Clean glass pack FULL-BLEED: the whole screen is the soft wallpaper wash (the mockup's rounded shell was presentation only); white wordmark at left, a dark centred pill nav with the search target built in, household bell/avatar/name at right, two tinted steel-blue feature cards with white titles and art bleeding from their inner edge, frosted glass shelf chips and captioned poster rails. An original Scenix composition; no marks or assets copied from any reference.",
   "canvas": {
     "width": 1920,
     "height": 1080
@@ -51,17 +51,24 @@
     "numeralStrokeRed": "#FF453A",
     "matBorder": "rgba(255,255,255,0.28)",
     "hdInk": "#F2F3F5",
-    "wallA": "#7E94A8",
-    "wallB": "#5C7288",
+    "wallA": "#8FA5B8",
+    "wallB": "#54687C",
     "glassPanel": "rgba(222,232,242,0.86)",
     "glassCard": "rgba(255,255,255,0.68)",
     "glassChip": "rgba(255,255,255,0.55)",
-    "cardTintA": "#8FB4DC",
-    "cardTintB": "#6E97C8",
+    "chipFrost": "rgba(255,255,255,0.18)",
+    "inkOnWall": "#FFFFFF",
+    "cardTintA": "#5F86B8",
+    "cardTintB": "#47699A",
+    "cardGlassA": "#A9BED8",
+    "cardGlassB": "#8CA6C6",
     "pill": "#1E252E",
     "pillActive": "#3A4552",
     "pillInk": "#9FB0C0",
-    "inkOnCard": "#17202B"
+    "inkOnCard": "#FFFFFF",
+    "rowInk": "#F4F8FC",
+    "captionInk": "#FFFFFF",
+    "captionSub": "#C7D3DE"
   },
   "spacing": {
     "gutter": 72,
@@ -82,9 +89,9 @@
     "listItem": 14
   },
   "radii": {
-    "card": 14,
+    "card": 22,
     "badge": 8,
-    "chip": 8,
+    "chip": 999,
     "button": 999,
     "listItem": 8,
     "field": 12,
@@ -254,9 +261,9 @@
     "hero": "full",
     "heroAlign": "left",
     "heroHeight": 700,
-    "cleanHomeHeight": 600,
+    "cleanHomeHeight": 480,
     "rows": "poster",
-    "card": "overlay",
+    "card": "below",
     "focus": "lift",
     "motion": "fade",
     "detail": "backdrop",

@@ -36,6 +36,8 @@ internal interface HomeSurface {
     fun focusEntry(activeIndex: Int): Boolean
     /** Shelf titles a composition may mirror as in-page shortcuts (Clean's chip row). */
     fun setChips(shelves: List<Pair<String, String>>) {}
+    /** The household identity a composition shows in its own header (Clean/Kids packs). */
+    fun setProfile(name: String, avatarUrl: String?) {}
 }
 
 /**
@@ -190,6 +192,7 @@ private class CleanSurface(private val view: CleanHomeLayout) : HomeSurface {
     override fun render(slides: List<Item>, activeIndex: Int) = view.render(slides, activeIndex)
     override fun setNextFocusUp(id: Int) = view.setNextFocusUp(id)
     override fun setChips(shelves: List<Pair<String, String>>) = view.setChips(shelves)
+    override fun setProfile(name: String, avatarUrl: String?) = view.setProfile(name, avatarUrl)
 
     override fun focusEntry(activeIndex: Int): Boolean = view.focusEntry(activeIndex)
 }
@@ -204,6 +207,7 @@ private class KidsSurface(private val view: KidsHomeLayout) : HomeSurface {
     override fun render(slides: List<Item>, activeIndex: Int) = view.render(slides, activeIndex)
     override fun setNextFocusUp(id: Int) = view.setNextFocusUp(id)
     override fun setChips(shelves: List<Pair<String, String>>) = view.setChips(shelves)
+    override fun setProfile(name: String, avatarUrl: String?) = view.setProfile(name, avatarUrl)
 
     override fun focusEntry(activeIndex: Int): Boolean = view.focusEntry(activeIndex)
 }

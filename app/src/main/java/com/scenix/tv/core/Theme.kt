@@ -39,6 +39,10 @@ class Theme private constructor(
     // ---- colours ---------------------------------------------------------------------------
     fun color(name: String, fallback: String = "#FFFFFF"): Int = parseColor(colors.optString(name, fallback))
 
+    /** A colour that falls back to an already-parsed one, e.g. wall-printed headings default to ink. */
+    fun colorOr(name: String, fallbackColor: Int): Int =
+        if (colors.has(name)) color(name) else fallbackColor
+
     val bg get() = color("bg", "#141414")
     val surface get() = color("surface", "#181818")
     val surface2 get() = color("surface2", "#232323")

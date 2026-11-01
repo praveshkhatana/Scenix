@@ -394,10 +394,25 @@ class BrowseActivity : Activity() {
             HomeLayoutSpec.Navigation.UTILITY,
             HomeLayoutSpec.Navigation.NONE,
         )
+        // The Clean and Kids compositions sit their blocks directly on the wallpaper, so the
+        // wall is the whole page's background — fixed behind the rails while they scroll —
+        // not a hero-slot backdrop with a seam where the hero ends.
+        val fullWall: android.graphics.drawable.Drawable? = when (app.theme.homeLayout.hero) {
+            HomeLayoutSpec.Hero.DUAL_CARDS -> GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
+            )
+            HomeLayoutSpec.Hero.KIDS_STAGE -> GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(app.theme.color("stageYellow", "#FFC93A"), app.theme.color("stageDeep", "#F4B81E")),
+            )
+            else -> null
+        }
         val content: ViewGroup = if (stageMode) FrameLayout(this) else LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
         }
+        fullWall?.let { content.background = it }
         val root: View = if (stageMode) {
             val frame = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
             val s = Stage()
@@ -415,7 +430,7 @@ class BrowseActivity : Activity() {
             layoutManager = LinearLayoutManager(this@BrowseActivity)
             setHasFixedSize(true)
             setItemViewCacheSize(24)
-            setBackgroundColor(if (stageMode) Color.TRANSPARENT else app.theme.bg)
+            setBackgroundColor(if (stageMode || fullWall != null) Color.TRANSPARENT else app.theme.bg)
             itemAnimator = null
             clipToPadding = false
             clipChildren = false
@@ -1536,6 +1551,16 @@ class BrowseActivity : Activity() {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     heroSlotHeight(surface.preferredHeightPx),
                 )
+                // Clean and Kids headers print the household's name and face in their own corner;
+                // surfaces without a header cluster ignore the update.
+                api.profiles { people, _ ->
+                    if (isFinishing || isDestroyed) return@profiles
+                    val me = people?.firstOrNull { it.id == profileId } ?: return@profiles
+                    surface.setProfile(
+                        me.name,
+                        if (me.avatar.isNotBlank()) api.absolute(me.avatar) else null,
+                    )
+                }
                 HeroHolder(surface)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
@@ -1543,7 +1568,9 @@ class BrowseActivity : Activity() {
                     layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     setPadding(0, theme.px(18f), 0, 0)
                 }
-                val head = Views.text(app, "rowTitle", 28f, theme.ink, "", bold = true)
+                // Packs that print rails on a light wallpaper override these two colours in the
+                // pack JSON; every other pack keeps reading them in its own ink.
+                val head = Views.text(app, "rowTitle", 28f, theme.colorOr("rowInk", theme.ink), "", bold = true)
                 head.setPadding(theme.gutter, 0, theme.gutter, theme.px(12f))
                 box.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 val rail = RailView(this@BrowseActivity).apply {
@@ -1695,7 +1722,8 @@ class BrowseActivity : Activity() {
                     leftMargin = theme.px(8f); rightMargin = theme.px(8f); bottomMargin = theme.px(8f)
                 })
             }
-            val name = Views.text(app, "caption", if (below) 18f else 19f, theme.ink, "", bold = true,
+            val name = Views.text(app, "caption", if (below) 18f else 19f,
+                theme.colorOr("captionInk", theme.ink), "", bold = true,
                 maxLines = if (below) 1 else 2)
             name.setPadding(theme.px(if (below) 4f else 12f), 0,
                 theme.px(if (below) 4f else 12f), theme.px(if (below) 0f else 10f))
@@ -1707,7 +1735,7 @@ class BrowseActivity : Activity() {
                     else -> 0
                 }
             })
-            val sub = Views.text(app, "meta", 14f, theme.ink3, "", maxLines = 1)
+            val sub = Views.text(app, "meta", 14f, theme.colorOr("captionSub", theme.ink3), "", maxLines = 1)
             sub.setPadding(theme.px(4f), 0, theme.px(4f), theme.px(4f))
             sub.visibility = if (below) View.VISIBLE else View.GONE
             card.addView(sub, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {

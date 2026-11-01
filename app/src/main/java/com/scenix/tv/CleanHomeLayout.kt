@@ -19,13 +19,15 @@ import com.scenix.tv.core.Views
 /**
  * The light glass Home composition for packs which opt into `homeHero: dual-cards`.
  *
- * The reference mockup's grammar, read block by block: one big rounded frosted panel floating on a
- * blurred wallpaper; inside it a quiet header (brand at left, a DARK centred pill nav with the
- * search target built in, household avatar at right); two feature cards side by side — text over a
- * tinted card plus key art bleeding from the other edge, each with a circular play control; a row
- * of glass chips for the household's real shelves with only one chip darkened; and below that,
- * captioned poster tiles. Nothing is opaque black, nothing is a full-bleed billboard, and motion
- * stays gentle because the whole pack reads as calm.
+ * The mockup's rounded outer frame is only a presentation border; on a real TV the WHOLE screen is
+ * the soft blue-grey wallpaper wash, with every block sitting directly on it: the SCENIX wordmark
+ * in white at left; a DARK centred pill nav with the search target welded to its end; a household
+ * cluster at right (frost bell, avatar, profile name); two tinted feature cards side by side —
+ * steel-blue and paler periwinkle plates carrying a white title, a dark circular play control and
+ * key art bleeding from the facing edge; a row of frosted glass chips naming the household's real
+ * shelves with only one chip darkened; and below the hero, captioned poster rails with rating and
+ * year. Nothing is opaque black and nothing is a full-bleed billboard; motion stays gentle because
+ * the whole pack reads as calm.
  */
 internal class CleanHomeLayout(
     context: Context,
@@ -49,7 +51,7 @@ internal class CleanHomeLayout(
     val root: View get() = this
     val primaryControl: View get() = cardA
     val navigationAnchor: View? get() = pillStops.firstOrNull()
-    val preferredHeightPx: Int get() = theme.px(theme.packInt("cleanHomeHeight", 880).toFloat())
+    val preferredHeightPx: Int get() = theme.px(theme.packInt("cleanHomeHeight", 480).toFloat())
 
     private val cardA: FrameLayout
     private val cardB: FrameLayout
@@ -62,22 +64,14 @@ internal class CleanHomeLayout(
     private val chipRow: LinearLayout
     private val pillStops = ArrayList<View>()
     private var chipIds: List<String> = emptyList()
+    private lateinit var avatarFace: ImageView
+    private lateinit var avatarIni: TextView
+    private lateinit var nameText: TextView
 
     init {
-        // The page behind the panel: a soft blurred-wallpaper wash, never flat black.
-        background = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(theme.color("wallA", "#7E94A8"), theme.color("wallB", "#5C7288")),
-        )
-
-        addView(View(context).apply {
-            background = Views.rounded(
-                theme.color("glassPanel", "#DCE6F0"), theme.radius("panel", 28f),
-                theme.px(1f), theme.color("glassLine", "#FFFFFF"),
-            )
-        }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-            setMargins(theme.px(48f), theme.px(36f), theme.px(48f), theme.px(28f))
-        })
+        // Transparent: the host paints the wallpaper across the entire screen behind this
+        // composition (and behind the rails below it), exactly as in the mockup, where the
+        // rounded outer frame was presentation framing and the wall is the whole page.
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -86,13 +80,12 @@ internal class CleanHomeLayout(
         }
         addView(content, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-        ).apply {
-            setMargins(theme.px(48f), theme.px(36f), theme.px(48f), theme.px(28f))
-        })
+        ).apply { setMargins(theme.px(56f), theme.px(24f), theme.px(56f), 0) })
 
-        // --- header: brand left, dark centred pill, household right ---------------------------
+        // --- header: white wordmark left, dark centred pill, household right -------------------
         val header = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
-        header.addView(Views.text(app, "brand", 26f, theme.ink, "SCENIX", bold = true), LayoutParams(
+        header.addView(Views.text(app, "brand", 26f, theme.color("inkOnWall", "#FFFFFF"), "SCENIX",
+            bold = true), LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
 
@@ -122,29 +115,59 @@ internal class CleanHomeLayout(
         val household = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
-        val avatar = Views.text(app, "meta", 17f, Color.WHITE, "S", bold = true,
-            gravity = Gravity.CENTER).apply {
-            background = Views.rounded(theme.brand, theme.px(999f))
+        val bell = FrameLayout(context).apply {
+            background = Views.rounded(theme.color("chipFrost", "#3A4552"), theme.px(999f))
         }
+        bell.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_bell)
+            setColorFilter(Color.WHITE)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(theme.px(12f), theme.px(12f), theme.px(12f), theme.px(12f))
+        }, LayoutParams(theme.px(48f), theme.px(48f)))
+        household.addView(bell, LinearLayout.LayoutParams(theme.px(48f), theme.px(48f)))
+
         val avatarStop = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Profiles"
-            setPadding(theme.px(8f), theme.px(6f), theme.px(8f), theme.px(6f))
+            setPadding(theme.px(8f), theme.px(4f), theme.px(8f), theme.px(4f))
         }
-        avatarStop.addView(avatar, LayoutParams(theme.px(44f), theme.px(44f)))
+        avatarIni = Views.text(app, "meta", 17f, theme.ink, "?", bold = true,
+            gravity = Gravity.CENTER).apply {
+            background = Views.rounded(theme.color("inkOnWall", "#FFFFFF"), theme.px(999f))
+        }
+        avatarFace = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setOval(0, 0, v.width, v.height)
+                }
+            }
+        }
+        avatarStop.addView(avatarIni, LayoutParams(theme.px(46f), theme.px(46f)))
+        avatarStop.addView(avatarFace, LayoutParams(theme.px(46f), theme.px(46f)))
         Focus.attach(avatarStop, avatarStop, app, theme.px(999f), scale = false, elevate = false,
             onClick = callbacks.onProfile)
         pillStops += avatarStop
-        household.addView(avatarStop)
+        household.addView(avatarStop, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(10f) })
+
+        nameText = Views.text(app, "nav", 17f, theme.color("inkOnWall", "#FFFFFF"), "", bold = true,
+            maxLines = 1).apply { visibility = View.GONE }
+        household.addView(nameText, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(10f) })
         header.addView(household, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
         content.addView(header, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f),
-        ))
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)))
 
         // --- the two feature cards ------------------------------------------------------------
         val cardRow = LinearLayout(context).apply {
@@ -152,24 +175,24 @@ internal class CleanHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
-        val a = makeCard(tinted = true)
+        val a = makeCard(deep = true)
         cardA = a.first; artA = a.second.first; titleA = a.second.second
-        val b = makeCard(tinted = false)
+        val b = makeCard(deep = false)
         cardB = b.first; artB = b.second.first; titleB = b.second.second
         cardRow.addView(cardA, LinearLayout.LayoutParams(0, theme.px(300f), 1f))
         cardRow.addView(cardB, LinearLayout.LayoutParams(0, theme.px(300f), 1f).apply {
-            marginStart = theme.px(24f)
+            marginStart = theme.px(22f)
         })
         content.addView(cardRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(300f),
-        ).apply { topMargin = theme.px(28f) })
+        ).apply { topMargin = theme.px(24f) })
         // The light pack speaks focus as a crisp keyline plus a soft lift — never a glow on glass.
         Focus.attach(cardA, cardA, app, theme.radius("card", 22f), scale = false, elevate = true,
             onClick = { itemA?.let(callbacks.onOpen) })
         Focus.attach(cardB, cardB, app, theme.radius("card", 22f), scale = false, elevate = true,
             onClick = { itemB?.let(callbacks.onOpen) })
 
-        // --- glass chip row: the household's real shelves, named exactly as they are -----------
+        // --- frosted chip row: the household's real shelves, named exactly as they are ----------
         chipRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -223,8 +246,9 @@ internal class CleanHomeLayout(
         return dot
     }
 
-    /** A feature card: tinted or glass plate, key art bleeding from the end edge, text + play. */
-    private fun makeCard(tinted: Boolean): Pair<FrameLayout, Pair<ImageView, TextView>> {
+    /** A feature card: a tinted plate (deep steel-blue or pale periwinkle) carrying a white
+     *  title, a dark circular play control and key art bleeding from the facing edge. */
+    private fun makeCard(deep: Boolean): Pair<FrameLayout, Pair<ImageView, TextView>> {
         val card = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
@@ -232,10 +256,11 @@ internal class CleanHomeLayout(
             clipChildren = false
             clipToPadding = false
             contentDescription = "Featured title. Open details"
-            background = if (tinted) GradientDrawable(
+            background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(theme.color("cardTintA", "#8FB4DC"), theme.color("cardTintB", "#6E97C8")),
-            ) else Views.rounded(theme.color("glassCard", "#FFFFFF"), theme.radius("card", 22f))
+                if (deep) intArrayOf(theme.color("cardTintA", "#5F86B8"), theme.color("cardTintB", "#47699A"))
+                else intArrayOf(theme.color("cardGlassA", "#A9BED8"), theme.color("cardGlassB", "#8CA6C6")),
+            )
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, o: android.graphics.Outline) {
                     o.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 22f).toFloat())
@@ -255,8 +280,8 @@ internal class CleanHomeLayout(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(theme.px(34f), theme.px(20f), theme.px(12f), theme.px(20f))
         }
-        val title = Views.text(app, "h2", 38f, theme.color("inkOnCard", "#17202B"), "", bold = true,
-            maxLines = 2)
+        val title = Views.text(app, "h2", 36f, theme.color("inkOnCard", "#FFFFFF"), "", bold = true,
+            maxLines = 3)
         textCol.addView(title, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val playRow = LinearLayout(context).apply {
@@ -267,17 +292,17 @@ internal class CleanHomeLayout(
             gravity = Gravity.CENTER).apply {
             background = Views.rounded(theme.color("pill", "#1E252E"), theme.px(999f))
         }, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
-        playRow.addView(Views.text(app, "sub", 17f, theme.color("inkOnCard", "#17202B"), "Play",
-            bold = true), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = theme.px(12f) })
+        playRow.addView(Views.text(app, "sub", 17f, Color.WHITE, "Play", bold = true),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = theme.px(12f) })
         textCol.addView(playRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = theme.px(20f) })
         card.addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 54f))
-            addView(artBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 46f))
+            addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 56f))
+            addView(artBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 44f))
         }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         return Pair(card, Pair(art, title))
     }
@@ -292,7 +317,7 @@ internal class CleanHomeLayout(
             contentDescription = "Jump to $label"
             setPadding(theme.px(20f), theme.px(13f), theme.px(20f), theme.px(13f))
             background = Views.rounded(
-                if (active) theme.color("pill", "#1E252E") else theme.color("glassChip", "#FFFFFF"),
+                if (active) theme.color("pill", "#1E252E") else theme.color("chipFrost", "#3A4552"),
                 theme.radius("chip", 999f))
         }
         val glyph = when {
@@ -302,13 +327,13 @@ internal class CleanHomeLayout(
             label.contains("Language", true) || label.contains("Top Hindi", true) -> "\u2691"
             else -> "\u25CF"
         }
-        chip.addView(Views.text(app, "meta", 15f, if (active) Color.WHITE else theme.ink, glyph,
-            bold = true), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        chip.addView(Views.text(app, "chip", 16f, if (active) Color.WHITE else theme.ink, label,
-            bold = true), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = theme.px(9f) })
+        chip.addView(Views.text(app, "meta", 15f, Color.WHITE, glyph, bold = true),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        chip.addView(Views.text(app, "chip", 16f, Color.WHITE, label, bold = true),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = theme.px(9f) })
         Focus.attach(chip, chip, app, theme.radius("chip", 999f), scale = false, elevate = false,
             onClick = { callbacks.onShelf(shelfId) })
         return chip
@@ -320,7 +345,7 @@ internal class CleanHomeLayout(
         if (ids == chipIds) return
         chipIds = ids
         chipRow.removeAllViews()
-        shelves.take(6).forEachIndexed { index, (id, label) ->
+        shelves.take(7).forEachIndexed { index, (id, label) ->
             val chip = makeChip(id, label.trim().removePrefix("New on "), index == 0)
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(52f))
             if (chipRow.childCount > 0) lp.marginStart = theme.px(14f)
@@ -328,6 +353,20 @@ internal class CleanHomeLayout(
         }
         cardA.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
+    }
+
+    /** The header prints the signed-in profile's name, like the mockup's household cluster. */
+    fun setProfile(name: String, avatarUrl: String?) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        avatarIni.text = trimmed.take(1).uppercase()
+        nameText.text = trimmed.take(18)
+        nameText.visibility = View.VISIBLE
+        if (!avatarUrl.isNullOrBlank()) {
+            BrowseImages.load(avatarFace, avatarUrl, theme.px(46f)) { ok ->
+                if (ok) avatarIni.visibility = View.GONE
+            }
+        }
     }
 
     fun render(slides: List<Item>, activeIndex: Int) {

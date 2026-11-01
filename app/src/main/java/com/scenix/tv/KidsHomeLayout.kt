@@ -19,14 +19,15 @@ import com.scenix.tv.core.Views
 /**
  * The bright stage composition for kids packs (`homeHero: kids-stage`).
  *
- * The mockup's grammar, block by block: flat sunshine yellow behind everything; a slightly paler
- * rounded panel holding the whole home; a black circular brand mark at left; a BLACK pill nav in
- * the centre with the active tab lit in the page's own yellow and a yellow search dot welded to
- * the pill's end; a household avatar and bell at right; two oversized feature cards (one full-art
- * with the title printed over it, one tinted with key art bleeding from the edge) each carrying a
- * chunky play circle; a row of black chip pills; and below them big square character tiles with
- * black uppercase captions. Focus is a thick black keyline — the same ink as everything else —
- * never a glow.
+ * The mockup's rounded outer frame is only a presentation border; on a real TV the WHOLE screen is
+ * the sunshine-yellow stage, deepening slightly toward the bottom, with every block sitting directly
+ * on it: a black circular brand mark at top-left with its BLACK tab pill welded beside it and a
+ * yellow search dot at the pill's end; a household cluster at right (avatar, gold bell, black name
+ * plate); two oversized feature cards — one full-art with the title printed over the top and a play
+ * circle at the foot, one yellow plate with key art bleeding from its inner edge; a row of black
+ * chip pills naming the household's real shelves; and below the hero, the host's rails draw chunky
+ * square captioned tiles. Focus is a thick black keyline — the same ink as everything else — never
+ * a glow.
  */
 internal class KidsHomeLayout(
     context: Context,
@@ -49,7 +50,7 @@ internal class KidsHomeLayout(
     val root: View get() = this
     val primaryControl: View get() = cardA
     val navigationAnchor: View? get() = pillStops.firstOrNull()
-    val preferredHeightPx: Int get() = theme.px(theme.packInt("kidsHomeHeight", 620).toFloat())
+    val preferredHeightPx: Int get() = theme.px(theme.packInt("kidsHomeHeight", 470).toFloat())
 
     private val cardA: FrameLayout
     private val cardB: FrameLayout
@@ -62,15 +63,13 @@ internal class KidsHomeLayout(
     private val chipRow: LinearLayout
     private val pillStops = ArrayList<View>()
     private var chipIds: List<String> = emptyList()
+    private lateinit var avatarFace: ImageView
+    private lateinit var avatarIni: TextView
+    private lateinit var namePlate: TextView
 
     init {
-        setBackgroundColor(theme.color("stageYellow", "#FFC42E"))
-
-        addView(View(context).apply {
-            background = Views.rounded(theme.color("panelTint", "#FFEFC2"), theme.radius("panel", 32f))
-        }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-            setMargins(theme.px(48f), theme.px(32f), theme.px(48f), theme.px(24f))
-        })
+        // Transparent: the host paints the sunshine stage across the entire screen behind this
+        // composition and the rails below it; the yellow stage IS the page.
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -79,61 +78,99 @@ internal class KidsHomeLayout(
         }
         addView(content, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-        ).apply {
-            setMargins(theme.px(48f), theme.px(32f), theme.px(48f), theme.px(24f))
-        })
+        ).apply { setMargins(theme.px(56f), theme.px(26f), theme.px(56f), 0) })
 
-        // --- header: black brand circle, black centred pill, household cluster -----------------
+        // --- header: brand circle + its tab pill at left, household cluster at right ------------
         val header = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
-        val mark = Views.text(app, "h2", 26f, Color.WHITE, "S", bold = true, gravity = Gravity.CENTER).apply {
+        val leftGroup = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val mark = Views.text(app, "h2", 26f, Color.WHITE, "S", bold = true,
+            gravity = Gravity.CENTER).apply {
             background = Views.rounded(theme.ink, theme.px(999f))
         }
-        header.addView(mark, LayoutParams(theme.px(56f), theme.px(56f)).apply {
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        })
+        leftGroup.addView(mark, LinearLayout.LayoutParams(theme.px(60f), theme.px(60f)))
 
         val pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = Views.rounded(theme.ink, theme.px(999f))
+            background = Views.rounded(theme.color("pill", "#1E252E"), theme.px(999f))
             setPadding(theme.px(8f), theme.px(7f), theme.px(7f), theme.px(7f))
         }
         val sections = listOf("Movies" to "movies", "Series" to "series", "Live" to "live")
         sections.forEachIndexed { index, (label, route) ->
-            val stop = makePillStop(label, route, index == 0)
-            pill.addView(stop)
+            pill.addView(makePillStop(label, route, index == 0))
         }
         pill.addView(makeSearchDot(), LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)).apply {
             marginStart = theme.px(8f)
         })
-        header.addView(pill, LayoutParams(
+        leftGroup.addView(pill, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(60f),
-        ).apply { gravity = Gravity.CENTER })
+        ).apply { marginStart = theme.px(18f) })
+        header.addView(leftGroup, LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
 
         val household = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
         val avatarStop = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Profiles"
-            setPadding(theme.px(8f), theme.px(4f), theme.px(8f), theme.px(4f))
         }
-        avatarStop.addView(Views.text(app, "meta", 17f, Color.WHITE, "K", bold = true,
+        avatarFace = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setOval(0, 0, v.width, v.height)
+                }
+            }
+        }
+        avatarIni = Views.text(app, "meta", 19f, Color.WHITE, "?", bold = true,
             gravity = Gravity.CENTER).apply {
             background = Views.rounded(theme.ink, theme.px(999f))
-        }, LayoutParams(theme.px(46f), theme.px(46f)))
+        }
+        avatarStop.addView(avatarIni, LayoutParams(theme.px(54f), theme.px(54f)))
+        avatarStop.addView(avatarFace, LayoutParams(theme.px(54f), theme.px(54f)))
         Focus.attach(avatarStop, avatarStop, app, theme.px(999f), scale = false, elevate = false,
             onClick = callbacks.onProfile)
         pillStops += avatarStop
-        household.addView(avatarStop)
+        household.addView(avatarStop, LinearLayout.LayoutParams(theme.px(54f), theme.px(54f)))
+
+        val bell = FrameLayout(context).apply {
+            background = Views.rounded(theme.color("accentYellow", "#FFD34E"), theme.px(999f))
+        }
+        bell.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_bell)
+            setColorFilter(theme.ink)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(theme.px(13f), theme.px(13f), theme.px(13f), theme.px(13f))
+        }, LayoutParams(theme.px(52f), theme.px(52f)))
+        household.addView(bell, LinearLayout.LayoutParams(theme.px(52f), theme.px(52f)).apply {
+            marginStart = theme.px(12f)
+        })
+
+        namePlate = Views.text(app, "nav", 17f, Color.WHITE, "", bold = true).apply {
+            background = Views.rounded(theme.ink, theme.px(999f))
+            setPadding(theme.px(20f), theme.px(13f), theme.px(20f), theme.px(13f))
+            maxLines = 1
+            visibility = View.GONE
+        }
+        household.addView(namePlate, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(14f) })
         header.addView(household, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
         content.addView(header, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(66f)))
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)))
 
         // --- the two oversized feature cards ---------------------------------------------------
         val cardRow = LinearLayout(context).apply {
@@ -145,13 +182,13 @@ internal class KidsHomeLayout(
         cardA = a.first; artA = a.second.first; titleA = a.second.second
         val b = makeCard(fullArt = false)
         cardB = b.first; artB = b.second.first; titleB = b.second.second
-        cardRow.addView(cardA, LinearLayout.LayoutParams(0, theme.px(280f), 42f))
-        cardRow.addView(cardB, LinearLayout.LayoutParams(0, theme.px(280f), 58f).apply {
-            marginStart = theme.px(24f)
+        cardRow.addView(cardA, LinearLayout.LayoutParams(0, theme.px(280f), 40f))
+        cardRow.addView(cardB, LinearLayout.LayoutParams(0, theme.px(280f), 60f).apply {
+            marginStart = theme.px(22f)
         })
         content.addView(cardRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(280f),
-        ).apply { topMargin = theme.px(26f) })
+        ).apply { topMargin = theme.px(20f) })
         Focus.attach(cardA, cardA, app, theme.radius("card", 26f), scale = false, elevate = true,
             onClick = { itemA?.let(callbacks.onOpen) })
         Focus.attach(cardB, cardB, app, theme.radius("card", 26f), scale = false, elevate = true,
@@ -165,8 +202,8 @@ internal class KidsHomeLayout(
             clipToPadding = false
         }
         content.addView(chipRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(60f),
-        ).apply { topMargin = theme.px(24f) })
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(58f),
+        ).apply { topMargin = theme.px(22f) })
 
         cardA.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
         cardB.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
@@ -183,7 +220,7 @@ internal class KidsHomeLayout(
                 theme.color("pillActive", "#26221B"), theme.px(999f)) else null
         }
         stop.addView(Views.text(app, "nav", 17f,
-            if (active) theme.color("stageYellow", "#FFC42E") else Color.WHITE,
+            if (active) theme.color("stageYellow", "#FFC93A") else Color.WHITE,
             label, bold = true, gravity = Gravity.CENTER), LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.CENTER })
@@ -213,8 +250,9 @@ internal class KidsHomeLayout(
         return dot
     }
 
-    /** fullArt = the backdrop covers the whole card and the title is printed over it (white);
-     *  tinted = yellow plate with key art bleeding from the end edge and the title in black ink. */
+    /** fullArt = the backdrop covers the whole card, the title prints over its top and a black
+     *  play circle sits at its foot; tinted = a yellow plate with key art bleeding from the inner
+     *  edge, the title in ink and the same play circle at the foot, exactly as the mockup shows. */
     private fun makeCard(fullArt: Boolean): Pair<FrameLayout, Pair<ImageView, TextView>> {
         val card = FrameLayout(context).apply {
             id = View.generateViewId()
@@ -235,50 +273,66 @@ internal class KidsHomeLayout(
         val art = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
-        val textCol = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM
-            setPadding(theme.px(30f), theme.px(20f), theme.px(12f), theme.px(24f))
-        }
-        val inkForCard = if (fullArt) Color.WHITE else theme.ink
-        val title = Views.text(app, "h2", 36f, inkForCard, "", bold = true, maxLines = 2)
-        textCol.addView(title, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val title = Views.text(app, "h2", 34f, Color.WHITE, "", bold = true, maxLines = 2)
         val playRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        playRow.addView(Views.text(app, "meta", 18f,
-            if (fullArt) theme.ink else Color.WHITE, "▶", bold = true, gravity = Gravity.CENTER).apply {
-            background = Views.rounded(if (fullArt) Color.WHITE else theme.ink, theme.px(999f))
+        playRow.addView(Views.text(app, "meta", 18f, Color.WHITE, "\u25B6", bold = true,
+            gravity = Gravity.CENTER).apply {
+            background = Views.rounded(theme.ink, theme.px(999f))
         }, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
-        playRow.addView(Views.text(app, "sub", 16f, inkForCard, "Play", bold = true),
+        playRow.addView(Views.text(app, "sub", 16f, Color.WHITE, "Play", bold = true),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { marginStart = theme.px(12f) })
-        textCol.addView(playRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(16f) })
         if (fullArt) {
             card.addView(art, LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            // A soft ink wash at the bottom so the printed title survives any backdrop.
+            // Soft ink washes top and bottom so printed text survives any backdrop.
+            card.addView(View(context).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT))
+            }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(150f)).apply {
+                gravity = Gravity.TOP
+            })
             card.addView(View(context).apply {
                 background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                     intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT))
-            }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(150f)).apply {
+            }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
                 gravity = Gravity.BOTTOM
             })
-            card.addView(textCol, LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            card.addView(title, LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.START or Gravity.TOP
+                setMargins(theme.px(26f), theme.px(20f), theme.px(20f), 0)
+            })
+            card.addView(playRow, LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.START or Gravity.BOTTOM
+                setMargins(theme.px(20f), 0, theme.px(16f), theme.px(18f))
+            })
         } else {
             val artBox = FrameLayout(context)
             artBox.addView(art, LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            // The left column stacks the ink title at the top and the play row at the foot.
+            val textCol = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(theme.px(28f), theme.px(22f), theme.px(10f), theme.px(20f))
+            }
+            title.setTextColor(theme.ink)
+            textCol.addView(title, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            textCol.addView(View(context), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            textCol.addView(playRow)
             card.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
-                addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 52f))
-                addView(artBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 48f))
+                addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 46f))
+                addView(artBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 54f))
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         return Pair(card, Pair(art, title))
@@ -320,7 +374,7 @@ internal class KidsHomeLayout(
         if (ids == chipIds) return
         chipIds = ids
         chipRow.removeAllViews()
-        shelves.take(6).forEachIndexed { index, (id, label) ->
+        shelves.take(7).forEachIndexed { index, (id, label) ->
             val chip = makeChip(id, label.trim().removePrefix("New on "), index == 0)
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(52f))
             if (chipRow.childCount > 0) lp.marginStart = theme.px(14f)
@@ -328,6 +382,20 @@ internal class KidsHomeLayout(
         }
         cardA.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
+    }
+
+    /** The household cluster prints the signed-in profile's name, like the mockup's name plate. */
+    fun setProfile(name: String, avatarUrl: String?) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        avatarIni.text = trimmed.take(1).uppercase()
+        namePlate.text = trimmed.take(18)
+        namePlate.visibility = View.VISIBLE
+        if (!avatarUrl.isNullOrBlank()) {
+            BrowseImages.load(avatarFace, avatarUrl, theme.px(54f)) { ok ->
+                if (ok) avatarIni.visibility = View.GONE
+            }
+        }
     }
 
     fun render(slides: List<Item>, activeIndex: Int) {

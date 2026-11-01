@@ -1,13 +1,13 @@
 {
   "id": "scenix-kids",
   "brandMark": "S",
-  "_read": "Kids stage: sunshine yellow, black pill navigation with a yellow search dot, two oversized feature cards, black chip pills and chunky square captioned tiles; focus is a thick black keyline. An original Scenix composition; no marks or characters copied from any reference.",
+  "_read": "Kids stage FULL-BLEED (the mockup's rounded frame was presentation only): the whole screen is sunshine yellow deepening toward the bottom; black brand circle top-left with its black tab pill welded beside it and a yellow search dot at the pill end; household avatar, gold bell and black name plate at right; two oversized feature cards (full-art with the title printed over it, and a yellow plate with key art bleeding from the inner edge); black chip pills; chunky square captioned tiles in the rails below; focus is a thick black keyline. An original Scenix composition; no marks or characters copied from any reference.",
   "canvas": {
     "width": 1920,
     "height": 1080
   },
   "colors": {
-    "bg": "#FFC42E",
+    "bg": "#FFC93A",
     "surface": "#FFD866",
     "surface2": "#FFE18A",
     "line": "#E0B53A",
@@ -64,7 +64,8 @@
     "inkOnCard": "#17202B",
     "panelTint": "#FFEDBE",
     "cardTint": "#FFD866",
-    "stageYellow": "#FFC42E",
+    "stageYellow": "#FFC93A",
+    "stageDeep": "#F4B81E",
     "accentYellow": "#FFD34E"
   },
   "spacing": {
@@ -260,7 +261,7 @@
     "heroHeight": 700,
     "cleanHomeHeight": 620,
     "rows": "poster",
-    "card": "overlay",
+    "card": "below",
     "focus": "ring",
     "motion": "fade",
     "detail": "backdrop",
@@ -270,6 +271,6 @@
     "stage": "off",
     "rank": "outline",
     "featuredMarker": "rim",
-    "kidsHomeHeight": 560
+    "kidsHomeHeight": 470
   }
 }
