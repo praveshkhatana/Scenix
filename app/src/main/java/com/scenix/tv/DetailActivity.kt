@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
@@ -68,6 +69,7 @@ class DetailActivity : Activity() {
         }
         scroll.addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(scroll)
+        Motion.enter(app.theme, scroll)
         loading()
         api.meta(identity, profileId) { record, error ->
             if (isFinishing || isDestroyed) return@meta

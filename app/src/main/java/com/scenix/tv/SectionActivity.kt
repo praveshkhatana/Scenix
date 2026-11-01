@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
@@ -73,6 +74,7 @@ class SectionActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
         ).apply { gravity = Gravity.BOTTOM })
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 

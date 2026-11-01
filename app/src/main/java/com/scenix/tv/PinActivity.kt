@@ -13,6 +13,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 
@@ -78,6 +79,7 @@ class PinActivity : Activity() {
             topMargin = app.theme.px(8f)
         })
         setContentView(root)
+        Motion.enter(app.theme, root)
         root.post {
             val firstRow = keys.getChildAt(0) as? ViewGroup
             (firstRow?.getChildAt(0) ?: keys)?.requestFocus()

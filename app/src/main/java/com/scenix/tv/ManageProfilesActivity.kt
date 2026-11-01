@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -86,6 +87,7 @@ class ManageProfilesActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 

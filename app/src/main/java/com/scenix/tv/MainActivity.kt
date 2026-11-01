@@ -8,6 +8,7 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.HubWatch
 import com.scenix.tv.core.Prefs
@@ -50,6 +51,7 @@ class MainActivity : AppCompatActivity(), ScreenHost {
         root = FrameLayout(this)
         root.setBackgroundColor(ctx.theme.bg)
         setContentView(root)
+        Motion.enter(app.theme, root)
 
         pendingRoute = deepRoute(intent)
         forceSetup = wantsSetup(intent)

@@ -49,6 +49,7 @@ import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.player.Ceilings
 import org.json.JSONArray
@@ -1531,7 +1532,7 @@ class PlayerActivity : Activity() {
 
     private fun rebuildMenu(kind: MenuKind, keepFocus: Boolean = true) {
         val focused = if (keepFocus) currentFocus else null
-        panel?.let { overlay.removeView(it) }
+        panel?.let { overlay.removeView(it) }  // replaced by the fresh sheet on the same frame
         panel = null
         panelRows = emptyList()
 
@@ -1597,6 +1598,7 @@ class PlayerActivity : Activity() {
             bottomMargin = bottom
         })
         panel = container
+        Motion.sheetIn(container, theme)
 
         trapFocus()
         val preservedEpisode = if (kind == MenuKind.EPISODES) pendingEpisodeFocus else null
@@ -2280,7 +2282,13 @@ class PlayerActivity : Activity() {
 
     private fun closeMenu(restore: Boolean = true) {
         val had = panel != null
-        panel?.let { overlay.removeView(it) }
+        panel?.let { p ->
+            // A menu leaves the way chrome does: a quick fade, never a hard pop.
+            Motion.outAlpha(p, theme,
+                (theme.token("anim", "cardFadeInMs", 220.0).toLong() * 2 / 3).coerceIn(60L, 400L)) {
+                if (p.parent === overlay) overlay.removeView(p)
+            }
+        }
         panel = null
         panelKind = null
         panelRows = emptyList()
@@ -2491,8 +2499,15 @@ class PlayerActivity : Activity() {
 
     private fun controlsVisible(): Boolean = overlay.visibility == View.VISIBLE
 
-    private fun showChrome(focus: Boolean) {
+    /** Chrome comes back by fading in — never a hard visibility pop over the film. */
+    private fun revealChrome() {
         overlay.visibility = View.VISIBLE
+        Motion.inAlpha(overlay, theme,
+            theme.token("anim", "navFadeMs", 180.0).toLong().coerceIn(60L, 400L))
+    }
+
+    private fun showChrome(focus: Boolean) {
+        revealChrome()
         armHide()
         if (!focus) return
         val target = when {
@@ -2542,7 +2557,10 @@ class PlayerActivity : Activity() {
             return
         }
         currentFocus?.clearFocus()
-        overlay.visibility = View.INVISIBLE
+        Motion.outAlpha(overlay, theme,
+            (theme.token("anim", "navFadeMs", 180.0).toLong() * 2 / 3).coerceIn(60L, 400L)) {
+            if (overlay.alpha < 0.05f) overlay.visibility = View.INVISIBLE
+        }
     }
 
     /**
@@ -2556,7 +2574,7 @@ class PlayerActivity : Activity() {
     private fun showCenter(text: String, spinner: Boolean) {        // Buffering can begin while the chrome has faded. The message is the one thing that must not
         // be invisible, so bring the layer back without stealing the ring.
         if (overlay.visibility != View.VISIBLE) {
-            overlay.visibility = View.VISIBLE
+            revealChrome()
             armHide()
         }
         centerText.text = text
@@ -2628,7 +2646,7 @@ class PlayerActivity : Activity() {
         clearErrorCard()
         errorShowing = true
         cancelHide()
-        overlay.visibility = View.VISIBLE
+        revealChrome()
         val card = cardBox()
         card.addView(Views.text(app, "panelTitle", 28f, theme.color("brand", "#E50914"),
             title, bold = true))
@@ -2710,7 +2728,7 @@ class PlayerActivity : Activity() {
         clearError()
         nextShowing = true
         cancelHide()
-        overlay.visibility = View.VISIBLE
+        revealChrome()
         val season = next.optInt("season", 0)
         val episode = next.optInt("episode", 0)
         val epTitle = str(next, "title")
@@ -2827,7 +2845,7 @@ class PlayerActivity : Activity() {
             leftMargin = theme.gutter
             bottomMargin = (bottomBar.height + theme.px(16f)).coerceAtLeast(theme.px(190f))
         })
-        overlay.visibility = View.VISIBLE
+        revealChrome()
         cancelHide()
         undo.post { undo.requestFocus() }
         val r = Runnable { hideUndo(); armHide() }

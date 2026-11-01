@@ -14,6 +14,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 
@@ -96,6 +97,7 @@ class TextEntryActivity : Activity() {
 
         root.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         setContentView(root)
+        Motion.enter(app.theme, root)
         field.requestFocus()
         field.postDelayed({
             field.requestFocus()

@@ -16,6 +16,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 
@@ -110,6 +111,7 @@ class ProfilesActivity : Activity() {
         status = Views.text(app, "sub", 22f, app.theme.ink2, "Reading the household…", gravity = Gravity.CENTER)
         root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(64f)))
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
@@ -127,13 +129,17 @@ class ProfilesActivity : Activity() {
             for (p in profiles) row.addView(profileTile(p))
             row.addView(addTile())
             // The gate wakes up, it doesn't snap into place: each face rises a hand-width behind the
-            // last. A dozen views, transform and alpha only — cheap even on the 2 GB panel.
+            // last. A dozen views, transform and alpha only — cheap even on the 2 GB panel. Every
+            // number comes from the pack's anim tokens; faces step wider apart than shelf sections.
             val theme = app.theme
+            val riseMs = theme.token("anim", "fadeUpMs", 600.0).toLong() * 2L / 5L
+            val stepMs = theme.token("anim", "fadeUpStagger", 30.0).toLong() * 3L
+            val lift = theme.px(theme.token("anim", "fadeUpShift", 20.0).toFloat()).toFloat()
             for (i in 0 until row.childCount) {
                 val c = row.getChildAt(i)
                 c.alpha = 0f
-                c.translationY = theme.px(26f).toFloat()
-                c.animate().alpha(1f).translationY(0f).setStartDelay(i * 90L).setDuration(240L).start()
+                c.translationY = lift
+                c.animate().alpha(1f).translationY(0f).setStartDelay(i * stepMs).setDuration(riseMs).start()
             }
             // Android often gives the only early control ("Edit profiles") focus while the
             // household is loading. Once the face tiles are present, land on the remembered

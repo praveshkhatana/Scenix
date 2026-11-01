@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -88,6 +89,7 @@ class GamesActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
         ).apply { gravity = Gravity.BOTTOM })
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
