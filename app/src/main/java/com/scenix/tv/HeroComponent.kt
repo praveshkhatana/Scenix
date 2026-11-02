@@ -80,6 +80,8 @@ internal class HeroComponent(
     private data class SelectorTile(
         val root: FrameLayout,
         val active: View,
+        val art: ImageView,
+        val item: Item,
     )
 
     /** The vertical height selected by the active pack, already converted to device pixels. */
@@ -382,6 +384,12 @@ internal class HeroComponent(
         }
         selectorTiles.forEachIndexed { index, tile ->
             tile.active.visibility = if (index == activeIndex) View.VISIBLE else View.INVISIBLE
+            // Only the slides around the active one have their art fetched. Before this, opening
+            // Home staged a download for every slide in the carousel (a 1920×1080 backdrop per
+            // 232 px preview tile), which saturated both image workers and left the shelves blank.
+            if (kotlin.math.abs(index - activeIndex) <= 2) {
+                BrowseImages.load(tile.art, tile.item.backdrop ?: tile.item.poster, theme.px(232f))
+            }
         }
     }
 
@@ -425,7 +433,7 @@ internal class HeroComponent(
             }
         }
         root.addView(art, FrameLayout.LayoutParams(width, height))
-        BrowseImages.load(art, item.backdrop ?: item.poster, width)
+        // Art is bound by syncSelectors, which only asks for the slides near the active one.
         val shade = View(context).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
@@ -463,7 +471,7 @@ internal class HeroComponent(
                 }
             },
         )
-        return SelectorTile(root, active)
+        return SelectorTile(root, active, art, item)
     }
 
     private fun paintDots(slides: List<Item>, activeIndex: Int) {

@@ -8,27 +8,47 @@ import android.util.LruCache
 import android.widget.ImageView
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * The native screen's picture loader: bounded memory, a handful of workers, and a tag so a recycled
  * card cannot receive the previous title's poster. Decoding happens off the UI thread; a missing or
  * slow image leaves the gradient placeholder, never blocks focus.
+ *
+ * Two rules keep a 1 GB panel responsive:
+ *
+ *  - `sizedUrl` asks the CDN for the picture the tile actually needs. Asking for the largest and
+ *    downsampling cost the network 25–40× more per tile: a 232 px preview strip pulled 1920×1080
+ *    backdrops (560 KB each), and a 280 px card pulled an 1800×2667 TMDB `original` (1 MB). Sizing
+ *    at the edge is also why those strips used to starve every poster on the page.
+ *  - The queue is newest-first and every job re-checks its view's tag before spending a byte. A
+ *    fast scroll used to leave a tail of stale downloads running in front of what was on screen.
  */
 object BrowseImages {
 
     private val cache = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
-    // Four simultaneous JPEG decodes were enough to monopolise the emulator/low-end TV cores
-    // exactly while a remote press needed a frame. Two workers keep artwork loading progressive
-    // without competing with focus and layout on the main render thread.
-    private val pool = Executors.newFixedThreadPool(2) { r -> Thread(r, "scenix-image").apply { isDaemon = true } }
     // A tiny image must never queue behind a shelf of full decodes: its whole job is to arrive
-    // first. One worker, a ~5 KB request and an LruCache entry are enough.
-    private val tinyPool = Executors.newFixedThreadPool(1) { r -> Thread(r, "scenix-image-tiny").apply { isDaemon = true } }
+    // first. One worker, a small request and an LruCache entry are enough.
+    private val tinyPool = ThreadPoolExecutor(
+        1, 1, 30, TimeUnit.SECONDS, LinkedBlockingDeque()
+    ) { r -> Thread(r, "scenix-image-tiny").apply { isDaemon = true } }.apply { allowCoreThreadTimeOut(true) }
+    // Two workers keep artwork loading progressive without competing with focus and layout on the
+    // main render thread. The queue is LIFO: the card the viewer just scrolled to is the newest
+    // request and runs first, instead of waiting behind the tiles that already left the screen.
+    private val pool = ThreadPoolExecutor(
+        2, 2, 30, TimeUnit.SECONDS, NewestFirstQueue()
+    ).apply { allowCoreThreadTimeOut(true) }
     private val main = Handler(Looper.getMainLooper())
+
     private val tmdbSized = Regex("(image\\.tmdb\\.org/t/p/)(w\\d+|original)(/)")
+    private val metahubPoster = Regex("(images\\.metahub\\.space/poster/)(small|medium|large)(/)")
+    private val metahubBackdrop = Regex("(images\\.metahub\\.space/background/)(small|medium|large)(/)")
+    private val metahubLogo = Regex("(images\\.metahub\\.space/logo/)(small|medium|large)(/)")
+    private val episodeStill = Regex("(episodes\\.metahub\\.space/[^/]+/\\d+/\\d+/)(w\\d+|medium|large)(\\.jpg)")
 
     /**
      * Load into a recycled view. `onResult` is called on the main thread with true/false when the URL
@@ -57,26 +77,39 @@ object BrowseImages {
             return
         }
         view.setImageDrawable(null)
-        // A blurred lick of the artwork while the full frame is in flight. TMDB serves the same
-        // picture at 92 px for a few kilobytes, so the tile is never a black hole on a cold scroll.
-        tinyUrl(clean)?.let { small ->
-            val tinyKey = "$small@tiny"
-            val ready = cache.get(tinyKey)
-            if (ready != null) {
-                view.setImageBitmap(ready)
-            } else {
-                tinyPool.execute {
-                    val bmp = decode(small, 24)
-                    if (bmp != null) {
-                        cache.put(tinyKey, bmp)
-                        main.post { if (view.tag == requestKey) view.setImageBitmap(bmp) }
+        // A blurred lick of the artwork while the full frame is in flight, so the tile is never a
+        // black hole on a cold scroll. Only worth a second request when the final picture is large:
+        // a card's own 300–500 px copy already lands in one round trip.
+        if (targetWidthPx > 480) {
+            val small = sizedUrl(clean, 200)
+            if (small != clean) {
+                val tinyKey = "$small@tiny"
+                val ready = cache.get(tinyKey)
+                if (ready != null) {
+                    view.setImageBitmap(ready)
+                } else {
+                    tinyPool.execute {
+                        if (view.tag != requestKey) return@execute
+                        val bmp = decode(small, 200)
+                            ?: if (small != clean) decode(clean, 200) else null
+                        if (bmp != null) {
+                            cache.put(tinyKey, bmp)
+                            main.post { if (view.tag == requestKey) view.setImageBitmap(bmp) }
+                        }
                     }
                 }
             }
         }
 
+        val sized = sizedUrl(clean, targetWidthPx)
         pool.execute {
-            val bitmap = decode(clean, targetWidthPx)
+            // The card was rebound before this job reached a worker: fetching it now would only
+            // spend bandwidth the viewer has already scrolled away from.
+            if (view.tag != requestKey) return@execute
+            // A CDN that does not publish the requested width (a small poster on an obscure title)
+            // must not leave a blank tile: one retry at the URL the provider actually gave us.
+            val bitmap = decode(sized, targetWidthPx)
+                ?: if (sized != clean) decode(clean, targetWidthPx) else null
             if (bitmap != null) cache.put(requestKey, bitmap)
             main.post {
                 if (view.tag == requestKey) {
@@ -88,13 +121,36 @@ object BrowseImages {
     }
 
     /**
-     * The same picture at a size that is almost free. TMDB is the household's dominant source;
-     * anything else keeps its full URL and simply shows the gradient until it lands.
+     * The CDN's copy of this picture at the width this tile can actually show. TMDB and MetaHub
+     * publish every poster/backdrop/logo/still at several widths; anything else keeps its full URL
+     * and simply shows the gradient until it lands.
      */
-    private fun tinyUrl(url: String): String? {
-        if (!url.contains("image.tmdb.org/t/p/")) return null
-        val small = tmdbSized.replace(url, "$1w92$3")
-        return if (small != url) small else null
+    fun sizedUrl(url: String, targetWidthPx: Int): String {
+        val t = targetWidthPx.coerceAtLeast(1)
+        if (tmdbSized.containsMatchIn(url)) {
+            val tier = when {
+                t <= 200 -> "w185"
+                t <= 400 -> "w342"
+                t <= 620 -> "w500"
+                t <= 900 -> "w780"
+                t <= 1500 -> "w1280"
+                else -> "original"
+            }
+            return tmdbSized.replace(url, "$1$tier$3")
+        }
+        if (metahubPoster.containsMatchIn(url)) {
+            return metahubPoster.replace(url, "$1" + (if (t <= 340) "small" else "medium") + "$3")
+        }
+        if (metahubBackdrop.containsMatchIn(url)) {
+            return metahubBackdrop.replace(url, "$1" + (if (t <= 640) "small" else "medium") + "$3")
+        }
+        if (metahubLogo.containsMatchIn(url)) {
+            return metahubLogo.replace(url, "$1" + (if (t <= 400) "small" else "medium") + "$3")
+        }
+        if (episodeStill.containsMatchIn(url)) {
+            return episodeStill.replace(url, "$1" + (if (t <= 360) "w300" else "w780") + "$3")
+        }
+        return url
     }
 
     private fun cacheKey(url: String, targetWidthPx: Int): String {
@@ -133,4 +189,13 @@ object BrowseImages {
     } catch (t: Throwable) {
         null
     }
+}
+
+/**
+ * A blocking deque the pool takes from the head, so the most recent request is served first. The
+ * executor only ever calls `offer`, and a rebinding screen always enqueues newer work than the
+ * tiles it just left behind.
+ */
+private class NewestFirstQueue : LinkedBlockingDeque<Runnable>() {
+    override fun offer(e: Runnable): Boolean = offerFirst(e)
 }

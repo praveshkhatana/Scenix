@@ -540,7 +540,9 @@ function rememberItems(items) {
 
 function cachedItem(identity) {
   const it = itemCache.get(String(identity));
-  return it ? JSON.parse(JSON.stringify(it)) : null;
+  // Art is normalised on the way out as well as on merge: entries written before the hub stopped
+  // publishing TMDB `original` URLs keep their over-sized art in the cache file.
+  return it ? merge.normalizeArt(JSON.parse(JSON.stringify(it))) : null;
 }
 
 // ---- the row context (what a row's build(ctx) gets) -----------------------------------------------

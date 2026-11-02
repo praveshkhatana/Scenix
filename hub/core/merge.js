@@ -32,6 +32,29 @@ function blankItem() {
 }
 
 /**
+ * One picture, many sizes. TMDB publishes each poster as `original` too, and an original poster is
+ * an 1800×2667 file (~1 MB) — handing that to a 280 px tile makes every client pay for pixels no
+ * screen shows, and it was the difference between a screen that scrolls and one that freezes. Only
+ * over-sized URLs are rewritten: a provider that already chose w500 or w780 keeps its choice, a
+ * non-TMDB host is untouched, and the client is still free to ask for its own width.
+ */
+const TMDB_SIZE = { poster: 'w500', backdrop: 'w1280', logo: 'w500' };
+function sizedImage(url, field) {
+  const want = TMDB_SIZE[field];
+  if (!want || typeof url !== 'string') return url;
+  const m = /^(https?:\/\/image\.tmdb\.org\/t\/p\/)(original|w\d+)(\/.*)$/.exec(url);
+  if (!m || m[2] !== 'original') return url;
+  return m[1] + want + m[3];
+}
+
+/** The art fields of one item, sized for a screen. Applied to fresh merges and to cache reads. */
+function normalizeArt(item) {
+  if (!item || typeof item !== 'object') return item;
+  for (const f of ['poster', 'backdrop', 'logo']) item[f] = sizedImage(item[f], f);
+  return item;
+}
+
+/**
  * Sources carry one hub-internal field: `_addon`, the id of the addon that offered them. It is what
  * lets a rule ask "is this item from an addon this profile allows?" and what routes play() back to the
  * right addon, while `provider` on the wire stays a transport word (live / youtube / torrent /
@@ -124,6 +147,7 @@ function dedupe(items, priorities = {}) {
   const list = [...out.values()];
   for (const it of list) {
     it.sources = rankSources(it.sources, priorities);
+    normalizeArt(it);
     // cinemeta describes a series with a `released` date and a `year` that is often a run ("2008–2013"),
     // which is not a number. The tile shows one year, so take it from the release date whenever the
     // addon's own value is missing or unusable.
@@ -141,4 +165,4 @@ function mergeItems(items, priorities = {}) {
   return merged[0] || null;
 }
 
-module.exports = { dedupe, mergeItems, rankSources, blankItem, unionEpisodes, FIELDS };
+module.exports = { dedupe, mergeItems, rankSources, blankItem, unionEpisodes, normalizeArt, FIELDS };
