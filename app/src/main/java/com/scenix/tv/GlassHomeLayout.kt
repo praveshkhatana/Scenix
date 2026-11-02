@@ -86,10 +86,16 @@ internal class GlassHomeLayout(
 
         // --- header: wordmark left, dark centred pill, household right --------------------------
         val header = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
-        header.addView(Views.text(app, "brand", 34f, theme.color("inkOnWall", "#FFFFFF"), "SCENIX",
-            bold = true), LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+        // The owner's wordmark file, not styled text — the same mark the splash and the front door
+        // wear, floated white on the wall as the reference measures it.
+        header.addView(ImageView(context).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            setColorFilter(theme.color("inkOnWall", "#FFFFFF"))
+            scaleType = ImageView.ScaleType.FIT_START
+            contentDescription = "Scenix"
+        }, LayoutParams(theme.px(140f), theme.px(49f)).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        })
 
         pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
