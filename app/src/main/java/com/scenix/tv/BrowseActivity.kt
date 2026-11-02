@@ -2326,9 +2326,17 @@ class BrowseActivity : Activity() {
                     else -> theme.px(8f)
                 }
             })
-            val badge = Views.text(app, "meta", 13f, Color.WHITE, "", bold = true, maxLines = 1)
+            val badge = Views.text(app, "meta", 13f,
+                if (glass) theme.color("match", "#EF9F42") else Color.WHITE, "", bold = true, maxLines = 1)
             badge.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
-            badge.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            badge.background = if (glass) {
+                // The glass chip: the same deep-glass capsule the PIN keys and nav pill ride,
+                // with the pack's hairline rim — labels sit ON the art, where the eye lands
+                // first (owner ask, 2026-11-03).
+                badge.setPadding(theme.px(12f), theme.px(4f), theme.px(12f), theme.px(4f))
+                Views.rounded(theme.color("gatePlate", "rgba(8,16,28,0.88)"), theme.px(999f),
+                    theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
+            } else Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
             card.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(10f); topMargin = theme.px(10f)
@@ -2360,11 +2368,21 @@ class BrowseActivity : Activity() {
             // IMDb rating and the certificate ride the top-right corner, gold star and plain badge,
             // exactly as the pack's card design drew them.
             val imdb = Views.text(app, "meta", 13f, Color.parseColor("#F6C621"), "", bold = true, maxLines = 1)
-            imdb.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
-            imdb.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
             val cert = Views.text(app, "meta", 13f, Color.WHITE, "", bold = true, maxLines = 1)
-            cert.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
-            cert.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            if (glass) {
+                // Same deep-glass capsule as the NEW/HOT chip: the rating rides ON the art,
+                // where the eye lands first (owner ask, 2026-11-03).
+                imdb.setPadding(theme.px(12f), theme.px(4f), theme.px(12f), theme.px(4f))
+                cert.setPadding(theme.px(12f), theme.px(4f), theme.px(12f), theme.px(4f))
+                imdb.background = Views.rounded(theme.color("gatePlate", "rgba(8,16,28,0.88)"),
+                    theme.px(999f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                cert.background = imdb.background
+            } else {
+                imdb.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+                imdb.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+                cert.setPadding(theme.px(8f), theme.px(3f), theme.px(8f), theme.px(3f))
+                cert.background = Views.rounded(Color.argb(185, 8, 8, 8), theme.px(5f))
+            }
             val corner = LinearLayout(this@BrowseActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -2434,6 +2452,19 @@ class BrowseActivity : Activity() {
                 card.addView(slideState, markerLayout)
             }
             val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideState, imdb, cert, corner, chevron)
+            if (glass) {
+                // Parents paint by Z: the glass art rides posterElevation for its cast shadow, so
+                // anything that stands ON the art (chips, rank column, playhead, see-all chevron)
+                // needs its own step of elevation or the elevated art simply paints over it —
+                // that is why the pass-13 rating/NEW chips were invisible at first.
+                val overlayZ = theme.space("posterElevation", 10f) + 2f
+                logo.elevation = overlayZ
+                badge.elevation = overlayZ
+                num.elevation = overlayZ
+                progress.elevation = overlayZ
+                chevron.elevation = overlayZ
+                corner.elevation = overlayZ
+            }
             // Glass tiles lift on focus exactly like the hero plates (halo + elevation on the
             // same resting cast shadow); other packs keep the flat, perf-first treatment.
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = glass,
@@ -2501,7 +2532,12 @@ class BrowseActivity : Activity() {
                 if (theme.packString("captionMeta", "") == "dot") {
                     // The glass reference prints "● 7.8 · 2023": an accent dot welded to the
                     // rating, the year quieter behind it. One shared format for the whole pack.
-                    holder.sub.text = captionDotLine(item)
+                    // With the rating and NEW/HOT chips moved ON the art (owner ask, 2026-11-03)
+                    // the glass caption keeps only the year — repeating the facts under the tile
+                    // is how they got buried in the first place.
+                    holder.sub.text = if (glass)
+                        (if (item.year > 0) item.year.toString() else "")
+                    else captionDotLine(item)
                 } else {
                     val sub = ArrayList<String>()
                     // Scene cards put their facts below the artwork; overlay and glass cards use the
@@ -2522,33 +2558,42 @@ class BrowseActivity : Activity() {
             holder.logo.visibility = View.GONE
             holder.logo.tag = item.identity + ":logo"
             val imdbR = if (item.rating > 0) String.format(java.util.Locale.US, "★ %.1f", item.rating) else ""
-            if (below) {
-                // Scene lockups keep metadata under the image, not as competing on-art badges.
-                holder.imdb.visibility = View.GONE
-                holder.cert.visibility = View.GONE
-                holder.corner.visibility = View.GONE
-            } else {
+            // The glass pack moved its facts ON the art (owner ask, 2026-11-03): a rating chip
+            // top-right and a NEW/HOT chip top-left, deep-glass capsules over the poster — the
+            // reference's own tiles carry no text at all, so on-art chips beat a caption line the
+            // eye never reaches while scanning. Scene lockups still keep metadata under the image.
+            val onArt = !below || glass
+            if (onArt) {
                 holder.imdb.text = imdbR
                 holder.imdb.visibility = if (imdbR.isNotEmpty()) View.VISIBLE else View.GONE
                 holder.cert.text = item.maturity
                 holder.cert.visibility = if (item.maturity.isNotBlank()) View.VISIBLE else View.GONE
                 holder.corner.visibility =
                     if (imdbR.isNotEmpty() || item.maturity.isNotBlank()) View.VISIBLE else View.GONE
+            } else {
+                holder.imdb.visibility = View.GONE
+                holder.cert.visibility = View.GONE
+                holder.corner.visibility = View.GONE
             }
             val facts = ArrayList<String>()
             if (!below) {
                 if (item.isNew) facts.add("NEW")
                 if (item.match > 0) facts.add("${item.match}% match")
+            } else if (glass) {
+                if (item.isNew) facts.add("NEW")
+                // The hub's match is how strongly a title fits this house; at 90+ it IS the hot
+                // signal, and it reads as one word instead of a percentage on a small chip.
+                if (item.match >= 90) facts.add("HOT")
             }
             holder.badge.text = facts.joinToString(" · ")
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             val artUrl = if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop
             val logoUrl = item.logo
-            // Posters first, logos after. The image queue is newest-first, so enqueueing a card's
-            // logo immediately after its poster put every logo in front of the artwork it decorates:
-            // a cold scroll painted floating logos over grey tiles and made a ready poster wait for
-            // it. The logo is polish; the poster is the shelf. Waiting for the poster's job to settle
-            // (whether it succeeded or not) keeps the row's artwork ahead of its decoration.
+            // Posters first, logos after: the queue is newest-first, so enqueueing a logo right
+            // after its poster ran the decoration ahead of the art. Title logos belong on WIDE tiles
+            // (owner ruling): a plain poster is already a title lockup, and the glass pass-12
+            // exception for portrait posters is retired (2026-11-03) — the hub's poster art already
+            // composes its own lockup, so the overlay double-painted it.
             BrowseImages.load(holder.art, artUrl, cardW) {
                 if (logoUrl.isNullOrBlank() || !landscape) return@load
                 holder.logo.visibility = View.VISIBLE

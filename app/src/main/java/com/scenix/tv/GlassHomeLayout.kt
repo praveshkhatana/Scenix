@@ -61,6 +61,11 @@ internal class GlassHomeLayout(
     private val artB: ImageView
     private val titleA: TextView
     private val titleB: TextView
+    // Captured ONCE in init like art/title: BrowseImages.load overwrites view.tag with its request
+    // key, so a later findViewWithTag("logo") would miss the plate's logo forever and its re-bind
+    // could never hide the typed fallback under a loaded lockup (owner ask, 2026-11-02).
+    private val logoA: ImageView
+    private val logoB: ImageView
     private var itemA: Item? = null
     private var itemB: Item? = null
     private val chipRow: LinearLayout
@@ -183,6 +188,8 @@ internal class GlassHomeLayout(
         artB = cardB.findViewWithTag("art")
         titleA = cardA.findViewWithTag("title")
         titleB = cardB.findViewWithTag("title")
+        logoA = cardA.findViewWithTag("logo")
+        logoB = cardB.findViewWithTag("logo")
         cardRow.addView(cardA, LinearLayout.LayoutParams(0, heroH, 7f))
         cardRow.addView(cardB, LinearLayout.LayoutParams(0, heroH, 10f).apply {
             marginStart = theme.space("heroGap", 20f)
@@ -282,6 +289,22 @@ internal class GlassHomeLayout(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         card.addView(textCol, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // The reference's hero plates carry the title's OWN logo lockup painted over the art (the
+        // "Si DoL" plate measures a stylized wordmark riding top-right, over the cleared half where
+        // the characters show). The logo replaces the typed title when it exists; the text stays as
+        // the fallback (owner ask, 2026-11-02).
+        val logo = ImageView(context).apply {
+            tag = "logo"
+            scaleType = ImageView.ScaleType.FIT_END
+            adjustViewBounds = true
+            maxHeight = theme.px(150f)
+            visibility = View.GONE
+        }
+        card.addView(logo, LayoutParams(theme.px(430f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = theme.px(34f)
+            marginEnd = theme.px(40f)
+        })
         return card
     }
 
@@ -374,17 +397,33 @@ internal class GlassHomeLayout(
         val b = if (slides.size >= 2) slides[(idx + 1) % slides.size] else null
         itemA = a
         itemB = b
-        bindCard(cardA, artA, titleA, a)
-        bindCard(cardB, artB, titleB, b)
+        bindCard(cardA, artA, titleA, logoA, a)
+        bindCard(cardB, artB, titleB, logoB, b)
         cardB.visibility = if (b == null) View.GONE else View.VISIBLE
         // The hero band grew taller behind the pill and plates with this slide — re-sample what
         // the chrome is really standing over.
         frostSurfaces.forEach { it.refresh() }
     }
 
-    private fun bindCard(card: FrameLayout, art: ImageView, title: TextView, item: Item?) {
+    private fun bindCard(card: FrameLayout, art: ImageView, title: TextView, logo: ImageView, item: Item?) {
         card.contentDescription = item?.let { "${it.title}. Open details" } ?: "Featured title"
         title.text = item?.title ?: ""
+        title.visibility = View.VISIBLE
+        // A recycled plate must never flash the previous title's logo while the new one loads.
+        logo.visibility = View.GONE
+        val url = item?.logo?.trim().orEmpty()
+        if (url.isNotEmpty()) {
+            BrowseImages.load(logo, url, theme.px(430f)) { ok ->
+                // BrowseImages only calls back when this view still belongs to THIS request,
+                // so a late answer cannot hide a rebound plate's title.
+                if (ok) {
+                    logo.visibility = View.VISIBLE
+                    title.visibility = View.GONE
+                } else {
+                    logo.visibility = View.GONE
+                }
+            }
+        }
         BrowseImages.load(art, item?.backdrop ?: item?.poster, theme.px(1000f)) { }
     }
 
