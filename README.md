@@ -192,6 +192,10 @@ design/         our architecture and the interface's measured numbers
 
 ## Licence
 
-MIT for everything in this repository. The hub talks to third-party addon services, and, if the owner
-enables it, to a debrid provider they already pay for. For torrent delivery it talks to a separate engine
-process over HTTP. It links against none of them, so no external licence reaches our code.
+MIT for everything in this repository except the interface typeface in `hub/web/font/`, which
+is a subset of Netflix Sans and carries its own notice (`hub/web/font/LICENSE.txt`).
+The hub talks to third-party add-on services chosen and
+installed by the owner, and, if the owner enables it, to a debrid provider they already pay for. For
+P2P delivery it talks to a separate engine process over HTTP. It links against none of them, so no
+external licence reaches our code. Scenix ships no media and no content metadata of its own.
+ 8cb817c (the owner's new SCENIX-Logo.svg, verbatim: the app drawable and the web mask asset are regenerated from it (347x88), and the interface face gets an honest label — ScenixSans is a local subset of Netflix Sans, so its notice now sits next to the files and the licence section of the README says who owns what)
