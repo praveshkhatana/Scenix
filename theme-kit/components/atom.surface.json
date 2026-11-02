@@ -1,0 +1,55 @@
+{
+  "id": "atom.surface",
+  "version": 1,
+  "level": "atom",
+  "summary": "The pack's plate: card, glass, panel or stage. Owns fill, hairline, radius, elevation and at most one blur layer.",
+  "props": {
+    "tone": {
+      "type": "enum",
+      "default": "card",
+      "enum": ["card", "glass", "panel", "stage"]
+    },
+    "radius": {
+      "type": "number",
+      "default": 14,
+      "min": 0,
+      "max": 48,
+      "description": "Design pixels; packs usually pass radius.card or radius.panel."
+    },
+    "elevation": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 32
+    },
+    "border": {
+      "type": "boolean",
+      "default": true
+    },
+    "blur": {
+      "type": "boolean",
+      "default": false,
+      "description": "One backdrop snapshot per surface, never per frame; falls back to a wash."
+    }
+  },
+  "states": ["default", "focus", "selected", "disabled"],
+  "events": [],
+  "slots": [
+    {
+      "name": "content",
+      "accepts": ["atom.label", "atom.icon", "atom.avatar", "atom.progress", "molecule.tile", "molecule.settings-row", "molecule.nav-item"],
+      "optional": true,
+      "max": 4
+    }
+  ],
+  "a11y": {
+    "role": "group",
+    "label": "{{tone}} surface"
+  },
+  "targets": {
+    "android": { "renderer": "GradientDrawable plate / LiquidFrost", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixSurface", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-surface", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 3, "maxLayers": 3, "maxImageBytes": 0 }
+}

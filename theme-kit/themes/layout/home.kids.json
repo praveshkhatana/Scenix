@@ -1,0 +1,61 @@
+{
+  "template": "home",
+  "theme": "scene.kids",
+  "description": "Kids composition: full-bleed yellow stage, black nav pills, two oversized feature cards, solid chips and chunky captioned tiles.",
+  "root": {
+    "type": "stack",
+    "children": [
+      {
+        "component": "organism.wall",
+        "props": {
+          "tone": "color.bg",
+          "gradient": ["color.stageYellow", "color.stageDeep"]
+        }
+      },
+      {
+        "type": "column",
+        "safe": "tv",
+        "gap": "space.rowGap",
+        "children": [
+          {
+            "component": "organism.nav.top",
+            "props": {
+              "items": "@nav",
+              "variant": "kids",
+              "profile": "@profile",
+              "search": true
+            }
+          },
+          {
+            "component": "organism.hero.cards",
+            "props": {
+              "items": "@hero",
+              "max": 2,
+              "variant": "kids-stage",
+              "height": "pack.kidsHomeHeight"
+            }
+          },
+          {
+            "component": "organism.chip.row",
+            "props": {
+              "items": "@chips",
+              "max": 8,
+              "variant": "solid",
+              "height": "space.navHeight"
+            }
+          },
+          {
+            "component": "organism.rail",
+            "repeat": "@rows",
+            "props": {
+              "variant": "poster",
+              "caption": "overlay",
+              "focus": "pack.focus",
+              "gap": "space.rowGap"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

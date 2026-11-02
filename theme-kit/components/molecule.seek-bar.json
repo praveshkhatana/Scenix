@@ -1,0 +1,63 @@
+{
+  "id": "molecule.seek-bar",
+  "version": 1,
+  "level": "molecule",
+  "summary": "Player timeline with played, buffered and knob layers; the bar thickens under focus and never owns playback.",
+  "props": {
+    "position": {
+      "type": "number",
+      "required": true,
+      "default": 0,
+      "min": 0,
+      "max": 1
+    },
+    "buffered": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 1
+    },
+    "duration": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 86400,
+      "description": "Seconds; used for the time readout only."
+    },
+    "live": {
+      "type": "boolean",
+      "default": false,
+      "description": "Live windows cannot seek back past the DVR edge."
+    },
+    "knob": {
+      "type": "boolean",
+      "default": true
+    },
+    "chapters": {
+      "type": "boolean",
+      "default": false
+    },
+    "hint": {
+      "type": "enum",
+      "default": "time",
+      "enum": ["none", "time", "chapter"]
+    }
+  },
+  "states": ["default", "focus", "pressed", "dragging", "disabled", "live", "buffering"],
+  "events": ["seekStart", "seek", "seekEnd", "focus", "blur"],
+  "slots": [
+    { "name": "readout", "accepts": ["atom.label"], "optional": true, "max": 2 }
+  ],
+  "a11y": {
+    "role": "slider",
+    "label": "Seek",
+    "hint": "LEFT and RIGHT seek; OK toggles playback.",
+    "value": "{{position}}"
+  },
+  "targets": {
+    "android": { "renderer": "SeekLine", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixSeekBar", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-seek-bar", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 5, "maxLayers": 2, "maxImageBytes": 0 }
+}

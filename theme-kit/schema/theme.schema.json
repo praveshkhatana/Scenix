@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scenix.local/theme-kit/schema/theme.schema.json",
+  "title": "Scenix theme pack",
+  "description": "A portable theme pack: metadata, capability requirements, fallbacks, token groups, assets, declared behaviour and licence. One pack renders on Android TV, web, iOS/iPadOS and macOS through the compiled IR.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "version",
+    "targets",
+    "requires",
+    "tokens",
+    "assets",
+    "behaviour",
+    "licence",
+    "meta"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+      "description": "Stable pack id, e.g. scene.glass."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the pack."
+    },
+    "basedOn": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+      "description": "Parent pack id. Missing token groups and components are inherited, then overridden."
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["android-tv", "web", "ios", "ipados", "macos"]
+      }
+    },
+    "requires": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caps"],
+      "properties": {
+        "caps": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Capabilities the pack needs, e.g. blur.backdrop or focus.tv.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+          }
+        },
+        "minApi": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "fallbacks": {
+      "type": "object",
+      "description": "Maps a required capability to the capability used when the target lacks it.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["color", "space", "radius", "type"],
+      "description": "Typed token groups. Values are scalar (or a type ramp object); aliases are strings beginning with @.",
+      "properties": {
+        "color": { "$ref": "#/$defs/tokenGroup" },
+        "space": { "$ref": "#/$defs/tokenGroup" },
+        "radius": { "$ref": "#/$defs/tokenGroup" },
+        "type": { "$ref": "#/$defs/tokenGroup" },
+        "focus": { "$ref": "#/$defs/tokenGroup" },
+        "anim": { "$ref": "#/$defs/tokenGroup" },
+        "player": { "$ref": "#/$defs/tokenGroup" },
+        "pack": { "$ref": "#/$defs/tokenGroup" }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "description": "Relative paths inside the pack folder. No remote URLs and no credentials.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^(?![a-zA-Z][a-zA-Z0-9+.-]*:)(?!/)[A-Za-z0-9._/-]+$"
+      }
+    },
+    "behaviour": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interactions", "modules"],
+      "properties": {
+        "interactions": {
+          "type": "array",
+          "description": "Tier-1 declarative interactions, validated by the compiler.",
+          "items": { "$ref": "#/$defs/interaction" }
+        },
+        "modules": {
+          "type": "array",
+          "description": "Tier-2 code modules. Empty for token/layout-only packs.",
+          "items": { "$ref": "#/$defs/module" }
+        }
+      }
+    },
+    "licence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "author": { "type": "string", "maxLength": 120 },
+        "url": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "description": "Human and tooling metadata; ignored by renderers.",
+      "additionalProperties": true,
+      "properties": {
+        "source": { "type": "string", "maxLength": 200 },
+        "extracted": { "type": "string", "maxLength": 40 },
+        "packName": { "type": "string", "maxLength": 80 },
+        "notes": { "type": "string", "maxLength": 500 }
+      }
+    }
+  },
+  "$defs": {
+    "tokenGroup": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-zA-Z0-9]*$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "maxLength": 400 },
+          { "type": "number" },
+          { "type": "boolean" },
+          { "$ref": "#/$defs/typeRamp" },
+          {
+            "type": "array",
+            "maxItems": 32,
+            "items": { "type": ["string", "number", "boolean"] }
+          }
+        ]
+      }
+    },
+    "typeRamp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size"],
+      "properties": {
+        "size": { "type": "number", "minimum": 1 },
+        "weight": { "type": "number", "minimum": 100, "maximum": 900 },
+        "tracking": { "type": "number" },
+        "lineHeight": { "type": "number", "minimum": 0.5 }
+      }
+    },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "on", "do"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-zA-Z0-9.]*$"
+        },
+        "on": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "do": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "permissions", "hash"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "target": {
+          "type": "string",
+          "enum": ["android-tv", "web", "ios", "ipados", "macos"]
+        },
+        "permissions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "player.read",
+              "player.seek",
+              "ui.toast",
+              "ui.sheet",
+              "storage.theme",
+              "focus.read"
+            ]
+          }
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

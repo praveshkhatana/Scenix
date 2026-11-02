@@ -1,0 +1,78 @@
+{
+  "id": "molecule.tile",
+  "version": 1,
+  "level": "molecule",
+  "summary": "One rail tile in the four shapes the product uses: poster, landscape, ranked and continue-watching.",
+  "props": {
+    "variant": {
+      "type": "enum",
+      "required": true,
+      "default": "poster",
+      "enum": ["poster", "landscape", "rank", "continue"]
+    },
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 120
+    },
+    "secondary": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "Year, genre or episode line printed under or over the art."
+    },
+    "art": {
+      "type": "image",
+      "required": true,
+      "sizes": ["w342", "w500"],
+      "description": "Poster or still; the host asks for the size it shows."
+    },
+    "logo": {
+      "type": "image",
+      "sizes": ["w185", "w300"],
+      "description": "Optional transparent title lockup."
+    },
+    "progress": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 1
+    },
+    "rank": {
+      "type": "integer",
+      "default": 1,
+      "min": 1,
+      "max": 100
+    },
+    "badge": {
+      "type": "enum",
+      "default": "none",
+      "enum": ["none", "new", "hd", "4k", "live"]
+    },
+    "caption": {
+      "type": "enum",
+      "default": "below",
+      "enum": ["below", "overlay", "none"]
+    },
+    "wide": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "states": ["default", "focus", "pressed", "selected", "disabled", "loading", "empty"],
+  "events": ["press", "longPress", "focus", "blur"],
+  "slots": [
+    { "name": "caption", "accepts": ["atom.label"], "optional": true, "max": 2 },
+    { "name": "badge", "accepts": ["atom.label", "atom.icon"], "optional": true },
+    { "name": "overlay", "accepts": ["atom.icon", "atom.progress"], "optional": true, "max": 2 }
+  ],
+  "a11y": {
+    "role": "button",
+    "label": "{{title}}, {{secondary}}"
+  },
+  "targets": {
+    "android": { "renderer": "CardView (BrowseActivity rail card)", "focus": "host-glow" },
+    "ios": { "renderer": "PosterTile", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-tile", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 14, "maxLayers": 4, "maxImageBytes": 48000 }
+}

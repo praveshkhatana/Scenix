@@ -1,0 +1,49 @@
+{
+  "id": "atom.button",
+  "version": 1,
+  "level": "atom",
+  "summary": "Action control with a label and optional leading icon; primary, secondary, ghost and danger variants share one focus contract.",
+  "props": {
+    "label": {
+      "type": "string",
+      "required": true,
+      "maxLength": 40
+    },
+    "kind": {
+      "type": "enum",
+      "default": "primary",
+      "enum": ["primary", "secondary", "ghost", "danger"]
+    },
+    "icon": {
+      "type": "enum",
+      "default": "none",
+      "enum": ["none", "play", "plus", "check", "close", "settings", "chevron"]
+    },
+    "wide": {
+      "type": "boolean",
+      "default": false,
+      "description": "Fills the available horizontal band, used by hero Play and picker actions."
+    },
+    "badge": {
+      "type": "string",
+      "maxLength": 12,
+      "description": "Optional short suffix such as HD or a count."
+    }
+  },
+  "states": ["default", "focus", "pressed", "disabled", "loading"],
+  "events": ["press", "longPress", "focus", "blur"],
+  "slots": [
+    { "name": "icon", "accepts": ["atom.icon"], "optional": true },
+    { "name": "label", "accepts": ["atom.label"], "optional": true }
+  ],
+  "a11y": {
+    "role": "button",
+    "label": "{{label}}"
+  },
+  "targets": {
+    "android": { "renderer": "ScenixButton", "focus": "host-ring", "notes": "Slim keyline when the pack opts out of scaling." },
+    "ios": { "renderer": "ScenixButton", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-button", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 6, "maxLayers": 3, "maxImageBytes": 0 }
+}

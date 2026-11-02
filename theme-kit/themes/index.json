@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "themes": ["apple.json", "glass.json", "kids.json"],
+  "layouts": ["layout/home.glass.json", "layout/home.kids.json"]
+}

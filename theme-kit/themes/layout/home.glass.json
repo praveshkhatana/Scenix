@@ -1,0 +1,62 @@
+{
+  "template": "home",
+  "theme": "scene.glass",
+  "description": "Glass composition: wash wall, centred nav, two unequal hero plates, frost chips, then caption-below rails.",
+  "root": {
+    "type": "stack",
+    "children": [
+      {
+        "component": "organism.wall",
+        "props": {
+          "tone": "color.bg",
+          "texture": "pack.wallBlobs",
+          "grain": "pack.wallGrain"
+        }
+      },
+      {
+        "type": "column",
+        "safe": "tv",
+        "gap": "space.railTopGap",
+        "children": [
+          {
+            "component": "organism.nav.top",
+            "props": {
+              "items": "@nav",
+              "variant": "pack.nav",
+              "profile": "@profile",
+              "search": true
+            }
+          },
+          {
+            "component": "organism.hero.cards",
+            "props": {
+              "items": "@hero",
+              "max": 2,
+              "variant": "glass-cards",
+              "height": "space.heroHeight"
+            }
+          },
+          {
+            "component": "organism.chip.row",
+            "props": {
+              "items": "@chips",
+              "max": 8,
+              "variant": "frost",
+              "height": "space.chipHeight"
+            }
+          },
+          {
+            "component": "organism.rail",
+            "repeat": "@rows",
+            "props": {
+              "variant": "pack.rows",
+              "caption": "pack.card",
+              "focus": "pack.focus",
+              "gap": "space.posterGap"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
