@@ -536,6 +536,10 @@ function sourceFor(entry) {
     _url: fileUrl(entry),
     _headers: {},
     _langs: ['eng'],
+    // archive.org's redirect loses the hub's ranged/multi-socket read: the cushion showed 0 bytes
+    // for 15 s while a plain range GET from the same host works. Hand the player the direct URL;
+    // archive.org supports HTTP ranges, so the player seeks itself.
+    _noCushion: true,
     audioLangs: ['eng'],
     audioTracks: [],
   };

@@ -2606,6 +2606,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // in RAM are dead weight — the answer hands the origin URL to the screen directly (out.live).
       // probePass is the only live check the picker needs; it already GETs the manifest.
       const directOn = readahead.cfg().direct && kept.type !== 'channel' && !o.live
+        && cand._noCushion !== true
         && /^https?:\/\//i.test(String(o.url || ''));
       if (directOn) {
         const who = { url: o.url, headers: o.headers || {} };
@@ -3582,6 +3583,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // (a signed link's key, the Referer a host insists on) stay here, where the screen never has to know
   // them, and a host that refuses a suffix range can no longer kill playback of an otherwise fine file.
   const cushioned = readahead.cfg().direct
+    && source && source._noCushion !== true
     && !out.remuxed && !out.audioMix && !out.live
     && out.mode !== 'gateway' && out.mode !== 'ladder'
     && /^https?:\/\//i.test(String(out.url || ''));
