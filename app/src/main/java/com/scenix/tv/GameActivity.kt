@@ -725,6 +725,21 @@ class GameActivity : Activity() {
    for(var i=0;i<fs.length;i++){try{var cd=fs[i].contentDocument;
     if(cd&&cd.body){if(carveDoc(cd,false))ok=true;else promoPass(cd,null);dive(cd,d+1);}}catch(x){}}} // cross-origin frames: blocked, skipped
   dive(document,0);
+  // itch.io mounts its game iframe only after the visitor presses Launch — on a TV nobody presses,
+  // so the stage never exists to carve. Press it for them (a couple of tries, then leave it be).
+  if(!ok&&/(^|\.)itch\.io$/i.test(location.hostname)){
+   try{
+    var taps=window.__scenixTaps=(window.__scenixTaps||0)+1;
+    if(taps<=3){
+     var btns=document.querySelectorAll('a,button,[role=button]');
+     for(var y=0;y<btns.length;y++){var b2=btns[y];
+      try{var cs2=v2(b2);if(cs2==='none')continue;
+       var t2=(b2.textContent||'').replace(/\s+/g,' ').trim();
+       if(/^launch|play now|play in browser/i.test(t2)){b2.click();break;}}catch(x){}}
+    }
+   }catch(x){}
+  }
+  function v2(e){var w=document.defaultView||window;return w.getComputedStyle(e).display;}
   // A port that cannot boot on this engine says why in its own words ("This browser has no
   // WebGPU…", "WebGL is not supported…"). The sweep hides that line with the portal chrome,
   // leaving a black screen and no reason; hand it to the app so it can say it out loud.
