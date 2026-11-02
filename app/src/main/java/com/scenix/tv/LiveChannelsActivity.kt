@@ -50,6 +50,10 @@ class LiveChannelsActivity : Activity() {
     private var rootView: FrameLayout? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
+    /** Text standing on the pack's wall; light packs override the wall ink, dark packs keep theirs. */
+    private val wallInk get() = app.theme.colorOr("wallInk", app.theme.ink)
+    private val wallInk2 get() = app.theme.colorOr("wallInk2", app.theme.ink2)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -79,7 +83,7 @@ class LiveChannelsActivity : Activity() {
         root.addView(topBar(), FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(96f)
         ))
-        status = Views.text(app, "sub", 21f, theme.ink2, "Reading channels…", gravity = Gravity.CENTER)
+        status = Views.text(app, "sub", 21f, wallInk2, "Reading channels…", gravity = Gravity.CENTER)
         root.addView(status, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
         ).apply { gravity = Gravity.BOTTOM })
@@ -98,7 +102,7 @@ class LiveChannelsActivity : Activity() {
         }
         val back = ImageView(this).apply {
             setImageResource(R.drawable.ic_chevron_left)
-            setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+            setColorFilter(wallInk, android.graphics.PorterDuff.Mode.SRC_IN)
             scaleType = ImageView.ScaleType.FIT_CENTER
             isFocusable = true
             isClickable = true
@@ -106,11 +110,11 @@ class LiveChannelsActivity : Activity() {
         }
         Focus.attach(back, back, app, theme.px(9f), scale = false, elevate = false)
         bar.addView(back, LinearLayout.LayoutParams(theme.px(34f), theme.px(34f)))
-        bar.addView(Views.text(app, "rowTitle", 26f, theme.ink, "Live TV", bold = true).apply {
+        bar.addView(Views.text(app, "rowTitle", 26f, wallInk, "Live TV", bold = true).apply {
             setPadding(theme.px(18f), 0, 0, 0)
         })
         // 383 tiles is a wall, not a shelf: the way to channel 214 is to name it, not to scroll.
-        val search = Views.text(app, "li", 19f, theme.ink,
+        val search = Views.text(app, "li", 19f, wallInk,
             if (filter.isBlank()) "Search" else "Search: $filter  ✕", bold = true, gravity = Gravity.CENTER)
         search.background = Views.rounded(theme.surface2, theme.px(8f))
         search.isFocusable = true
@@ -281,12 +285,12 @@ class LiveChannelsActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(10f); topMargin = theme.px(10f)
             })
-            val name = Views.text(app, "caption", 18f, theme.ink, "", bold = true, maxLines = 1)
+            val name = Views.text(app, "caption", 18f, wallInk, "", bold = true, maxLines = 1)
             name.setPadding(theme.px(4f), theme.px(12f), theme.px(4f), 0)
             card.addView(name, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, captionH
             ).apply { gravity = Gravity.BOTTOM })
-            val sub = Views.text(app, "meta", 14f, theme.ink3, "", maxLines = 1)
+            val sub = Views.text(app, "meta", 14f, wallInk2, "", maxLines = 1)
             sub.setPadding(theme.px(4f), 0, theme.px(4f), theme.px(4f))
             card.addView(sub, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT

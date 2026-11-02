@@ -118,7 +118,7 @@ internal object GlassKit {
         // change with whatever font the television ships, and it read as a stray mark (owner ruling).
         pill.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_chevron_down)
-            setColorFilter(theme.color("inkOnWall", "#FFFFFF"), android.graphics.PorterDuff.Mode.SRC_IN)
+            setColorFilter(theme.colorOr("wallInk", theme.ink), android.graphics.PorterDuff.Mode.SRC_IN)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(theme.px(5f), theme.px(5f), theme.px(5f), theme.px(5f))
         }, LinearLayout.LayoutParams(theme.px(30f), theme.px(30f)).apply {
@@ -171,11 +171,11 @@ internal object GlassKit {
             alpha = 0.75f
             scaleType = ImageView.ScaleType.FIT_CENTER
         }, LinearLayout.LayoutParams(theme.px(96f), theme.px(96f)))
-        body.addView(Views.text(app, "h1", 32f, theme.color("inkOnWall", "#FFFFFF"), title,
+        body.addView(Views.text(app, "h1", 32f, theme.colorOr("wallInk", theme.ink), title,
             bold = true, gravity = Gravity.CENTER, maxLines = 1),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(18f) })
-        body.addView(Views.text(app, "sub", 21f, theme.color("pillInk", "#B7C4D2"), sub,
+        body.addView(Views.text(app, "sub", 21f, theme.colorOr("wallInk2", theme.ink2), sub,
             gravity = Gravity.CENTER),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(8f) })
@@ -191,7 +191,7 @@ internal object GlassKit {
                     theme.px(999f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
                 setPadding(theme.px(26f), theme.px(10f), theme.px(26f), theme.px(10f))
             }
-            retry.addView(Views.text(app, "nav", 20f, theme.color("inkOnWall", "#FFFFFF"), "Try again",
+            retry.addView(Views.text(app, "nav", 20f, theme.colorOr("wallInk", theme.ink), "Try again",
                 bold = true, gravity = Gravity.CENTER))
             Focus.attach(retry, retry, app, theme.px(999f), scale = false, elevate = false,
                 onClick = onRetry)

@@ -52,9 +52,12 @@ internal class GlassHomeLayout(
         get() = theme.px(30f) + navBandH + theme.px(44f) + heroH + theme.px(64f) + chipH
 
     private val navBandH = theme.space("navBand", 68f)
+    /** The plate band's unconstrained height; [appliedHeroH] is what the host slot can afford. */
     private val heroH = theme.space("heroHeight", 397f)
+    private var appliedHeroH = heroH
     private val chipH = theme.space("chipHeight", 104f)
 
+    private val cardRow: LinearLayout
     private val cardA: FrameLayout
     private val cardB: FrameLayout
     private val artA: ImageView
@@ -168,11 +171,12 @@ internal class GlassHomeLayout(
         gearStop.nextFocusLeftId = profile.root.id
 
         // --- the two feature plates: 741 wide beside 1067 (measured asymmetry) ------------------
-        val cardRow = LinearLayout(context).apply {
+        val cardRowView = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             clipChildren = false
             clipToPadding = false
         }
+        cardRow = cardRowView
         val heroR = theme.radius("hero", 26f)
         // The halo needs a canvas grown by glowInset on every side — the padded glow-canvas
         // pattern every other screen uses (see BrowseActivity's rail holder). Attaching the halo
@@ -239,6 +243,28 @@ internal class GlassHomeLayout(
             frostInto(profile.root, navBandH / 2)
             frostInto(gearStop, theme.px(52f) / 2)
         }
+    }
+
+    /**
+     * The host clamps the hero slot so one shelf stays on screen; at 150% zoom that slot is shorter
+     * than the scaled stage and the fixed plate band used to draw over the first shelf heading.
+     * Give the shortfall to the two plates (they crop their art) and leave the header and frosted
+     * chip row at the zoomed size. At 100% and 115% the slot still holds the full stage, so the
+     * measured layout is unchanged.
+     */
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.EXACTLY) {
+            val available = View.MeasureSpec.getSize(heightMeasureSpec)
+            val deficit = (preferredHeightPx - available).coerceAtLeast(0)
+            val target = (heroH - deficit).coerceAtLeast(theme.space("heroMin", 240f))
+            if (target != appliedHeroH) {
+                appliedHeroH = target
+                (cardRow.layoutParams as? LinearLayout.LayoutParams)?.height = target
+                (cardA.layoutParams as? LinearLayout.LayoutParams)?.height = target
+                (cardB.layoutParams as? LinearLayout.LayoutParams)?.height = target
+            }
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
     /** Wrap the host's current fallback background under a sampled frost layer. */

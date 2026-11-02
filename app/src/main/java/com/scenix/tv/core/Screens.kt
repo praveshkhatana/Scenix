@@ -227,7 +227,8 @@ object Screens {
      * under it.
      */
     fun section(ctx: Context, app: AppContext, list: LinearLayout, title: String) {
-        val t = Views.text(app, "rowTitle", 19f, app.theme.ink3, title.uppercase(), bold = true)
+        val t = Views.text(app, "rowTitle", 19f,
+            app.theme.colorOr("wallInk2", app.theme.ink3), title.uppercase(), bold = true)
         t.setLetterSpacing(0.16f)
         t.setPadding(app.theme.px(28f), 0, 0, 0)
         list.addView(t, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -252,18 +253,21 @@ object Screens {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
         }
-        val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
+        val back = Views.text(app, "li", 26f,
+            app.theme.colorOr("wallInk", app.theme.ink), "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
         back.isClickable = true
         back.setOnClickListener { onBack() }
         Focus.attach(back, back, app, app.theme.radius("button", 10f).coerceAtMost(app.theme.px(14f)),
             scale = false, elevate = false)
         bar.addView(back, LinearLayout.LayoutParams(app.theme.px(56f), app.theme.px(50f)))
-        val t = Views.text(app, "h2", 30f, app.theme.ink, title, bold = true)
+        val t = Views.text(app, "h2", 30f,
+            app.theme.colorOr("wallInk", app.theme.ink), title, bold = true)
         t.setPadding(app.theme.px(18f), 0, 0, 0)
         bar.addView(t)
         bar.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
-        val status = Views.text(app, "meta", 19f, app.theme.ink2, "", maxLines = 1)
+        val status = Views.text(app, "meta", 19f,
+            app.theme.colorOr("wallInk2", app.theme.ink2), "", maxLines = 1)
         bar.addView(status)
         return bar to status
     }
@@ -302,10 +306,17 @@ object Screens {
             setOnClickListener { onClick() }
         }
         val tick = if (selected) "✓" else " "
-        row.addView(
-            Views.text(app, "li", 22f,
-                if (selected) app.theme.color("panelValue", "#F2C33A") else app.theme.ink,
-                "$tick  $label", bold = selected, maxLines = 1),
+        // A selected option in a glow pack sits on the pack's bright focus band, not on the dark
+        // panel: a pale value ink (Glass prints white) disappears there. Keep the pack's value
+        // colour when the row is resting; when focus paints the band, swap to the readable wall ink.
+        val valueInk = app.theme.color("panelValue", "#F2C33A")
+        val onBandInk = if (app.theme.focusStyle == "glow" &&
+            android.graphics.Color.luminance(valueInk) > 0.75f
+        ) app.theme.colorOr("wallInk", app.theme.ink) else valueInk
+        val labelView = Views.text(app, "li", 22f,
+            if (selected) valueInk else app.theme.ink,
+            "$tick  $label", bold = selected, maxLines = 1)
+        row.addView(labelView,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // In a glow pack the row stands in the panel's own halo language; on a light panel a flat
         // keyline disappears, so the row asks for the small inset the theme carries for controls.
@@ -315,7 +326,8 @@ object Screens {
         Focus.attach(row, row, app, radius, scale = false, elevate = false,
             glowInset = app.theme.focusGlowInsetSm, control = true,
             onFocus = { has ->
-                if (!selected) row.background =
+                if (selected) labelView.setTextColor(if (has) onBandInk else valueInk)
+                else row.background =
                     if (has) Views.rounded(app.theme.colorOr("listFillFocused", app.theme.surface2), radius)
                     else null
             })

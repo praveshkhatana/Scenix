@@ -40,6 +40,16 @@ class DetailActivity : Activity() {
     // pack keeps its solid brand buttons.
     private val isGlassPack get() =
         app.theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
+
+    /**
+     * Ink for copy that stands BELOW the backdrop, directly on the pack's wall: a light pack
+     * declares `wallInk`/`wallInk2` so its Cast and More-like-this text does not disappear into
+     * the wash, while every dark pack falls back to its normal ink.
+     */
+    private fun wallInk(theme: com.scenix.tv.core.Theme): Int =
+        theme.colorOr("wallInk", theme.ink)
+    private fun wallInk2(theme: com.scenix.tv.core.Theme, fallback: Int): Int =
+        theme.colorOr("wallInk2", fallback)
     private lateinit var profileId: String
     private lateinit var identity: String
     private var expectedTitle = ""
@@ -212,6 +222,15 @@ class DetailActivity : Activity() {
         // backdrop layout painted dark meta text over a bright poster and was unreadable.
         val kids = app.theme.homeLayout.family == com.scenix.tv.core.HomeLayoutSpec.Family.KIDS
         val split = app.theme.detailStyle == "split" || kids
+        // A wall pack with a BACKDROP hero (Clean, Glass) prints its copy over dark art while its
+        // normal ink is tuned for the light wall; the hero therefore takes the wall's light ink.
+        // The Kids split keeps its dark ink because its words stand on the yellow wall, not on art.
+        val copyOnArt = !split && Screens.wall(app) != null
+        val heroInk = if (copyOnArt) theme.color("inkOnWall", "#FFFFFF") else theme.ink
+        val heroInk2 = if (copyOnArt) theme.color("inkOnWallMuted", "rgba(255,255,255,0.82)")
+            else theme.ink2
+        val heroInk3 = if (copyOnArt) theme.color("inkOnWallMuted", "rgba(255,255,255,0.72)")
+            else theme.ink3
         val heroHeight = if (split) app.theme.heroHeightPx else theme.px(600f)
         val hero = FrameLayout(this).apply {
             setBackgroundColor(if (kids) Color.TRANSPARENT else theme.surface2)
@@ -248,7 +267,7 @@ class DetailActivity : Activity() {
             })
         }
 
-        val back = Views.text(app, "li", 28f, theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
+        val back = Views.text(app, "li", 28f, heroInk, "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(theme.px(16f), theme.px(6f), theme.px(16f), theme.px(6f))
         back.isFocusable = true
         back.isClickable = true
@@ -286,7 +305,7 @@ class DetailActivity : Activity() {
         // A long YouTube or file title must not fill the hero a line at a time. The web caps the
         // column at 1100 px; the same cap plus a smaller size for long names keeps the meta line and
         // Play where the eye expects them.
-        val heading = Views.text(app, "h1", 54f, theme.ink, title, bold = true, maxLines = 3)
+        val heading = Views.text(app, "h1", 54f, heroInk, title, bold = true, maxLines = 3)
         heading.setTextSize(
             android.util.TypedValue.COMPLEX_UNIT_PX,
             if (kids) theme.px(76f).toFloat()
@@ -329,7 +348,7 @@ class DetailActivity : Activity() {
             if (names.isNotEmpty()) meta.add(names.joinToString(", "))
         }
         if (meta.isNotEmpty()) {
-            words.addView(Views.text(app, "sub", 22f, theme.ink2, meta.joinToString(" · "), maxLines = 2),
+            words.addView(Views.text(app, "sub", 22f, heroInk2, meta.joinToString(" · "), maxLines = 2),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(12f)
                 })
@@ -340,14 +359,14 @@ class DetailActivity : Activity() {
                 .map { sa(advisories, it, "") }
                 .filter { it.isNotBlank() && !it.equals("null", true) }
                 .joinToString(" · ")
-            words.addView(Views.text(app, "sub", 19f, theme.ink3, text, maxLines = 2),
+            words.addView(Views.text(app, "sub", 19f, heroInk3, text, maxLines = 2),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(8f)
                 })
         }
         val overview = s(record, "overview", "")
         if (overview.isNotBlank() && !overview.equals("null", true)) {
-            words.addView(Views.text(app, "sub", 21f, theme.ink2, overview, maxLines = 4),
+            words.addView(Views.text(app, "sub", 21f, heroInk2, overview, maxLines = 4),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(18f)
                 })
@@ -614,7 +633,7 @@ class DetailActivity : Activity() {
             setPadding(0, theme.px(30f), 0, theme.px(30f))
         }
         contentSlot?.addView(
-            Views.text(app, "rowTitle", 27f, theme.ink, "More like this", bold = true),
+            Views.text(app, "rowTitle", 27f, wallInk(theme), "More like this", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(24f); bottomMargin = theme.px(12f)
             })
@@ -633,7 +652,7 @@ class DetailActivity : Activity() {
                 // The empty-state rule again: the heading stays only with an honest line under it,
                 // and the placeholder rail collapses so there is no blank band pretending to load.
                 rail.visibility = View.GONE
-                contentSlot?.addView(Views.text(app, "sub", 20f, theme.ink3,
+                contentSlot?.addView(Views.text(app, "sub", 20f, wallInk2(theme, theme.ink3),
                     "This hub has not found anything similar yet."),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 return@row
@@ -734,7 +753,7 @@ class DetailActivity : Activity() {
             people.add(person)
         }
         if (people.isEmpty()) return
-        parent.addView(Views.text(app, "rowTitle", 27f, theme.ink, "Cast", bold = true),
+        parent.addView(Views.text(app, "rowTitle", 27f, wallInk(theme), "Cast", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(18f); bottomMargin = theme.px(12f)
             })
@@ -748,7 +767,7 @@ class DetailActivity : Activity() {
             // A face without a photo is still a face: the disc carries the person's initial,
             // which steps aside only when the hub supplied a real portrait.
             val faceSlot = FrameLayout(this)
-            faceSlot.addView(Views.text(app, "h3", 34f, theme.ink2,
+            faceSlot.addView(Views.text(app, "h3", 34f, wallInk(theme),
                 s(person, "name", " ").trim().take(1).uppercase(), bold = true, gravity = Gravity.CENTER).apply {
                 background = Views.rounded(theme.surface2, theme.px(999f))
             }, FrameLayout.LayoutParams(theme.px(112f), theme.px(112f)))
@@ -768,9 +787,9 @@ class DetailActivity : Activity() {
                     (faceSlot.getChildAt(0) as? TextView)?.visibility = View.GONE
                 }
             }
-            box.addView(Views.text(app, "caption", 18f, theme.ink, s(person, "name", ""), maxLines = 1, gravity = Gravity.CENTER),
+            box.addView(Views.text(app, "caption", 18f, wallInk(theme), s(person, "name", ""), maxLines = 1, gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(8f) })
-            box.addView(Views.text(app, "meta", 15f, theme.ink3, s(person, "character", ""), maxLines = 1, gravity = Gravity.CENTER),
+            box.addView(Views.text(app, "meta", 15f, wallInk2(theme, theme.ink3), s(person, "character", ""), maxLines = 1, gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT))
             strip.addView(box)
         }
@@ -818,9 +837,9 @@ class DetailActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        heading.addView(Views.text(app, "rowTitle", 27f, theme.ink, "Episodes", bold = true),
+        heading.addView(Views.text(app, "rowTitle", 27f, wallInk(theme), "Episodes", bold = true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val seasonSummary = Views.text(app, "meta", 18f, theme.ink2, "", gravity = Gravity.END)
+        val seasonSummary = Views.text(app, "meta", 18f, wallInk2(theme, theme.ink2), "", gravity = Gravity.END)
         heading.addView(seasonSummary)
         section.addView(heading, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -867,7 +886,9 @@ class DetailActivity : Activity() {
             for (season in seasons) {
                 val current = season == selectedSeason
                 tabWashes[season]?.visibility = if (current) View.VISIBLE else View.INVISIBLE
-                tabLabels[season]?.setTextColor(if (current) theme.onBrand else theme.ink)
+                tabLabels[season]?.setTextColor(
+                    if (current) (if (isGlassPack) wallInk(theme) else theme.onBrand)
+                    else wallInk(theme))
                 // A white selected tab needs a dark focus keyline; otherwise selection and focus
                 // are indistinguishable. An unselected tab keeps the normal white focus ring.
                 val plate = tabFocusPlates[season]
@@ -962,7 +983,7 @@ class DetailActivity : Activity() {
                 setPadding(theme.px(4f), theme.px(12f), theme.px(8f), 0)
             }
             val episodeTitle = s(ep, "title", "").ifBlank { "Episode $number" }
-            copy.addView(Views.text(app, "li", 23f, theme.ink, episodeTitle, bold = true, maxLines = 1))
+            copy.addView(Views.text(app, "li", 23f, wallInk(theme), episodeTitle, bold = true, maxLines = 1))
             val synopsis = s(ep, "synopsis", "")
             val durationMs = ep.optLong("durationMs", 0L)
             val detail = when {
@@ -970,7 +991,7 @@ class DetailActivity : Activity() {
                 durationMs > 0L -> runtime(durationMs)
                 else -> "Episode $number"
             }
-            copy.addView(Views.text(app, "meta", 17f, theme.ink2, detail, maxLines = 2),
+            copy.addView(Views.text(app, "meta", 17f, wallInk2(theme, theme.ink2), detail, maxLines = 2),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = theme.px(5f)
                 })
@@ -1065,7 +1086,7 @@ class DetailActivity : Activity() {
                 else Views.rounded(theme.brand, theme.px(999f))
                 visibility = View.INVISIBLE
             }
-            val label = Views.text(app, "button", 19f, theme.ink, "Season $season", bold = true,
+            val label = Views.text(app, "button", 19f, wallInk(theme), "Season $season", bold = true,
                 gravity = Gravity.CENTER)
             label.setPadding(theme.px(21f), theme.px(11f), theme.px(21f), theme.px(11f))
             val focusPlate = View(this)

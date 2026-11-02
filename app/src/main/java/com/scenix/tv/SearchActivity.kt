@@ -52,6 +52,11 @@ class SearchActivity : Activity() {
 
     private val searchNow = Runnable { runSearch() }
 
+    /** Text standing directly on the pack's wall (Glass draws a dark wall ink over its light wash). */
+    private val wallInk get() = app.theme.colorOr("wallInk", app.theme.ink)
+    private val wallInk2 get() = app.theme.colorOr("wallInk2", app.theme.ink2)
+    private val wallFaint get() = app.theme.colorOr("wallInk2", app.theme.ink3)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -75,7 +80,7 @@ class SearchActivity : Activity() {
             setPadding(app.theme.px(24f), 0, app.theme.px(24f), 0)
             background = Views.rounded(app.theme.surface2, app.theme.radius("field", 14f))
         }
-        queryView = Views.text(app, "li", 22f, app.theme.ink, "", bold = true, maxLines = 1)
+        queryView = Views.text(app, "li", 22f, wallInk, "", bold = true, maxLines = 1)
         queryView.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(38f).toFloat())
         queryShell.addView(queryView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(queryShell, LinearLayout.LayoutParams(
@@ -139,7 +144,7 @@ class SearchActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(36f), app.theme.px(10f), 0, 0)
         }
-        resultHeading = Views.text(app, "li", 26f, app.theme.ink, "Search the catalogue", bold = true)
+        resultHeading = Views.text(app, "li", 26f, wallInk, "Search the catalogue", bold = true)
         resultHeading.setPadding(0, 0, 0, app.theme.px(12f))
         pane.addView(resultHeading)
         val resultHost = FrameLayout(this)
@@ -163,7 +168,7 @@ class SearchActivity : Activity() {
         resultHost.addView(results, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
-        emptyResults = Views.text(app, "sub", 22f, app.theme.ink3,
+        emptyResults = Views.text(app, "sub", 22f, wallFaint,
             "Choose letters to find a movie or series", gravity = Gravity.CENTER, maxLines = 2)
         emptyResults.setPadding(app.theme.px(32f), 0, app.theme.px(32f), 0)
         resultHost.addView(emptyResults, FrameLayout.LayoutParams(
@@ -186,7 +191,7 @@ class SearchActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
             }
             for (label in row) {
-                val key = Views.text(app, "li", 22f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
+                val key = Views.text(app, "li", 22f, wallInk, label, bold = true, gravity = Gravity.CENTER)
                 key.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(if (label.length > 1) 17f else 25f).toFloat())
                 key.isFocusable = true
                 key.isClickable = true
@@ -198,7 +203,8 @@ class SearchActivity : Activity() {
                         if (focused) app.theme.ink else app.theme.surface2,
                         app.theme.radius("key", 10f),
                     )
-                    key.setTextColor(if (focused) app.theme.bg else app.theme.ink)
+                    key.setTextColor(if (focused)
+                        app.theme.colorOr("keyFocusInk", app.theme.bg) else wallInk)
                 }
                 paintKey(false)
                 // The key carries the pack's own halo focus — the same control ring the stage
@@ -229,10 +235,10 @@ class SearchActivity : Activity() {
     private fun renderQuery() {
         if (query.isEmpty()) {
             queryView.text = "Type a title…"
-            queryView.setTextColor(app.theme.ink3)
+            queryView.setTextColor(wallFaint)
         } else {
             queryView.text = query.toString() + "▌"
-            queryView.setTextColor(app.theme.ink)
+            queryView.setTextColor(wallInk)
         }
     }
 

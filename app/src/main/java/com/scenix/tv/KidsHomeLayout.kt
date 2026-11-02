@@ -59,6 +59,11 @@ internal class KidsHomeLayout(
     val navigationAnchor: View? get() = pillStops.firstOrNull()
     val preferredHeightPx: Int get() = theme.px(theme.packInt("kidsHomeHeight", 660).toFloat())
 
+    private val cardRow: LinearLayout
+    /** The card band's unconstrained height; [appliedHeroH] is what the host slot can afford. */
+    private val naturalHeroH = theme.space("kidsHeroH", 355f)
+    private var appliedHeroH = naturalHeroH
+
     private val cardA: FrameLayout
     private val cardB: FrameLayout
     private val artA: ImageView
@@ -232,12 +237,13 @@ internal class KidsHomeLayout(
         gearStop.nextFocusLeftId = profilePill.id
 
         // --- the two oversized feature cards ---------------------------------------------------
-        val cardRow = LinearLayout(context).apply {
+        val cardRowView = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             clipChildren = false
             clipToPadding = false
         }
-        val heroH = theme.space("kidsHeroH", 355f)
+        cardRow = cardRowView
+        val heroH = naturalHeroH
         val a = makeCard(fullArt = true)
         cardA = a.first; artA = a.third.first; titleA = a.third.second; logoA = a.third.third
         val b = makeCard(fullArt = false)
@@ -286,6 +292,31 @@ internal class KidsHomeLayout(
 
         cardA.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
         cardB.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
+    }
+
+    /**
+     * The host gives every home surface a fixed hero slot and clamps that slot so one shelf stays
+     * on screen. At 150% zoom the slot is shorter than the scale-1.5 stage, and the old fixed card
+     * band simply drew past its bounds into the first shelf heading ("Continue watching" sat under
+     * the chips). Measure against the slot the host actually gave us and give the difference to the
+     * two feature cards — they crop their art, while the header, chips and their gaps keep the
+     * zoomed size that makes the mode useful. At 100% (and anywhere the slot is tall enough) the
+     * demanded and available heights match, so the stage is untouched.
+     */
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.EXACTLY) {
+            val available = View.MeasureSpec.getSize(heightMeasureSpec)
+            val deficit = (preferredHeightPx - available).coerceAtLeast(0)
+            val target = (naturalHeroH - deficit)
+                .coerceAtLeast(theme.space("kidsHeroMin", 220f))
+            if (target != appliedHeroH) {
+                appliedHeroH = target
+                (cardRow.layoutParams as? LinearLayout.LayoutParams)?.height = target
+                (cardA.layoutParams as? LinearLayout.LayoutParams)?.height = target
+                (cardB.layoutParams as? LinearLayout.LayoutParams)?.height = target
+            }
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
     private fun makePillStop(label: String, route: String, active: Boolean): View {
