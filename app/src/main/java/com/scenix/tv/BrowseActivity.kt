@@ -1797,6 +1797,31 @@ class BrowseActivity : Activity() {
         )
     }
 
+    /**
+     * The billboard's Play button. A hero is the biggest Play in the product, so it starts the film
+     * (or the remembered episode of a series) instead of opening another page to press Play again.
+     * The player resolves the copy itself from identity; the tile only supplies where to resume.
+     */
+    private fun playItem(item: Item) {
+        val p = item.progress
+        val series = item.type == "series"
+        val season = p?.episode?.season ?: if (series) 1 else 0
+        val episode = p?.episode?.episode ?: if (series) 1 else 0
+        startActivity(
+            Intent(this, PlayerActivity::class.java)
+                .putExtra(PlayerActivity.EXTRA_PROFILE, profileId)
+                .putExtra(PlayerActivity.EXTRA_IDENTITY, item.identity)
+                .putExtra(PlayerActivity.EXTRA_TYPE, item.type)
+                .putExtra(PlayerActivity.EXTRA_TITLE, item.title)
+                .putExtra(PlayerActivity.EXTRA_SEASON, season)
+                .putExtra(PlayerActivity.EXTRA_EPISODE, episode)
+                .putExtra(PlayerActivity.EXTRA_POSITION_MS, p?.positionMs ?: 0L)
+                .putExtra(PlayerActivity.EXTRA_MATURITY, item.maturity)
+                .putExtra(PlayerActivity.EXTRA_POSTER, item.poster.orEmpty())
+                .putExtra(PlayerActivity.EXTRA_LOGO, item.logo.orEmpty())
+        )
+    }
+
     private inner class BrowseAdapter(
         private val hero: Item?,
         private val shelves: List<BrowseRow>,
@@ -1839,6 +1864,7 @@ class BrowseActivity : Activity() {
                     this@BrowseActivity,
                     app,
                     HomeSurfaceCallbacks(
+                        onPlay = ::playItem,
                         onOpen = ::openDetail,
                         onSelected = ::onSlideFocused,
                         onStep = ::stepHero,

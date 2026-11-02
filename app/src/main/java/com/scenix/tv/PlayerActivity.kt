@@ -227,6 +227,8 @@ class PlayerActivity : Activity() {
     private lateinit var bottomBar: LinearLayout
     private lateinit var buttonRow: LinearLayout
     private lateinit var seekLine: SeekLine
+    /** The name of the focused control, shown above the transport while the viewer is in it. */
+    private lateinit var controlHint: TextView
     private lateinit var elapsed: TextView
     private lateinit var remaining: TextView
     private lateinit var titleView: TextView
@@ -1414,8 +1416,9 @@ class PlayerActivity : Activity() {
         seekLine.isFocusable = true
         seekLine.isClickable = true
         seekLine.setOnClickListener { togglePlay() }
-        Focus.attach(seekLine, seekLine, app, theme.radius("button", 6f), scale = false, elevate = false)
-        val lineLp = LinearLayout.LayoutParams(0, theme.px(26f), 1f)
+        Focus.attach(seekLine, seekLine, app, theme.radius("button", 6f), scale = false, elevate = false,
+            onFocus = { focused -> showControlHint(if (focused) "Timeline · LEFT / RIGHT to seek" else null) })
+        val lineLp = LinearLayout.LayoutParams(0, theme.px(30f), 1f)
         lineLp.marginStart = theme.px(18f)
         lineLp.marginEnd = theme.px(18f)
         lineRow.addView(elapsed, wrap())
@@ -1433,8 +1436,10 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         playButton = icon(GLYPH_PLAY, "Play") { togglePlay() }
-        rewindButton = icon(GLYPH_BACK10, "Back ${seekBackMs / 1000} seconds") { seekBy(-seekBackMs) }
-        forwardButton = icon(GLYPH_FORWARD30, "Forward ${seekForwardMs / 1000} seconds") { seekBy(seekForwardMs) }
+        rewindButton = icon(GLYPH_REWIND, "Back ${seekBackMs / 1000} seconds",
+            seconds = (seekBackMs / 1000).toInt()) { seekBy(-seekBackMs) }
+        forwardButton = icon(GLYPH_FORWARD, "Forward ${seekForwardMs / 1000} seconds",
+            seconds = (seekForwardMs / 1000).toInt()) { seekBy(seekForwardMs) }
         audioButton = icon(GLYPH_AUDIO, "Audio", flat = true) { openMenu(MenuKind.AUDIO, audioButton) }
         subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
         speedButton = icon(GLYPH_SPEED, "Speed", flat = true) { openMenu(MenuKind.SPEED, speedButton) }
@@ -1466,9 +1471,21 @@ class PlayerActivity : Activity() {
         episodesButton?.let { options.addView(it, wrap().withStart(theme.px(4f))) }
         buttonRow.addView(options, wrap())
 
+        // Stremio's remote-first courtesy: the icon under the ring says what it will do, in words,
+        // so a viewer never has to guess a glyph. It sits inside the bar and disappears with it.
+        controlHint = Views.text(app, "meta", 16f, theme.ink2, "", maxLines = 1,
+            gravity = Gravity.START)
+        controlHint.visibility = View.GONE
+        bottomBar.addView(controlHint, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            topMargin = theme.px(12f)
+            bottomMargin = theme.px(2f)
+        })
+
         bottomBar.addView(buttonRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(12f) })
+        ).apply { topMargin = theme.px(6f) })
 
         overlay.addView(bottomBar, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1538,8 +1555,8 @@ class PlayerActivity : Activity() {
      * 24 px play/pause mark. The value a control currently holds lives in its menu and in its
      * content description.
      */
-    private fun icon(glyph: Int, desc: String, flat: Boolean = false, action: () -> Unit): GlyphView {
-        val v = GlyphView(this, glyph)
+    private fun icon(glyph: Int, desc: String, flat: Boolean = false, hint: Boolean = true, seconds: Int = 0, action: () -> Unit): GlyphView {
+        val v = GlyphView(this, glyph, seconds)
         v.contentDescription = desc
         if (!flat) {
             // Standalone transport buttons are soft pills; the menu group shares one wider pill.
@@ -1550,8 +1567,17 @@ class PlayerActivity : Activity() {
         Focus.attach(
             v, v, app, theme.px(if (flat) 20f else 23f),
             scale = false, elevate = false, onClick = action,
+            // Read the live contentDescription: Play becomes Pause while the film runs.
+            onFocus = { focused -> if (hint) showControlHint(if (focused) v.contentDescription?.toString() else null) },
         )
         return v
+    }
+
+    /** One quiet line above the transport naming the focused control; null keeps it hidden. */
+    private fun showControlHint(text: String?) {
+        if (!::controlHint.isInitialized) return
+        controlHint.text = text.orEmpty()
+        controlHint.visibility = if (text.isNullOrBlank()) View.GONE else View.VISIBLE
     }
 
     private fun chip(
@@ -3394,7 +3420,7 @@ class PlayerActivity : Activity() {
     // flat transport icons
     // =========================================================================================
 
-    private class GlyphView(context: android.content.Context, val glyph: Int) : View(context) {
+    private class GlyphView(context: android.content.Context, val glyph: Int, val seconds: Int = 0) : View(context) {
         private val app2 = (context.applicationContext as ScenixApp).ctx
         private val theme2 get() = app2.theme
         var playing = false
@@ -3450,8 +3476,8 @@ class PlayerActivity : Activity() {
                     path.close()
                     canvas.drawPath(path, solid)
                 }
-                GLYPH_BACK10 -> seekIcon(canvas, cx, cy, u, 10, back = true)
-                GLYPH_FORWARD30 -> seekIcon(canvas, cx, cy, u, 30, back = false)
+                GLYPH_REWIND -> seekIcon(canvas, cx, cy, u, seconds.coerceAtLeast(1), back = true)
+                GLYPH_FORWARD -> seekIcon(canvas, cx, cy, u, seconds.coerceAtLeast(1), back = false)
                 GLYPH_BACK -> {
                     val path = Path()
                     path.moveTo(cx + 3.5f * u, cy - 8 * u)
@@ -3559,12 +3585,21 @@ class PlayerActivity : Activity() {
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.brand }
         private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.ink }
 
+        override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+            invalidate()
+        }
+
         override fun onDraw(canvas: Canvas) {
             val h = height.toFloat()
             val cy = h / 2f
-            val r = theme.px(3f).toFloat()
             val w = width.toFloat()
-            val bar = theme.px(6f).toFloat()
+            // The timeline grows under the ring: on a 10-foot screen a 6 px bar is a hairline, and
+            // the focused state is where a viewer actually reads it. Buffered and played ranges keep
+            // their own colours so the three depths stay distinguishable at TV distance.
+            val focused = isFocused
+            val bar = theme.px(if (focused) 10f else 7f).toFloat()
+            val r = bar / 2f
             canvas.drawRoundRect(0f, cy - bar / 2f, w, cy + bar / 2f, r, r, track)
             if (buffered > 0f) {
                 canvas.drawRoundRect(0f, cy - bar / 2f, w * buffered, cy + bar / 2f, r, r, buf)
@@ -3572,8 +3607,10 @@ class PlayerActivity : Activity() {
             if (fraction > 0f) {
                 canvas.drawRoundRect(0f, cy - bar / 2f, w * fraction, cy + bar / 2f, r, r, fill)
             }
-            val knobR = theme.px(8f).toFloat()
+            val knobR = theme.px(if (focused) 13f else 9f).toFloat()
             if (w > knobR * 2f) {
+                // A dark cradle under the knob keeps it legible over the white played range.
+                canvas.drawCircle((w * fraction).coerceIn(knobR, w - knobR), cy, knobR + theme.px(2f), track)
                 canvas.drawCircle((w * fraction).coerceIn(knobR, w - knobR), cy, knobR, knob)
             }
         }
@@ -3700,8 +3737,8 @@ class PlayerActivity : Activity() {
         /** A viewer may be moved down twice for a shrinking cushion; after that the menu is theirs. */
         private const val CUSHION_SWITCHES_MAX = 2
         private const val GLYPH_PLAY = 0
-        private const val GLYPH_BACK10 = 1
-        private const val GLYPH_FORWARD30 = 2
+        private const val GLYPH_REWIND = 1
+        private const val GLYPH_FORWARD = 2
         private const val GLYPH_AUDIO = 3
         private const val GLYPH_SUBS = 4
         private const val GLYPH_SPEED = 5

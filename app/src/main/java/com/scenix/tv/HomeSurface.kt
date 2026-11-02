@@ -42,6 +42,8 @@ internal interface HomeSurface {
  * pretending it has an Apple preview tile and preserves a PS5 hub's direct card focus.
  */
 internal data class HomeSurfaceCallbacks(
+    /** The billboard's Play is playback, not a detail page. `onOpen` stays the card/detail route. */
+    val onPlay: (Item) -> Unit,
     val onOpen: (Item) -> Unit,
     val onSelected: (Int) -> Unit,
     val onStep: (Int) -> Unit,
@@ -65,7 +67,7 @@ internal object HomeSurfaceFactory {
                     context,
                     app,
                     NetflixHeroComponent.Callbacks(
-                        onPlay = callbacks.onOpen,
+                        onPlay = callbacks.onPlay,
                         onMoreInfo = callbacks.onOpen,
                         onSlideRequested = callbacks.onStep,
                         onHeroFocused = callbacks.onHeroFocused,
@@ -91,7 +93,7 @@ internal object HomeSurfaceFactory {
                     context,
                     app,
                     HeroComponent.Callbacks(
-                        onPlay = callbacks.onOpen,
+                        onPlay = callbacks.onPlay,
                         onSlideSelected = callbacks.onSelected,
                         onPlayFocused = callbacks.onHeroFocused,
                     ),
