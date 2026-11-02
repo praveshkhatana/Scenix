@@ -953,7 +953,19 @@ function arrangeHome(rows) {
   for (const r of rest) for (const it of r.items) below.add(it.identity);
   for (const h of heroes) {
     const unique = h.items.filter((it) => !below.has(it.identity));
-    h.items = (unique.length ? unique : h.items.slice(0, 1)).slice(0, HERO_MAX);
+    let chosen = unique.slice();
+    // A carousel of one is not a carousel. The billboard's preview strip only exists with two or
+    // more slides, and a profile whose shelves overlap the hero pool (or whose rules leave a narrow
+    // pool) was collapsing to a single static frame. Uniqueness against the shelves below is a
+    // nicety; once it would cost the carousel, fill the remaining slides from the ranked pool even
+    // if one of them is also on a shelf.
+    if (chosen.length < 2) {
+      for (const it of h.items) {
+        if (chosen.length >= HERO_MAX) break;
+        if (!chosen.includes(it)) chosen.push(it);
+      }
+    }
+    h.items = chosen.slice(0, HERO_MAX);
     h.title = null;
   }
   return [...heroes, ...rest];

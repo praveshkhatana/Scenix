@@ -110,6 +110,9 @@ class BrowseActivity : Activity() {
             if (anchor != null && heroFamily != HomeLayoutSpec.Hero.FOCUSED_HUB &&
                 event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP && onTopRow(focus)) {
                 anchor.requestFocus()
+                // The billboard is the page, not a strip above it. Once the remote is back on the
+                // bar the household should see the banner, not one Play button clipped under it.
+                list.scrollToPosition(0)
                 return true
             }
             // DOWN out of the pill lands on the preview belonging to the visible hero slide. The
@@ -247,14 +250,17 @@ class BrowseActivity : Activity() {
     }
 
     /**
-     * One row per press, skipping rows that carry no focusable card. The target row is scrolled into
-     * view first; [focusShelfAt] retries until the rail has laid out, so a press cannot be swallowed.
+     * One row per press, skipping rows that carry no focusable card. The column is preserved by the
+     * tile's own adapter position, not by where its centre happened to be: rows differ in card width
+     * (poster, landscape, ranked), so matching screen x landed on the first tile of the next row
+     * whenever the new rail had only its left edge laid out — the "random tile" hop.
      */
     private fun moveVertical(direction: Int, from: View) {
         val current = outerPositionOf(from)
-        val x = screenCenterX(from)
-        var target = current + direction
         if (current < 0) return
+        val x = screenCenterX(from)
+        val rowHeight = outerRowHeight(from) ?: app.theme.px(360f)
+        var target = current + direction
         // The Hero selector is now inside the hero. Moving out of the top component lands on the
         // first ordinary shelf at position one.
         if (current == 0 && direction > 0) target = 1
@@ -262,16 +268,37 @@ class BrowseActivity : Activity() {
         while (target in 0 until total) {
             if (target == 0) {
                 // Each structural home defines its own re-entry point: Apple returns to its
-                // preview selector, Netflix to Play, and PS5 to the selected square tile.  The
-                // old code skipped position zero, which made UP from the first shelf feel dead.
+                // preview selector, Netflix to Play, and PS5 to the selected square tile.
                 val hero = list.findViewHolderForAdapterPosition(0) as? HeroHolder
-                if (hero?.surface?.focusEntry(heroPos) == true) return
-                if (hero == null) list.postDelayed({ moveVertical(direction, from) }, 45L)
+                if (hero?.surface?.focusEntry(heroPos) == true) {
+                    // The banner is the point of the step. RecyclerView only scrolls the focused
+                    // child into view, which left Play clipped at the top and the artwork above it
+                    // hidden, so "back to the hero" looked like it never happened.
+                    list.scrollToPosition(0)
+                    return
+                }
+                if (hero == null) {
+                    list.scrollToPosition(0)
+                    list.postDelayed({
+                        currentFocus?.let { focus -> moveVertical(direction, focus) }
+                    }, 60L)
+                }
                 return
             }
-            if (focusShelfAt(target, x, 0)) return
+            if (focusShelfAt(target, x, direction, rowHeight, 0)) return
             target += direction
         }
+    }
+
+    /** The height of the outer row containing [v], used to move the page by one row, not one page. */
+    private fun outerRowHeight(v: View?): Int? {
+        var cur: View? = v
+        while (cur != null) {
+            val parent = cur.parent
+            if (parent === list) return cur.height.takeIf { it > 0 }
+            cur = parent as? View
+        }
+        return null
     }
 
     /** The x centre of a view on screen, used to land on the tile in the same column below. */
@@ -283,33 +310,63 @@ class BrowseActivity : Activity() {
     }
 
     /**
-     * Focus the card nearest [x] on the row at [position]. The row may not be attached yet, so scroll
-     * to it and retry for a few frames instead of consuming the keypress with nothing focused.
+     * Focus the tile in the same visual column on the row at [position]. Rows differ in card width
+     * (poster, landscape, ranked), so the column is the card nearest [x] on screen — not an adapter
+     * index, which lands at the left edge when a row's width differs from the one above.
+     *
+     * A row that is not attached yet, or a rail whose laid-out window does not cover [x], is moved
+     * one step and retried. Focusing the only card that happened to be laid out was the "jump to a
+     * random tile" bug: the first frame of a new row showed the viewer its left edge.
      */
-    private fun focusShelfAt(position: Int, x: Int, tries: Int): Boolean {
+    private fun focusShelfAt(
+        position: Int,
+        x: Int,
+        direction: Int,
+        rowHeight: Int,
+        tries: Int,
+    ): Boolean {
         val holder = list.findViewHolderForAdapterPosition(position)
-        if (holder is ShelfHolder) {
-            val target = nearestCard(holder.rail, x) ?: holder.rail.getChildAt(0)
-            if (target?.requestFocus() == true) {
-                keepRowBelowBar(position)
-                return true
+        val attached = holder?.itemView?.isAttachedToWindow == true
+        if (attached && holder is ShelfHolder) {
+            val rail = holder.rail
+            if (rail.childCount > 0) {
+                val first = rail.getChildAt(0)
+                val last = rail.getChildAt(rail.childCount - 1)
+                val firstCenter = screenCenterX(first)
+                val lastCenter = screenCenterX(last)
+                val firstPos = rail.getChildAdapterPosition(first)
+                val lastPos = rail.getChildAdapterPosition(last)
+                val count = rail.adapter?.itemCount ?: 0
+                val needLeft = x < firstCenter - themeGapPx() && firstPos > 0
+                val needRight = x > lastCenter + themeGapPx() && lastPos < count - 1
+                if (needLeft) {
+                    rail.scrollBy(x - firstCenter, 0)
+                } else if (needRight) {
+                    rail.scrollBy(x - lastCenter, 0)
+                } else {
+                    val target = nearestCard(rail, x) ?: first
+                    if (target.requestFocus()) {
+                        keepRowBelowBar(position)
+                        return true
+                    }
+                }
             }
-            // The rail exists but its children are not measured yet; wait for the next frame.
-        } else if (holder is HeroHolder) {
+            // The rail is laying out, or has just been scrolled toward the viewer's column.
+        } else if (attached && holder is HeroHolder) {
             if (holder.surface.primaryControl.requestFocus()) return true
         } else {
-            // Keep the row's heading below the floating pill/wordmark. Scrolling it flush to the top
-            // put "Browse by category" under "SCENIX", which read as two labels on top of each other.
-            val lm = list.layoutManager as? LinearLayoutManager
-            if (lm != null) {
-                lm.scrollToPositionWithOffset(position, if (position >= 2) app.theme.px(96f) else 0)
-            } else {
-                list.scrollToPosition(position)
-            }
+            // The row is not attached yet. Move the viewport by one row in the direction of travel;
+            // top-aligning it made every UP hop look like a jump to another section.
+            list.scrollBy(0, direction * rowHeight)
         }
-        if (tries < 8) list.postDelayed({ focusShelfAt(position, x, tries + 1) }, 45L)
+        if (tries < 8) list.postDelayed(
+            { focusShelfAt(position, x, direction, rowHeight, tries + 1) }, 45L
+        )
         return true
     }
+
+    /** A tile's own gap, used as the tolerance before scrolling a rail to reach a column. */
+    private fun themeGapPx(): Int = app.theme.px(20f)
 
     /**
      * A row scrolled to the very top puts its heading under the floating pill and wordmark. Nudge the
