@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -61,6 +62,13 @@ class GamesActivity : Activity() {
     private var heroCard: GameCard? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
+    /** The packs that stand on a wall rather than flat black: glass, clean, kids. */
+    private val wallPack get() = app.theme.homeLayout.family in setOf(
+        com.scenix.tv.core.HomeLayoutSpec.Family.GLASS,
+        com.scenix.tv.core.HomeLayoutSpec.Family.CLEAN,
+        com.scenix.tv.core.HomeLayoutSpec.Family.KIDS,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -73,7 +81,12 @@ class GamesActivity : Activity() {
         }
 
         val theme = app.theme
-        val root = FrameLayout(this).apply { setBackgroundColor(theme.bg) }
+        val root = FrameLayout(this).apply {
+            // The arcade is a screen of the pack too: a wall pack stands on its wall, not on the
+            // dark cinema page the game mode used to paint under its shelves.
+            val wall = Screens.wall(app)
+            if (wall != null) background = wall else setBackgroundColor(theme.bg)
+        }
         list = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@GamesActivity)
             setHasFixedSize(true)
@@ -121,7 +134,10 @@ class GamesActivity : Activity() {
         // letterforms must not depend on the font the television happens to carry.
         val brand = ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
-            setColorFilter(theme.brand, android.graphics.PorterDuff.Mode.SRC_IN)
+            // The Games bar floats over the hero art, so a wall pack's mark is white, not the
+            // pack's brand blue; dark packs keep the brand colour as before.
+            setColorFilter(if (wallPack) Color.WHITE else theme.brand,
+                android.graphics.PorterDuff.Mode.SRC_IN)
             scaleType = ImageView.ScaleType.FIT_START
             adjustViewBounds = true
             contentDescription = "Scenix"
@@ -252,7 +268,8 @@ class GamesActivity : Activity() {
                 View(this@GamesActivity).apply {
                     background = GradientDrawable(
                         GradientDrawable.Orientation.BOTTOM_TOP,
-                        intArrayOf(theme.bg, Color.TRANSPARENT),
+                        intArrayOf(if (wallPack) theme.colorOr("wallB", theme.bg) else theme.bg,
+                            Color.TRANSPARENT),
                     )
                 },
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(120f))
@@ -277,9 +294,19 @@ class GamesActivity : Activity() {
             heroDesc = Views.text(app, "sub", 19f, theme.ink2, "", maxLines = 2)
             heroDesc.setPadding(0, theme.px(10f), 0, 0)
             copy.addView(heroDesc, LinearLayout.LayoutParams(theme.px(700f), ViewGroup.LayoutParams.WRAP_CONTENT))
-            heroPlay = Views.text(app, "li", 22f, Color.WHITE, "PLAY", bold = true, gravity = Gravity.CENTER)
+            // Glass/Clean Play is the same lit translucent chip as their Detail/Mylist buttons;
+            // Kids keeps its solid black pill; dark packs keep the brand pill. A bright blue PLAY
+            // pill was the one element on this screen that belonged to no pack.
+            val glassButton = wallPack && app.theme.homeLayout.family !=
+                com.scenix.tv.core.HomeLayoutSpec.Family.KIDS
+            heroPlay = Views.text(app, "li", 22f,
+                if (glassButton) Color.WHITE else theme.onBrand,
+                "PLAY", bold = true, gravity = Gravity.CENTER)
             heroPlay.setPadding(theme.px(44f), theme.px(13f), theme.px(44f), theme.px(13f))
-            heroPlay.background = Views.rounded(theme.brand, theme.px(999f))
+            heroPlay.background = if (glassButton)
+                Views.rounded(theme.color("chipFillActive", "rgba(255,255,255,0.22)"),
+                    theme.px(999f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
+            else Views.rounded(theme.brand, theme.px(999f))
             copy.addView(heroPlay, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = theme.px(26f) })
