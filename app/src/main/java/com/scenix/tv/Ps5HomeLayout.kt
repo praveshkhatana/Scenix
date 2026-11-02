@@ -263,7 +263,7 @@ internal class Ps5HomeLayout(
             scaleType = android.widget.ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }
-        left.addView(brand, LinearLayout.LayoutParams(theme.px(122f), theme.px(28f)).apply {
+        left.addView(brand, LinearLayout.LayoutParams(theme.px(80f), theme.px(28f)).apply {
             marginEnd = theme.px(24f)
         })
         val sections = listOf(

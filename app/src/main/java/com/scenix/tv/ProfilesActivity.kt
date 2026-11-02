@@ -64,7 +64,7 @@ class ProfilesActivity : Activity() {
             setColorFilter(app.theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
-        }, LinearLayout.LayoutParams(app.theme.px(140f), app.theme.px(32f)))
+        }, LinearLayout.LayoutParams(app.theme.px(91f), app.theme.px(32f)))
         head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         // Managing the household belongs on the household's own door, not two screens away in
         // Settings. The button opens the same editor, PIN gate included.

@@ -124,7 +124,7 @@ class GamesActivity : Activity() {
             adjustViewBounds = true
             contentDescription = "Scenix"
         }
-        bar.addView(brand, LinearLayout.LayoutParams(theme.px(122f), theme.px(28f)).apply {
+        bar.addView(brand, LinearLayout.LayoutParams(theme.px(80f), theme.px(28f)).apply {
             marginStart = theme.px(26f)
         })
         bar.addView(Views.text(app, "meta", 17f, theme.ink2, "Games", bold = true).apply {
