@@ -34,6 +34,7 @@ const langdb = require('./langdb');
 const ROOT = path.join(__dirname, '..');
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const ADDONS_FILE = process.env.ADDONS_FILE || path.join(DATA_DIR, 'addons.json');
+const DEFAULT_ADDONS_FILE = process.env.DEFAULT_ADDONS_FILE || path.join(ROOT, 'addons.example.json');
 const CACHE_FILE = process.env.ADDON_CACHE_FILE || path.join(DATA_DIR, 'addon-cache.json');
 
 const TTL_MS = Number(process.env.ADDON_TTL_MS || 6 * 60 * 60 * 1000); // freshness rule, 6 h
@@ -51,58 +52,78 @@ function minSizeBytes() { return settings.get().addons.minSizeMB * 1e6; }
 const WARM_STREAMS = Number(process.env.ADDON_WARM_STREAMS || 12); // identities whose streams we pre-fetch
 const UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
-// Seed install: what a brand-new hub ships with, before anyone configures anything. Ids are named,
-// not derived from the hostname, because they surface in the list the user reads in Settings.
-// A hub that is already running picks these up too (see the seed merge in init()), so shipping a new
-// addon in code is enough to put it on a family's TV.
+// Seed install: what a brand-new hub ships with, before anyone configures anything. The list lives in
+// addons.example.json so the legal defaults are reviewable in one place, and so an owner can see exactly
+// what a fresh box starts with. It contains only catalogues, subtitle search, watch links and the native
+// providers already in this tree: no torrent index and no credential.
 //
-// The list is built per boot rather than written out as a literal, because a community addon carries its
-// own configuration inside its URL: baking one household's languages into that string would decide what a
-// stranger's catalogue contains. `settings.languages` empty means no `language=` segment at all — ask the
-// addon for everything it has and let this hub's own rules decide what is worth showing.
-function seedAddons() {
-  const langs = settings.languages()
-    .map((code) => LANG_CODE_TO_NAME[code] || null)
-    .filter(Boolean);
-  const sizeFilter = String(settings.get().addons.sizeFilter || '').trim();
-  const torrentioPath = [
-    langs.length ? 'language=' + langs.join(',') : '',
-    sizeFilter ? 'sizefilter=' + sizeFilter : '',
-  ].filter(Boolean).join('|') || 'sort=qualitysize';
-  const seeds = [
-    { id: 'cinemeta', name: 'Cinemeta', url: 'https://v3-cinemeta.strem.io/manifest.json' },
-    {
-      id: 'torrentio',
-      name: 'Torrentio',
-      // A community addon carries its own configuration in the path, using commas AND pipes - which
-      // is why SEED_ADDON_URLS below splits on a comma only where another URL follows it.
-      // `language=` comes from the owner's languages, and is left out entirely when they named none.
-      // `sizefilter=` is read by the addon as a list of size RANGES, not as one descending ceiling: the
-      // old `25GB,8GB,4GB,2GB` asked for 2-4 GB, 4-8 GB and 8-25 GB and therefore hid every copy under
-      // 2 GB — which is every 720p rip, the ones that actually start playing on a home connection. What
-      // this household plays is still decided per profile by core/prefs.js (qualityCap) and
-      // rules/size_cap.js + source_ranking.js; these two bands just make sure the fast-starting small
-      // copies and a proper 1080p/4K copy are both on the table to choose between.
-      url: 'https://torrentio.strem.fun/' + torrentioPath + '/manifest.json',
-    },
-    { id: 'opensubtitles', name: 'OpenSubtitles', url: 'https://opensubtitles-v3.strem.io/manifest.json' },
-    // A streams-only addon that answers with the services a title sits on. Measured on the hub, its
-    // public endpoint answers with *service links* (subscription / rent landing pages), not media files;
-    // rules/source_ranking.js keeps those below a real file so play() never hands the TV a web page.
-    { id: 'watchhub', name: 'WatchHub', url: 'https://watchhub.strem.io/manifest.json' },
-    // The game catalogue lives in its own public repo — the Scenix repo carries no game data — so
-    // it arrives as a seeded add-on instead of data files: a fresh or standalone hub gets a
-    // populated Games tab out of the box, and one push to that repo updates every household.
-    { id: 'scenix-games', name: 'Scenix Games', url: 'https://praveshkhatana.github.io/scenix-games-addon/manifest.json' },
-  ];
-  if (process.env.SEED_ADDON_URLS) {
-    seeds.length = 0;
-    for (const url of String(process.env.SEED_ADDON_URLS)
-      .split(/,(?=https?:\/\/)/).map((s) => s.trim()).filter(Boolean)) {
-      seeds.push({ id: '', name: null, url });
+// The file is a SEED, not the owner's list. readEntries() reads data/addons.json; only when that file is
+// absent does init() build the first list from here. Existing hubs keep their own file, including any
+// source they added, and the seed merge below only fills a source that is missing altogether.
+//
+// A community addon used to carry this household's language list inside its URL. That is deliberately
+// gone from the defaults: a stranger's hub must not be told what languages to ask for, and the per-profile
+// language rules already decide what is worth showing. `SEED_ADDON_URLS` still replaces the external list
+// for an installer that wants its own sources.
+const FALLBACK_DEFAULT_ADDONS = [
+  { id: 'cinemeta', name: 'Cinemeta', url: 'https://v3-cinemeta.strem.io/manifest.json', priority: 40 },
+  { id: 'opensubtitles', name: 'OpenSubtitles v3', url: 'https://opensubtitles-v3.strem.io/manifest.json', priority: 41 },
+  { id: 'watchhub', name: 'WatchHub', url: 'https://watchhub.strem.io/manifest.json', priority: 42 },
+  { id: 'scenix-games', name: 'Scenix Games', url: 'https://praveshkhatana.github.io/scenix-games-addon/manifest.json', priority: 43 },
+  { id: 'local-files', name: 'Local Files', native: true },
+  { id: 'public-domain', name: 'Public Domain Movies', native: true },
+  { id: 'live-tv', name: 'Live TV playlists', native: true },
+  { id: 'kids-yt', name: 'Curated kids YouTube', native: true },
+];
+
+/** Keep only well-formed entries; a typo in the example file must not break a first boot. */
+function normalizeDefaultAddons(entries) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = String(entry.id || '').trim().slice(0, 80);
+    if (!id || seen.has(id)) continue;
+    const name = String(entry.name || id).trim().slice(0, 80) || id;
+    if (entry.native === true) {
+      seen.add(id);
+      out.push({ id, name, native: true, enabled: entry.enabled !== false });
+      continue;
     }
+    const url = String(entry.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+    seen.add(id);
+    out.push({
+      id, name, url,
+      enabled: entry.enabled !== false,
+      priority: Number.isFinite(Number(entry.priority)) ? Number(entry.priority) : 40 + out.length,
+    });
   }
-  return seeds;
+  return out;
+}
+
+/** The fresh-install defaults, from addons.example.json when it is present. */
+function defaultAddons() {
+  let raw = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(DEFAULT_ADDONS_FILE, 'utf8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') log('ADDONS defaults unreadable, using built-ins:', DEFAULT_ADDONS_FILE, e.message);
+    return normalizeDefaultAddons(FALLBACK_DEFAULT_ADDONS);
+  }
+  const entries = Array.isArray(raw) ? raw
+    : Array.isArray(raw && raw.addons) ? raw.addons : null;
+  return normalizeDefaultAddons(entries || FALLBACK_DEFAULT_ADDONS);
+}
+
+/** The external seeds only: what the seed merge and resyncSeeds() may add or configure. */
+function seedAddons() {
+  if (process.env.SEED_ADDON_URLS) {
+    return String(process.env.SEED_ADDON_URLS)
+      .split(/,(?=https?:\/\/)/).map((s) => s.trim()).filter(Boolean)
+      .map((url) => ({ id: '', name: null, url, enabled: true }));
+  }
+  return defaultAddons().filter((a) => !a.native);
 }
 
 /**
@@ -280,13 +301,6 @@ const LANG_NAME_TO_CODE = {
   chinese: 'chi', portuguese: 'por', persian: 'per', arabic: 'ara', turkish: 'tur', polish: 'pol',
 };
 
-
-/** The other direction: the hub's codes spelled the way an addon's own URL wants them. */
-const LANG_CODE_TO_NAME = (() => {
-  const out = {};
-  for (const [name, code] of Object.entries(LANG_NAME_TO_CODE)) out[code] = name;
-  return out;
-})();
 
 /** Trim to usable text, or nothing: an empty string on a tile reads like a field that failed. */
 function cleanText(v) {
@@ -1150,14 +1164,29 @@ function init(reg, st) {
   let list = readEntries();
   if (list === null) {
     const now = Date.now();
+    // A fresh hub gets exactly the legal set in addons.example.json. Every other native provider
+    // stays in the list but off, so the owner can enable an aggregator or a source pack knowingly
+    // instead of a first boot quietly deciding for them.
+    const nativeDefaults = defaultAddons()
+      .filter((a) => a.native && registry.byId[a.id]);
+    const seededExternal = seedAddons().map((a, i) => {
+      const id = a.id || slugFromUrl(a.url);
+      return {
+        id, name: a.name || id, url: a.url,
+        enabled: a.enabled !== false, addedAt: now,
+        priority: Number.isFinite(a.priority) ? a.priority : 40 + i,
+      };
+    });
+    const seededNative = nativeDefaults.map((a) => ({
+      id: a.id, name: a.name, native: true, enabled: a.enabled !== false, addedAt: now,
+    }));
+    const known = new Set([...seededExternal, ...seededNative].map((e) => e.id));
     list = [
-      ...seedAddons().map((a, i) => ({
-        id: a.id || slugFromUrl(a.url), name: a.name, url: a.url,
-        enabled: true, addedAt: now, priority: 40 + i,
-      })),
-      ...registry.providers.map((p) => ({
-        id: p.id, name: p.name || p.id, native: true, enabled: true, addedAt: now,
-      })),
+      ...seededExternal,
+      ...seededNative,
+      ...registry.providers
+        .filter((p) => p.native && !known.has(p.id))
+        .map((p) => ({ id: p.id, name: p.name || p.id, native: true, enabled: false, addedAt: now })),
     ];
     try {
       writeEntries(list);
@@ -1167,11 +1196,14 @@ function init(reg, st) {
     }
   }
 
-  // A native addon file added after the seed (the "one file = one feature" case) joins the list too.
+  // A native addon file added after the seed (the "one file = one feature" case) joins the list too —
+  // except a provider marked `freshInstallOnly`. That mark is for a bundled shop-front default such as
+  // Public Domain Movies: a fresh hub should show it, but appending it to an owner's existing list would
+  // change a hub they had already configured. They can add the one entry from addons.example.json.
   const seen = new Set(list.map((e) => e.id));
   let addedNative = false;
   for (const p of registry.providers) {
-    if (p.native && !seen.has(p.id)) {
+    if (p.native && !seen.has(p.id) && !p.freshInstallOnly) {
       list.push({ id: p.id, name: p.name || p.id, native: true, enabled: true, addedAt: Date.now() });
       addedNative = true;
     }
@@ -1180,6 +1212,17 @@ function init(reg, st) {
     try {
       writeEntries(list);
     } catch (e) { /* the list is still correct in memory */ }
+  }
+
+  // A fresh-install-only provider that is not in this hub's list must also leave the LIVE registry.
+  // Otherwise it would be active but invisible in Settings — the worst of both. Nothing is written to
+  // data/addons.json here; an owner's file is not rewritten.
+  const listedNative = new Set(list.filter((e) => e.native).map((e) => e.id));
+  for (const p of registry.providers.slice()) {
+    if (p.native && p.freshInstallOnly && !listedNative.has(p.id)) {
+      registry.remove(p.id);
+      log('ADDON fresh-install default only, not in this hub list:', p.id);
+    }
   }
 
   /**

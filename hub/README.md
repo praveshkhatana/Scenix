@@ -74,6 +74,24 @@ around from the settings screen, and that override is stored in `data/settings.j
 `rows.order` — both shipped empty, so a fresh hub draws exactly the shelves its own `rows/` files ask
 for, in their own order, and nothing about the defaults depends on which of those files happen to exist.
 
+### Fresh-install defaults
+
+`addons.example.json` is the add-on seed. The hub reads it only while `data/addons.json` does not exist,
+and copies it into that file on the first boot. It contains the legal external defaults — Cinemeta,
+OpenSubtitles v3, WatchHub and Scenix Games — and the native providers a new hub should have on: Local
+Files, Public Domain Movies, Live TV and Kids YouTube. Every other native provider is written with
+`enabled:false`, so a first boot does not quietly switch on an aggregator or a source pack nobody chose.
+An existing `data/addons.json` is never replaced from this file, and `SEED_ADDON_URLS` still replaces the
+external list for an installer that has its own sources.
+
+`providers/public-domain.js` and `rows/publicdomain.js` are the bundled legal shelf: a curated set of
+films that are public domain in the United States, each streamed as a direct MP4 from the Internet
+Archive. The provider is marked `freshInstallOnly`, so it is not appended to an existing hub's add-on
+list. An owner who wants it on an older hub can add
+`{"id":"public-domain","name":"Public Domain Movies","native":true,"enabled":true}` to `data/addons.json`;
+nothing rewrites their file behind their back. Disable it in Settings and the row empties and is dropped
+like any other row.
+
 ### Rule — `rules/x.js`
 ```js
 module.exports = { id: 'x', order: 30, async apply(item, ctx) { return item; /* or null to drop */ } };
@@ -301,7 +319,7 @@ falls back to the gateway unchanged. The provider contract lives in `core/debrid
 | `SETTINGS_FILE` | `data/settings.json` | where the owner's settings live |
 | `KIDS_BLOCK` | `Animax,MediBizTV,…` | kid-grouped channels that are still not for kids |
 | `YT_BIN` | `yt-dlp` | yt-dlp path; `YT_JS` (its `--js-runtimes`), `YT_CLIENT` (`android`), `YT_MAX`, `YT_CHANNELS` |
-| `SEED_ADDON_URLS` | unset | comma-separated addon-protocol upstreams that replace the shipped seed list (the shipped list is built from `settings.languages` and `settings.addons.sizeFilter`, since an addon carries its configuration in its URL) |
+| `SEED_ADDON_URLS` | unset | comma-separated addon-protocol upstreams that replace the shipped **external** seed list (`addons.example.json`); the native defaults still come from that file, and an existing `data/addons.json` is not replaced |
 | `SIZE_CAP_GB` | 4 | hard per-source cap in `rules/size_cap.js` (the per-profile cap in `prefs` is what usually binds) |
 | `QUALITY_CAP`, `KIDS_QUALITY_CAP` | `1080p` / `720p` | default `qualityCap` for adult and kids profiles (`auto` disables the ceiling) |
 | `RATINGS_DAILY_CAP` | 800 | upstream certificate lookups per day, counted in `data/ratings.json`; browsing spends it, the backfill stops at it |

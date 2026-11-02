@@ -1,0 +1,73 @@
+{
+  "_readme": [
+    "Fresh-install add-on seed for Scenix. The hub reads this file only when data/addons.json",
+    "does not exist yet; it never rewrites an owner's installed list from here.",
+    "",
+    "The external entries are catalogues, subtitle search and watch-link services. The native",
+    "entries are code that already ships in providers/: Local Files reads the owner's own media",
+    "folder, Public Domain Movies is the bundled legal shelf, Live TV needs the owner's playlist,",
+    "and Kids YouTube reads its curated channel allow-list. No torrent index, paid account,",
+    "credential or personal data belongs in this list.",
+    "",
+    "This is also a valid data/addons.json if an owner deliberately wants to pin it, but the",
+    "normal path is to leave data/addons.json alone and edit this file only when changing what a",
+    "brand-new hub starts with. An existing hub keeps its own list, including any source it added.",
+    "",
+    "fields: id (stable, shown in Settings), name, url (external only), native (true for a file in",
+    "providers/), enabled, priority (external order, lower is asked first)"
+  ],
+  "addons": [
+    {
+      "id": "cinemeta",
+      "name": "Cinemeta",
+      "url": "https://v3-cinemeta.strem.io/manifest.json",
+      "enabled": true,
+      "priority": 40
+    },
+    {
+      "id": "opensubtitles",
+      "name": "OpenSubtitles v3",
+      "url": "https://opensubtitles-v3.strem.io/manifest.json",
+      "enabled": true,
+      "priority": 41
+    },
+    {
+      "id": "watchhub",
+      "name": "WatchHub",
+      "url": "https://watchhub.strem.io/manifest.json",
+      "enabled": true,
+      "priority": 42
+    },
+    {
+      "id": "scenix-games",
+      "name": "Scenix Games",
+      "url": "https://praveshkhatana.github.io/scenix-games-addon/manifest.json",
+      "enabled": true,
+      "priority": 43
+    },
+    {
+      "id": "local-files",
+      "name": "Local Files",
+      "native": true,
+      "enabled": true
+    },
+    {
+      "id": "public-domain",
+      "name": "Public Domain Movies",
+      "native": true,
+      "enabled": true
+    },
+    {
+      "id": "live-tv",
+      "name": "Live TV playlists",
+      "native": true,
+      "enabled": true
+    },
+    {
+      "id": "kids-yt",
+      "name": "Curated kids YouTube",
+      "native": true,
+      "enabled": true
+    }
+  ]
+}

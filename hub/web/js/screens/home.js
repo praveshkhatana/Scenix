@@ -222,7 +222,7 @@ export function screen(ctx) {
       el('h1', { text: 'Nothing on the shelves yet' }),
       el('p', {
         text: canFix
-          ? 'The hub is answering and your profile is set. What is missing is content: this hub has no add-ons installed, so there is nothing to put on a row.'
+          ? 'The hub is answering and your profile is set. What is missing is a source that is on: a fresh Scenix ships with a legal public-domain film shelf and Local Files, and you can install an add-on for more.'
           : 'The hub is answering and your profile is set, but it has nothing to show yet. Whoever runs this hub adds the content.',
       }),
       el('div', { class: 'fr-steps' },

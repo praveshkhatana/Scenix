@@ -879,7 +879,7 @@ export function screen(ctx) {
      want this source again". On a remote, on/off and remove are two things that could be done to the
      same row, so the row opens a choice instead of parking two buttons on it. */
   function buildAddons(parent) {
-    const g = group('Add-ons', 'Sources this hub reads. Switching one off keeps its address and settings; the hub simply stops asking it.');
+    const g = group('Add-ons', 'Sources this hub reads. A fresh Scenix includes Public Domain Movies, a built-in shelf of films in the U.S. public domain; switching a source off keeps its address and settings, and the hub simply stops asking it.');
     for (const ad of installed || []) {
       const cats = (ad.catalogs || []).length;
       const note = ad.native
