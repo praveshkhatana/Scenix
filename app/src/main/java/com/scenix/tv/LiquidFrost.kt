@@ -184,13 +184,20 @@ private class FrostDrawable(
                 lens?.setFloatUniform("size", w.toFloat(), h.toFloat())
                 n.setRenderEffect(e)
                 val rc = n.beginRecording()
+                // Record UNCLIPPED; the shape is cut at composite time. A clipPath INSIDE the node
+                // gave the blur a hard cut edge of its own, and that edge bled as a pale rectangle
+                // standing out on the wall behind the pill, profile stop and gear (owner report,
+                // 2026-11-02). The sample is continuous scene pixels — let the blur bend only the
+                // real backdrop and clip the finished frost to the surface's own rounded shape.
+                rc.drawBitmap(b, null, Rect(0, 0, w, h), paint)
+                n.endRecording()
+                canvas.save()
                 clip.reset()
                 clip.addRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()),
                     radiusPx.toFloat(), radiusPx.toFloat(), Path.Direction.CW)
-                rc.clipPath(clip)
-                rc.drawBitmap(b, null, Rect(0, 0, w, h), paint)
-                n.endRecording()
+                canvas.clipPath(clip)
                 canvas.drawRenderNode(n)
+                canvas.restore()
                 return
             } catch (ex: Exception) {
                 effect = null

@@ -2084,10 +2084,12 @@ class BrowseActivity : Activity() {
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art,
                 if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop, cardW)
-            // Title logos belong on WIDE tiles only (owner ruling): a poster is already a title
-            // lockup, and painting a second wordmark over a vertical poster competes with the art
-            // AND the caption below it. Portrait tiles keep poster + caption; backdrops carry the logo.
-            if (!item.logo.isNullOrBlank() && landscape) {
+            // Title logos belong on WIDE tiles (owner ruling): a plain poster is already a title
+            // lockup, and painting a second wordmark over it competes with the art AND the caption.
+            // The glass pack is the named exception (owner ask, 2026-11-02): its reference posters
+            // read as art + stylized lockup ("Kang Satay", "Mommy cat"), so glass portrait tiles
+            // wear the hub's logo over the lower art too — caption stays for the below-card rule.
+            if (!item.logo.isNullOrBlank() && (landscape || glass)) {
                 holder.logo.visibility = View.VISIBLE
                 BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE

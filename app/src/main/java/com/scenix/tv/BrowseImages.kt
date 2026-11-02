@@ -130,33 +130,65 @@ object BrowseImages {
         return "$url@$bucket"
     }
 
-    private fun decode(url: String, targetWidthPx: Int): Bitmap? = try {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        try {
-            conn.connectTimeout = 10000
-            conn.readTimeout = 15000
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("User-Agent", "Scenix/0.2 (Android TV)")
-            if (conn.responseCode !in 200..299) null else {
+    /**
+     * Fetch with an explicit redirect hop chain. `instanceFollowRedirects` silently refuses
+     * cross-HOST redirects, and the hub's title logos live on image CDNs that answer with exactly
+     * that — images.metahub.space 307s to live.metahub.space, so every logo came back undecoded
+     * and plates kept their fallback text (owner ask, 2026-11-02). http(s) targets only, bounded
+     * hops, relative Location headers resolved against the current URL.
+     */
+    private fun fetchBytes(url: String): ByteArray? {
+        var current = url
+        var hop = 0
+        while (hop++ < 5) {
+            val conn = try {
+                URL(current).openConnection() as HttpURLConnection
+            } catch (t: Throwable) {
+                return null
+            }
+            try {
+                conn.connectTimeout = 10000
+                conn.readTimeout = 15000
+                conn.instanceFollowRedirects = false
+                conn.setRequestProperty("User-Agent", "Scenix/0.2 (Android TV)")
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val loc = conn.headerFields["Location"]?.firstOrNull()
+                        ?: conn.getHeaderField("Location")
+                    if (loc.isNullOrBlank()) return null
+                    current = try { URL(URL(current), loc).toString() } catch (t: Throwable) { return null }
+                    if (!current.startsWith("http")) return null
+                    continue
+                }
+                if (code !in 200..299) return null
                 // One download, two decodes: bounds first, then the sampled bitmap. Opening the URL
                 // twice doubled the network cost of every card on a cold shelf.
-                val bytes = conn.inputStream.use { it.readBytes() }
-                if (bytes.size > 12 * 1024 * 1024) null else {
-                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                    var sample = 1
-                    while (opts.outWidth / (sample * 2) >= targetWidthPx) sample *= 2
-                    val decode = BitmapFactory.Options().apply {
-                        inSampleSize = sample
-                        inPreferredConfig = Bitmap.Config.RGB_565
-                    }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decode)
-                }
+                return conn.inputStream.use { it.readBytes() }
+            } catch (t: Throwable) {
+                return null
+            } finally {
+                conn.disconnect()
             }
-        } finally {
-            conn.disconnect()
         }
-    } catch (t: Throwable) {
-        null
+        return null
+    }
+
+    private fun decode(url: String, targetWidthPx: Int): Bitmap? {
+        return try {
+            val bytes = fetchBytes(url) ?: return null
+            if (bytes.size > 12 * 1024 * 1024) null else {
+                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                var sample = 1
+                while (opts.outWidth / (sample * 2) >= targetWidthPx) sample *= 2
+                val decode = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decode)
+            }
+        } catch (t: Throwable) {
+            null
+        }
     }
 }
