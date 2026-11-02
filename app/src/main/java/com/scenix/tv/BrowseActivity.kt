@@ -674,7 +674,10 @@ class BrowseActivity : Activity() {
             // edge, exactly like a stage. Other packs reserve their host bar.
             setPadding(0, if (stageMode || ownsHomeNavigation) 0 else app.theme.px(16f), 0, app.theme.px(64f))
         }
-        shelfListId = View.generateViewId()
+        // A declared id, not generateViewId(): the latter is a process-wide counter, so a recreated
+        // activity gives the shelf a different number and the old RecyclerView state lands on an
+        // unrelated view ("Wrong state class"), killing the app on a tab switch.
+        shelfListId = R.id.shelf_list
         list.id = shelfListId
         contentRoot = content
         status = Views.text(app, "sub", 24f, app.theme.ink2, "", gravity = Gravity.CENTER)
