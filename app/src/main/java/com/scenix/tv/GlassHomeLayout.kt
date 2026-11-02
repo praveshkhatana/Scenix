@@ -74,6 +74,11 @@ internal class GlassHomeLayout(
 
     init {
         // Transparent: the host paints the wash across the whole screen behind this composition.
+        // Never clip our own children: the hero plates cast their elevation shadow into the
+        // gutter margins, and a clipped-to-bounds root cuts that shadow in a hard vertical line
+        // beside the card's bottom corner (owner report, 2026-11-02).
+        clipChildren = false
+        clipToPadding = false
 
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -161,8 +166,16 @@ internal class GlassHomeLayout(
             clipToPadding = false
         }
         val heroR = theme.radius("hero", 26f)
-        cardA = makePlate(deep = true, radius = heroR)
-        cardB = makePlate(deep = false, radius = heroR)
+        // The halo needs a canvas grown by glowInset on every side — the padded glow-canvas
+        // pattern every other screen uses (see BrowseActivity's rail holder). Attaching the halo
+        // to the plate itself drew the keyline as a pale hairline INSIDE the art with a wrong
+        // corner radius, and the plate clips to its rounded outline, so no part of the glow could
+        // spill outside the banner (owner report, 2026-11-02).
+        val glowPad = theme.focusGlowInset
+        val (wrapA, ringA) = heroWrap(makePlate(deep = true, radius = heroR), glowPad)
+        val (wrapB, ringB) = heroWrap(makePlate(deep = false, radius = heroR), glowPad)
+        cardA = wrapA
+        cardB = wrapB
         artA = cardA.findViewWithTag("art")
         artB = cardB.findViewWithTag("art")
         titleA = cardA.findViewWithTag("title")
@@ -175,10 +188,10 @@ internal class GlassHomeLayout(
             ViewGroup.LayoutParams.MATCH_PARENT, heroH,
         ).apply { topMargin = theme.px(44f) })
         // Liquid glass speaks focus as a pale halo plus lift — never a hard keyline.
-        Focus.attach(cardA, cardA, app, heroR, scale = true, elevate = true,
-            glowInset = theme.focusGlowInset, onClick = { itemA?.let(callbacks.onOpen) })
-        Focus.attach(cardB, cardB, app, heroR, scale = true, elevate = true,
-            glowInset = theme.focusGlowInset, onClick = { itemB?.let(callbacks.onOpen) })
+        Focus.attach(cardA, ringA, app, heroR, scale = true, elevate = true,
+            glowInset = glowPad, onClick = { itemA?.let(callbacks.onOpen) })
+        Focus.attach(cardB, ringB, app, heroR, scale = true, elevate = true,
+            glowInset = glowPad, onClick = { itemB?.let(callbacks.onOpen) })
 
         // --- frost chip row: the household's real shelves ---------------------------------------
         chipRow = LinearLayout(context).apply {
@@ -253,6 +266,26 @@ internal class GlassHomeLayout(
         card.addView(textCol, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         return card
+    }
+
+    /**
+     * A hero plate inside its focus canvas: a transparent focusable frame holding the glow
+     * canvas (the plate's bounds grown by glowPad on every side, as a plain first child with
+     * negative margins) UNDER the plate itself. Nothing here clips, so the cast shadow and halo
+     * reach into the gutter around the banner.
+     */
+    private fun heroWrap(plate: View, glowPad: Int): Pair<FrameLayout, View> {
+        val wrap = FrameLayout(context).apply {
+            clipChildren = false
+            clipToPadding = false
+        }
+        val ringOn = View(context)
+        wrap.addView(ringOn, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        ).apply { setMargins(-glowPad, -glowPad, -glowPad, -glowPad) })
+        wrap.addView(plate, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return wrap to ringOn
     }
 
     /** The shelf titles the host actually rendered below; each chip jumps to its shelf. */

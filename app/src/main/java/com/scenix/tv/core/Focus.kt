@@ -70,6 +70,12 @@ object Focus {
                 val near = (glowInset * 0.30f).toInt().coerceAtLeast(theme.px(4f))
                 val keyOutset = theme.px(3f).coerceAtMost(glowInset)
                 fun inset(outset: Int) = (glowInset - outset).coerceAtLeast(0)
+                // IMPORTANT for callers: this math assumes ringOn's bounds are the artwork grown
+                // by glowInset on every side (the padded glow-canvas pattern every screen uses —
+                // see BrowseActivity's rail holder). Passing the artwork view itself as ringOn
+                // instead puts every plate INSIDE the art: the keyline paints as a pale hairline
+                // deep in the plate with a mismatched corner radius (the hero's odd bottom-left
+                // edge, owner report 2026-11-02).
                 val halo = LayerDrawable(arrayOf(
                     Views.rounded(Color.argb(8, r, g, b), ringRadiusPx + outer),
                     Views.rounded(Color.argb(12, r, g, b), ringRadiusPx + middle),

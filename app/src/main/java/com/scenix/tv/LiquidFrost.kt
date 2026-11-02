@@ -117,37 +117,28 @@ private class FrostDrawable(
         // The GPU paths read near 1:1 detail; the pre-31 fallback blurs by downsampling hard.
         val scale = if (Build.VERSION.SDK_INT >= 31) 3 else 7
         val dst = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        // Sample what stands BEHIND the surface, not the surface itself: PixelCopy reads the window
-        // region, which would include this view's own background — the blur then re-bends the
-        // surface's own edge and paints a doubled rim with hard steps at the rounded caps. Hide
-        // only the background (text stays put; whatever ghost it leaves is smeared by the blur),
-        // for exactly the frames the copy needs, restored in the callback.
-        val wasBg = host.background
-        host.background = null
-        host.postOnAnimation {
-            host.post {
-                try {
-                    PixelCopy.request(window,
-                        Rect(loc[0], loc[1], loc[0] + w, loc[1] + h), dst, { result ->
-                            pending = false
-                            host.background = wasBg
-                            if (result == PixelCopy.SUCCESS) {
-                                val small = if (scale > 1) Bitmap.createScaledBitmap(dst,
-                                    maxOf(1, w / scale), maxOf(1, h / scale), true) else dst
-                                if (small !== dst) dst.recycle()
-                                bmp = small
-                                prepareEffect()
-                                invalidateSelf()
-                            } else {
-                                dst.recycle()
-                            }
-                        }, host.handler)
-                } catch (e: Exception) {
+        // No background-hiding here: the hide/restore window around the async copy made the whole
+        // top bar blink on every scene change (owner report, 2026-11-02). The doubled-rim artifact
+        // that tempting fix chased is instead neutralized by the layer order in install(): the
+        // sample wears the pack's wash ON TOP, so a blurred self-edge stays under an 86% veil.
+        try {
+            PixelCopy.request(window,
+                Rect(loc[0], loc[1], loc[0] + w, loc[1] + h), dst, { result ->
                     pending = false
-                    host.background = wasBg
-                    dst.recycle()
-                }
-            }
+                    if (result == PixelCopy.SUCCESS) {
+                        val small = if (scale > 1) Bitmap.createScaledBitmap(dst,
+                            maxOf(1, w / scale), maxOf(1, h / scale), true) else dst
+                        if (small !== dst) dst.recycle()
+                        bmp = small
+                        prepareEffect()
+                        invalidateSelf()
+                    } else {
+                        dst.recycle()
+                    }
+                }, host.handler)
+        } catch (e: Exception) {
+            pending = false
+            dst.recycle()
         }
     }
 
