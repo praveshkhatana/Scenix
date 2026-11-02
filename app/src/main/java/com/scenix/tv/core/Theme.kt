@@ -42,6 +42,9 @@ class Theme private constructor(
     private val player: JSONObject,
     private val pack: JSONObject,
 ) {
+    /** The single letter a pack prints on its brand disc ("S" unless the pack names another). */
+    val brandMark: String get() = root.optString("brandMark", "S").ifBlank { "S" }
+
     // ---- colours ---------------------------------------------------------------------------
     fun color(name: String, fallback: String = "#FFFFFF"): Int = parseColor(colors.optString(name, fallback))
 
@@ -74,6 +77,12 @@ class Theme private constructor(
     val focusRingPx get() = px(focus.optDouble("ringWidth", 4.0).toFloat())
     val focusRingColor get() = color("focusRing", "#FFFFFF")
     val focusScale get() = focus.optDouble("scale", 1.05).toFloat()
+    /**
+     * The zoom a full-width list row takes when focused. Packs that never asked for it keep 1.0 —
+     * rows stay static; the Kids stage raises it (owner, round 5: "focus show increase list-item
+     * and a zoom-in") so a focused setting reads as a lifted tile, not just a ring.
+     */
+    val focusRowScale get() = focus.optDouble("rowScale", 1.0).toFloat()
     val focusDurationMs get() = focus.optInt("durationMs", 200)
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
 
@@ -83,6 +92,38 @@ class Theme private constructor(
      */
     val focusGlowInset get() = px(focus.optDouble("glowInset", 24.0).toFloat())
     val focusGlowInsetSm get() = px(focus.optDouble("glowInsetSm", 16.0).toFloat())
+
+    /**
+     * The three halo bands' intensities, outer to inner. The dark packs get away with a barely-
+     * there wash (8/12/18); a light pack sits on cream that swallows those alphas, so it raises
+     * them until the glow actually reads as a state change — measured from the reference, where
+     * the focused tile wears an opaque warm band around it.
+     */
+    val focusGlowAlphas: IntArray get() {
+        val a = focus.optJSONArray("glowAlphas")
+        return if (a == null || a.length() < 3) intArrayOf(8, 12, 18)
+        else intArrayOf(a.optInt(0, 8), a.optInt(1, 12), a.optInt(2, 18))
+    }
+
+    /**
+     * The thin ring that closes the halo just outside the art. A glow colour alone vanishes on a
+     * light sheet, so the reference closes its halo with a warm dark keyline — liquid-glass edge,
+     * never black ink. Packs that omit it keep the glow-coloured keyline.
+     */
+    val focusKeylineColor get(): Int =
+        if (focus.has("keylineColor")) parseColor(focus.optString("keylineColor")) else focusGlowColor
+    val focusKeylineExplicit get() = focus.has("keylineColor")
+
+    /** The keyline's weight. Packs that measured a heavier reference edge raise it; the rest keep 2. */
+    val focusKeylinePx get() = px(focus.optDouble("keylineWidth", 2.0).toFloat())
+
+    /** The shelf tile spec from `cards.poster` (width, height in device px); aspect is height/width. */
+    fun posterTilePx(): Pair<Int, Int> {
+        val c = root.optJSONObject("cards")?.optJSONObject("poster")
+        val w = (c?.optDouble("width", 280.0) ?: 280.0).toFloat()
+        val asp = (c?.optDouble("aspect", 1.5) ?: 1.5).toFloat()
+        return px(w) to px(w * asp)
+    }
 
     /**
      * Android TV exposes "remove animations" through the system animator scale.  A focus change

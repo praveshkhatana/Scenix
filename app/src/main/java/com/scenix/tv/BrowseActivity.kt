@@ -138,6 +138,14 @@ class BrowseActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // A section tab re-launches BrowseActivity with CLEAR_TOP, so Home is not underneath in
+        // the task stack and a bare BACK would leave the app. From a section, BACK walks to the
+        // unfiltered Home first; the next BACK from Home exits, as expected (owner, round 6).
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+            event.action == android.view.KeyEvent.ACTION_UP && section.isNotEmpty()) {
+            goTab("")
+            return true
+        }
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             lastKeyAt = android.os.SystemClock.elapsedRealtime()
             if (railOpen) {
@@ -303,7 +311,7 @@ class BrowseActivity : Activity() {
      */
     private fun heroSlotHeight(wantedPx: Int): Int {
         val theme = app.theme
-        val room = resources.displayMetrics.heightPixels - theme.px(200f)
+        val room = resources.displayMetrics.heightPixels - theme.space("heroReserve", 200f)
         return wantedPx.coerceAtMost(maxOf(room, theme.px(420f)))
     }
 
@@ -1543,8 +1551,25 @@ class BrowseActivity : Activity() {
                     }
                     return@row
                 }
-                loaded = true
-                present(deriveShelves(section, items))
+                // A hub need not carry generic movie/series rows for every profile — a kid
+                // profile answers "row not for this profile" and keeps only kids shelves.
+                // Fall back to the profile's own shelves filtered to this section, instead of
+                // printing the hub's raw error sentence on the page.
+                api.load(profileId) { rows, _ ->
+                    if (isFinishing || isDestroyed) return@load
+                    val pool = rows.orEmpty()
+                        .filter { it.id != "hero" && it.card != "channel" }
+                        .flatMap { it.items }
+                        .filter { it.type == if (section == "series") "series" else "movie" }
+                    if (pool.isEmpty()) {
+                        showSkeleton(false)
+                        status.visibility = View.VISIBLE
+                        status.text = error ?: "Nothing in this section yet"
+                        return@load
+                    }
+                    loaded = true
+                    present(deriveShelves(section, pool))
+                }
             }
             return
         }
@@ -1675,6 +1700,12 @@ class BrowseActivity : Activity() {
         for (lang in listOf("Hindi", "Telugu", "Tamil", "Malayalam", "Kannada", "Bengali", "Marathi")) {
             val pool = items.filter { it.languages.any { l -> l.contains(lang, ignoreCase = true) } }
             if (pool.size >= 8) add("lang:$lang", "Top $lang $label", pool.sortedByDescending { it.rating * 10 + it.match / 10 })
+        }
+        // A kid section holds a handful of titles, and every gate above reads a rail of four as too
+        // thin to print — the tab then showed a hero over an empty page. When nothing else passes,
+        // the section prints itself whole rather than showing a blank below the hero (owner round 7).
+        if (out.isEmpty() && items.isNotEmpty()) {
+            out.add(BrowseRow("all", "All $label", "poster", items.take(18), items.size))
         }
         return out
     }
@@ -2050,7 +2081,8 @@ class BrowseActivity : Activity() {
                                     Intent(this@BrowseActivity, GamesActivity::class.java)
                                         .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
                                 )
-                            } else goTab(target)
+                            } else if (target == "home") goTab("")
+                            else goTab(target)
                         },
                         onProfile = {
                             startActivity(
@@ -2077,6 +2109,7 @@ class BrowseActivity : Activity() {
                                 list.smoothScrollToPosition(index + (if (hero != null) 1 else 0))
                             }
                         },
+                        section = this@BrowseActivity.section,
                     ),
                 )
                 surface.root.layoutParams = RecyclerView.LayoutParams(
@@ -2182,12 +2215,16 @@ class BrowseActivity : Activity() {
         }
         // A pack may resize the poster lockup from its spacing tokens (Glass replicates the
         // reference's 264×373 tiles at 27px gaps); packs that omit the keys keep the classic
-        // geometry byte for byte.
-        private val cardW = if (poster) theme.space("posterWidth", if (landscape) 480f else 280f)
-                            else theme.px(320f)
-        private val cardH = if (poster) theme.space("posterHeight", if (landscape) 270f else 420f)
-                            else theme.px(180f)
-        private val radius = theme.radius("card", 6f)
+        // geometry byte for byte. The Kids contract squares its tiles from `cards.poster` instead.
+        private val tileSquare = theme.packInt("tileSquare", 0) == 1
+        private val cardW = if (poster && tileSquare) theme.posterTilePx().first
+            else if (poster) theme.space("posterWidth", if (landscape) 480f else 280f)
+            else theme.px(320f)
+        private val cardH = if (poster && tileSquare) theme.posterTilePx().second
+            else if (poster) theme.space("posterHeight", if (landscape) 270f else 420f)
+            else theme.px(180f)
+        private val radius = if (poster && tileSquare) theme.radius("tile", 24f)
+            else theme.radius("card", 6f)
         // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
         private val seeAll = !featured && row.total > row.items.size
         // Continue is the one shelf a viewer can clean up in place: long-press removes the tile and
@@ -2201,8 +2238,10 @@ class BrowseActivity : Activity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             val card = FrameLayout(this@BrowseActivity)
             card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH).apply {
-                // Apple's shelves breathe; tiles never touch each other.
-                marginEnd = theme.space("posterGap", 26f)
+                // Apple's shelves breathe; tiles never touch each other. Glass measures a
+                // poster gap, the Kids contract a wider plate gap; both win over the classic 26.
+                marginEnd = if (theme.token("spacing", "posterGap", 0.0) > 0.0)
+                    theme.space("posterGap", 26f) else theme.space("cardGap", 26f)
             }
             card.isFocusable = true
             card.isFocusableInTouchMode = true
@@ -2223,10 +2262,11 @@ class BrowseActivity : Activity() {
             // its own yellow) gets chunky framed tiles: the photo sits INSIDE a rounded plate with
             // a soft glow, as in the reference, never pasted bare onto the sheet.
             val tilePlate = if (below) theme.colorOr("cardTint", 0) else 0
-            val tileInset = if (tilePlate != 0) theme.px(12f) else 0
+            val tileInset = if (tilePlate != 0) theme.space("kidsTileInset", 12f) else 0
             if (tilePlate != 0) {
                 card.addView(View(this@BrowseActivity).apply {
-                    background = Views.rounded(tilePlate, radius + theme.px(10f))
+                    background = Views.rounded(tilePlate,
+                        if (poster && tileSquare) radius else radius + theme.px(10f))
                     elevation = theme.px(10f).toFloat()
                 }, FrameLayout.LayoutParams(cardW, cardH).apply { gravity = Gravity.TOP })
             }
@@ -2296,12 +2336,18 @@ class BrowseActivity : Activity() {
             val name = Views.text(app, "caption", if (below) 18f else 19f,
                 theme.colorOr("captionInk", theme.ink), "", bold = true,
                 maxLines = if (below) 1 else 2)
+            if (poster && tileSquare) {
+                // The Kids contract prints captions as letter-spaced capitals.
+                name.isAllCaps = true
+                name.letterSpacing = 0.12f
+            }
             name.setPadding(theme.px(if (below) 4f else 12f), 0,
                 theme.px(if (below) 4f else 12f), theme.px(if (below) 0f else 10f))
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
                 bottomMargin = when {
-                    below -> theme.space("captionNameBottom", 26f)
+                    below -> if (poster && tileSquare) theme.space("kidsCaptionGap", 16f)
+                        else theme.space("captionNameBottom", 26f)
                     frame -> theme.px(8f)
                     else -> 0
                 }
@@ -2451,6 +2497,14 @@ class BrowseActivity : Activity() {
                 }
                 card.addView(slideState, markerLayout)
             }
+            if (tilePlate != 0) {
+                // On a framed tile the photo itself rides above the opaque plate; every overlay —
+                // badge, rating corner, rank numeral, genre label, logo, playhead — must ride above
+                // the photo or Android's z-order buries it under the plate (owner round 5: category
+                // tiles rendered blank, shelf badges never showed).
+                for (v in listOf(badge, corner, num, chevron, logo, progress))
+                    v.elevation = theme.px(14f).toFloat()
+            }
             val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideState, imdb, cert, corner, chevron)
             if (glass) {
                 // Parents paint by Z: the glass art rides posterElevation for its cast shadow, so
@@ -2525,10 +2579,14 @@ class BrowseActivity : Activity() {
             }
             holder.chevron.visibility = View.GONE
             if (featured) holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID
+            // A square framed tile (the Kids stage) wears its facts ON the art like every other
+            // card pack — a NEW pill and the rating corner — while its name stays printed below
+            // (owner round 5). Scene packs still keep the meta line under the artwork instead.
+            val onTileFacts = below && poster && tileSquare
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
-            holder.sub.visibility = if (below) View.VISIBLE else View.GONE
-            if (below) {
+            holder.sub.visibility = if (below && !onTileFacts) View.VISIBLE else View.GONE
+            if (below && !onTileFacts) {
                 if (theme.packString("captionMeta", "") == "dot") {
                     // The glass reference prints "● 7.8 · 2023": an accent dot welded to the
                     // rating, the year quieter behind it. One shared format for the whole pack.
@@ -2562,7 +2620,7 @@ class BrowseActivity : Activity() {
             // top-right and a NEW/HOT chip top-left, deep-glass capsules over the poster — the
             // reference's own tiles carry no text at all, so on-art chips beat a caption line the
             // eye never reaches while scanning. Scene lockups still keep metadata under the image.
-            val onArt = !below || glass
+            val onArt = !below || glass || onTileFacts
             if (onArt) {
                 holder.imdb.text = imdbR
                 holder.imdb.visibility = if (imdbR.isNotEmpty()) View.VISIBLE else View.GONE
@@ -2576,7 +2634,7 @@ class BrowseActivity : Activity() {
                 holder.corner.visibility = View.GONE
             }
             val facts = ArrayList<String>()
-            if (!below) {
+            if (!below || onTileFacts) {
                 if (item.isNew) facts.add("NEW")
                 if (item.match > 0) facts.add("${item.match}% match")
             } else if (glass) {
@@ -2595,7 +2653,11 @@ class BrowseActivity : Activity() {
             // exception for portrait posters is retired (2026-11-03) — the hub's poster art already
             // composes its own lockup, so the overlay double-painted it.
             BrowseImages.load(holder.art, artUrl, cardW) {
-                if (logoUrl.isNullOrBlank() || !landscape) return@load
+                // A wide tile carries the title logo; a poster already has its own lockup. The one
+                // portrait exception is a tile with no artwork at all — a logo there names a plate
+                // that would otherwise be empty.
+                if (logoUrl.isNullOrBlank()) return@load
+                if (!landscape && !artUrl.isNullOrBlank()) return@load
                 holder.logo.visibility = View.VISIBLE
                 BrowseImages.load(holder.logo, logoUrl, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE

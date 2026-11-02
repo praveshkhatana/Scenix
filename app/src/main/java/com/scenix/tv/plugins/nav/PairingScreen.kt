@@ -208,7 +208,12 @@ object PairingScreen {
 
         row.setOnClickListener { chooseHub(host, hub.url, hub.name) }
         row.setOnFocusChangeListener { v, has ->
-            v.setBackgroundColor(if (has) theme.color("surfHover", "#2F2F2F") else theme.surface)
+            // The focused plate deepens the row's own fill (never a dark slab under dark ink —
+            // owner round 8: content vanished on the black plate), and the ring stays rounded.
+            v.background = if (has) {
+                Views.rounded(theme.colorOr("listFillFocused", theme.color("surfHover", "#2F2F2F")),
+                    theme.radius("listItem", 6f))
+            } else Views.rounded(theme.surface, theme.radius("listItem", 6f))
             v.foreground = if (has) {
                 Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
             } else null
@@ -363,7 +368,12 @@ object PairingScreen {
 
         row.setOnClickListener { onClick() }
         row.setOnFocusChangeListener { v, has ->
-            v.setBackgroundColor(if (has) theme.color("surfHover", "#2F2F2F") else theme.surface)
+            // The focused plate deepens the row's own fill (never a dark slab under dark ink —
+            // owner round 8: content vanished on the black plate), and the ring stays rounded.
+            v.background = if (has) {
+                Views.rounded(theme.colorOr("listFillFocused", theme.color("surfHover", "#2F2F2F")),
+                    theme.radius("listItem", 6f))
+            } else Views.rounded(theme.surface, theme.radius("listItem", 6f))
             v.foreground = if (has) {
                 Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
             } else null

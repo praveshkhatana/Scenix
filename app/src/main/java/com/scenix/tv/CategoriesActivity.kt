@@ -49,7 +49,8 @@ class CategoriesActivity : Activity() {
     private var genre = ""
 
     private var picker: View? = null
-    /** The row that had the remote before a picker opened; focus returns there on close. */
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
     private var pickerReturn: View? = null
     private var saving = false
     private var focusTag: String? = null
@@ -521,8 +522,9 @@ class CategoriesActivity : Activity() {
     ) {
         if (picker == null) pickerReturn = currentFocus
         closePicker()
+        pickerReturn = currentFocus ?: pickerReturn
         val layer = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(190, 0, 0, 0))
+            setBackgroundColor(Screens.dimColor(app))
             isClickable = true
         }
         val panel = LinearLayout(this).apply {

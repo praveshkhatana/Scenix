@@ -58,6 +58,9 @@ internal data class HomeSurfaceCallbacks(
     val onSettings: () -> Unit,
     /** Jump the outer list to the shelf a chip names; surfaces that own their rails ignore it. */
     val onShelf: (String) -> Unit = {},
+    /** The active section ("" = Home). Section pills paint ONLY the matching segment active, so
+     *  Home shows no selection at all (owner, round 7: "when on home screen why is Movies selected?"). */
+    val section: String = "",
 )
 
 /**
@@ -147,6 +150,7 @@ internal object HomeSurfaceFactory {
                         onSearch = callbacks.onSearch,
                         onSettings = callbacks.onSettings,
                         onShelf = callbacks.onShelf,
+                        section = callbacks.section,
                     ),
                 ),
             )

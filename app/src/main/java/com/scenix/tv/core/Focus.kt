@@ -29,6 +29,8 @@ object Focus {
         animateScale: Boolean = true,
         elevate: Boolean = true,
         glowInset: Int = 0,
+        control: Boolean = false,
+        scaleTo: Float = 0f,
         onClick: (() -> Unit)? = null,
         onFocus: ((Boolean) -> Unit)? = null,
         arrow: ((Int) -> Boolean)? = null,
@@ -48,11 +50,36 @@ object Focus {
         val ring: android.graphics.drawable.Drawable = when {
             style == "lift" && !liftControl -> Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
             liftControl -> Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(1, theme.focusRingPx))
-            style == "glow" && !scale -> {
-                // A halo is legible around artwork, but around a compact text button it spreads
-                // into neighbouring chrome. Controls get one crisp keyline instead, including
-                // white primary buttons whose focus must not disappear into their fill.
-                Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(2, theme.focusRingPx))
+            style == "glow" && glowInset > 0 && control -> {
+                // A compact control — a chip, a pill, a settings row — carries its own fill and label,
+                // so the filled plates would paint straight over its text (owner, round 5: "content
+                // not visible/readable on focus"). The control takes only the halo's edges: a soft
+                // glow ring and the warm keyline hugging its border, leaving the contents fully
+                // readable in every state. When the ring rides an oversized canvas behind the
+                // control (a haloRow) the rings are inset INTO the canvas to land at the control's
+                // edge; when it rides the control itself (a chip) they hang just outside it.
+                val c = theme.focusGlowColor
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
+                val wg = maxOf(theme.px(10f), theme.focusRingPx)
+                val wk = theme.focusKeylinePx
+                val halo = LayerDrawable(arrayOf(
+                    Views.ring(Color.argb(theme.focusGlowAlphas[2],
+                        Color.red(c), Color.green(c), Color.blue(c)),
+                        ringRadiusPx + theme.px(12f), wg),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + theme.px(7f), wk),
+                ))
+                if (ringOn === focusable) {
+                    halo.setLayerInset(0, -theme.px(2f), -theme.px(2f), -theme.px(2f), -theme.px(2f))
+                    halo.setLayerInset(1, -theme.px(3f), -theme.px(3f), -theme.px(3f), -theme.px(3f))
+                } else {
+                    val i0 = (glowInset - theme.px(12f)).coerceAtLeast(0)
+                    val i1 = (glowInset - theme.px(7f)).coerceAtLeast(0)
+                    halo.setLayerInset(0, i0, i0, i0, i0)
+                    halo.setLayerInset(1, i1, i1, i1, i1)
+                }
+                halo
             }
             style == "glow" && glowInset > 0 -> {
                 // The glow target is deliberately larger than the artwork and is inserted *behind*
@@ -70,23 +97,15 @@ object Focus {
                 val near = (glowInset * 0.30f).toInt().coerceAtLeast(theme.px(4f))
                 val keyOutset = theme.px(3f).coerceAtMost(glowInset)
                 fun inset(outset: Int) = (glowInset - outset).coerceAtLeast(0)
-                // IMPORTANT for callers: this math assumes ringOn's bounds are the artwork grown
-                // by glowInset on every side (the padded glow-canvas pattern every screen uses —
-                // see BrowseActivity's rail holder). Passing the artwork view itself as ringOn
-                // instead puts every plate INSIDE the art: the keyline paints as a pale hairline
-                // deep in the plate with a mismatched corner radius (the hero's odd bottom-left
-                // edge, owner report 2026-11-02).
-                // The band alphas are a pack dial: on a LIGHT wall (glass measures ~(157,172,179))
-                // the bare 8/12/18 blend is a 3–7% shift — the halo never read (owner note,
-                // 2026-11-02). glowAlpha scales the soft falloff; dark packs leave it at 1.
-                val ga = theme.token("focus", "glowAlpha", 1.0).toFloat()
-                fun a(base: Int) = (base * ga).toInt().coerceIn(1, 255)
+                val alphas = theme.focusGlowAlphas
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
                 val halo = LayerDrawable(arrayOf(
-                    Views.rounded(Color.argb(a(8), r, g, b), ringRadiusPx + outer),
-                    Views.rounded(Color.argb(a(12), r, g, b), ringRadiusPx + middle),
-                    Views.rounded(Color.argb(a(18), r, g, b), ringRadiusPx + near),
-                    Views.ring(Color.argb(224, r, g, b), ringRadiusPx + keyOutset,
-                        maxOf(1, theme.px(2f))),
+                    Views.rounded(Color.argb(alphas[0], r, g, b), ringRadiusPx + outer),
+                    Views.rounded(Color.argb(alphas[1], r, g, b), ringRadiusPx + middle),
+                    Views.rounded(Color.argb(alphas[2], r, g, b), ringRadiusPx + near),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + keyOutset, theme.focusKeylinePx),
                 ))
                 halo.setLayerInset(0, inset(outer), inset(outer), inset(outer), inset(outer))
                 halo.setLayerInset(1, inset(middle), inset(middle), inset(middle), inset(middle))
@@ -94,7 +113,20 @@ object Focus {
                 halo.setLayerInset(3, inset(keyOutset), inset(keyOutset), inset(keyOutset), inset(keyOutset))
                 halo
             }
-            style == "glow" -> Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(2, theme.focusRingPx))
+            // A compact control in a glow pack takes one crisp keyline in the glow colour — the same
+            // liquid rim as the artwork's halo, just without the halo, which would smear a text
+            // button into its neighbours. A thin warm-dark keyline rides just outside it so the
+            // state still reads on a light pack, where the glow colour is a hair off the page.
+            style == "glow" -> {
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
+                val outset = theme.px(5f)
+                LayerDrawable(arrayOf(
+                    Views.ring(theme.focusGlowColor, ringRadiusPx, maxOf(2, theme.focusRingPx)),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + outset, maxOf(1, theme.focusKeylinePx)),
+                )).apply { setLayerInset(1, -outset, -outset, -outset, -outset) }
+            }
             else -> Views.ring(ringColor, ringRadiusPx, ringWidth)
         }
         val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
@@ -167,7 +199,8 @@ object Focus {
             paintRing(has)
             onFocus?.invoke(has)
             val target = if (has) {
-                if (style == "lift") Math.max(theme.focusScale, 1.045f) else theme.focusScale
+                val cap = if (scaleTo > 1f) scaleTo else theme.focusScale
+                if (style == "lift") Math.max(cap, 1.045f) else cap
             } else 1f
             val elev = if (has) theme.focusElevationPx.toFloat() else 0f
             // Artwork uses the Apple-style lift.  Compact or full-width controls use the keyline

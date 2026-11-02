@@ -28,7 +28,8 @@ class AddonsActivity : Activity() {
     private lateinit var status: TextView
     private var installed: JSONArray? = null
     private var picker: View? = null
-    /** The row that had the remote before a picker opened; focus returns there on close. */
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
     private var pickerReturn: View? = null
     private var renameAddon: String? = null
     private var renameCatalog: String? = null
@@ -184,7 +185,8 @@ class AddonsActivity : Activity() {
     private fun showPicker(title: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
         if (picker == null) pickerReturn = currentFocus
         closePicker()
-        val layer = FrameLayout(this).apply { setBackgroundColor(Color.argb(190, 0, 0, 0)) }
+        pickerReturn = currentFocus ?: pickerReturn
+        val layer = FrameLayout(this).apply { setBackgroundColor(Screens.dimColor(app)) }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(26f), app.theme.px(20f), app.theme.px(26f), app.theme.px(20f))

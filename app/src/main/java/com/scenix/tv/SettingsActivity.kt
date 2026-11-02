@@ -44,7 +44,8 @@ class SettingsActivity : Activity() {
     private var globalRows: JSONObject? = null
     private var rowsCfg: JSONObject? = null
     private var picker: View? = null
-    /** The row that had the remote before a picker opened; focus returns there on close. */
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
     private var pickerReturn: View? = null
     // The D-pad is trapped inside a picker: Android's default search treats the overlay as a plain
     // rectangle and can hand focus to a row behind it, which turned "pick a theme" into "open Live TV".
@@ -645,8 +646,9 @@ class SettingsActivity : Activity() {
     private fun showPicker(title: String, options: List<Pair<String, String>>, current: String, onPick: (String) -> Unit) {
         if (picker == null) pickerReturn = currentFocus
         closePicker()
+        pickerReturn = currentFocus ?: pickerReturn
         val layer = FrameLayout(this).apply {
-            setBackgroundColor(Color.argb(190, 0, 0, 0))
+            setBackgroundColor(Screens.dimColor(app))
             isClickable = true
         }
         val panel = LinearLayout(this).apply {
@@ -1012,7 +1014,8 @@ class SettingsActivity : Activity() {
         for (row in rows) {
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (label in row) {
-                val b = Views.text(app, "li", 24f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
+                val b = Views.text(app, "li", 24f,
+                    app.theme.colorOr("keyInk", app.theme.ink), label, bold = true, gravity = Gravity.CENTER)
                 b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
                     app.theme.px(if (label.length > 1) 17f else 26f).toFloat())
                 val keyRadius = app.theme.radius("key", 12f)
@@ -1030,7 +1033,8 @@ class SettingsActivity : Activity() {
                         else -> addPinDigit(label.toInt())
                     }
                 }
-                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false)
+                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false,
+                    glowInset = app.theme.focusGlowInsetSm, control = true)
                 line.addView(b, LinearLayout.LayoutParams(app.theme.px(120f), app.theme.px(64f)).apply {
                     marginStart = app.theme.px(6f)
                     marginEnd = app.theme.px(6f)

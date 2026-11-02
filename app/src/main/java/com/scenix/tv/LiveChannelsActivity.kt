@@ -43,7 +43,8 @@ class LiveChannelsActivity : Activity() {
     private var only: MutableList<String> = ArrayList()
     private var order: MutableList<String> = ArrayList()
     private var picker: View? = null
-    /** The row that had the remote before a picker opened; focus returns there on close. */
+    // The row that opened the last picker; it takes focus back when the picker
+    // closes, so the remote never lands on the page's back control by accident.
     private var pickerReturn: View? = null
     private var filter = ""
     private var rootView: FrameLayout? = null
@@ -416,7 +417,8 @@ class LiveChannelsActivity : Activity() {
         if (picker == null) pickerReturn = currentFocus
         closePicker()
         val theme = app.theme
-        val layer = FrameLayout(this).apply { setBackgroundColor(Color.argb(190, 0, 0, 0)) }
+        pickerReturn = currentFocus ?: pickerReturn
+        val layer = FrameLayout(this).apply { setBackgroundColor(Screens.dimColor(app)) }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(theme.px(26f), theme.px(20f), theme.px(26f), theme.px(20f))
