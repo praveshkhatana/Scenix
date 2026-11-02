@@ -46,6 +46,39 @@ class BrowseActivity : Activity() {
     private lateinit var status: TextView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var loaded = false
+    /**
+     * The pack's answer to an empty or failed shelf (owner ruling: a bare line of text on the
+     * wall reads as a bug, not a state). A frost plate stands in the middle of the page — glyph,
+     * what happened, and a focusable Try again that re-runs the load. Non-glass packs keep the
+     * plain status line, which is their language.
+     */
+    private var emptyOverlay: View? = null
+
+    private fun isGlassPack(): Boolean =
+        app.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS
+
+    private fun showEmpty(title: String, sub: String) {
+        hideEmpty()
+        val host = window.decorView.findViewById<ViewGroup>(android.R.id.content)
+        val wrap = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        val card = GlassKit.emptyState(this, app, title, sub, true) { load() }
+        wrap.addView(card, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        host.addView(wrap, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        emptyOverlay = wrap
+        if (app.theme.motionEnabled) Motion.sheetIn(card, app.theme)
+        card.post { card.findViewWithTag<View>("retry")?.requestFocus() }
+    }
+
+    private fun hideEmpty() {
+        (emptyOverlay as? ViewGroup)?.let { host ->
+            window.decorView.findViewById<ViewGroup>(android.R.id.content).removeView(host)
+        }
+        emptyOverlay = null
+    }
     private var stage: Stage? = null
     /** Last shelf card which changed the room. Avoids repeating backdrop work on the same card. */
     private var roamingCard: View? = null
@@ -1185,8 +1218,14 @@ class BrowseActivity : Activity() {
                 if (isFinishing || isDestroyed) return@row
                 if (items.isNullOrEmpty()) {
                     showSkeleton(false)
-                    status.visibility = View.VISIBLE
-                    status.text = error ?: "Nothing in this section yet"
+                    if (isGlassPack()) {
+                        status.visibility = View.GONE
+                        showEmpty("Nothing in this section yet",
+                            error ?: "The hub may still be warming its shelves. Try again in a moment.")
+                    } else {
+                        status.visibility = View.VISIBLE
+                        status.text = error ?: "Nothing in this section yet"
+                    }
                     return@row
                 }
                 loaded = true
@@ -1199,8 +1238,14 @@ class BrowseActivity : Activity() {
             if (rows == null) {
                 loaded = false
                 showSkeleton(false)
-                status.visibility = View.VISIBLE
-                status.text = error ?: "The hub is not answering"
+                if (isGlassPack()) {
+                    status.visibility = View.GONE
+                    showEmpty("The hub is not answering",
+                        error ?: "Check that the hub is awake, then try again.")
+                } else {
+                    status.visibility = View.VISIBLE
+                    status.text = error ?: "The hub is not answering"
+                }
                 return@load
             }
             loaded = true
@@ -1323,6 +1368,7 @@ class BrowseActivity : Activity() {
     private fun present(shelves: List<BrowseRow>) {
         showSkeleton(false)
         status.visibility = View.GONE
+        hideEmpty()
         heroPos = 0
         heroItem = slides.firstOrNull()
         stage?.show(heroItem?.backdrop ?: heroItem?.poster
@@ -1452,6 +1498,8 @@ class BrowseActivity : Activity() {
                 .putExtra(EXTRA_TAB, tab)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
+        // Section switches rebuild the page; the new one rises under the old instead of snapping.
+        overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
     }
 
     /** A full-list page for one shelf: the hub's row by id, or a search for a derived shelf's tag. */
@@ -2032,7 +2080,10 @@ class BrowseActivity : Activity() {
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
             BrowseImages.load(holder.art,
                 if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop, cardW)
-            if (!item.logo.isNullOrBlank()) {
+            // Title logos belong on WIDE tiles only (owner ruling): a poster is already a title
+            // lockup, and painting a second wordmark over a vertical poster competes with the art
+            // AND the caption below it. Portrait tiles keep poster + caption; backdrops carry the logo.
+            if (!item.logo.isNullOrBlank() && landscape) {
                 holder.logo.visibility = View.VISIBLE
                 BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE

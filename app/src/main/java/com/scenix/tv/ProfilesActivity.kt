@@ -18,6 +18,7 @@ import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
 
 /** The native front door: pick a person before Browse draws a shelf. PINs are checked by the hub. */
@@ -56,6 +57,9 @@ class ProfilesActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
+            // The front door belongs to the pack too: the glass household stands on its wall,
+            // not on flat black (pack-means-everything ruling; screen pass splash → profile).
+            Screens.wall(app)?.let { background = it }
             setPadding(app.theme.px(64f), app.theme.px(50f), app.theme.px(64f), app.theme.px(40f))
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -336,6 +340,7 @@ class ProfilesActivity : Activity() {
                     .putExtra(PinActivity.EXTRA_NAME, p.name),
                 REQ_PIN
             )
+            overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
             return
         }
         open(p)
@@ -373,6 +378,8 @@ class ProfilesActivity : Activity() {
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         startActivity(intent)
+        // Home rises into the gate — one continuous motion law across the whole start flow.
+        overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
         finish()
     }
 

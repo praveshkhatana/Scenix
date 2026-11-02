@@ -113,7 +113,9 @@
     "railGlowPad": 26,
     "plateElevation": 16,
     "chipElevation": 6,
-    "posterElevation": 10
+    "posterElevation": 10,
+    "frostBevel": 26,
+    "frostRefr": 14
   },
   "radii": {
     "card": 21,
@@ -304,6 +306,8 @@
     "heroFadePct": 62,
     "chipGlyph": 34,
     "wallGrain": 1,
-    "tileMaterial": "glass"
+    "tileMaterial": "glass",
+    "frostFall": 3,
+    "frostDisp": 12
   }
 }

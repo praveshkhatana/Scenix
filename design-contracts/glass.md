@@ -46,6 +46,7 @@ Interactive states (reference shows default only; others inferred → deviation 
 | heroFadePct (wash reaches clear at % of card width) | 62 | m (same scan) |
 | heroScrim (bottom wash under copy/Play, blue not black) | rgba(34,90,146,0.35) | m (reference bottom band #406E99 is LIGHTER than mid-card, i.e. a blue wash; a dark scrim was wrong) |
 | plateElevation / posterElevation / chipElevation (cast shadow, canvas px) | 16 / 10 / 6 | e (shadow strength eyeballed against reference card separation from wall) |
+| frostBevel / frostRefr / frostFall / frostDisp (frost lens shape) | 26 / 14 / 3 / 12 (/100) | ported QWEA0 tunables re-scaled for chrome-size surfaces (chip/pill/plate), not the library's 48/160 defaults built for big panels |
 | chipGlyph (chip pictogram size, canvas px) | 34 | m (~24 @ref ×1.417) |
 | pill (nav bg) | rgba(8,16,28,0.86) sampled #0A1420 | m |
 | pillActive (segment fill) | rgba(255,255,255,0.08) — no bright fill; active word = brighter ink | m (zoom: (24,34,48) vs pill (6,17,31)) |
@@ -89,12 +90,18 @@ pill→hero gap 44, hero→chip gap 64; rowTitle→poster gap 21.
 card(rail)=18, hero=26, chip/nav=999. Elevation: surfaces carry real cast shadows
 (plateElevation 16 / posterElevation 10 / chipElevation 6 canvas px — system shadows from the
 rounded outlines, separate from the inner rim + top sheen rgba(255,255,255,.16)→0 over top
-45%); focus lift rides translationZ on the same outline. Material truth (platform research
-2026-11-02): Android has NO public backdrop blur before API 36 — View.setRenderEffect (API 31)
-blurs a view's OWN content, not what is behind it. The pack's "glass" is therefore: real cast
-shadow + translucent tinted surface + specular rim + sheen (IMPLEMENTED), and frosted backdrop
-blur of the wall behind surfaces is APPROXIMATED by the tinted wash over the wall, not by a
-blur pass.
+45%); focus lift rides translationZ on the same outline. Material truth (revised 2026-11-03):
+Android has no ONE-CALL backdrop blur before API 36, but that is not "impossible" — the frost
+is IMPLEMENTED as a ported pipeline (LiquidFrost.kt, technique from QWEA0/Liquid-Glass-Android,
+MIT, ported not vendored to keep the stack third-party-free): PixelCopy snapshot of the window
+behind the surface → offscreen RenderNode chain of blur + AGSL rounded-rect SDF refraction lens
+(inward sample ∝ (1+d/bevel·¼)^−fall, edge-normal gradient, optional RGB dispersion). API tiers:
+33+ blur+lens single pass; 31–32 blur only; ≤30 coarse 1/7 downsample + bilinear upscale.
+Honesty: the backdrop is re-sampled on scene changes (layout, hero slide, render()), not per
+frame — correct for static wall chrome, would smear under a scrolling surface. Tunables via pack
+tokens frostBevel 26 / frostRefr 14 / frostFall 3 / frostDisp 12(/100). Cast shadow + tinted
+surface + rim + sheen remain the BASE every tier falls back to (fallback drawable stays under
+the frost layer).
 
 ## 3. Component rules (glass-specific)
 
@@ -177,7 +184,8 @@ APPEARANCE gate — INCOMPLETE, judged on specimens, no masks over the evaluated
   fixed. Residual: wash fade is eyeball-close, not per-pixel (different artwork makes pixel diff
   on content meaningless — see D7).
 - Material: cast shadows visible OUTSIDE the surfaces (plates, posters, chips) — separate from
-  rim/sheen; backdrop BLUR is approximation, stated in §Radius/elevation (no API pre-36).
+  rim/sheen; backdrop BLUR is real frost via the ported snapshot+AGSL pipeline on API 33+
+  (coarser tiers below), sampled on scene change — stated in §Radius/elevation.
 - Chips: centered icon+label, meaningful labels, chipGlyph 34; residual: reference pictograms are
   filled colour icons, mine are monochrome text glyphs (deviation, NOT approved).
 Full-frame diff number is reported but carries no acceptance weight on content bands (D7).

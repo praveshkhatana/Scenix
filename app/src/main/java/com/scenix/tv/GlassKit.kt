@@ -114,12 +114,94 @@ internal object GlassKit {
         pill.addView(name, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { marginStart = theme.px(10f) })
-        pill.addView(Views.text(app, "nav", 16f, Color.WHITE, "⌄", bold = true, gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { marginStart = theme.px(6f) })
+        // A feather chevron vector, not the "⌄" text glyph: the character's shape and baseline
+        // change with whatever font the television ships, and it read as a stray mark (owner ruling).
+        pill.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_chevron_down)
+            setColorFilter(theme.color("inkOnWall", "#FFFFFF"), android.graphics.PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(theme.px(5f), theme.px(5f), theme.px(5f), theme.px(5f))
+        }, LinearLayout.LayoutParams(theme.px(30f), theme.px(30f)).apply {
+            marginStart = theme.px(8f)
+        })
         Focus.attach(pill, pill, app, theme.px(999f), scale = false, elevate = false, onClick = onClick)
         return ProfilePill(pill, initials, face, name)
+    }
+
+    /**
+     * The pack's answer to an empty or failed shelf. A bare line of text on the wall reads like a
+     * bug report; the glass language is a small plate standing in the middle of the space — glyph,
+     * what happened, why a retry may help, and a focusable Try again stop that re-runs the load.
+     */
+    fun emptyState(
+        context: Context,
+        app: AppContext,
+        title: String,
+        sub: String,
+        showRetry: Boolean,
+        onRetry: () -> Unit,
+    ): FrameLayout {
+        val theme = app.theme
+        val radius = theme.radius("card", 18f)
+        val card = FrameLayout(context).apply {
+            background = LayerDrawable(arrayOf(
+                GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(theme.color("seeAllGlassA", "rgba(232,240,248,0.16)"),
+                        theme.color("seeAllGlassB", "rgba(196,210,224,0.08)")),
+                ).apply { cornerRadius = radius.toFloat() },
+                Views.ring(theme.color("glassRim", "rgba(255,255,255,0.38)"), radius, theme.px(1f)),
+            ))
+            elevation = theme.space("plateElevation", 16f) / 2f
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setRoundRect(0, 0, v.width, v.height, radius.toFloat())
+                }
+            }
+        }
+        val body = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(theme.px(70f), theme.px(46f), theme.px(70f), theme.px(46f))
+        }
+        body.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_empty_shelf)
+            setColorFilter(theme.color("inkOnWall", "#FFFFFF"), android.graphics.PorterDuff.Mode.SRC_IN)
+            alpha = 0.75f
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }, LinearLayout.LayoutParams(theme.px(96f), theme.px(96f)))
+        body.addView(Views.text(app, "h1", 32f, theme.color("inkOnWall", "#FFFFFF"), title,
+            bold = true, gravity = Gravity.CENTER, maxLines = 1),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(18f) })
+        body.addView(Views.text(app, "sub", 21f, theme.color("pillInk", "#B7C4D2"), sub,
+            gravity = Gravity.CENTER),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(8f) })
+        if (showRetry) {
+            val retry = LinearLayout(context).apply {
+                tag = "retry"
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isFocusable = true
+                isClickable = true
+                contentDescription = "Try again"
+                background = Views.rounded(theme.color("discGlass", "rgba(255,255,255,0.16)"),
+                    theme.px(999f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                setPadding(theme.px(26f), theme.px(10f), theme.px(26f), theme.px(10f))
+            }
+            retry.addView(Views.text(app, "nav", 20f, theme.color("inkOnWall", "#FFFFFF"), "Try again",
+                bold = true, gravity = Gravity.CENTER))
+            Focus.attach(retry, retry, app, theme.px(999f), scale = false, elevate = false,
+                onClick = onRetry)
+            body.addView(retry, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(26f) })
+        }
+        card.addView(body, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { gravity = Gravity.CENTER })
+        return card
     }
 
     /** A small round stop for header chrome (the settings door). */

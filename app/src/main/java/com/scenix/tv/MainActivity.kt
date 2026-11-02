@@ -1,18 +1,27 @@
 package com.scenix.tv
 
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.HubWatch
 import com.scenix.tv.core.Prefs
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.ScreenHost
+import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.nav.PairingScreen
 
 /**
@@ -38,6 +47,9 @@ class MainActivity : AppCompatActivity(), ScreenHost {
     private var screen = ""
     private var rendering = false
     private var pendingRoute: String? = null
+    /** The branded wait while the first hub probe is open; faded away when a screen takes over. */
+    private var splashView: View? = null
+    private var splashAlive = true
 
     /** `--ez setup true` or `tv://setup`: show the front door even when a backend is already paired. */
     private var forceSetup = false
@@ -50,8 +62,39 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
         root = FrameLayout(this)
         root.setBackgroundColor(ctx.theme.bg)
+        // The splash is not a blank page while a probe runs: the pack's wall rises, the brand mark
+        // fades up on it, and one quiet line says what the box is doing. Every pack ships its wall;
+        // packs without one keep their plain ground. (screen pass 2026-11-03: splash → profile → PIN → home)
+        Screens.wall(ctx)?.let { root.background = it }
+        val splash = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            clipChildren = false
+        }
+        val glassGround = ctx.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS
+        splash.addView(ImageView(this).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            setColorFilter(if (glassGround) Color.WHITE else ctx.theme.brand)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Scenix"
+        }, LinearLayout.LayoutParams(ctx.theme.px(220f), ctx.theme.px(50f)))
+        splash.addView(Views.text(ctx, "sub", 22f,
+            if (glassGround) ctx.theme.color("pillInk", "#B7C4D2") else ctx.theme.ink3,
+            "Finding your hub…", gravity = Gravity.CENTER),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = ctx.theme.px(14f) })
+        root.addView(splash, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        splashView = splash
         setContentView(root)
         Motion.enter(app.theme, root)
+        if (app.theme.motionEnabled) {
+            splash.alpha = 0f
+            splash.animate().alpha(1f).setStartDelay(120L).setDuration(500L).start()
+            // The status line breathes while the probe is open, so the box reads as working, not hung.
+            breathe(splash.getChildAt(1))
+        }
 
         pendingRoute = deepRoute(intent)
         forceSetup = wantsSetup(intent)
@@ -95,11 +138,32 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
     /** Called once the first hub probe (or the standalone check) has an answer. */
     private fun startup(online: Boolean) {
+        leaveSplash()
         if (!online && watch.unpaired) {
             showPairing()
             return
         }
         openShell(pendingRoute)
+    }
+
+    private fun breathe(v: View) {
+        if (!splashAlive || isFinishing) return
+        v.animate().alpha(0.45f).setDuration(900L).withEndAction {
+            if (splashAlive && !isFinishing)
+                v.animate().alpha(1f).setDuration(900L).withEndAction { breathe(v) }.start()
+        }.start()
+    }
+
+    /** The branded wait fades out as a screen takes over — exits stay shorter than entries. */
+    private fun leaveSplash() {
+        splashAlive = false
+        val s = splashView ?: return
+        splashView = null
+        if (!ctx.theme.motionEnabled) {
+            s.visibility = View.GONE
+            return
+        }
+        s.animate().alpha(0f).setDuration(220L).withEndAction { s.visibility = View.GONE }.start()
     }
 
     /**
@@ -167,6 +231,8 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         if (route != null && route.startsWith("#/")) next.putExtra(ProfilesActivity.EXTRA_ROUTE, route)
         startActivity(next)
+        // The gate rises into the splash instead of snapping over it (§4 screen-enter law).
+        overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
         finish()
     }
 

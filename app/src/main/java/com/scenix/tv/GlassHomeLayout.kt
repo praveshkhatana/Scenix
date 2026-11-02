@@ -63,6 +63,9 @@ internal class GlassHomeLayout(
     private var itemA: Item? = null
     private var itemB: Item? = null
     private val chipRow: LinearLayout
+    private lateinit var pill: LinearLayout
+    /** Chrome surfaces wearing the real sampled frost (LiquidFrost). */
+    private val frostSurfaces = ArrayList<LiquidFrost>()
     private val pillStops = ArrayList<View>()
     private var chipIds: List<String> = emptyList()
     private val profile: GlassKit.ProfilePill
@@ -88,7 +91,7 @@ internal class GlassHomeLayout(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
 
-        val pill = LinearLayout(context).apply {
+        pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = Views.rounded(theme.color("pill", "rgba(8,16,28,0.86)"), theme.px(999f))
@@ -184,6 +187,20 @@ internal class GlassHomeLayout(
 
         cardA.nextFocusUpId = pillStops.first().id
         cardB.nextFocusUpId = pillStops.first().id
+
+        // Real liquid glass on the chrome (ported from QWEA0/Liquid-Glass-Android, MIT): after the
+        // first layout each surface snapshots what stands behind it, blurs it and refracts its
+        // edges — instead of wearing a flat wash that merely claims to be translucent.
+        post {
+            frostInto(pill, navBandH / 2)
+            frostInto(profile.root, navBandH / 2)
+            frostInto(gearStop, theme.px(52f) / 2)
+        }
+    }
+
+    /** Wrap the host's current fallback background under a sampled frost layer. */
+    private fun frostInto(host: View, radiusPx: Int) {
+        LiquidFrost.install(host, app, radiusPx, host.background)?.let { frostSurfaces += it }
     }
 
     /**
@@ -248,6 +265,8 @@ internal class GlassHomeLayout(
             val lp = LinearLayout.LayoutParams(chipW, chipH)
             if (chipRow.childCount > 0) lp.marginStart = gap
             chipRow.addView(chip, lp)
+            // The chips sit right where the hero band meets the wall — frost makes that real.
+            frostInto(chip, chipH / 2)
         }
         cardA.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
@@ -294,6 +313,9 @@ internal class GlassHomeLayout(
         bindCard(cardA, artA, titleA, a)
         bindCard(cardB, artB, titleB, b)
         cardB.visibility = if (b == null) View.GONE else View.VISIBLE
+        // The hero band grew taller behind the pill and plates with this slide — re-sample what
+        // the chrome is really standing over.
+        frostSurfaces.forEach { it.refresh() }
     }
 
     private fun bindCard(card: FrameLayout, art: ImageView, title: TextView, item: Item?) {
