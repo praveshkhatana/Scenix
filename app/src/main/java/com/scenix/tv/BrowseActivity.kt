@@ -25,6 +25,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Updates
@@ -80,6 +81,9 @@ class BrowseActivity : Activity() {
     private val railItems = ArrayList<View>()
     private var railOpen = false
     private var railReturn: View? = null
+    /** The page shell, so an empty library can explain itself above every theme layout. */
+    private var shellView: FrameLayout? = null
+    private var emptyPanel: LinearLayout? = null
     private val clock = Handler(Looper.getMainLooper())
     private var rotationPaused = false
     // Apple's billboard never moves under the viewer's hands: any key on the remote rewinds the
@@ -709,6 +713,7 @@ class BrowseActivity : Activity() {
         // Every pack draws its own page; the rail is a host overlay so no theme has to leave room
         // for it. A FrameLayout shell works for both the stage composition and the stacked one.
         val shell = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
+        shellView = shell
         shell.addView(root, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         buildLeftRail(shell)
@@ -1503,7 +1508,90 @@ class BrowseActivity : Activity() {
     }
 
     /** Put a finished set of shelves on screen: hero, stage, rails, rotation and first focus. */
+    /**
+     * What a fresh standalone install sees: this TV has no hub, no add-ons and therefore no titles.
+     * The screen says that in one sentence and gives the only two ways forward, instead of a black
+     * page behind a nav bar (which is what standalone used to be).
+     */
+    private fun showEmptyState() {
+        showSkeleton(false)
+        status.visibility = View.GONE
+        val shell = shellView ?: return
+        val standalone = app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE
+        val panel = emptyPanel ?: buildEmptyPanel().also {
+            emptyPanel = it
+            shell.addView(it, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        val title = panel.getChildAt(0) as? TextView
+        val body = panel.getChildAt(1) as? TextView
+        title?.text = if (standalone) "This TV is running on its own"
+        else "This hub has no titles to show"
+        body?.text = if (standalone)
+            "Scenix becomes the backend on this TV. Add an add-on and films and series arrive straight from it — no second machine, no hub address."
+        else
+            "The hub is reachable, but its shelves are empty. Add an add-on to the hub in Settings, or check that its library has finished its first scan."
+        panel.visibility = View.VISIBLE
+        panel.getChildAt(2)?.post { panel.getChildAt(2)?.requestFocus() }
+    }
+
+    private fun buildEmptyPanel(): LinearLayout {
+        val theme = app.theme
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(theme.bg)
+            setPadding(theme.px(80f), 0, theme.px(80f), theme.px(60f))
+            visibility = View.GONE
+        }
+        panel.addView(Views.text(app, "h1", 40f, theme.ink, "", bold = true,
+            gravity = Gravity.CENTER))
+        panel.addView(Views.text(app, "sub", 22f, theme.ink2, "", gravity = Gravity.CENTER,
+            maxLines = 3), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(18f) })
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        fun action(label: String, primary: Boolean, click: () -> Unit): View {
+            val row = Views.text(app, "button", 21f,
+                if (primary) theme.onBrand else theme.ink, label, bold = true,
+                gravity = Gravity.CENTER)
+            row.setPadding(theme.px(26f), theme.px(13f), theme.px(26f), theme.px(13f))
+            row.background = if (primary) Views.rounded(theme.brand, theme.radius("button", 6f))
+            else Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            row.isFocusable = true
+            row.isClickable = true
+            row.contentDescription = label
+            Focus.attach(row, row, app, theme.radius("button", 6f), scale = false, elevate = false,
+                onClick = click)
+            return row
+        }
+        actions.addView(action("Open Settings", primary = true) {
+            startActivity(Intent(this, SettingsActivity::class.java)
+                .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
+        })
+        actions.addView(action("Connect a hub", primary = false) {
+            startActivity(Intent(this, MainActivity::class.java).putExtra("setup", true))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = theme.px(20f) })
+        panel.addView(actions, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(30f) })
+        return panel
+    }
+
     private fun present(shelves: List<BrowseRow>) {
+        // A reachable backend with nothing in it is not a black page. Standalone with no add-ons
+        // is the common case for a first install, so it explains itself and offers the one useful
+        // action instead of leaving the viewer on an unexplained empty Home.
+        if (slides.isEmpty() && shelves.isEmpty()) {
+            showEmptyState()
+            return
+        }
+        emptyPanel?.visibility = View.GONE
         showSkeleton(false)
         status.visibility = View.GONE
         heroPos = 0
