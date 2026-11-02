@@ -914,6 +914,14 @@ function generalItems(rowId, items) {
 function shelfItem(it) {
   if (!it || typeof it !== 'object') return it;
   const { sources, episodes, ...tile } = it;
+  // A shelf still tells the truth about depth: the web billboard prints "N seasons" from the tile,
+  // and an episode array is the only place that number lived. Compute it before the array is
+  // dropped, so the tile keeps the fact without the sixty stills behind it.
+  if (Array.isArray(episodes) && episodes.length) {
+    const seasons = new Set();
+    for (const ep of episodes) seasons.add(ep && ep.season !== undefined ? ep.season : 1);
+    tile.seasonCount = seasons.size;
+  }
   return tile;
 }
 function shelfItems(items) {

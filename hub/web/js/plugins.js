@@ -590,6 +590,10 @@ function monthYear(ts) {
 
 /** How many seasons the hub's own episode list covers. */
 function seasonCount(item) {
+  // A shelf tile carries the count the hub computed before it dropped the episode array (the array
+  // belongs to the detail record, not to a poster). Older payloads still send `episodes`.
+  const precomputed = Number(item && item.seasonCount);
+  if (Number.isFinite(precomputed) && precomputed > 0) return precomputed;
   if (!Array.isArray(item.episodes) || !item.episodes.length) return 0;
   const seen = new Set();
   for (const e of item.episodes) seen.add(e && e.season !== undefined ? e.season : 1);
