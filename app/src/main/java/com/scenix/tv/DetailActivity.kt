@@ -447,36 +447,61 @@ class DetailActivity : Activity() {
         var reaction = record.optString("reaction").takeIf { it == "like" || it == "love" || it == "dislike" }
         var seen = record.optBoolean("seen", false)
         val social = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        fun socialChip(label: String, active: Boolean, click: () -> Unit): TextView {
-            val b = Views.text(app, "button", 18f, if (active) theme.onBrand else theme.ink,
-                label, bold = true, gravity = Gravity.CENTER)
+        val pillRadius = theme.radius("button", 6f)
+        fun socialChip(label: String, click: () -> Unit): TextView {
+            // The one labelled control: a trailer is a destination with a name, not a state toggle.
+            val b = Views.text(app, "button", 18f, theme.ink, label, bold = true, gravity = Gravity.CENTER)
             b.setPadding(theme.px(18f), theme.px(10f), theme.px(18f), theme.px(10f))
-            b.background = if (active) Views.rounded(theme.brand, theme.radius("button", 6f))
-                else Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            b.background = Views.rounded(theme.surface, pillRadius, theme.px(1f), theme.line)
             b.isFocusable = true
             b.isClickable = true
             b.setOnClickListener { click() }
-            Focus.attach(b, b, app, theme.radius("button", 6f), scale = false, elevate = false)
+            Focus.attach(b, b, app, pillRadius, scale = false, elevate = false)
             return b
         }
+        val reactionPills = LinkedHashMap<String, View>()
+        val reactionIcons = LinkedHashMap<String, ImageView>()
+        fun isTruthyTag(tag: String): Boolean = when (tag) {
+            "like", "love", "dislike" -> reaction == tag
+            "seen" -> seen
+            else -> false
+        }
+        fun socialIcon(tag: String, iconRes: Int, desc: String, click: () -> Unit): View {
+            val pill = FrameLayout(this).apply {
+                this.tag = tag
+                isFocusable = true
+                isClickable = true
+                contentDescription = desc
+                background = Views.rounded(theme.surface, pillRadius, theme.px(1f), theme.line)
+            }
+            val icon = ImageView(this).apply {
+                setImageResource(iconRes)
+                setColorFilter(theme.ink)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+            }
+            pill.addView(icon, FrameLayout.LayoutParams(theme.px(24f), theme.px(24f)).apply {
+                gravity = Gravity.CENTER
+            })
+            Focus.attach(pill, pill, app, pillRadius, scale = false, elevate = false,
+                onClick = click,
+                onFocus = { focused ->
+                    val active = isTruthyTag(tag)
+                    pill.background = if (focused || active) Views.rounded(Color.WHITE, pillRadius)
+                        else Views.rounded(theme.surface, pillRadius, theme.px(1f), theme.line)
+                    icon.setColorFilter(if (focused || active) Color.rgb(10, 15, 20) else theme.ink)
+                })
+            reactionPills[tag] = pill
+            reactionIcons[tag] = icon
+            return pill
+        }
         fun repaintReactions() {
-            // Rebuild labels in place: a like can turn a love off, and the visible state must say so.
-            for (i in 0 until social.childCount) {
-                val v = social.getChildAt(i) as? TextView ?: continue
-                val tag = v.tag as? String ?: continue
-                val active = when (tag) {
-                    "like", "love", "dislike" -> reaction == tag
-                    "seen" -> seen
-                    else -> false
-                }
-                val base = when (tag) {
-                    "like" -> "Like"; "love" -> "Love"; "dislike" -> "Dislike"
-                    "seen" -> "Seen"; else -> v.text.toString().removePrefix("✓ ")
-                }
-                v.text = if (active) "✓ $base" else base
-                v.setTextColor(if (active) theme.onBrand else theme.ink)
-                v.background = if (active) Views.rounded(theme.brand, theme.radius("button", 6f))
-                    else Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            for ((tag, pill) in reactionPills) {
+                val icon = reactionIcons[tag] ?: continue
+                val active = isTruthyTag(tag)
+                val focused = pill.isFocused
+                pill.background = if (focused || active) Views.rounded(Color.WHITE, pillRadius)
+                    else Views.rounded(theme.surface, pillRadius, theme.px(1f), theme.line)
+                icon.setColorFilter(if (focused || active) Color.rgb(10, 15, 20) else theme.ink)
             }
         }
         fun setReaction(next: String) {
@@ -489,15 +514,13 @@ class DetailActivity : Activity() {
                 }
             }
         }
-        val trailerBtn = socialChip("▶ Trailer", false) {
+        val trailerBtn = socialChip("▶ Trailer") {
             api.trailer(identity) { url, error ->
                 runOnUiThread {
                     if (url.isNullOrBlank()) {
                         android.widget.Toast.makeText(this, error ?: "No trailer for this title",
                             android.widget.Toast.LENGTH_SHORT).show()
                     } else {
-                        // Play it in this app: a TV often has no browser or YouTube app to hand a
-                        // signed clip to, and "No player for the trailer" is not an answer.
                         startActivity(
                             Intent(this, TrailerActivity::class.java)
                                 .putExtra(TrailerActivity.EXTRA_URL, url)
@@ -509,33 +532,29 @@ class DetailActivity : Activity() {
         }
         trailerBtn.tag = "trailer"
         social.addView(trailerBtn)
-        val seenBtn = socialChip(if (seen) "✓ Seen" else "Seen", seen) {
+        val seenBtn = socialIcon("seen", R.drawable.ic_action_eye, "Mark as seen") {
             seen = !seen
             repaintReactions()
             api.setSeen(profileId, identity, seen) { confirmed ->
                 if (confirmed != seen) runOnUiThread { seen = confirmed; repaintReactions() }
             }
         }
-        seenBtn.tag = "seen"
-        social.addView(seenBtn, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = theme.px(10f) })
-        for ((tag, label) in listOf("like" to "Like", "love" to "Love", "dislike" to "Dislike")) {
-            val chip = socialChip(if (reaction == tag) "✓ $label" else label, reaction == tag) {
-                setReaction(tag)
-            }
-            chip.tag = tag
-            social.addView(chip, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = theme.px(10f) })
+        social.addView(seenBtn, LinearLayout.LayoutParams(theme.px(58f), theme.px(44f)).apply {
+            marginStart = theme.px(10f)
+        })
+        val actionIcons = listOf(
+            Triple("like", R.drawable.ic_action_like, "Like"),
+            Triple("love", R.drawable.ic_action_love, "Love"),
+            Triple("dislike", R.drawable.ic_action_dislike, "Dislike"),
+        )
+        for ((tag, icon, desc) in actionIcons) {
+            val v = socialIcon(tag, icon, desc) { setReaction(tag) }
+            social.addView(v, LinearLayout.LayoutParams(theme.px(58f), theme.px(44f)).apply {
+                marginStart = theme.px(10f)
+            })
         }
-        val shareBtn = socialChip("Share", false) {
-            val text = "Watch " + s(record, "title", "") + " on Scenix"
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-            runCatching { startActivity(Intent.createChooser(send, "Share")) }
-        }
-        shareBtn.tag = "share"
-        social.addView(shareBtn);
+        // Share is a phone/tablet/web affordance: a television has no share sheet worth opening,
+        // and the owner asked for icons only. It stays out of this build.
         val socialScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             isFocusable = false
