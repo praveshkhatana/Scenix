@@ -296,8 +296,8 @@ internal object GlassKit {
      */
     class HeroOverlay(context: Context, private val app: AppContext) : View(context) {
         private val paint = android.graphics.Paint()
-        // The pack default until the loaded art is sampled; setWash re-keys the wash to the
-        // title's own palette — the real liquid-glass behaviour the first pass deferred.
+        // The fixed pack tint for this plate slot (heroWashDeep / heroWashLight) — the reference
+        // plates keep their tints whatever artwork loads beneath them.
         private var wash = 0
         fun setWash(color: Int) { if (color != wash) { wash = color; invalidate() } }
         fun currentWash(): Int = wash

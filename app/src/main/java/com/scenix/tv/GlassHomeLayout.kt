@@ -219,9 +219,11 @@ internal class GlassHomeLayout(
         card.addView(art, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         // The measured overlay: near-opaque tint at the left edge fading to clear at
-        // heroFadePct of the width, plus the bottom scrim under the Play row. The pack tint is
-        // only the starting point — bindCard re-keys it to the title's own palette once the art
-        // lands (real liquid glass samples the surface beneath it).
+        // heroFadePct of the width, plus the bottom scrim under the Play row. The reference's
+        // two plates carry FIXED tints — deep steel blue at slot A, light periwinkle at slot B —
+        // regardless of the artwork underneath (measured hero composites: (45,98,150) and
+        // (137,164,206)); an art-sampled wash was my own substitution and read as brown/olive
+        // over warm posters.
         val overlay = GlassKit.heroOverlay(context, app,
             theme.color(if (deep) "heroWashDeep" else "heroWashLight",
                 if (deep) "rgba(34,90,146,0.88)" else "rgba(126,156,203,0.80)"))
@@ -265,8 +267,10 @@ internal class GlassHomeLayout(
             val lp = LinearLayout.LayoutParams(chipW, chipH)
             if (chipRow.childCount > 0) lp.marginStart = gap
             chipRow.addView(chip, lp)
-            // The chips sit right where the hero band meets the wall — frost makes that real.
-            frostInto(chip, chipH / 2)
+            // No frost here: the reference category chips are FLAT translucent panels on the
+            // wall (measured fill barely above the local wall tone with a faint rim). Sampling
+            // the bright hero behind them milky-white'd the chips — glass modernization is a
+            // separate ask from reference fidelity (reference-reconstruction skill §7).
         }
         cardA.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
         cardB.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
@@ -321,32 +325,7 @@ internal class GlassHomeLayout(
     private fun bindCard(card: FrameLayout, art: ImageView, title: TextView, item: Item?) {
         card.contentDescription = item?.let { "${it.title}. Open details" } ?: "Featured title"
         title.text = item?.title ?: ""
-        BrowseImages.load(art, item?.backdrop ?: item?.poster, theme.px(1000f)) { ok ->
-            if (ok) applyTitleWash(card, art)
-        }
-    }
-
-    /**
-     * Liquid glass samples what's under it: the wash re-keys to the loaded artwork's own palette
-     * (the average of the left region the wash covers, saturated so a grey frame still tints),
-     * keeping the pack token's alpha for readability. Falls back to the pack wash when no art
-     * loaded. (Open item from the third pass, closed 2026-11-02.)
-     */
-    private fun applyTitleWash(card: FrameLayout, art: ImageView) {
-        val src = (art.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap ?: return
-        val overlay = card.findViewWithTag<GlassKit.HeroOverlay>("overlay") ?: return
-        val small = android.graphics.Bitmap.createScaledBitmap(src, 16, 9, true)
-        var r = 0; var g = 0; var b = 0; var n = 0
-        for (y in 0 until 9) for (x in 0 until 7) {
-            val p = small.getPixel(x, y)
-            r += android.graphics.Color.red(p); g += android.graphics.Color.green(p)
-            b += android.graphics.Color.blue(p); n++
-        }
-        val lum = (r + g + b) / (3 * n)
-        fun sat(v: Int): Int = (lum + (v - lum) * 1.6f).toInt().coerceIn(0, 255)
-        // Keep the plate's own token alpha (deep vs light differ); swap only the hue source.
-        val alpha = android.graphics.Color.alpha(overlay.currentWash())
-        overlay.setWash(android.graphics.Color.argb(alpha, sat(r / n), sat(g / n), sat(b / n)))
+        BrowseImages.load(art, item?.backdrop ?: item?.poster, theme.px(1000f)) { }
     }
 
     fun focusEntry(activeIndex: Int): Boolean {
