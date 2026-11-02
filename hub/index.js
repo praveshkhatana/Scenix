@@ -2545,6 +2545,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         if (refusal) {
           log('PLAY REJECT', identity, labelOf(cand), refusal);
           tried.push(labelOf(cand) + ': ' + refusal);
+          // A direct copy that the hub's short validation window could not reach is not proof it
+          // cannot play: a busy archive/CDN node often takes longer than the window to first byte.
+          // When it is the last candidate, keep it as the fallback and let the player's own read
+          // timeout decide, instead of answering "warming" forever on a URL that is fine.
+          const silent = /no answer|timed out|timeout|socket/i.test(refusal);
+          if (silent && queue.indexOf(cand) === queue.length - 1
+              && /^https?:\/\//i.test(String(o.url || ''))) {
+            lastResort = lastResort || { o, cand };
+            break;
+          }
           // The ranked list was longer than the seats. Waking its next copy is only for a refused mint,
           // only while another validation attempt is still allowed, and only once the current walk has
           // nothing left queued behind it — the retry copies are appended in ranked order.

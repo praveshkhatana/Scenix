@@ -655,8 +655,13 @@ module.exports = {
     return playFor(identity);
   },
 
-  /** What this source would hand the player, without a round trip, for the hub's probe. */
-  async sourceTarget(identity) {
+  /**
+   * What this source would hand the player, without a round trip, for the hub's probe.
+   * SYNCHRONOUS on purpose: core/index.js sourceTarget() reads `.url` immediately, so an async
+   * function handed it a Promise and the probe saw no URL — every public-domain press then came
+   * back "warming" although play() was correct.
+   */
+  sourceTarget(identity) {
     const entry = entryOf(identity);
     return entry ? { url: fileUrl(entry), headers: {} } : null;
   },

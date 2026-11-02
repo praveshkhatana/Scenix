@@ -244,6 +244,7 @@ class PlayerActivity : Activity() {
     private lateinit var playButton: GlyphView
     private lateinit var rewindButton: GlyphView
     private lateinit var forwardButton: GlyphView
+    private var nextButton: GlyphView? = null
     private lateinit var audioButton: GlyphView
     private lateinit var subButton: GlyphView
     private lateinit var speedButton: GlyphView
@@ -1448,6 +1449,11 @@ class PlayerActivity : Activity() {
             seconds = (seekBackMs / 1000).toInt()) { seekBy(-seekBackMs) }
         forwardButton = icon(GLYPH_FORWARD, "Forward ${seekForwardMs / 1000} seconds", hint = false,
             seconds = (seekForwardMs / 1000).toInt()) { seekBy(seekForwardMs) }
+        // Stremio's player puts the next episode beside Play; the episode list already exists for
+        // jumping anywhere, but a series should not need a menu to continue the story.
+        nextButton = icon(GLYPH_NEXT, "Next episode", flat = false) { playNext() }.apply {
+            visibility = View.GONE
+        }
         audioButton = icon(GLYPH_AUDIO, "Audio", flat = true) { openMenu(MenuKind.AUDIO, audioButton) }
         subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
         speedButton = icon(GLYPH_SPEED, "Speed", flat = true) { openMenu(MenuKind.SPEED, speedButton) }
@@ -1461,6 +1467,7 @@ class PlayerActivity : Activity() {
         }
 
         buttonRow.addView(playButton, wrap().withStart(theme.px(12f)))
+        nextButton?.let { buttonRow.addView(it, wrap().withStart(theme.px(10f))) }
         buttonRow.addView(rewindButton, wrap().withStart(theme.px(10f)))
         buttonRow.addView(forwardButton, wrap().withStart(theme.px(10f)))
         buttonRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
@@ -1515,6 +1522,7 @@ class PlayerActivity : Activity() {
     private fun wireChromeFocus() {
         val controls = listOfNotNull(
             playButton,
+            nextButton?.takeIf { it.visibility == View.VISIBLE },
             rewindButton.takeIf { it.visibility == View.VISIBLE },
             forwardButton.takeIf { it.visibility == View.VISIBLE },
             audioButton,
@@ -2601,6 +2609,11 @@ class PlayerActivity : Activity() {
             else -> currentSourceLabel.ifBlank { "Auto" }
         }
         qualityButton.contentDescription = "Quality · " + qualityValue
+        val nextVisible = nextEpisode != null && !live
+        if (nextButton?.visibility != (if (nextVisible) View.VISIBLE else View.GONE)) {
+            nextButton?.visibility = if (nextVisible) View.VISIBLE else View.GONE
+            wireChromeFocus()
+        }
         // A tiny dot is the only "current value" a flat icon can carry without becoming a label:
         // audio when a specific track is chosen, CC when subtitles are on, speed when it is not 1×.
         audioButton.badge = audioChosen || (mixHint != null && !mixDisabled)
@@ -3582,6 +3595,17 @@ class PlayerActivity : Activity() {
                     canvas.drawLine(cx, cy + 5 * u, cx, cy + 9.5f * u, stroke)
                     canvas.drawLine(cx - 5 * u, cy + 9.5f * u, cx + 5 * u, cy + 9.5f * u, stroke)
                 }
+                GLYPH_NEXT -> {
+                    // skip-forward: a solid triangle against a bar
+                    val path = Path()
+                    path.moveTo(cx - 9 * u, cy - 9 * u)
+                    path.lineTo(cx + 5 * u, cy)
+                    path.lineTo(cx - 9 * u, cy + 9 * u)
+                    path.close()
+                    canvas.drawPath(path, solid)
+                    canvas.drawRoundRect(cx + 7 * u, cy - 9 * u, cx + 11 * u, cy + 9 * u,
+                        1.2f * u, 1.2f * u, solid)
+                }
                 GLYPH_EPISODES -> {
                     // A stacked episode list: three still-thumb blocks with a title line beside each,
                     // the same language the episode rows themselves use.
@@ -3796,6 +3820,7 @@ class PlayerActivity : Activity() {
         private const val GLYPH_QUALITY = 6
         private const val GLYPH_BACK = 7
         private const val GLYPH_EPISODES = 8
+        private const val GLYPH_NEXT = 9
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
