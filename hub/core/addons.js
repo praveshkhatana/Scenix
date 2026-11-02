@@ -659,13 +659,24 @@ class External {
   }
 
   streamPath(identity) {
-    const type = this.types.get(identity) || 'movie';
-    return this.url + '/stream/' + type + '/' + remoteIdFor(identity, this.id) + '.json';
+    return this.url + '/stream/' + this.typeFor(identity) + '/' + remoteIdFor(identity, this.id) + '.json';
   }
 
   metaPath(identity, type) {
-    return this.url + '/meta/' + (type || this.types.get(identity) || 'movie') + '/'
+    return this.url + '/meta/' + (type || this.typeFor(identity)) + '/'
       + remoteIdFor(identity, this.id) + '.json';
+  }
+
+  /**
+   * The upstream type for one identity. The remembered map keys what meta was fetched for — the show —
+   * while streams are asked for `<show>:<season>:<episode>`. A triple only ever exists for series, so
+   * an unremembered triple must not fall back to `movie`: asking `/stream/movie/tt…:1:1.json` answers
+   * empty, and per-episode copies (including dubbed ones) vanish from the tile.
+   */
+  typeFor(identity) {
+    const s = String(identity || '');
+    return this.types.get(s) || this.types.get(s.replace(/:\d+:\d+$/, ''))
+      || (/:\d+:\d+$/.test(s) ? 'series' : 'movie');
   }
 
   // ---- the addon contract (same shape a native provider file implements) ----
@@ -1014,7 +1025,7 @@ class External {
   async subtitles(identity, langs) {
     await this.ensureManifest();
     if (!this.has('subtitles') || !addressableBy(identity, this.id)) return [];
-    const type = this.types.get(identity) || 'movie';
+    const type = this.typeFor(identity);
     const rid = remoteIdFor(identity, this.id);
     const out = [];
     for (const lang of langs) {

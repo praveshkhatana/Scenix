@@ -1784,14 +1784,29 @@ async function adoptEpisodeSibling(item, ctx, opts) {
       if (!sib) continue;
       const full = await ctx.metaOnly(sib.identity, 'series', 1500);
       if (!full || !Array.isArray(full.episodes) || !full.episodes.length) continue;
-      log('EPISODE SIBLING', item.identity, '->', sib.identity, 'episodes=' + full.episodes.length);
-      item.episodes = full.episodes;
+      // Union, never replace. DesiFlix knowing 20 of Breaking Bad's 62 episodes must not erase the
+      // 62 — the tile lost seasons 1-3 that way, and with the full list the copies indexed by the
+      // show's shared ids.
+      item.episodes = merge.unionEpisodes(item.episodes, full.episodes);
+      log('EPISODE SIBLING', item.identity, '->', sib.identity, 'episodes=' + item.episodes.length);
       const ep = episodeOf(item, opts.season, opts.episode);
       if (!ep) continue;
-      item.streamId = episodeStreamId(item, ep);
-      item.sources = [];
-      await fetchEpisodeSources(item);
-      if ((item.sources || []).length) {
+      // Ask both addresses for the episode: the sibling's (the reason to adopt is that its addon
+      // indexes streams under its own ids) and this tile's own, when it differs — so adopting never
+      // loses the addons that answer at the shared id. The viewer gets the union of the answers.
+      const sibEp = full.episodes.find((x) => x.season === ep.season && x.episode === ep.episode) || ep;
+      const addrs = [episodeStreamId(item, sibEp)];
+      const own = episodeStreamId(item, ep);
+      if (own !== addrs[0]) addrs.push(own);
+      let adopted = [];
+      for (const addr of addrs) {
+        item.streamId = addr;
+        item.sources = [];
+        await fetchEpisodeSources(item);
+        adopted.push(...(item.sources || []));
+      }
+      if (adopted.length) {
+        item.sources = merge.rankSources(adopted, registry.priorities);
         rememberItems([item]); // the detail page listing this show now sees the same episodes
         return ep;
       }

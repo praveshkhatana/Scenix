@@ -63,6 +63,20 @@ function rankSources(sources, priorities = {}) {
     .map((x) => x.s);
 }
 
+/** Union two episode lists the viewer needs all of. Two addons describing the same show each know
+ *  part of it; the entry that came first (higher priority) keeps its fields, and episodes only the
+ *  other one knows are appended, sorted. This is why `episodes` is not a first-wins field: DesiFlix
+ *  knowing 20 episodes of Breaking Bad must never erase the 62 cinemeta described. */
+function unionEpisodes(a, b) {
+  if (!Array.isArray(a)) return Array.isArray(b) ? b.slice() : null;
+  if (!Array.isArray(b)) return a;
+  const key = (e) => `${e && e.season}x${e && e.episode}`;
+  const out = a.slice();
+  const seen = new Set(out.map(key));
+  for (const e of b) if (e && !seen.has(key(e))) { seen.add(key(e)); out.push(e); }
+  return out.sort((x, y) => (x.season - y.season) || (x.episode - y.episode));
+}
+
 /**
  * Merge an array of §1 items into one tile per identity.
  * `priorities` maps providerId -> provider priority (lower = more trusted).
@@ -93,6 +107,13 @@ function dedupe(items, priorities = {}) {
       if (Array.isArray(it.languages) && Array.isArray(keep.languages)) {
         keep.languages = [...new Set(keep.languages.concat(it.languages))];
       }
+      // Episodes are the exception to "first wins": a show's episode list is the union of what every
+      // addon knows. A partial list (a dub catalog carrying 20 of 62 episodes) must never erase the
+      // full one — that is how Breaking Bad lost seasons 1-3 on the tile and, with them, the copies
+      // addressed by the ids the full list carries.
+      if (Array.isArray(it.episodes) && it.episodes.length) {
+        keep.episodes = unionEpisodes(keep.episodes, it.episodes);
+      }
     }
     if (Array.isArray(it.sources)) keep.sources.push(...it.sources);
     // Which addons touched this identity. Internal (`_` fields never cross the wire), and the only
@@ -120,4 +141,4 @@ function mergeItems(items, priorities = {}) {
   return merged[0] || null;
 }
 
-module.exports = { dedupe, mergeItems, rankSources, blankItem, FIELDS };
+module.exports = { dedupe, mergeItems, rankSources, blankItem, unionEpisodes, FIELDS };
