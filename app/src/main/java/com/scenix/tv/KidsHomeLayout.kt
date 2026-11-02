@@ -119,7 +119,7 @@ internal class KidsHomeLayout(
         leftGroup.addView(brand)
 
         val pill = KidsKit.tabCapsule(app, theme.space("kidsPillH", 62f))
-        val sections = listOf("Movies" to "movies", "Series" to "series", "Live" to "live")
+        val sections = listOf("Movies" to "movies", "Series" to "series", "Games" to "games", "Live" to "live")
         sections.forEach { (label, route) ->
             // Only the segment for the section actually on screen reads active; Home (no section)
             // shows no selection (owner, round 7).

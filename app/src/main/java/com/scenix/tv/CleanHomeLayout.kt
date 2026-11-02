@@ -103,6 +103,7 @@ internal class CleanHomeLayout(
         val sections = listOf(
             "Movies" to "movies",
             "Series" to "series",
+            "Games" to "games",
             "Live" to "live",
         )
         sections.forEachIndexed { index, (label, route) ->

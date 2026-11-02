@@ -69,11 +69,21 @@ class ProfilesActivity : Activity() {
      * not readable" (2026-11-02). Text that stands bare on the wall wears the wall's own dark ink;
      * buttons still ride the pack's dark pill with white type.
      */
-    private val glass get() = app.theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
-    private fun wallInk() = if (glass) app.theme.color("wallInk", "#101821") else app.theme.ink
-    private fun wallInk2() = if (glass) app.theme.color("wallInk2", "#41505C") else app.theme.ink2
-    private fun wallFaint() = if (glass) app.theme.color("wallInk2", "#41505C") else app.theme.ink3
-    private fun wallRing() = if (glass) app.theme.color("wallLine", "rgba(16,24,32,0.50)") else app.theme.line
+    /**
+     * Every pack that paints a light wall behind the front door — Glass, Clean and the Kids stage —
+     * needs the wall's own ink. The old test named only Glass, so Clean's front door kept the blue
+     * brand wordmark and a washed-out "Edit profiles" on a pale wall (owner comparison, 2026-11-03).
+     * The wall packs share the treatment: dark ink on the wall, a dark pill for actions, readable PIN.
+     */
+    private val wallPack get() = app.theme.homeLayout.family in setOf(
+        com.scenix.tv.core.HomeLayoutSpec.Family.GLASS,
+        com.scenix.tv.core.HomeLayoutSpec.Family.CLEAN,
+        com.scenix.tv.core.HomeLayoutSpec.Family.KIDS,
+    )
+    private fun wallInk() = if (wallPack) app.theme.color("wallInk", "#101821") else app.theme.ink
+    private fun wallInk2() = if (wallPack) app.theme.color("wallInk2", "#41505C") else app.theme.ink2
+    private fun wallFaint() = if (wallPack) app.theme.color("wallInk2", "#41505C") else app.theme.ink3
+    private fun wallRing() = if (wallPack) app.theme.color("wallLine", "rgba(16,24,32,0.50)") else app.theme.line
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,11 +104,9 @@ class ProfilesActivity : Activity() {
         // The same wordmark file the Home bar uses, so the front door and the shelves wear one brand.
         head.addView(ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
-            // Same rule as the splash: on the Glass pack the mark floats white on the wall;
-            // the brand colour is the wordmark's voice only on the packs that use it.
-            setColorFilter(if (app.theme.homeLayout.hero ==
-                com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
-            ) Color.WHITE else app.theme.brand)
+            // On a light wall the mark reads in the wall's own dark ink; a white wordmark
+            // disappeared into Glass/Clean/Kids. Dark packs keep the brand colour.
+            setColorFilter(if (wallPack) wallInk() else app.theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }, LinearLayout.LayoutParams(app.theme.px(91f), app.theme.px(32f)))
@@ -106,10 +114,10 @@ class ProfilesActivity : Activity() {
         // Managing the household belongs on the household's own door, not two screens away in
         // Settings. The button opens the same editor, PIN gate included.
         val manage = Views.text(app, "li", 20f,
-            if (glass) app.theme.color("inkOnWall", "#FFFFFF") else app.theme.ink2,
+            if (wallPack) app.theme.color("inkOnWall", "#FFFFFF") else app.theme.ink2,
             "Edit profiles", bold = true, gravity = Gravity.CENTER)
         manage.setPadding(app.theme.px(17f), app.theme.px(9f), app.theme.px(17f), app.theme.px(9f))
-        if (glass) manage.background =
+        if (wallPack) manage.background =
             Views.rounded(app.theme.color("pill", "rgba(8,16,28,0.86)"), app.theme.px(999f))
         manage.isFocusable = true
         manage.isClickable = true

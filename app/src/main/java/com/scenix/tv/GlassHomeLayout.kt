@@ -122,7 +122,7 @@ internal class GlassHomeLayout(
         // sections rebuilds this page, so the pill always paints where you actually stand.
         val standing = (context as? BrowseActivity)?.intent
             ?.getStringExtra(BrowseActivity.EXTRA_TAB).orEmpty()
-        listOf("Home" to "", "Movies" to "movies", "Series" to "series", "Live" to "live")
+        listOf("Home" to "", "Movies" to "movies", "Series" to "series", "Games" to "games", "Live" to "live")
             .forEach { (label, route) ->
                 val stop = GlassKit.segment(context, app, label, route == standing) {
                     callbacks.onSection(route)
