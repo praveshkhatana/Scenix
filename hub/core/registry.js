@@ -27,7 +27,7 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const isFn = (o, k) => o && typeof o[k] === 'function';
 const isStr = (o, k) => o && typeof o[k] === 'string' && o[k].length > 0;
 
-// ---- validation (shape from design/plugin-architecture.md §2) ------------------------------------
+// ---- validation (the host contract in ADDONS.md) ------------------------------------------------
 
 function validateProvider(mod, file) {
   if (!isStr(mod, 'id')) return 'provider needs a string id';

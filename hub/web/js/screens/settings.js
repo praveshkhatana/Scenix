@@ -538,8 +538,8 @@ export function screen(ctx) {
         canHubSetting() ? (v) => writeSettings({ adaptive: Object.assign({}, ad, { maxHeight: Number(v) }) }) : null);
       toggle(g3, 'Hold a window of the film in memory',
         pb.readAhead
-          ? 'The hub reads ahead of the player into its own memory, so a torrent that bursts and pauses still plays like a file on a server.'
-          : 'Off: bytes go straight from the torrent to the player, which is what it did before — a quiet swarm shows up as a frozen picture.',
+          ? 'The hub reads ahead of the player into its own memory, so a P2P copy that bursts and pauses still plays like a file on a server.'
+          : 'Off: bytes go straight from the P2P copy to the player, which is what it did before — a quiet swarm shows up as a frozen picture.',
         pb.readAhead !== false,
         (v) => writeSettings({ playback: Object.assign({}, pb, { readAhead: v }) }));
       pickRow(g3, 'How much of the film to hold',
@@ -804,11 +804,11 @@ export function screen(ctx) {
       const only = list.length === 1 ? list[0] : null;
       const tokenSet = d.tokenSet === true || info.tokenSet === true;
       const gD = group('Debrid / direct',
-        'Optional. With your own debrid account, the hub asks the service to turn a magnet or a file-host link into an ordinary HTTP stream, so it starts without a torrent engine. Off by default; with no token nothing changes.');
+        'Optional. With your own debrid account, the hub asks the service to turn a P2P link or a file-host link into an ordinary HTTP stream, so it starts without a P2P engine on the hub. Off by default; with no token nothing changes.');
       toggle(gD, 'Use a debrid account',
         d.enabled
-          ? 'On: the hub tries your provider before the torrent gateway and falls through if it cannot answer.'
-          : 'Off: torrents use the gateway and host links play as they are.',
+          ? 'On: the hub tries your provider before the P2P gateway and falls through if it cannot answer.'
+          : 'Off: P2P copies use the gateway and host links play as they are.',
         !!d.enabled,
         canHubSetting() ? async (v) => {
           // Enabling an account with no provider chosen cannot work. With one adapter available, choose

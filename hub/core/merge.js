@@ -2,7 +2,7 @@
 /*
  * core/merge.js — dedupe + source ranking. The app must never see two tiles for the same thing.
  *
- * Items are merged on `identity` (design/plugin-architecture.md §1: "identity is the merge key").
+ * Items are merged on `identity`: identity is the merge key.
  * Everything a second provider knows about the same identity becomes extra `sources[]` on the one
  * surviving tile; fields already filled by a higher-priority provider are never overwritten by a
  * lower-priority one (rows gather providers in priority order, so "first wins" == "best wins").

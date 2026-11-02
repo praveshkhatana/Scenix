@@ -16,7 +16,7 @@ internal fun sa(a: JSONArray, i: Int, def: String = ""): String =
     if (a.isNull(i)) def else a.optString(i, def)
 
 /**
- * The only shared data shape — `design/plugin-architecture.md` §1, field for field.
+ * The only shared data shape — every surface and every addon answer maps into it, field for field.
  *
  * The app never invents content and never re-shapes this: the backend sends it, the standalone
  * host parses it, and the page reads the same JSON. Missing fields get neutral defaults so a

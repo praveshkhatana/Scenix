@@ -7,7 +7,7 @@
  * come; it owns no media element and knows nothing about hubs, so the same rule covers the shell's player and
  * a browser's, and the timing can be argued about in a test rather than on a television.
  *
- * The rule, from design/ui-tokens.md section D: six seconds of nothing while the player still says it is
+ * The rule: six seconds of nothing while the player still says it is
  * playing gets one silent reload at the current position. If it happens again the viewer decides, because a
  * still frame with no explanation is how people conclude an app is broken rather than a connection slow. A
  * two-minute gap between attempts keeps a genuinely slow line from being reloaded over and over.

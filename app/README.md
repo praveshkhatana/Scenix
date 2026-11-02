@@ -31,7 +31,7 @@ Nothing is installed or deployed from here.
   from `/app/v1/meta`. `PlayerActivity` asks `/app/v1/play`, decodes the answer with Media3 and draws
   the remote-first chrome itself: flat icon transport, Audio/Subtitles/Speed/Quality sheets, CH
   Up/Down zapping on live TV, and a next-episode roll with Undo. Play no longer hands off to the web
-  player. See [../design/native-browse.md](../design/native-browse.md).
+  player.
 - **Native Search + Settings** — `SearchActivity` is a remote A-Z keyboard over the hub's
   `/app/v1/search` index, with the same poster cards and focus ring as Home. `SettingsActivity`
   covers audio language, subtitle language, quality ceiling, a native Home-rows editor (this

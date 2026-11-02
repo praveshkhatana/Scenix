@@ -9,7 +9,7 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * Standalone mode: this app hosts the `/app/v1` contract itself (design/deployment-modes.md
+ * Standalone mode: this app hosts the `/app/v1` contract itself (mirroring
  * Rule 2). It answers the same JSON a hub answers, over loopback, so the page cannot tell which
  * machine it is talking to. The only thing the UI branches on is what a backend says it can do —
  * the `capabilities` list in its manifest.
@@ -179,7 +179,7 @@ class LocalHub private constructor(context: Context) {
         val enabled = d.optBoolean("enabled", false)
         val ready = enabled && d.optString("provider", "real-debrid") == "real-debrid" && token.isNotBlank()
         val note = when {
-            !enabled -> "off: torrents use this TV's engine"
+            !enabled -> "off: P2P copies use this TV's engine"
             token.isBlank() -> "enabled, but no token is stored"
             else -> "Real-Debrid is configured; magnets are tried before the local engine"
         }
@@ -1036,7 +1036,7 @@ class LocalHub private constructor(context: Context) {
                 ?: return JSONObject().put("error", "this copy has no magnet the local engine can use")
             val prepared = TorrentEngine.prepare(appContext, uri, season, episode)
                 ?: return JSONObject()
-                    .put("error", "the local torrent engine could not prepare this copy")
+                    .put("error", "the P2P engine on this TV could not prepare this copy")
                     .put("warming", true)
                     .put("retryAfterMs", 5000)
                     .put("sources", JSONArray(sources.map { sourceJson(it) }))
@@ -1842,12 +1842,12 @@ class LocalHub private constructor(context: Context) {
         }
         val label = when {
             playable -> listOf(quality.ifBlank { "stream" }, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
-            isTorrent -> listOf("torrent", quality, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
+            isTorrent -> listOf("P2P", quality, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
             else -> "link \u00B7 " + hostOf(direct)
         }
         val why = when {
             playable -> listOf(URL_TAG + direct, "$addonName \u00B7 a file this TV reads on its own")
-            isTorrent -> listOf("$addonName \u00B7 the local torrent engine streams this")
+            isTorrent -> listOf("$addonName \u00B7 streamed peer-to-peer on this TV")
             else -> listOf("not a file this player can open")
         }
         return Source(

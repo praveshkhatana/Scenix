@@ -2,7 +2,7 @@
 /*
  * core/addons.js — the addon host. Content only enters the hub through addons.
  *
- * Two kinds, one contract (design/plugin-architecture.md §2, restated in ADDONS.md):
+ * Two kinds, one contract (restated in ADDONS.md):
  *   native    a file in providers/, loaded by core/registry.js at boot
  *   external  installed at runtime from data/addons.json: no code, no restart, and rows and rules
  *             cannot tell it apart from a native addon (they never mention an addon's name)

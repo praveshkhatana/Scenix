@@ -20,7 +20,7 @@ data class HubAddress(val url: String, val name: String) {
 }
 
 /**
- * The client half of pairing (design/deployment-modes.md Rule 4): ask the local network who is a
+ * The client half of pairing: ask the local network who is a
  * Scenix hub, and list the answers by name.
  *
  * The hub answers an SSDP `M-SEARCH` for [SSDP_TARGET] over UDP 1900 with:

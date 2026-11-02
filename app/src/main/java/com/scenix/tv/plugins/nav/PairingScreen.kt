@@ -19,7 +19,7 @@ import com.scenix.tv.core.ScreenHost
 import com.scenix.tv.core.Views
 
 /**
- * The front door of a TV that has no backend yet (design/deployment-modes.md Rule 4).
+ * The front door of a TV that has no backend yet.
  *
  * Nothing is guessed here. A fresh install names no machine, so the app would otherwise sit on an
  * empty network showing nothing, or worse, showing the bundled sample rows as though they were this

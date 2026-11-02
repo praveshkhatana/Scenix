@@ -8,7 +8,7 @@
  * That is a paid service, so this file is not allowed to be necessary. With `debrid.enabled: false` —
  * the shipped default — not one line of the play path changes and no network call is made here.
  *
- * The contract (design/debrid.md):
+ * The contract:
  *
  *   provider file in core/debrid/*.js
  *     { id, label, hosters?: string[],

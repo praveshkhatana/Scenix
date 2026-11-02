@@ -20,7 +20,8 @@ node index.js                    # 0.0.0.0:8788
 PORT=8789 LOG_REQUESTS=1 node index.js
 ```
 
-Contract: [`../design/plugin-architecture.md`](../design/plugin-architecture.md) §1 (item model) and §2 (hub host).
+Contract: the item model is `app/…/core/Models.kt` field for field, and the host contract for
+add-ons, rows and rules is restated in [`ADDONS.md`](ADDONS.md) and enforced in `core/registry.js`.
 The hub also serves the one web interface (`web/`) that the TV shell, a browser and a phone all load.
 
 ## Adding a feature is adding one file
@@ -282,7 +283,7 @@ is absent and the capability `debrid` is not advertised — the interface has no
 a token, a magnet or hoster link is exchanged for an ordinary HTTP URL before the gateway is asked, and
 the answer says which provider served it. The token is write-only: settings returns `tokenSet`, never
 the secret, and the log never contains it. If the provider is down, slow or refuses the link, playback
-falls back to the gateway unchanged. See [debrid.md](../design/debrid.md).
+falls back to the gateway unchanged. The provider contract lives in `core/debrid/` and `core/debrid.js`.
 
 ## Environment
 

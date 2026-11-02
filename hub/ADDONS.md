@@ -1,7 +1,7 @@
 # Add-ons
 
-Content enters the hub only through add-ons (the contract lives in `core/addons.js` and
-`design/plugin-architecture.md` §2). A **native** add-on is a file in `providers/` loaded at boot;
+Content enters the hub only through add-ons (the contract lives in `core/addons.js`). A **native**
+add-on is a file in `providers/` loaded at boot;
 an **external** one is installed at runtime into `data/addons.json` — no code, no restart. An
 external add-on speaks the community manifest protocol: `GET /manifest.json`, `/catalog/…`,
 `/meta/…`, `/stream/…`, `/subtitles/…`, with its own configuration riding in the URL path, so the

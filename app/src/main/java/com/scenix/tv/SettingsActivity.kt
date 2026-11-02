@@ -288,7 +288,7 @@ class SettingsActivity : Activity() {
             addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL") {
                 requireAdmin { startActivity(Intent(this, AddonsActivity::class.java)) }
             }
-            addRow("Debrid", "Cached torrents", "Provider, token and the on/off switch") {
+            addRow("Debrid", "Cached copies", "Provider, token and the on/off switch") {
                 requireAdmin { startActivity(Intent(this, DebridActivity::class.java)) }
             }
             if (profileKind != "kids") {

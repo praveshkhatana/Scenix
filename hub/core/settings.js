@@ -2,7 +2,7 @@
 /*
  * core/settings.js — what the owner chose, read at request time.
  *
- * This file exists to enforce one rule (design/deployment-modes.md): **no household-specific value is a
+ * This file exists to enforce one rule: **no household-specific value is a
  * constant in the code.** The languages a family watches, which live-TV playlist they pull, how many
  * torrent copies a picker shows — those belong to the person who installed the hub, not to the build they
  * downloaded. A hub that hardcodes someone else's language list hands a stranger in Brazil a product that
@@ -94,7 +94,7 @@ const DEFAULTS = {
   // its own bitrate and (b) read ahead of the player into RAM, so a torrent that bursts and pauses plays
   // like a file on a server. Both are the owner's call, so both live here and on the Settings screen.
   // What does NOT live here is "what counts as stuck" — that stays a timing rule in code (see
-  // Scenix/design/playback-strategy.md §5). These are how much of the film we hold, not how long we wait.
+  // see core/readahead.js). These are how much of the film we hold, not how long we wait.
   playback: {
     readAhead: true,      // buffer torrent bytes in the hub ahead of the player at all
     bufferDirect: true,   // do the same for a plain internet copy: the screen reads the hub, not the host

@@ -19,7 +19,7 @@ const https = require('https');
 const path = require('path');
 
 const DATA_DIR = process.env.GAMES_DATA_DIR || path.join(__dirname, '..', 'data', 'games');
-const UA = 'ScenixHub/1.0 (game catalogue poster refresh; contact: praveshkhatana@gmail.com)';
+const UA = 'ScenixHub/1.0 (game catalogue poster refresh; https://github.com/praveshkhatana/Scenix)';
 const SLEEP_MS = 380;                 // Wikimedia guidance: few requests/s, no parallel bursts
 const DEP_HOSTS = /ported2browser\.com$|^imgs\.crazygames\.com$|^img\.poki-cdn\.com$/i;
 

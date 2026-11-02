@@ -92,7 +92,7 @@ class DebridActivity : Activity() {
         val provider = d.optString("provider").ifBlank { "real-debrid" }
         val tokenSet = info?.optBoolean("tokenSet", false) == true ||
             d.optBoolean("tokenSet", false) || d.optString("token").isNotBlank()
-        addRow("Debrid", if (enabled) "On · $provider" else "Off", "Use a debrid account for cached torrents") {
+        addRow("Debrid", if (enabled) "On · $provider" else "Off", "Use a debrid account for cached copies") {
             val next = JSONObject(settings.toString())
             val db = next.optJSONObject("debrid") ?: JSONObject().also { next.put("debrid", it) }
             db.put("enabled", !enabled)

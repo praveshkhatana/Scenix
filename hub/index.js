@@ -10,7 +10,7 @@
  *   /manifest.json, /catalog/, /meta/, /stream/   legacy addon-compat routes for an addon already
  *                              installed on the TV; nothing under /app/v1 depends on them
  *
- * Content enters the hub ONLY as an addon (design/plugin-architecture.md §0): a native one is a file
+ * Content enters the hub ONLY as an addon (see ADDONS.md): a native one is a file
  * in providers/ scanned at boot, an installed one is a row in data/addons.json hot-mounted at
  * runtime through POST /app/v1/addons. Adding a feature never means editing this file.
  *
@@ -1350,7 +1350,7 @@ async function proxyStream(req, res, u) {
       return send(res, 503, {
         error: 'warming',
         warming: true,
-        detail: 'the torrent engine did not start this copy within ' + waited + 'ms',
+        detail: 'the P2P engine did not start this copy within ' + waited + 'ms',
         retryAfterMs: 5000,
         hash,
         fileId,
@@ -2434,7 +2434,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (isTorrent) value.magnet = o.url;
     value.headers = {};
     extraWhy.push('debrid: served by ' + (value.providerLabel || 'your provider')
-      + ' as ordinary HTTP, no torrent engine involved');
+      + ' as ordinary HTTP, no P2P engine involved');
     return value;
   };
 
@@ -2713,7 +2713,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // on the list this one waits for its turn.
     const frozen = gateway.isCold(r.hash);
     if (frozen && queue.length > 1) {
-      tried.push(labelOf(cand) + ': the engine has not answered for this torrent for '
+      tried.push(labelOf(cand) + ': the engine has not answered for this copy for '
         + Math.round((frozen.until - Date.now()) / 1000) + 's (no header ' + (frozen.tries || 1)
         + 'x, last after ' + frozen.waitedMs + 'ms)');
       o.cold = true;
@@ -2793,7 +2793,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       log('PLAY RATE WARMING', identity, labelOf(cand), 'over=' + m.ms + 'ms',
         'seeders=' + (cand.seeders != null ? cand.seeders : '?'),
         'need=' + (needs == null ? '?' : needs.toFixed(1)));
-      tried.push(labelOf(cand) + ': no byte of it arrived in ' + m.ms + 'ms (cold torrent, still reading)');
+      tried.push(labelOf(cand) + ': no byte of it arrived in ' + m.ms + 'ms (cold copy, still reading)');
       o.warming = true;
       o.measuredBytes = 0;
       o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
@@ -3313,7 +3313,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         : 'container: HLS segments, video copied');
   } else if (out.container !== 'any') {
     extraWhy.push(out.mode === 'gateway'
-      ? 'container: asked for ' + out.container + ', but this copy is not a torrent — handed over as it is'
+      ? 'container: asked for ' + out.container + ', but this copy is not a P2P copy — handed over as it is'
       : 'container: this source is already an HTTP stream the player reads directly, no re-wrap needed');
   }
   // The TV path keeps the file's own container, and says so, because that is the difference between a

@@ -77,7 +77,7 @@ class AddonManifest(val spec: AddonSpec, val body: JSONObject) {
 }
 
 /**
- * The addon protocol over plain HTTP, plus the on-device JSON cache (design/deployment-modes.md
+ * The addon protocol over plain HTTP, plus the on-device JSON cache (standalone mode
  * Rule 2: standalone "talks to addons directly, keeps its own cache and DB on device").
  *
  * Same shape as the hub's addon host, deliberately: `manifest`, `catalog`, `meta`, `stream`,

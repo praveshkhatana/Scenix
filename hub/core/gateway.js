@@ -562,7 +562,7 @@ async function resolve(source, opts = {}) {
   if (MODE === 'off') return { url: null, reason: 'gateway off' };
   if (MODE !== 'http') return { url: null, reason: 'unknown GATEWAY value "' + MODE + '": expected off or http' };
   if (!source) return { url: null, reason: 'no source' };
-  if (source.kind !== 'torrent') return { url: null, reason: 'not a torrent source' };
+  if (source.kind !== 'torrent') return { url: null, reason: 'not a P2P source' };
   if (!hashOf(source)) return { url: null, reason: 'addon gave no magnet or info hash' };
   // Ask the engine directly rather than trusting the 30s cache: right after a deploy the cache still
   // says "not checked", and a TV handed a magnet cannot play anything at all.
@@ -572,7 +572,7 @@ async function resolve(source, opts = {}) {
   const info = await prepare(source, opts.budgetMs, opts.want);
   if (!info) return { url: null, reason: 'no info hash to serve' };
   if (info.error || info.fileId === undefined) {
-    return { url: null, reason: 'engine has not read this torrent (' + (info.error || 'no file list') + ')' };
+    return { url: null, reason: 'engine has not read this copy (' + (info.error || 'no file list') + ')' };
   }
   return {
     url: clientBaseUrl(opts.clientOrigin) + '/play/' + info.hash + '/' + info.fileId,
@@ -590,9 +590,9 @@ async function gatewayUrl(source, opts = {}) {
 }
 
 function statusNote() {
-  if (MODE === 'off') return 'gateway off: torrents are handed to the client as magnets';
+  if (MODE === 'off') return 'gateway off: P2P copies are handed to the client as links';
   if (MODE === 'http') {
-    return engineSeen.ok ? 'torrents served as seekable HTTP by the engine'
+    return engineSeen.ok ? 'P2P copies served as seekable HTTP by the engine'
       : 'gateway on, engine not answering at ' + ENGINE + (engineSeen.note ? ' (' + engineSeen.note + ')' : '');
   }
   return 'unknown GATEWAY value "' + MODE + '": expected off or http';
