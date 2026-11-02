@@ -128,6 +128,10 @@ the frost layer).
   Top 10 / Trending / Acclaimed / Just added — "Because you" was rejected as not meaningful).
 - Rail captions: name then "● rating · year" — dot is accent token, rating number light,
   year in captionSub (reference meta line). Poster art bare (no scrim) on glass wall.
+  The caption band carries BARE TEXT ONLY — no plate of any kind under the art; a darker name
+  strip may overlay the art bottom only in overlay-caption geometry, never in "below" packs
+  (owner ruling 2026-11-03: a glassSurface strip anchored to the card bottom painted as a
+  stray grey box floating on the wall beneath every poster and genre tile).
 - Focus language = `glow`: pale-blue halo plates (#CFE3F5) + scale 1.03, 150 ms; controls get
   keyline (shared Focus rules). The SAME lift applies to rail tiles as to hero plates: elevated
   art outline (posterElevation) casts its shadow at rest, focus rides translationZ on that

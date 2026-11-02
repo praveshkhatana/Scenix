@@ -1837,7 +1837,11 @@ class BrowseActivity : Activity() {
                 card.addView(View(this@BrowseActivity).apply {
                     background = Views.ring(theme.line, radius, theme.px(1f))
                 }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            } else if (glass) {
+            } else if (glass && !below) {
+                // A glass tile that OVERLAYS its name gets a darker name strip welded to the art.
+                // A below-caption pack must NOT get one: the strip would paint as a stray grey box
+                // floating on the wall under every poster (owner ruling 2026-11-03 — the reference
+                // rail caption is bare text on the wall; the tile itself is the plate).
                 card.addView(View(this@BrowseActivity).apply {
                     // A console pack's glass is cool blue; a cinema pack can keep the neutral
                     // dark plate. The card shape stays shared while colour remains declarative.
