@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
@@ -63,6 +64,8 @@ internal class GlassHomeLayout(
     private var itemA: Item? = null
     private var itemB: Item? = null
     private val chipRow: LinearLayout
+    /** The chip row scrolls when the pack asks for larger type: equal widths cannot hold 150% zoom. */
+    private val chipScroll: HorizontalScrollView
     private lateinit var pill: LinearLayout
     /** Chrome surfaces wearing the real sampled frost (LiquidFrost). */
     private val frostSurfaces = ArrayList<LiquidFrost>()
@@ -200,7 +203,21 @@ internal class GlassHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
-        content.addView(chipRow, LinearLayout.LayoutParams(
+        // A scroll view, not a fixed row: at the accessibility zoom the chip's text and padding
+        // grow, and seven equal-width chips can no longer hold their labels on a 1920 canvas. At
+        // 100% the measured equal width still fills the row exactly; when it does not fit, the
+        // row scrolls and focus follows the chosen chip instead of truncating every caption.
+        chipScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = false
+            isFocusable = false
+            isFocusableInTouchMode = false
+            clipChildren = false
+            clipToPadding = false
+            addView(chipRow, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, chipH))
+        }
+        content.addView(chipScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, chipH,
         ).apply { topMargin = theme.px(64f) })
 
@@ -297,9 +314,13 @@ internal class GlassHomeLayout(
         val shelvesTake = shelves.take(7)
         // Measured: the chips are one equal-width row spanning the gutter, glyph+label left set.
         val gap = theme.space("chipGap", 34f)
-        val chipW = if (shelvesTake.isEmpty()) 0 else
+        // The measured equal width is a floor, not a ceiling: a chip never shrinks below the pack's
+        // own 228 canvas px, so at 130/150% the row overflows into the scroll view rather than
+        // cutting the label. At 100% both values are the same and the row still meets the gutter.
+        val equalW = if (shelvesTake.isEmpty()) 0 else
             (resources.displayMetrics.widthPixels - theme.gutter * 2 -
                 gap * (shelvesTake.size - 1)) / shelvesTake.size
+        val chipW = maxOf(equalW, theme.px(228f))
         shelvesTake.forEachIndexed { index, (id, label) ->
             val chip = GlassKit.chip(context, app, chipLabel(label),
                 index == 0, chipH) { callbacks.onShelf(id) }
