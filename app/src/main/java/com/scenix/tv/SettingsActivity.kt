@@ -903,10 +903,20 @@ class SettingsActivity : Activity() {
             val ground = Screens.wall(app)
             if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
         }
+        val glassKeys = app.theme.homeLayout.hero ==
+            com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(app.theme.px(48f), app.theme.px(36f), app.theme.px(48f), app.theme.px(24f))
+            // The pad wears the same deep glass plate as the household's PIN gate: the pack's
+            // white inks were standing bare on the light wall and washing out (2026-11-02).
+            if (glassKeys) {
+                val plateR = app.theme.radius("hero", 26f)
+                background = Views.rounded(app.theme.color("gatePlate", "rgba(8,16,28,0.88)"),
+                    plateR, app.theme.px(1.5f), app.theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                elevation = app.theme.space("plateElevation", 16f) / 2f
+            }
         }
         panel.addView(Views.text(app, "li", 34f, app.theme.ink, title, bold = true, gravity = Gravity.CENTER))
         pinSub = Views.text(app, "meta", 19f, app.theme.ink3, subtitle, gravity = Gravity.CENTER, maxLines = 2)
@@ -929,7 +939,11 @@ class SettingsActivity : Activity() {
                 b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
                     app.theme.px(if (label.length > 1) 17f else 26f).toFloat())
                 val keyRadius = app.theme.radius("key", 12f)
-                b.background = Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
+                b.background = if (glassKeys) Views.rounded(
+                    app.theme.color(if (label == "OK") "chipFillActive" else "keyGlass",
+                        "rgba(255,255,255,0.10)"),
+                    keyRadius, app.theme.px(1f), app.theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                else Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
                 b.isFocusable = true
                 b.isClickable = true
                 b.setOnClickListener {

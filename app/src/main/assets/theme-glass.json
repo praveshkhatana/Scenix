@@ -80,7 +80,12 @@
     "heroScrim": "rgba(34,90,146,0.35)",
     "seeAllGlassA": "rgba(232,240,248,0.16)",
     "seeAllGlassB": "rgba(196,210,224,0.08)",
-    "discGlass": "rgba(255,255,255,0.16)"
+    "discGlass": "rgba(255,255,255,0.16)",
+    "gatePlate": "rgba(8,16,28,0.88)",
+    "keyGlass": "rgba(255,255,255,0.10)",
+    "wallInk": "#101821",
+    "wallInk2": "#41505C",
+    "wallLine": "rgba(16,24,32,0.50)"
   },
   "spacing": {
     "gutter": 57,
@@ -166,7 +171,7 @@
     "panelNote": 18
   },
   "focus": {
-    "ringWidth": 2,
+    "ringWidth": 3,
     "scale": 1.03,
     "durationMs": 150,
     "shadowElevation": 16,

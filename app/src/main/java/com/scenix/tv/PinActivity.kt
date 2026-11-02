@@ -56,12 +56,18 @@ class PinActivity : Activity() {
             Screens.wall(app)?.let { background = it }
         }
         val plateR = theme.radius("hero", 26f)
+        val glass = theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
+            // The gate wears the pack's deep glass — the nav pill's own ink at plate weight — so
+            // its white type carries full contrast and the rim reads as one edge, not a smudge
+            // (the 59% wash over the frost sample had muddy two-tone edges on the light wall).
             // Fallback plate first; the sampled frost layers over it once the capture lands.
-            background = Views.rounded(theme.color("glassSurface", "rgba(8,10,14,0.59)"), plateR,
-                theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
+            background = Views.rounded(
+                theme.color(if (glass) "gatePlate" else "glassSurface",
+                    if (glass) "rgba(8,16,28,0.88)" else "rgba(8,10,14,0.59)"),
+                plateR, theme.px(1.5f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, o: android.graphics.Outline) {
@@ -101,11 +107,23 @@ class PinActivity : Activity() {
         for (labels in rows) {
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             for (label in labels) {
-                val b = Views.text(app, "li", if (label.length > 1) 18f else 28f, keyInk, label, bold = true, gravity = Gravity.CENTER)
+                val b = Views.text(app, "li", if (label.length > 1) 18f else 28f,
+                    if (glass && label == "CLEAR") theme.color("pillInk", "#B7C4D2") else keyInk,
+                    label, bold = true, gravity = Gravity.CENTER)
                 b.setPadding(app.theme.px(8f), 0, app.theme.px(8f), 0)
                 // The keypad keys are the pack's keys: same rounded plate language as Settings' PIN pad.
                 val keyRadius = app.theme.radius("key", 12f)
-                b.background = Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
+                if (glass) {
+                    // Glass keycaps: a light translucent fill with a hairline rim stands clearly on
+                    // the deep plate — the legacy opaque grey squares read as dead plastic. OK is
+                    // lit like the pack's active chip so the pad has one obvious destination.
+                    b.background = Views.rounded(
+                        theme.color(if (label == "OK") "chipFillActive" else "keyGlass",
+                            "rgba(255,255,255,0.10)"),
+                        keyRadius, theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                } else {
+                    b.background = Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
+                }
                 b.isFocusable = true
                 b.isClickable = true
                 b.setOnClickListener {
@@ -117,7 +135,21 @@ class PinActivity : Activity() {
                     }
                     press(label)
                 }
-                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false)
+                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false,
+                    onFocus = if (glass) { focused ->
+                        // The focused cap lights up with a bright rim so the D-pad target is
+                        // unmistakable without hiding the digit under a heavy ring; leaving focus
+                        // puts the resting cap back (this callback is the last writer of the
+                        // background, so it must paint both states).
+                        b.background = Views.rounded(
+                            theme.color(if (focused) "chipFillActive"
+                                else if (label == "OK") "chipFillActive" else "keyGlass",
+                                "rgba(255,255,255,0.10)"),
+                            keyRadius,
+                            if (focused) theme.px(1.5f) else theme.px(1f),
+                            if (focused) theme.color("glassLine", "rgba(255,255,255,0.90)")
+                            else theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                    } else null)
                 line.addView(b, LinearLayout.LayoutParams(app.theme.px(150f), app.theme.px(74f)).apply {
                     marginStart = app.theme.px(8f); marginEnd = app.theme.px(8f)
                 })
@@ -132,12 +164,15 @@ class PinActivity : Activity() {
         ))
         setContentView(frame)
         Motion.enter(theme, frame, listOf(root))
-        // Real frost on the plate: sample the wall behind it once the layout has settled.
-        root.post {
-            frost = LiquidFrost.install(root, app, plateR, root.background)
-            val firstRow = keys.getChildAt(0) as? ViewGroup
-            (firstRow?.getChildAt(0) ?: keys)?.requestFocus()
-        }
+        val firstRow = keys.getChildAt(0) as? ViewGroup
+        (firstRow?.getChildAt(0) ?: keys)?.requestFocus()
+        // Real frost on the plate: sample the wall behind it — but only once the plate has finished
+        // rising. Capturing mid-entry sampled the animating plate itself and left a lighter inner
+        // rectangle with its own edges inside the plate (the muddy double-frame the owner saw).
+        root.postDelayed({
+            if (!isFinishing) frost = LiquidFrost.install(root, app, plateR, root.background)
+        }, if (theme.motionEnabled)
+            (theme.token("anim", "fadeUpMs", 600.0) + 250).toLong() else 0L)
     }
 
     private fun press(label: String) {
