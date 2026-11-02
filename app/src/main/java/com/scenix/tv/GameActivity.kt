@@ -185,6 +185,34 @@ class GameActivity : Activity() {
                     // Chromium reports 100 the moment the document settles, long before the game does.
                     if (progress > 0) loader.setProgress(Math.min(progress, 95) / 100f)
                 }
+
+                // Port sites announce themselves with alert() and gate their load on confirm() —
+                // a dialog nobody can answer on a TV freezes the game's own script thread forever.
+                // In this container the dialogs answer themselves, unseen, so the script moves on.
+                override fun onJsAlert(
+                    view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?,
+                ): Boolean {
+                    android.util.Log.i("ScenixGame", "jsalert ${message?.take(80)}")
+                    result?.cancel()
+                    return true
+                }
+
+                override fun onJsConfirm(
+                    view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?,
+                ): Boolean {
+                    android.util.Log.i("ScenixGame", "jsconfirm ${message?.take(80)}")
+                    result?.confirm()
+                    return true
+                }
+
+                override fun onJsPrompt(
+                    view: WebView?, url: String?, message: String?, defaultValue: String?,
+                    result: android.webkit.JsPromptResult?,
+                ): Boolean {
+                    android.util.Log.i("ScenixGame", "jsprompt ${message?.take(80)}")
+                    result?.confirm(defaultValue ?: "")
+                    return true
+                }
             }
         }
         root.addView(web, FrameLayout.LayoutParams(
