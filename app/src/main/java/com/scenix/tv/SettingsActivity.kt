@@ -182,7 +182,7 @@ class SettingsActivity : Activity() {
             addRow("Home rows", "${visible.count { it !in hidden }} of ${visible.size} shown",
                 "This profile's shelves — hide, show or reorder", chevron = true) { showHomeRows() }
         }
-        addRow("Live TV channels", "This profile's lineup", "Choose the channels and their zap order", chevron = true) {
+        addRow("Live TV lineup", "This profile's lineup", "Choose the channels this profile sees and their zap order", chevron = true) {
             startActivity(
                 Intent(this, LiveChannelsActivity::class.java)
                     .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
@@ -293,7 +293,7 @@ class SettingsActivity : Activity() {
             addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks", chevron = true) {
                 requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
             }
-            addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips", chevron = true) {
+            addRow("Live TV playlist", "Address and groups", "The household playlist source, and the groups every profile skips", chevron = true) {
                 requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
             }
             // Only standalone has files on this machine. Against a hub, this TV has no folder of its

@@ -571,32 +571,34 @@ class BrowseActivity : Activity() {
             leftMargin = theme.px(16f)
             bottomMargin = theme.px(18f)
         })
-        val destinations = listOf<Pair<String, () -> Unit>>(
-            "Switch profile" to {
+        // Profile, then Search, then the library. Search is a destination, not a footnote at the
+        // bottom: it sits above Home the way the owner asked, and every row carries an icon.
+        val destinations = listOf<Triple<String, Int, () -> Unit>>(
+            Triple("Switch profile", R.drawable.ic_rail_profile) {
                 startActivity(Intent(this, ProfilesActivity::class.java))
             },
-            "Home" to { goTab("") },
-            "Movies" to { goTab("movies") },
-            "Series" to { goTab("series") },
-            "Games" to {
-                startActivity(Intent(this, GamesActivity::class.java)
-                    .putExtra(GamesActivity.EXTRA_PROFILE, profileId))
-            },
-            "Live TV" to {
-                startActivity(Intent(this, LiveChannelsActivity::class.java)
-                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
-            },
-            "Search" to {
+            Triple("Search", R.drawable.ic_nav_search) {
                 startActivity(Intent(this, SearchActivity::class.java)
                     .putExtra(SearchActivity.EXTRA_PROFILE, profileId))
             },
-            "Settings" to {
+            Triple("Home", R.drawable.ic_rail_home) { goTab("") },
+            Triple("Movies", R.drawable.ic_rail_movies) { goTab("movies") },
+            Triple("Series", R.drawable.ic_rail_series) { goTab("series") },
+            Triple("Games", R.drawable.ic_rail_games) {
+                startActivity(Intent(this, GamesActivity::class.java)
+                    .putExtra(GamesActivity.EXTRA_PROFILE, profileId))
+            },
+            Triple("Live TV", R.drawable.ic_rail_live) {
+                startActivity(Intent(this, LiveChannelsActivity::class.java)
+                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
+            },
+            Triple("Settings", R.drawable.ic_nav_settings) {
                 startActivity(Intent(this, SettingsActivity::class.java)
                     .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
             },
         )
-        for ((label, action) in destinations) {
-            panel.addView(railRow(label, action), LinearLayout.LayoutParams(
+        for ((label, icon, action) in destinations) {
+            panel.addView(railRow(label, icon, action), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, theme.px(66f)
             ).apply { bottomMargin = theme.px(4f) })
         }
@@ -606,25 +608,43 @@ class BrowseActivity : Activity() {
         railScrim = scrim
     }
 
-    private fun railRow(label: String, action: () -> Unit): View {
+    private fun railRow(label: String, iconRes: Int, action: () -> Unit): View {
         val theme = app.theme
-        val row = Views.text(app, "li", 23f, theme.ink, label, bold = true,
-            gravity = Gravity.CENTER_VERTICAL)
-        row.setPadding(theme.px(20f), 0, theme.px(16f), 0)
-        row.isFocusable = true
-        row.isClickable = true
-        row.contentDescription = label
         val radius = theme.px(12f)
-        row.background = Views.rounded(Color.TRANSPARENT, radius)
+        val idleInk = theme.color("railInk", "#F4F8FC")
+        val idleIcon = theme.color("railInk2", "#B9C6D2")
+        val focusInk = theme.color("railFocusInk", "#0A0F14")
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(theme.px(16f), 0, theme.px(16f), 0)
+            isFocusable = true
+            isClickable = true
+            contentDescription = label
+            background = Views.rounded(Color.TRANSPARENT, radius)
+        }
+        val icon = ImageView(this).apply {
+            setImageResource(iconRes)
+            setColorFilter(idleIcon)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }
+        row.addView(icon, LinearLayout.LayoutParams(theme.px(24f), theme.px(24f)))
+        val text = Views.text(app, "li", 23f, idleInk, label, bold = true)
+        text.setPadding(theme.px(18f), 0, 0, 0)
+        row.addView(text, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         Focus.attach(row, row, app, radius, scale = false, elevate = false,
             // Choosing a destination closes the rail first: leaving it up would cover the page the
             // viewer just asked for, and coming back from another activity would still show it.
             onClick = { closeRail(); action() },
             onFocus = { focused ->
-                // A rail destination is a solid pill when active, the way Netflix and tvOS draw it.
-                row.background = if (focused) Views.rounded(theme.brand, radius)
+                // A WHITE pill with dark ink reads on every wall. Using the pack's brand made the
+                // Glass rail bright blue (brand #2D6BFF) while the rest of Glass is neutral glass;
+                // and on Kids a dark-brand pill plus dark ink made every item disappear.
+                row.background = if (focused) Views.rounded(Color.WHITE, radius)
                 else Views.rounded(Color.TRANSPARENT, radius)
-                row.setTextColor(if (focused) theme.onBrand else theme.ink)
+                text.setTextColor(if (focused) focusInk else idleInk)
+                icon.setColorFilter(if (focused) focusInk else idleIcon)
             })
         railItems += row
         return row

@@ -161,6 +161,22 @@ object Screens {
         wrap.addView(row, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
+        // The halo canvas has to be LARGER than the plate, not just offset behind it. With a
+        // MATCH_PARENT child and negative margins the wrapper measured to the row itself, so the
+        // glow sat entirely under an opaque row and the focused settings option looked like a
+        // plain 1px keyline. Once the row is measured, grow the canvas by glowPad on every side.
+        wrap.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+            val lp = ringOn.layoutParams as android.widget.FrameLayout.LayoutParams
+            val w = (r - l) + glowPad * 2
+            val h = (b - t) + glowPad * 2
+            if (lp.width != w || lp.height != h) {
+                lp.width = w
+                lp.height = h
+                lp.leftMargin = -glowPad
+                lp.topMargin = -glowPad
+                ringOn.layoutParams = lp
+            }
+        }
         Focus.attach(wrap, ringOn, app, radius,
             scale = app.theme.focusRowScale > 1f, scaleTo = app.theme.focusRowScale,
             elevate = false, glowInset = glowPad, control = true, onClick = onClick,
