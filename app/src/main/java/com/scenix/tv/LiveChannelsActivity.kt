@@ -41,6 +41,8 @@ class LiveChannelsActivity : Activity() {
     private var only: MutableList<String> = ArrayList()
     private var order: MutableList<String> = ArrayList()
     private var picker: View? = null
+    /** The row that had the remote before a picker opened; focus returns there on close. */
+    private var pickerReturn: View? = null
     private var filter = ""
     private var rootView: FrameLayout? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
@@ -405,6 +407,7 @@ class LiveChannelsActivity : Activity() {
     }
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+        if (picker == null) pickerReturn = currentFocus
         closePicker()
         val theme = app.theme
         val layer = FrameLayout(this).apply { setBackgroundColor(Color.argb(190, 0, 0, 0)) }
@@ -448,7 +451,12 @@ class LiveChannelsActivity : Activity() {
 
     private fun closePicker() {
         picker?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        val wasOpen = picker != null
         picker = null
+        if (wasOpen) {
+            pickerReturn?.takeIf { it.isAttachedToWindow }?.requestFocus()
+            pickerReturn = null
+        }
     }
 
     override fun onBackPressed() {
