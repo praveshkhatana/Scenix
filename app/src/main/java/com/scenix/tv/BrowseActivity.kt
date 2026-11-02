@@ -92,6 +92,14 @@ class BrowseActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // A section tab re-launches BrowseActivity with CLEAR_TOP, so Home is not underneath in
+        // the task stack and a bare BACK would leave the app. From a section, BACK walks to the
+        // unfiltered Home first; the next BACK from Home exits, as expected (owner, round 6).
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+            event.action == android.view.KeyEvent.ACTION_UP && section.isNotEmpty()) {
+            goTab("")
+            return true
+        }
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             lastKeyAt = android.os.SystemClock.elapsedRealtime()
             val adapter = browseAdapter
@@ -1534,7 +1542,8 @@ class BrowseActivity : Activity() {
                                     Intent(this@BrowseActivity, GamesActivity::class.java)
                                         .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
                                 )
-                            } else goTab(target)
+                            } else if (target == "home") goTab("")
+                            else goTab(target)
                         },
                         onProfile = {
                             startActivity(

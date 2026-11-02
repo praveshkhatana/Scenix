@@ -103,7 +103,19 @@ internal class KidsHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
-        leftGroup.addView(KidsKit.brandDisc(app, headerH))
+        // The brand disc is not just a mark: it doubles as the Home stop. Standing in a section,
+        // OK on it walks back to the unfiltered mix (owner, round 6: "there is no way to go back
+        // to home screen").
+        val brand = KidsKit.brandDisc(app, headerH).apply {
+            id = View.generateViewId()
+            isFocusable = true
+            isClickable = true
+            contentDescription = "Home"
+        }
+        Focus.attach(brand, brand, app, theme.px(999f), scale = false, elevate = false,
+            glowInset = theme.focusGlowInsetSm, control = true,
+            onClick = { callbacks.onSection("home") })
+        leftGroup.addView(brand)
 
         val pill = KidsKit.tabCapsule(app, theme.space("kidsPillH", 62f))
         val sections = listOf("Movies" to "movies", "Series" to "series", "Live" to "live")
@@ -116,6 +128,9 @@ internal class KidsHomeLayout(
         leftGroup.addView(pill, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, theme.space("kidsPillH", 62f),
         ).apply { marginStart = theme.space("kidsLogoGap", 33f) })
+        // LEFT from the first tab lands on the brand disc; RIGHT walks back onto the tabs.
+        brand.nextFocusRightId = pillStops.first().id
+        pillStops.first().nextFocusLeftId = brand.id
         header.addView(leftGroup, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
@@ -324,18 +339,24 @@ internal class KidsHomeLayout(
         if (fullArt) {
             card.addView(art, LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            // Soft ink washes top and bottom so printed text survives any backdrop.
+            // Soft ink washes top and bottom so printed text survives any backdrop. The washes
+            // carry the card's own corner radii: as plain rectangles they painted square grey
+            // wedges past the rounded art, visible as odd corners on light key art (owner,
+            // round 6).
+            val washR = theme.radius("card", 32f).toFloat()
             card.addView(View(context).apply {
                 background = android.graphics.drawable.GradientDrawable(
                     android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT))
+                    intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT)
+                ).apply { cornerRadii = floatArrayOf(washR, washR, washR, washR, 0f, 0f, 0f, 0f) }
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(150f)).apply {
                 gravity = Gravity.TOP
             })
             card.addView(View(context).apply {
                 background = android.graphics.drawable.GradientDrawable(
                     android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
-                    intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT))
+                    intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT)
+                ).apply { cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, washR, washR, washR, washR) }
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
                 gravity = Gravity.BOTTOM
             })

@@ -82,10 +82,12 @@ letter-spacing ([m] letter gaps ~10 px ref). Hero title bold; card B lockup cent
 
 `KidsKit` builders consume ONLY tokens from `Theme`; focus routing stays with the composition.
 
-1. `brandDisc(d)` — plateInk circle + white mark.
+1. `brandDisc(d)` — plateInk circle + white mark. The disc is a focusable stop, not decoration:
+   it doubles as the Home stop (round 6) — control halo, `onClick → onSection("home")`, LEFT
+   from the first tab pill lands on it, RIGHT walks back.
 2. `tabPill(segments, knob)` — plateInk capsule, h=tabPill; segments text segActive/white; searchKnob = knobYellow disc, black glyph, flush at the pill's right end (3 px inset).
 3. `profileStop(avatar)` — avatarDisc (page-ring 3) + plateInk pill h=profilePill: name bold white, sub quiet grey, chevron.
-4. `heroCardA(art,title,sub)` — photo full-bleed, radius 32; title white top-left, sub ink under it; playDisc bottom-left.
+4. `heroCardA(art,title,sub)` — photo full-bleed, radius 32; title white top-left, sub ink under it; playDisc bottom-left. The top/bottom ink-wash overlays carry the card's own cornerRadii — a square wash over rounded art painted grey wedges past the curve (owner round 6, "odd corners").
 6. `heroCardB(art,title)` — plate gradient, centred lockup, art bleeding from the RIGHT edge, playDisc bottom-left.
 7. `chip(label,icon)` — plateInk capsule, uniform width, white icon + white label.
 8. `tile(art,caption)` — tileFill plate r24, art fills, caption centred below.
@@ -115,6 +117,7 @@ Every number first from theme.json `anim`/`focus`.
 - [c] Rail tiles print a quiet meta sub-line ("New · year · match") under the caps caption; the mock shows names only. Data beats decoration here (information over decoration), kept in the pack's ink. — SUPERSEDED round 5: the meta lives ON the tile (NEW/match pill top-left, ★rating + cert corner top-right); only the name prints below.
 - [c] Round 5 owner asks, implemented: hero logo lockups (`item.logo` over the title slot, printed title as fallback); brand disc wears the Scenix wordmark drawable; avatar+name merged into one pill with a drawn chevron; chips shortened (`shortChipLabel` strips the hub's conversational prefaces, glyph box 44→token chipIcon 40) because 219-px capsules truncated to "Continue watchi…"; shelf header → rail gap trimmed via `spacing.railPadV` (Kids 24 — the glow there is the page's own colour family, so the sliver above the first row is invisible).
 - [c] Round 5 readability: settings rows fill `colors.listFill` #F9C406 (was the page's own colour — rows had no boundaries); player menu sheets use `colors.panelScrim` #FFF6DC (dark-ink text on dark was unreadable); every list row lifts by `focus.rowScale` with widened padding, and compact controls take the stroke-only halo (component §3.9).
+- [c] Round 6: the mock's brand disc is decoration; ours doubles as the HOME stop (the section pill has no Home tab and goTab's CLEAR_TOP leaves Home underneath, so the owner found "no way to go back to home screen"). LEFT from the first tab pill reaches it, OK walks to the unfiltered mix; BACK from a section now returns Home first instead of exiting the app (BrowseActivity.dispatchKeyEvent).
 
 ## 7. QA gates
 - `qa/kids/ref_grid.png` (50 px labelled grid over the reference) is the measurement sheet.
@@ -141,3 +144,7 @@ Owner round-5 list, verified on device (captures `qa/kids/r5-*.png`):
 - category tiles: "Drama/Comedy/Crime/…" labels paint over the gradient (root cause: overlays at elevation 0 buried under the elevation-12 framed photo — all overlays now ride elevation 14) ✓
 - settings/profiles: #F9C406 plates on the #FBD364 page read; focused row zooms 1.03 (pulled back from 1.06 — the plate carried the label past the screen edge; row padding widened for zooming packs) ✓
 - player menus: `colors.panelScrim` → #FFF6DC cream sheet (dark-ink text was unreadable on the dark scrim); focused dialog chip reads with glow ring + keyline ✓
+
+### Gate results — round 6 (2026-11-02, build md5 597660de6e3513ed56251d0d3bcff861, ui_zoom=1.3 functional)
+- Home affordance: Movies section → UP to pill → LEFT onto the brand disc (wordmark legible, keyline ring) → OK returns to the unfiltered Home mix (hero back to The Widower) ✓; BACK from Movies lands on Home, second BACK exits to the launcher ✓ (captures r6-homefocus.png, r6-backhome.png).
+- hero corners: Movies hero (Clayface, light art) top-left and bottom-right crops (r6-corner-tl.png, r6-corner-br.png) — washes follow the r32 curve, page colour shows through the corner, no grey wedges ✓.
