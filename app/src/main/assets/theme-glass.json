@@ -178,7 +178,8 @@
     "glass": 0,
     "glassPad": 0,
     "glowInset": 26,
-    "glowInsetSm": 14
+    "glowInsetSm": 14,
+    "glowAlpha": 6.5
   },
   "anim": {
     "cardFadeInMs": 220,
