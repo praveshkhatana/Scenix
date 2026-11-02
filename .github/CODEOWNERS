@@ -1,0 +1,28 @@
+# CODEOWNERS
+#
+# GitHub only *requests* review from these owners. To make the ownership
+# mandatory, enable "Require review from Code Owners" in the branch protection
+# rule or repository ruleset for main and games-mode. See SECURITY.md.
+
+# CI, scanning scripts, and this policy file.
+/.github/            @praveshkhatana
+/scripts/            @praveshkhatana
+/SECURITY.md         @praveshkhatana
+
+# Security-sensitive runtime code.
+/app/src/main/java/com/scenix/tv/core/  @praveshkhatana
+/hub/core/                              @praveshkhatana
+
+# Release and signing material. Nothing here should ever contain a real secret:
+# keystores and credentials must live in GitHub Actions secrets or an HSM.
+/release/            @praveshkhatana
+/app/release/        @praveshkhatana
+/app/build.gradle    @praveshkhatana
+/app/gradle.properties @praveshkhatana
+
+*.jks                @praveshkhatana
+*.keystore           @praveshkhatana
+*.p12                @praveshkhatana
+*.pfx                @praveshkhatana
+keystore.properties  @praveshkhatana
+signing.properties   @praveshkhatana

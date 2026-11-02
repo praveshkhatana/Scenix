@@ -1,0 +1,60 @@
+version: 2
+
+# Dependabot for the two build roots in this monorepo.
+#
+# The Gradle wrapper and build files live in app/, not at the repository root,
+# so the Gradle ecosystem points there. GitHub Actions updates cover the
+# workflows in .github/workflows/.
+#
+# npm is intentionally omitted: hub/ has no package.json (the hub uses Node
+# built-ins only). When one is added, uncomment the npm block below and commit
+# a lockfile so Dependabot can resolve the dependency graph.
+
+updates:
+  - package-ecosystem: gradle
+    directory: "/app"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: gradle
+    # These are deliberately pinned to the TV's toolchain and must be moved by
+    # hand with a build/test pass, not by an automated version bump.
+    ignore:
+      - dependency-name: "org.mozilla.geckoview:geckoview"
+      - dependency-name: "org.libtorrent4j:*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: actions
+
+  # Enable this only after hub/package.json and a lockfile exist.
+  # - package-ecosystem: npm
+  #   directory: "/hub"
+  #   schedule:
+  #     interval: weekly
+  #     day: monday
+  #     time: "06:00"
+  #     timezone: Etc/UTC
+  #   open-pull-requests-limit: 5
+  #   labels:
+  #     - dependencies
+  #     - security
+  #   commit-message:
+  #     prefix: npm
