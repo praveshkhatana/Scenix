@@ -114,9 +114,16 @@ private class AppleSceneSurface(private val view: HeroComponent) : HomeSurface {
 
     override fun setNextFocusUp(id: Int) = view.setNextFocusUp(id)
 
+    /**
+     * The strip is the natural re-entry point when it exists; a hero row with a single slide has
+     * no strip at all, and the Play action is then the only stop inside the billboard. Falling
+     * back to it is what keeps UP from the first shelf (and after a tab re-entry) alive.
+     */
     override fun focusEntry(activeIndex: Int): Boolean {
-        view.focusSelector(activeIndex)
-        return true
+        // Only fall back when there is genuinely no strip: a strip that exists but is still being
+        // laid out retries internally, and moving focus to Play here would race that retry.
+        if (view.hasSelector()) return view.focusSelector(activeIndex)
+        return view.playControl.requestFocus()
     }
 }
 

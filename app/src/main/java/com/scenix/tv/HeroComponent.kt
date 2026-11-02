@@ -354,12 +354,16 @@ internal class HeroComponent(
     /** The thumbnail at [index] is the equivalent of a carousel bullet, just much more useful. */
     fun selectorAt(index: Int): View? = selectorTiles.getOrNull(index)?.root
 
+    /** Whether this hero has a preview strip at all (it does not for a single-slide row). */
+    fun hasSelector(): Boolean = selectorTiles.isNotEmpty()
+
     /** Focus and reveal one slide selector without moving the outer RecyclerView. */
-    fun focusSelector(index: Int, tries: Int = 0) {
-        val tile = selectorAt(index) ?: return
+    fun focusSelector(index: Int, tries: Int = 0): Boolean {
+        val tile = selectorAt(index) ?: return false
         selectorScroll.scrollTo((tile.left - theme.px(24f)).coerceAtLeast(0), 0)
-        if (tile.requestFocus()) return
+        if (tile.requestFocus()) return true
         if (tries < 8) selectorScroll.postDelayed({ focusSelector(index, tries + 1) }, 32L)
+        return false
     }
 
     private fun syncSelectors(slides: List<Item>, activeIndex: Int) {

@@ -117,7 +117,14 @@ class BrowseActivity : Activity() {
             // content rail.
             if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
                 slides.isNotEmpty() && isInside(pillGroup, currentFocus)) {
-                focusFeatured(heroPos.coerceIn(0, slides.size - 1))
+                // Only step into the preview strip when it is really on screen. A pack whose hero
+                // row carries a single slide hides it, and routing DOWN into a GONE strip was a
+                // dead key: the viewer pressed down from the pill or Play and nothing moved.
+                if (hasHeroSelector()) {
+                    focusFeatured(heroPos.coerceIn(0, slides.size - 1))
+                } else {
+                    adapter?.heroPlay?.requestFocus()
+                }
                 return true
             }
             // The billboard itself needs to be a real carousel too.  Before this route existed,
@@ -167,10 +174,12 @@ class BrowseActivity : Activity() {
                             if (down) moveVertical(1, focus) else navAnchor?.requestFocus()
                             return true
                         }
-                        if (down && slides.isNotEmpty()) {
+                        if (down && hasHeroSelector()) {
                             focusFeatured(heroPos.coerceIn(0, slides.lastIndex))
                             return true
                         }
+                        // No preview strip to land on (a single featured title): DOWN is the
+                        // ordinary way out of the billboard and belongs to the first shelf.
                         moveVertical(if (down) 1 else -1, focus)
                         return true
                     }
@@ -1336,6 +1345,14 @@ class BrowseActivity : Activity() {
         }
         return null
     }
+
+    /**
+     * True when the hero actually exposes a preview strip with a tile for every slide. The strip
+     * is built only for a multi-slide hero, so a single-slide billboard must not pretend DOWN can
+     * enter it.
+     */
+    private fun hasHeroSelector(): Boolean =
+        slides.size > 1 && browseAdapter?.heroSelector?.visibility == View.VISIBLE
 
     /** Move focus to this structural Home surface's entry point for a slide. */
     private fun focusFeatured(pos: Int, tries: Int = 0) {
