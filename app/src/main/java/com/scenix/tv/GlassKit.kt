@@ -151,9 +151,15 @@ internal object GlassKit {
     }
 
     /**
-     * A feature plate: tinted gradient fill, hairline specular rim and an inner top sheen —
-     * never a drop shadow. Returns the plate; the caller fills it (title top, Play bottom, art
-     * bleeding from one edge) inside the rounded outline.
+     * A feature plate standing on the wall. Three SEPARATE material layers, in the order the
+     * reference shows them:
+     *  1. cast shadow OUTSIDE the surface — real elevation on the view (the parent chain must not
+     *     clip), which is also what the focus lift rides on (Focus adds translationZ);
+     *  2. the surface itself: the caller lays FULL-BLEED key art across the whole card and paints
+     *     [heroOverlay]'s tint wash over it (measured: the reference's artwork is continuous; the
+     *     tint is an overlay that fades clear, never a panel beside the image);
+     *  3. inner light: hairline specular rim + top sheen — these read as glass edges, never as the
+     *     depth cue. The tint fill below stays only as the art-not-loaded fallback.
      */
     fun plate(
         context: Context,
@@ -185,6 +191,9 @@ internal object GlassKit {
                 }
             }
             clipToOutline = true
+            // Layer 1: the surface casts a real shadow onto the wall. Elevation (px) comes from
+            // the pack; the system draws it outside the card bounds from the rounded outline.
+            elevation = theme.space("plateElevation", 16f).toFloat()
         }
         // The sheen is the liquid-glass tell: translucent white fading over the plate's top band.
         card.addView(View(context).apply {
@@ -194,6 +203,34 @@ internal object GlassKit {
             ).apply { cornerRadius = radiusPx.toFloat() }
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (heightPx * 0.45f).toInt()))
         return card
+    }
+
+    /**
+     * The wash that turns full-bleed art into the reference's hero: the card's tint at the left
+     * edge at measured alpha, linear to CLEAR at heroFadePct% of the width (so the subject on the
+     * right stays unobstructed), plus a bottom scrim that carries the copy and Play row. Drawn
+     * with exact stop positions — a plain 2-stop GradientDrawable would fade across the whole
+     * width and wash the artwork out.
+     */
+    fun heroOverlay(context: Context, app: AppContext, wash: Int): View {
+        val theme = app.theme
+        return object : View(context) {
+            private val paint = android.graphics.Paint()
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                val w = width.toFloat(); val h = height.toFloat()
+                if (w < 1f || h < 1f) return
+                val fade = theme.packInt("heroFadePct", 62).coerceIn(25, 95) / 100f
+                paint.shader = android.graphics.LinearGradient(
+                    0f, 0f, w, 0f, intArrayOf(wash, Color.TRANSPARENT),
+                    floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP)
+                canvas.drawRect(0f, 0f, w, h, paint)
+                paint.shader = android.graphics.LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.TRANSPARENT, theme.color("heroScrim", "rgba(6,16,30,0.50)")),
+                    floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP)
+                canvas.drawRect(0f, 0f, w, h, paint)
+            }
+        }
     }
 
     /** A dark disc Play control welded to a bold word — one component, both hero plates and Detail. */
@@ -229,23 +266,39 @@ internal object GlassKit {
             isFocusable = true
             isClickable = true
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            // Measured on the reference chip crop: the pictogram+label pair sits CENTERED in the
+            // chip, not set off the left padding — the left-set version read cramped.
+            gravity = Gravity.CENTER
             contentDescription = "Jump to $label"
-            setPadding(theme.px(26f), 0, theme.px(24f), 0)
+            setPadding(theme.px(18f), 0, theme.px(18f), 0)
             background = Views.rounded(
                 theme.color(if (active) "chipFillActive" else "chipFill",
                     if (active) "rgba(255,255,255,0.22)" else "rgba(255,255,255,0.10)"),
                 radius, theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"),
             )
+            // Cast shadow separate from the rim, like every other Glass surface.
+            elevation = theme.space("chipElevation", 6f).toFloat()
         }
+        // Measured: reference glyphs are filled pictograms ~30px tall, far heavier than a text
+        // dot; the glyph size is a pack token (canvas px) so the weight is tunable with the
+        // rest of the pack.
+        val glyphSize = theme.packInt("chipGlyph", 32).toFloat()
         val glyph = when {
+            label.contains("Continue", true) -> "\u25B6\uFE0E"
             label.contains("Trending", true) -> "\u2197"
             label.contains("New", true) -> "\u2726"
-            label.contains("Top", true) || label.contains("rated", true) -> "\u2605"
-            label.contains("Language", true) || label.contains("Hindi", true) -> "\u2691"
-            else -> "\u25CF"
+            label.contains("Top", true) || label.contains("rated", true) ||
+                label.contains("Acclaimed", true) -> "\u2605"
+            label.contains("Recommended", true) || label.contains("More like", true) -> "\u2727"
+            label.contains("My List", true) -> "\uFF0B"
+            label.contains("Language", true) || label.contains("Hindi", true) ||
+                label.contains("Tamil", true) || label.contains("Telugu", true) -> "\u2691"
+            label.contains("Horror", true) -> "\u2620"
+            label.contains("Romance", true) -> "\u2665"
+            label.contains("Family", true) || label.contains("Kids", true) -> "\u263A"
+            else -> "\u25C6"
         }
-        chip.addView(Views.text(app, "meta", 26f, Color.WHITE, glyph, bold = true),
+        chip.addView(Views.text(app, "meta", glyphSize, Color.WHITE, glyph, bold = true),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         chip.addView(Views.text(app, "chip", 21f, Color.WHITE, label, bold = true, maxLines = 1),

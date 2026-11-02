@@ -40,8 +40,13 @@ Interactive states (reference shows default only; others inferred → deviation 
 ### Color
 | Token | Value | Src |
 |---|---|---|
-| wallA / wallB (full-page wash, TL→BR base) | #819DA9 / #A59D9A | m ((129,157,169)→(165,157,154) corner-sampled) |
-| wallBlobs (wash is photographic, not flat — field sample 2026-11-02: top cool band, dark left rim, light seam drift, warm bokeh low) | 50,5,90:#465A69:0.22;-8,55,45:#3A4A55:0.20;108,25,42:#2E3E4A:0.25;52,66,55:#BEC8D2:0.15;40,92,28:#FFEFC8:0.35;18,97,22:#F2EDD9:0.30;80,84,22:#FFBE78:0.28;30,83,20:#96BEE6:0.22 | m (10×7 field sample vs base gradient deltas; right rim + lower-left cream added after second band audit) |
+| wallA / wallB (full-page wash, TL→BR base) | #859DA9 / #A5A5A7 | m (13×8 grid sample 2026-11-02: left/top uniform #849CA8 cool; right edge drifts to neutral #A5A5A7 — the previous warm #A59D9A was off-hue; the reference frame's black rounded-corner mask must be excluded when sampling edges) |
+| wallBlobs (soft light-field over the base; the reference wash is smooth-photographic — strong blobs read as banding) | 50,5,90:#465A69:0.20;-8,55,45:#3A4A55:0.16;108,25,42:#2E3E4A:0.22;52,66,55:#BEC8D2:0.12;40,92,28:#D8C8B8:0.18;18,97,22:#C9C4B8:0.15;80,84,22:#C9B8A4:0.15;30,83,20:#A9B8C8:0.12 | e (alphas halved 2026-11-02: the first pass's saturated warm bokeh was inferred from poster art bleeding into the sample region; the wall itself keeps only a faint warm drift) |
+| heroWashDeep / heroWashLight (OVERLAY painted on full-bleed hero art, not a panel) | rgba(34,90,146,0.95) / rgba(126,156,203,0.86) | m (fade scan of reference card A at y=190: solid rgb(34,91,145)→rgb(42,97,149) to 40%, blended 50–65%, art unobstructed from ~65%) |
+| heroFadePct (wash reaches clear at % of card width) | 62 | m (same scan) |
+| heroScrim (bottom wash under copy/Play, blue not black) | rgba(34,90,146,0.35) | m (reference bottom band #406E99 is LIGHTER than mid-card, i.e. a blue wash; a dark scrim was wrong) |
+| plateElevation / posterElevation / chipElevation (cast shadow, canvas px) | 16 / 10 / 6 | e (shadow strength eyeballed against reference card separation from wall) |
+| chipGlyph (chip pictogram size, canvas px) | 34 | m (~24 @ref ×1.417) |
 | pill (nav bg) | rgba(8,16,28,0.86) sampled #0A1420 | m |
 | pillActive (segment fill) | rgba(255,255,255,0.08) — no bright fill; active word = brighter ink | m (zoom: (24,34,48) vs pill (6,17,31)) |
 | inkOnActiveSeg | #FFFFFF | m |
@@ -81,17 +86,36 @@ height 104 (74@ref), gap 34; rail title top 772; poster 283×397 gap 21 radius 2
 pill→hero gap 44, hero→chip gap 64; rowTitle→poster gap 21.
 
 ### Radius / elevation
-card(rail)=18, hero=26, chip/nav=999. Elevation: cards use 1px specular rim + inner top sheen
-(gradient rgba(255,255,255,.16)→0 over top 45%), NOT drop shadows; focus adds soft shadow.
+card(rail)=18, hero=26, chip/nav=999. Elevation: surfaces carry real cast shadows
+(plateElevation 16 / posterElevation 10 / chipElevation 6 canvas px — system shadows from the
+rounded outlines, separate from the inner rim + top sheen rgba(255,255,255,.16)→0 over top
+45%); focus lift rides translationZ on the same outline. Material truth (platform research
+2026-11-02): Android has NO public backdrop blur before API 36 — View.setRenderEffect (API 31)
+blurs a view's OWN content, not what is behind it. The pack's "glass" is therefore: real cast
+shadow + translucent tinted surface + specular rim + sheen (IMPLEMENTED), and frosted backdrop
+blur of the wall behind surfaces is APPROXIMATED by the tinted wash over the wall, not by a
+blur pass.
 
 ## 3. Component rules (glass-specific)
 
 - Nav pill: centred, h62, padding 6; segments text-only; active segment light-filled pill with
   dark ink (measured); search welded at end as light circle 46 with dark glyph.
-- Hero card: gradient tint plate + rim + sheen; title anchored TOP-left pad 40; Play row anchored
-  BOTTOM-left: disc 54 + label; art occupies right 42–58% of each card bleeding to edge,
-  clipped by card outline. Card A narrower than B (7:10) — measured asymmetry.
-- Chips: frost fill + hairline rim, icon glyph + label, height 78; never opaque.
+- Hero card: ONE continuous composition (owner ruling 2026-11-02, after the panel+image seam was
+  rejected): full-bleed key art (centerCrop) across the WHOLE card; the card's tint is an OVERLAY
+  painted over the art — near-opaque wash at the left edge fading clear at heroFadePct=62% of the
+  width (measured scan of reference card A at y=190: solid rgb(34,91,145) to 40%, blended 50–65%,
+  unobstructed art from ~65% right) — plus a bottom wash rgba(34,90,146,0.35) under the copy;
+  title anchored TOP-left pad 40, Play row BOTTOM-left: disc 54 + label, over the scrim.
+  Card A narrower than B (7:10) — measured asymmetry.
+- Depth layers are SEPARATE: outer cast shadow = real view elevation (plate 16, poster 10,
+  chip 6 canvas px — system shadow from the rounded outline, drawn OUTSIDE the surface; the
+  focus lift rides on the same channel via translationZ); inner light = 1px specular rim +
+  top sheen. Rim ≠ shadow; the first pass's "no drop shadow" rule was an unapproved substitution
+  and is superseded.
+- Chips: frost fill + hairline rim, pictogram glyph (chipGlyph 34 canvas px) + label CENTERED
+  in the chip (measured on the reference crop — left-set content read cramped); height 78;
+  never opaque. Labels keep the shelf's leading promise (Continue / Recommended / More like /
+  Top 10 / Trending / Acclaimed / Just added — "Because you" was rejected as not meaningful).
 - Rail captions: name then "● rating · year" — dot is accent token, rating number light,
   year in captionSub (reference meta line). Poster art bare (no scrim) on glass wall.
 - Focus language = `glow`: pale-blue halo plates (#CFE3F5) + scale 1.03, 150 ms; controls get
@@ -107,6 +131,10 @@ card(rail)=18, hero=26, chip/nav=999. Elevation: cards use 1px specular rim + in
 
 ## 5. Deviation log
 
+Logging a deviation does NOT approve it. Each entry stands as proposed until the owner signs it;
+entries the owner has rejected are marked UNRESOLVED and the implementation must not cite the
+log as cover.
+
 | Item | Value used | Src | Rationale |
 |---|---|---|---|
 | D1 vertical reflow | hero 397 (remeasured), rail captions brought above fold via host scroll | chosen | reference page scrolls (aspect 1.40); TV 16:9 fold must show nav+hero+chips+first rail |
@@ -118,14 +146,27 @@ card(rail)=18, hero=26, chip/nav=999. Elevation: cards use 1px specular rim + in
 | Motion values | timing table §4 | chosen | still reference |
 | D6 chip labels | conversational tail cut ("Top 10 in this house"→"Top 10", "Browse by category"→"Browse"), cap 22 | chosen | equal-width frost chips (≈228px) truncate hub shelf names mid-word; the chip keeps its leading promise and still names its shelf |
 | Home pill segment | added as first word, active on unfiltered home | measured | reference pill shows Home lit; section switches rebuild the page so the pill paints where you stand |
-| D7 wall texture floor | wash = gradient + 8 soft blobs, not per-pixel grain | chosen | reference wall is a photographic surface (droplet/bokeh grain, ±15 local deltas); blobs match its measured light field (top cool band, left rim, seam drift, warm bokeh); per-pixel grain would mean copying its asset. Band audit 2026-11-02: chrome-masked diff 22.2%, residual concentrated in wall grain only |
+| D7 wall residual | wash = gradient + 8 soft blobs, not per-pixel grain | UNRESOLVED (owner: the 2026-11-02 "residual = wall grain" attribution was made with the hero seam masked out and was never isolated) | Honest re-attribution 2026-11-02 (NO content masked): full-frame pixel diff is meaningless on content bands — the hub features DIFFERENT titles than the reference (Blue Sword vs The Widower), so heroA/heroB/rail deltas measure artwork, not material. Wall-only bands (left gutter/top strip) now sit at d7–17 mean after the wallA/wallB retune; the reference frame's black rounded-corner mask pollutes edge columns and must be excluded. "Texture floor" claim WITHDRAWN until a same-title capture isolates it |
 
-## 6. QA gates (run 2026-11-02, emulator scenix-glass/5558, ui_zoom 1.0)
+## 6. QA gates (three gates kept SEPARATE; run 2026-11-02, emulator scenix-glass/5558, ui_zoom 1.0)
 
-Landmark audit — pass (canvas px vs contract): pill 748–1171 w=424 (target 425) ✓; hero top 141 (142) ✓;
-chips y 603–706 h=104, widths 225–228 equal ✓; rail title top ~778 (772, +6 boundary) ✓;
-wall BR (163,156,152) ≈ measured (165,157,154) ✓; pill centre x 960 ✓.
-Chrome-masked diff (art+rail+avatar masked): 22.2%; residual = wall grain band (see D7).
+GEOMETRY gate — pass (canvas px vs contract): pill 748–1171 w=424 (target 425) ✓; hero top 141 (142) ✓;
+chips y 603–706 h=104, widths 225–228 equal ✓; rail title top ~778 (772, +6 boundary) ✓; pill centre x 960 ✓.
+Geometry passing is NOT visual fidelity.
+
+APPEARANCE gate — INCOMPLETE, judged on specimens, no masks over the evaluated effect:
+- Hero: 3-way whole-card crop (reference / pre-fix seam version / current) — continuous art +
+  left→right wash + blue bottom wash now match the reference's composition; the seam defect is
+  fixed. Residual: wash fade is eyeball-close, not per-pixel (different artwork makes pixel diff
+  on content meaningless — see D7).
+- Material: cast shadows visible OUTSIDE the surfaces (plates, posters, chips) — separate from
+  rim/sheen; backdrop BLUR is approximation, stated in §Radius/elevation (no API pre-36).
+- Chips: centered icon+label, meaningful labels, chipGlyph 34; residual: reference pictograms are
+  filled colour icons, mine are monochrome text glyphs (deviation, NOT approved).
+Full-frame diff number is reported but carries no acceptance weight on content bands (D7).
+
+INTERACTION gate — captured 2026-11-02: unfocused-vs-focused poster pair
+(`/tmp/spec_poster_focus.png`: top row normal, bottom row halo + dimmed neighbours, cast shadow
+intact on both states) + screenrecord of the focus walk (`/tmp/focus_walk2.mp4`); pill walk and
+chip-jump walks previously verified. Glow is not clipped (railGlowPad 26 holds halo+shadow).
 Evidence: `qa/glass/impl_home.png`, `qa/glass/ref_169.png`, `qa/glass/heatmap.png`.
-Interaction: pill walk Home→Movies (PIN-gated section opens), CENTER on active Home scrolls to top;
-chips rename check (Continue / Because you / My List / More like / Top 10 / Trending / Acclaimed — no mid-word truncation).

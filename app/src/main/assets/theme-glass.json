@@ -51,8 +51,8 @@
     "numeralStrokeRed": "#FF453A",
     "matBorder": "rgba(255,255,255,0.28)",
     "hdInk": "#F2F3F5",
-    "wallA": "#819DA9",
-    "wallB": "#A59D9A",
+    "wallA": "#859DA9",
+    "wallB": "#A5A5A7",
     "pill": "rgba(8,16,28,0.86)",
     "pillActive": "rgba(255,255,255,0.08)",
     "segInk": "#FFFFFF",
@@ -74,7 +74,10 @@
     "captionInk": "#EAF1F6",
     "captionSub": "#A9BFCB",
     "listFill": "rgba(255,255,255,0.62)",
-    "listStroke": "rgba(255,255,255,0.90)"
+    "listStroke": "rgba(255,255,255,0.90)",
+    "heroWashDeep": "rgba(34,90,146,0.95)",
+    "heroWashLight": "rgba(126,156,203,0.86)",
+    "heroScrim": "rgba(34,90,146,0.35)"
   },
   "spacing": {
     "gutter": 57,
@@ -104,7 +107,10 @@
     "listItem": 96,
     "listGap": 14,
     "railTopGap": 64,
-    "railGlowPad": 26
+    "railGlowPad": 26,
+    "plateElevation": 16,
+    "chipElevation": 6,
+    "posterElevation": 10
   },
   "radii": {
     "card": 21,
@@ -291,6 +297,8 @@
     "stage": "off",
     "rank": "outline",
     "featuredMarker": "rim",
-    "wallBlobs": "50,5,90:#465A69:0.22;-8,55,45:#3A4A55:0.20;108,25,42:#2E3E4A:0.25;52,66,55:#BEC8D2:0.15;40,92,28:#FFEFC8:0.35;18,97,22:#F2EDD9:0.30;80,84,22:#FFBE78:0.28;30,83,20:#96BEE6:0.22"
+    "wallBlobs": "50,5,90:#465A69:0.20;-8,55,45:#3A4A55:0.16;108,25,42:#2E3E4A:0.22;52,66,55:#BEC8D2:0.12;40,92,28:#D8C8B8:0.18;18,97,22:#C9C4B8:0.15;80,84,22:#C9B8A4:0.15;30,83,20:#A9B8C8:0.12",
+    "heroFadePct": 62,
+    "chipGlyph": 34
   }
 }

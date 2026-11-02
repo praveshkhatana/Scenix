@@ -186,13 +186,28 @@ internal class GlassHomeLayout(
         cardB.nextFocusUpId = pillStops.first().id
     }
 
-    /** A plate filled from GlassKit parts: title top, Play bottom-left, art bleeding right. */
+    /**
+     * A plate composed the way the reference crop measures it: ONE continuous artwork filling
+     * the whole card (centerCrop — never an image panel beside a color panel), the tint wash
+     * painted OVER the art with a left-to-right fade clear at ~62% width, and the copy column
+     * floated on top of the art, title top-left and Play pinned bottom-left over the scrim.
+     */
     private fun makePlate(deep: Boolean, radius: Int): FrameLayout {
         val card = GlassKit.plate(context, app, deep, radius, heroH)
-        val textWeight = if (deep) 58f else 40f
-        val split = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
+        // Continuous artwork: the full card, so the surface reads as one composition.
+        val art = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            tag = "art"
         }
+        card.addView(art, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // The measured overlay: near-opaque tint at the left edge fading to clear at
+        // heroFadePct of the width, plus the bottom scrim under the Play row.
+        card.addView(GlassKit.heroOverlay(context, app,
+            theme.color(if (deep) "heroWashDeep" else "heroWashLight",
+                if (deep) "rgba(34,90,146,0.88)" else "rgba(126,156,203,0.80)")),
+            LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // Copy floats over the faded half: title top-left, Play pinned bottom-left.
         val textCol = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(theme.px(50f), theme.px(40f), theme.px(12f), theme.px(42f))
@@ -202,21 +217,11 @@ internal class GlassHomeLayout(
         title.tag = "title"
         textCol.addView(title, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        // The copy column holds the line to its bottom: title at top, Play pinned below it.
         textCol.addView(View(context), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         textCol.addView(GlassKit.playRow(context, app), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        split.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, textWeight))
-        val artBox = FrameLayout(context)
-        val art = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            clipToOutline = true
-            tag = "art"
-        }
-        artBox.addView(art, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        split.addView(artBox, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 100f - textWeight))
-        card.addView(split, LayoutParams(
+        card.addView(textCol, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         return card
     }
@@ -251,7 +256,7 @@ internal class GlassHomeLayout(
     private fun chipLabel(raw: String): String {
         var s = raw.trim().removePrefix("New on ")
         if (s.contains("continue", true)) s = "Continue"
-        if (s.contains("because you", true)) s = "Because you"
+        if (s.contains("because you", true)) s = "Recommended"
         if (s.contains("more like", true)) s = "More like"
         if (s.contains("acclaim", true)) s = "Acclaimed"
         s = s.replace(Regex("(?i)^(\\S+)\\s(movies|classics|cinema|films|shows|collection|specials)\\b.*"), "$1")

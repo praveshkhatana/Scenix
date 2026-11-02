@@ -1748,6 +1748,9 @@ class BrowseActivity : Activity() {
                 // The plate sits at elevation 10 to cast its glow; the photo must sit above it or
                 // Android's z-order paints the plate over the artwork.
                 if (tilePlate != 0) elevation = theme.px(12f).toFloat()
+                // Glass tiles are bare art plates: the pack's depth cue is a real cast shadow
+                // under the rounded outline, separate from the focus glow painted behind.
+                if (glass) elevation = theme.space("posterElevation", 10f).toFloat()
                 outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) {
                         outline.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 6f).toFloat())
@@ -1765,6 +1768,8 @@ class BrowseActivity : Activity() {
                         GradientDrawable.Orientation.BOTTOM_TOP,
                         intArrayOf(Color.argb(if (glass) 190 else 235, 0, 0, 0), Color.TRANSPARENT)
                     )
+                    // Parents paint by Z: the elevated glass art would cover a Z-0 shade.
+                    if (glass) elevation = theme.space("posterElevation", 10f) + 2f
                 }
                 card.addView(shade, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
                     gravity = Gravity.BOTTOM
