@@ -111,8 +111,20 @@ class GamesActivity : Activity() {
         }
         Focus.attach(back, back, app, theme.px(9f), scale = false, elevate = false)
         bar.addView(back, LinearLayout.LayoutParams(theme.px(34f), theme.px(34f)))
-        bar.addView(Views.text(app, "rowTitle", 26f, theme.ink, "Games", bold = true).apply {
-            setPadding(theme.px(26f), 0, 0, 0)
+        // The wordmark, not styled text: this bar is a brand placement like every other, and its
+        // letterforms must not depend on the font the television happens to carry.
+        val brand = ImageView(this).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            setColorFilter(theme.brand, android.graphics.PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_START
+            adjustViewBounds = true
+            contentDescription = "Scenix"
+        }
+        bar.addView(brand, LinearLayout.LayoutParams(theme.px(80f), theme.px(28f)).apply {
+            marginStart = theme.px(26f)
+        })
+        bar.addView(Views.text(app, "meta", 17f, theme.ink2, "Games", bold = true).apply {
+            setPadding(theme.px(18f), 0, 0, 0)
         })
         return bar
     }

@@ -862,7 +862,7 @@ class BrowseActivity : Activity() {
             val bar = FrameLayout(this)
             bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
             bar.addView(brand, FrameLayout.LayoutParams(
-                theme.px(122f), theme.px(28f)
+                theme.px(80f), theme.px(28f)
             ).apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
                 leftMargin = theme.gutter
