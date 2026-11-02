@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.Views
 
 /** The native front door: pick a person before Browse draws a shelf. PINs are checked by the hub. */
@@ -26,6 +27,21 @@ class ProfilesActivity : Activity() {
     private lateinit var profileId: String
     private lateinit var row: LinearLayout
     private lateinit var status: TextView
+    private lateinit var heading: TextView
+    private lateinit var scroller: HorizontalScrollView
+    /**
+     * The gate's own front door when the hub cannot be reached. A saved address that no longer
+     * answers used to leave this screen with no focusable control at all: no household, no Edit
+     * profiles (that needs the hub too) and every D-pad press swallowed while the row waited.
+     * These two actions are local — they never ask the unreachable hub for anything.
+     */
+    private lateinit var recovery: LinearLayout
+    private var recoveryAddress: TextView? = null
+    private var recoveryDetail: TextView? = null
+    private var hubAddressButton: View? = null
+    /** True while the failure panel is up, so the gate does not eat remote keys meant for it. */
+    private var recovering = false
+    private var loading = false
     /** Kept out of the initial focus graph until the household faces have arrived. */
     private var manageProfilesButton: View? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
@@ -84,7 +100,8 @@ class ProfilesActivity : Activity() {
         manageProfilesButton = manage
         head.addView(manage)
         root.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(Views.text(app, "h1", 52f, app.theme.ink, "Who's watching?", bold = true),
+        heading = Views.text(app, "h1", 52f, app.theme.ink, "Who's watching?", bold = true)
+        root.addView(heading,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = app.theme.px(38f)
             })
@@ -93,7 +110,7 @@ class ProfilesActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val scroller = HorizontalScrollView(this).apply {
+        scroller = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             isFillViewport = true
             // The strip is only a viewport for profile tiles. If it can take focus itself Android
@@ -109,17 +126,162 @@ class ProfilesActivity : Activity() {
         })
         status = Views.text(app, "sub", 22f, app.theme.ink2, "Reading the household…", gravity = Gravity.CENTER)
         root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(64f)))
+        recovery = buildRecovery()
+        recovery.visibility = View.GONE
+        root.addView(recovery, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         load()
     }
 
+    /**
+     * Coming back from the setup page (or another app) is a fresh chance to reach the hub. A door
+     * that only retried on launch would make "Change hub address → back" feel broken.
+     */
+    override fun onResume() {
+        super.onResume()
+        if (recovering && !loading) load()
+    }
+
+    override fun onDestroy() {
+        scroller.removeCallbacks(autoRetry)
+        super.onDestroy()
+    }
+
+    /**
+     * The screen a hub that cannot be reached deserves: what happened, which address was tried, and
+     * the two things that can fix it without a network round trip. The address action opens the
+     * same native setup page a brand-new TV sees ([MainActivity] with `setup`), where the saved
+     * address is prefilled and a LAN search is running — that page is the only hub editor that
+     * works while the hub itself is down.
+     */
+    private fun buildRecovery(): LinearLayout {
+        val theme = app.theme
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(theme.px(64f), 0, theme.px(64f), theme.px(40f))
+        }
+        panel.addView(Views.text(app, "h2", 34f, theme.ink, "Can't reach the hub", bold = true, gravity = Gravity.CENTER))
+        val address = Views.text(app, "sub", 23f, theme.ink2, "", gravity = Gravity.CENTER)
+        panel.addView(address, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(18f) })
+        val hint = Views.text(
+            app, "sub", 20f, theme.ink3,
+            "Check that the hub is running and that this TV is on the same network, then try again.",
+            gravity = Gravity.CENTER, maxLines = 3,
+        )
+        panel.addView(hint, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(10f) })
+
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        // Two tvOS-style pills. The ring is drawn on a wrapper with a hair of inset, because a
+        // white keyline painted on top of a white primary fill is no focus cue at all.
+        fun pill(label: String, primary: Boolean, startMargin: Int, onClick: () -> Unit): View {
+            val wrapper = FrameLayout(this).apply {
+                setPadding(theme.px(3f), theme.px(3f), theme.px(3f), theme.px(3f))
+            }
+            val button = Views.text(
+                app, "button", 21f,
+                if (primary) theme.onBrand else theme.ink,
+                label, bold = true, gravity = Gravity.CENTER,
+            )
+            button.setPadding(theme.px(26f), theme.px(12f), theme.px(26f), theme.px(12f))
+            button.background = if (primary) Views.rounded(theme.brand, theme.radius("button", 6f))
+                else Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            button.isFocusable = true
+            button.isClickable = true
+            button.contentDescription = label
+            button.setOnClickListener { onClick() }
+            Focus.attach(button, wrapper, app, theme.radius("button", 6f), scale = false, elevate = false)
+            wrapper.addView(button, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+            buttons.addView(wrapper, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = startMargin })
+            return button
+        }
+        hubAddressButton = pill("Change hub address", primary = true, startMargin = 0) {
+            // The setup page is local: it reads preferences and the LAN, never the dead hub.
+            startActivity(Intent(this, MainActivity::class.java).putExtra("setup", true))
+        }
+        pill("Try again", primary = false, startMargin = theme.px(20f)) { load() }
+        panel.addView(buttons, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = theme.px(30f)
+        })
+
+        // Keep the two hidden lines addressable by showFailure().
+        recoveryAddress = address
+        recoveryDetail = hint
+        return panel
+    }
+
+    /** Swap the household strip for the recovery panel (and back) without leaving a blank page. */
+    private fun showFailure(error: String?) {
+        recovering = true
+        loading = false
+        profiles = emptyList()
+        row.removeAllViews()
+        scroller.visibility = View.GONE
+        heading.visibility = View.GONE
+        status.visibility = View.GONE
+        recovery.visibility = View.VISIBLE
+        recoveryAddress?.text = HubEndpoint.base(this)
+        recoveryDetail?.text = error ?: "The hub is not answering"
+        // A cold launch begins in touch mode; a programmatic request only lands on a view that
+        // accepts touch-mode focus. This is the same rule the profile tiles follow.
+        hubAddressButton?.let { button ->
+            button.isFocusableInTouchMode = true
+            button.post { if (!isFinishing && !isDestroyed) button.requestFocus() }
+        }
+        // Neither household action can work without the hub, and a visible-but-dead "Edit
+        // profiles" reads as a bug. The recovery panel owns the screen until the hub answers.
+        manageProfilesButton?.isFocusable = false
+        manageProfilesButton?.isFocusableInTouchMode = false
+        manageProfilesButton?.visibility = View.GONE
+        // The hub may come back on its own (the watcher retries every ten seconds). Do not leave
+        // the viewer staring at a stale error: re-read quietly, and the panel disappears by itself.
+        scroller.removeCallbacks(autoRetry)
+        scroller.postDelayed(autoRetry, 10_000L)
+    }
+
+    private fun showHousehold() {
+        recovering = false
+        scroller.removeCallbacks(autoRetry)
+        recovery.visibility = View.GONE
+        scroller.visibility = View.VISIBLE
+        heading.visibility = View.VISIBLE
+        status.visibility = View.VISIBLE
+        manageProfilesButton?.visibility = View.VISIBLE
+    }
+
+    /** A quiet re-read while the failure panel is up. Never stacks a second request on top. */
+    private val autoRetry = object : Runnable {
+        override fun run() {
+            if (!recovering || isFinishing || isDestroyed) return
+            load()
+        }
+    }
+
     private fun load() {
+        if (loading) return
+        loading = true
         api.profiles { list, error ->
             if (isFinishing || isDestroyed) return@profiles
+            loading = false
             if (list == null) {
-                status.text = error ?: "The hub is not answering"
+                showFailure(error)
                 return@profiles
             }
+            showHousehold()
             profiles = list
             status.text = ""
             row.removeAllViews()
@@ -195,7 +357,7 @@ class ProfilesActivity : Activity() {
                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
                 android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                 android.view.KeyEvent.KEYCODE_ENTER,
-            )
+            ) && !recovering
         ) {
             // The first remote key can arrive while the Hub request is still inflating the row.
             // In that brief window Android has no visible target, but the old implementation still

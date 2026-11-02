@@ -127,7 +127,7 @@ object PairingScreen {
         }
         infoRow(
             ctx, col,
-            "On its own this TV plays direct HTTP links \u2014 no torrents, no live TV. What it can show comes from addons you add in Settings.",
+            "On its own this TV plays direct HTTP links \u2014 no P2P copies, no live TV. What it can show comes from addons you add in Settings.",
         )
 
         // A screen that opens onto an empty list is a screen that looks broken, so the first render
