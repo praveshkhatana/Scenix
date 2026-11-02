@@ -1595,10 +1595,12 @@ class BrowseActivity : Activity() {
                     setItemViewCacheSize(16)
                     itemAnimator = null
                     isNestedScrollingEnabled = false
-                    // 44px of clear space lets a lifted, glowing lockup remain fully visible;
-                    // the former 18px top inset clipped focus so it looked like an underline.
-                    // A pack whose halo reaches further (the Kids bands) gets that much more.
-                    val railPadV = maxOf(theme.px(44f), theme.focusGlowInset + theme.px(12f))
+                    // Clear space so a lifted, glowing lockup stays fully visible; a pack whose
+                    // halo reaches further gets more. The Kids stage trims this to pull the tiles
+                    // up under their title (owner round 5: "reduce gap in between title and row
+                    // tiles") — its glow is the page's own colour family, so the sliver it gives
+                    // up above the top row is invisible there.
+                    val railPadV = theme.space("railPadV", 44f)
                     setPadding(theme.gutter, railPadV, theme.gutter, railPadV)
                     clipToPadding = false
                     clipChildren = false
@@ -1903,6 +1905,14 @@ class BrowseActivity : Activity() {
                 }
                 card.addView(slideState, markerLayout)
             }
+            if (tilePlate != 0) {
+                // On a framed tile the photo itself rides above the opaque plate; every overlay —
+                // badge, rating corner, rank numeral, genre label, logo, playhead — must ride above
+                // the photo or Android's z-order buries it under the plate (owner round 5: category
+                // tiles rendered blank, shelf badges never showed).
+                for (v in listOf(badge, corner, num, chevron, logo, progress))
+                    v.elevation = theme.px(14f).toFloat()
+            }
             val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideState, imdb, cert, corner, chevron)
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
                 glowInset = glowPad,
@@ -1939,10 +1949,14 @@ class BrowseActivity : Activity() {
             }
             holder.chevron.visibility = View.GONE
             if (featured) holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID
+            // A square framed tile (the Kids stage) wears its facts ON the art like every other
+            // card pack — a NEW pill and the rating corner — while its name stays printed below
+            // (owner round 5). Scene packs still keep the meta line under the artwork instead.
+            val onTileFacts = below && poster && tileSquare
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
-            holder.sub.visibility = if (below) View.VISIBLE else View.GONE
-            if (below) {
+            holder.sub.visibility = if (below && !onTileFacts) View.VISIBLE else View.GONE
+            if (below && !onTileFacts) {
                 val sub = ArrayList<String>()
                 // Scene cards put their facts below the artwork; overlay and glass cards use the
                 // on-art badge/corner treatment instead. This is a card-layout decision, not a
@@ -1961,7 +1975,7 @@ class BrowseActivity : Activity() {
             holder.logo.visibility = View.GONE
             holder.logo.tag = item.identity + ":logo"
             val imdbR = if (item.rating > 0) String.format(java.util.Locale.US, "★ %.1f", item.rating) else ""
-            if (below) {
+            if (below && !onTileFacts) {
                 // Scene lockups keep metadata under the image, not as competing on-art badges.
                 holder.imdb.visibility = View.GONE
                 holder.cert.visibility = View.GONE
@@ -1975,7 +1989,7 @@ class BrowseActivity : Activity() {
                     if (imdbR.isNotEmpty() || item.maturity.isNotBlank()) View.VISIBLE else View.GONE
             }
             val facts = ArrayList<String>()
-            if (!below) {
+            if (!below || onTileFacts) {
                 if (item.isNew) facts.add("NEW")
                 if (item.match > 0) facts.add("${item.match}% match")
             }

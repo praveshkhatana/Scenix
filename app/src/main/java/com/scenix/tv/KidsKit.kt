@@ -32,13 +32,21 @@ internal object KidsKit {
 
     private fun theme(app: AppContext) = app.theme
 
-    /** Black brand disc with its white mark — the reference's (73,62)-(183,172) circle. */
-    fun brandDisc(app: AppContext, d: Int, mark: String): TextView =
-        Views.text(app, "nmark", 40f, Color.WHITE, mark, bold = true, gravity = Gravity.CENTER)
-            .apply {
-                background = Views.rounded(theme(app).color("plateInk", "#050505"), theme(app).px(999f))
-                layoutParams = LinearLayout.LayoutParams(d, d)
-            }
+    /** Black brand disc carrying the real Scenix wordmark — owner round 5: no letter "S". */
+    fun brandDisc(app: AppContext, d: Int): FrameLayout {
+        val t = theme(app)
+        return FrameLayout(app.app).apply {
+            background = Views.rounded(t.color("plateInk", "#050505"), t.px(999f))
+            addView(ImageView(app.app).apply {
+                setImageResource(R.drawable.scenix_wordmark)
+                setColorFilter(Color.WHITE)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                setPadding(t.px(18f), t.px(18f), t.px(18f), t.px(18f))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT))
+            layoutParams = LinearLayout.LayoutParams(d, d)
+        }
+    }
 
     /** The black tab capsule: a rounded plate the segment stops and the search knob weld into. */
     fun tabCapsule(app: AppContext, h: Int): LinearLayout {
@@ -75,27 +83,17 @@ internal object KidsKit {
     }
 
     /**
-     * The household cluster's shape from the reference: an avatar disc standing on the page
-     * (centre (1795,114) d=80 → 64), a narrow gap, then the black name capsule (250×80 → h64).
-     * The reference's yellow bell disc has no slot here: this app has no notifications, and an
-     * icon that lies about a feature is worse than empty space (owner rule).
+     * The ONE household element (owner round 5: avatar and name combined): the face disc welds
+     * into the left end of the black name capsule, its label and a drawn chevron ride beside it.
+     * There is no separate disc standing on the page anymore.
      */
-    fun avatarDisc(app: AppContext, d: Int): FrameLayout {
-        val t = theme(app)
-        return FrameLayout(app.app).apply {
-            // The page-yellow ring is the reference's own edge between face and sheet.
-            background = Views.rounded(t.color("stageSheet", "#FBD364"), t.px(999f))
-            setPadding(t.px(3f), t.px(3f), t.px(3f), t.px(3f))
-        }
-    }
-
     fun nameCapsule(app: AppContext, h: Int): LinearLayout {
         val t = theme(app)
         return LinearLayout(app.app).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = Views.rounded(t.color("plateInk", "#050505"), t.px(999f))
-            setPadding(t.px(20f), 0, t.px(14f), 0)
+            setPadding(0, 0, t.px(18f), 0)
         }.also { it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, h) }
     }
 
@@ -163,19 +161,22 @@ internal object KidsKit {
             gravity = Gravity.CENTER
             background = Views.rounded(t.color("plateInk", "#050505"), t.radius("chip", 999f))
         }
-        chip.addView(Views.text(app, "chipIcon", 30f, Color.WHITE, glyph, bold = true,
+        chip.addView(Views.text(app, "chipIcon", 40f, Color.WHITE, glyph, bold = true,
             gravity = Gravity.CENTER),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         chip.addView(Views.text(app, "chip", 24f, Color.WHITE, label, bold = true,
-            gravity = Gravity.CENTER),
+            gravity = Gravity.CENTER, maxLines = 1).apply {
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = t.px(10f) })
+                ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = t.px(12f) })
         return chip
     }
 
     /** Chip glyphs are approximated in the deviation log: system-safe marks, one per shelf kind. */
     fun chipGlyph(label: String): String = when {
+        label.contains("Continue", true) -> "▶"
         label.contains("Trending", true) || label.contains("Hot", true) -> "♥"
         label.contains("New", true) -> "✶"
         label.contains("Top", true) || label.contains("rated", true) -> "★"

@@ -2177,7 +2177,10 @@ class PlayerActivity : Activity() {
             row,
             app,
             theme.radius("listItem", 6f),
-            scale = false,
+            // Round 5: a focused menu row must lift, not just ring. The pack's rowScale token
+            // decides; packs that never set one keep the old static row.
+            scale = theme.focusRowScale > 1f, scaleTo = theme.focusRowScale,
+            control = theme.focusRowScale > 1f,
             elevate = false,
             // Activity-level routing handles the entire sheet, but keep the same rule on the
             // focused row as a boundary fallback for TV firmware that dispatches D-pad keys
@@ -2265,7 +2268,10 @@ class PlayerActivity : Activity() {
         if (value.isNotBlank()) {
             row.addView(Views.text(app, "panelNote", 18f, theme.ink3, value, maxLines = 1, gravity = Gravity.END))
         }
-        Focus.attach(row, row, app, theme.radius("listItem", 6f), scale = false, elevate = false)
+        Focus.attach(row, row, app, theme.radius("listItem", 6f),
+            scale = theme.focusRowScale > 1f, scaleTo = theme.focusRowScale,
+            control = theme.focusRowScale > 1f,
+            elevate = false)
         val lp = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)
         ).apply { topMargin = theme.space("panelRowGap", 10f) }

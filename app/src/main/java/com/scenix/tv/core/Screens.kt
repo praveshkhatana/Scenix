@@ -74,7 +74,10 @@ object Screens {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = listHeight(app)
-            setPadding(app.theme.px(28f), app.theme.px(14f), app.theme.px(22f), app.theme.px(14f))
+            // A pack that lifts its rows on focus needs extra inset so a scaled plate cannot
+            // carry the label past the screen edge (owner round 5 asked for the zoom).
+            setPadding(app.theme.px(if (app.theme.focusRowScale > 1f) 40f else 28f), app.theme.px(14f),
+                app.theme.px(if (app.theme.focusRowScale > 1f) 40f else 22f), app.theme.px(14f))
             background = rowFill(app)
             isFocusable = true
             isClickable = true
@@ -139,8 +142,9 @@ object Screens {
         wrap.addView(row, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
-        Focus.attach(wrap, ringOn, app, radius, scale = false, elevate = false,
-            glowInset = glowPad, onClick = onClick)
+        Focus.attach(wrap, ringOn, app, radius,
+            scale = app.theme.focusRowScale > 1f, scaleTo = app.theme.focusRowScale,
+            elevate = false, glowInset = glowPad, control = true, onClick = onClick)
         return wrap
     }
 

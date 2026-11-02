@@ -77,6 +77,12 @@ class Theme private constructor(
     val focusRingPx get() = px(focus.optDouble("ringWidth", 4.0).toFloat())
     val focusRingColor get() = color("focusRing", "#FFFFFF")
     val focusScale get() = focus.optDouble("scale", 1.05).toFloat()
+    /**
+     * The zoom a full-width list row takes when focused. Packs that never asked for it keep 1.0 —
+     * rows stay static; the Kids stage raises it (owner, round 5: "focus show increase list-item
+     * and a zoom-in") so a focused setting reads as a lifted tile, not just a ring.
+     */
+    val focusRowScale get() = focus.optDouble("rowScale", 1.0).toFloat()
     val focusDurationMs get() = focus.optInt("durationMs", 200)
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
 

@@ -57,8 +57,8 @@ default + one focused tile (LOAF); all other states are inferred (§3 matrix).
 | brand circle d | 110 | 88 |
 | tabPill | 450×77 r38 | wrap×62 r31 |
 | searchKnob d | 61 | 49 |
-| avatar d | 80 | 64 |
-| profilePill | 250×80 r40 | wrap×64 r32 |
+| avatar d | 80 | 64 — welded INSIDE the left end of the name capsule (owner round 5: one element) |
+| profilePill | 250×80 r40 | ONE pill wrap×64 r32: avatar d64 + name bold 26 white + drawn chevron-down 24 (`ic_chevron_right` rotated 90°); no separate disc, no "⌄" glyph |
 | heroH | 442 | 355 |
 | hero A / gap / B | 772 / 67 / 1166 | gap 54; A:B keep the reference's 40:60 ratio as row weights (measured 526:805 canvas on device; the 169 px width slack is shared by both cards so the row spans full width — see §5) |
 | heroRadius | 40 | 32 |
@@ -71,7 +71,7 @@ default + one focused tile (LOAF); all other states are inferred (§3 matrix).
 | nav text | ~26 | 21 |
 | chip label | ~30 | 24 |
 | section margins | 73–74 | 59 → gutter 60 |
-| vertical rhythm | nav bottom 172 → hero 238 (66); hero 680 → chips 742 (62); chips 849 → tiles 916 (67) | 53 / 50 / 54 |
+| vertical rhythm | nav bottom 172 → hero 238 (66); hero 680 → chips 742 (62); chips 849 → tiles 916 (67) | 53 / 50 / 54; shelf header → first tile = `spacing.railPadV` 24 + header pad 12 (owner round 5: gap was 77+12 and read as a void; Kids' glow is the page's own colour family so the trimmed band above the top row is invisible) |
 | kidsHomeHeight | — | 50+88+53+355+50+86 = 682 (token `pack.kidsHomeHeight`; the hero slot may only shrink to height−`spacing.heroReserve`, and Kids sets `heroReserve: 140` so the stage is never squeezed under its own height — at 200 the chips bled over the first shelf header) |
 
 ### Typography
@@ -112,7 +112,9 @@ Every number first from theme.json `anim`/`focus`.
 - [e] segActive, quiet-meta grey, hero radius 32, caption letter-spacing: JPEG-limited sampling; flagged for device re-sample.
 - [c] Reference rail has no section header; our rails keep real shelf headers (information over decoration), ink, smaller.
 - [c] Hero absolutes 620/≥936 assumed the row spans 1800 canvas, but the reference row occupies only 1631 of the 1800 (its 1.621 aspect leaves outer slack). Implementation preserves the reference's A:B ratio (measured 526:805 canvas, gap 54) and lets the row span full width — ratio-faithful reflow instead of widening B alone.
-- [c] Rail tiles print a quiet meta sub-line ("New · year · match") under the caps caption; the mock shows names only. Data beats decoration here (owner rule), kept in the pack's ink.
+- [c] Rail tiles print a quiet meta sub-line ("New · year · match") under the caps caption; the mock shows names only. Data beats decoration here (information over decoration), kept in the pack's ink. — SUPERSEDED round 5: the meta lives ON the tile (NEW/match pill top-left, ★rating + cert corner top-right); only the name prints below.
+- [c] Round 5 owner asks, implemented: hero logo lockups (`item.logo` over the title slot, printed title as fallback); brand disc wears the Scenix wordmark drawable; avatar+name merged into one pill with a drawn chevron; chips shortened (`shortChipLabel` strips the hub's conversational prefaces, glyph box 44→token chipIcon 40) because 219-px capsules truncated to "Continue watchi…"; shelf header → rail gap trimmed via `spacing.railPadV` (Kids 24 — the glow there is the page's own colour family, so the sliver above the first row is invisible).
+- [c] Round 5 readability: settings rows fill `colors.listFill` #F9C406 (was the page's own colour — rows had no boundaries); player menu sheets use `colors.panelScrim` #FFF6DC (dark-ink text on dark was unreadable); every list row lifts by `focus.rowScale` with widened padding, and compact controls take the stroke-only halo (component §3.9).
 
 ## 7. QA gates
 - `qa/kids/ref_grid.png` (50 px labelled grid over the reference) is the measurement sheet.
@@ -129,3 +131,13 @@ Every number first from theme.json `anim`/`focus`.
 - rails (impl-rails.png): tile pitch 335 vs 332 ✓, plates #F9C406, caps UPPERCASE ✓, focused tile glow band + warm keyline + scale ✓
 - fixed this round: tab pill was WRAP_CONTENT-height (64 px) → explicit kidsPillH; profile capsule same; hero slot clamp got its own `spacing.heroReserve` (140 for Kids) because the 200 default squeezed the 682-px stage and the chips bled over the first shelf header.
 - raw pixel_diff across aspect 1.621 vs 1.778 is NOT meaningful (skill rule); landmark audit is the gate. Sign-off sheet: `qa/kids/side-by-side.png`.
+
+### Gate results — round 5 (2026-11-02, build md5 4b44cf019536154cb3280b6addd3f951, ui_zoom=1.0)
+Owner round-5 list, verified on device (captures `qa/kids/r5-*.png`):
+- hero logos: HANUMAN ANSH logo lockup prints centred in card B, printed title as fallback (card A has no logo) ✓
+- brand disc: Scenix wordmark on the black disc ✓; household: ONE pill (face welded into capsule, drawn chevron) ✓
+- chips: no truncation ("Continue", "Top 10", "Acclaimed", "New releases"), glyph 40 ✓; focused chip keeps black fill + white text with keyline ring ✓
+- rails: header→tile gap 77+12 → 24+12 ✓; square tiles wear NEW/match + ★rating + cert ON the art ✓
+- category tiles: "Drama/Comedy/Crime/…" labels paint over the gradient (root cause: overlays at elevation 0 buried under the elevation-12 framed photo — all overlays now ride elevation 14) ✓
+- settings/profiles: #F9C406 plates on the #FBD364 page read; focused row zooms 1.03 (pulled back from 1.06 — the plate carried the label past the screen edge; row padding widened for zooming packs) ✓
+- player menus: `colors.panelScrim` → #FFF6DC cream sheet (dark-ink text was unreadable on the dark scrim); focused dialog chip reads with glow ring + keyline ✓
