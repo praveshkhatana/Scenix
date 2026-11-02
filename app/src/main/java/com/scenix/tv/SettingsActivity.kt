@@ -42,6 +42,8 @@ class SettingsActivity : Activity() {
     private var globalRows: JSONObject? = null
     private var rowsCfg: JSONObject? = null
     private var picker: View? = null
+    /** The row that had the remote before a picker opened; focus returns there on close. */
+    private var pickerReturn: View? = null
     // The D-pad is trapped inside a picker: Android's default search treats the overlay as a plain
     // rectangle and can hand focus to a row behind it, which turned "pick a theme" into "open Live TV".
     private var pickerRows: List<View> = emptyList()
@@ -146,6 +148,19 @@ class SettingsActivity : Activity() {
     }
 
     private fun paint() {
+        // The first focusable view in a settings screen used to be the Back chevron in the top bar:
+        // a viewer who opened a section and pressed OK went straight back out (or, while the list
+        // was still loading, saw a dead remote). Land on the first real control instead; UP still
+        // reaches the bar.
+        // A rebuild (after a toggle or a save) used to drop focus to the Back chevron, so the next
+        // press went out of the screen. Remember the focused row by position and put the remote
+        // back there after the list is rebuilt; a first paint lands on the first real control.
+        val keepAt = (0 until rows.childCount).firstOrNull { rows.getChildAt(it).isFocused } ?: -1
+        rows.post {
+            if (isFinishing || isDestroyed) return@post
+            if (keepAt in 0 until rows.childCount) rows.getChildAt(keepAt).requestFocus()
+            else Focus.focusFirst(rows)
+        }
         rows.removeAllViews()
         val p = prefs ?: return
         addRow("Audio language", languageName(firstOf(p, "audioLanguages")), "The hub mixes this language into copies that lack it") {
@@ -611,6 +626,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, current: String, onPick: (String) -> Unit) {
+        if (picker == null) pickerReturn = currentFocus
         closePicker()
         val layer = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(190, 0, 0, 0))
@@ -683,7 +699,12 @@ class SettingsActivity : Activity() {
 
     private fun closePicker() {
         picker?.let { root.removeView(it) }
+        val wasOpen = picker != null
         picker = null
+        if (wasOpen) {
+            pickerReturn?.takeIf { it.isAttachedToWindow }?.requestFocus()
+            pickerReturn = null
+        }
         pickerRows = emptyList()
     }
 

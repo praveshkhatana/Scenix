@@ -72,6 +72,14 @@ class BrowseActivity : Activity() {
     /** Ordered remote stops in the floating Apple-style navigation pill. */
     private var pillStops: List<View> = emptyList()
     private var shelfListId = View.NO_ID
+    // The left rail is the way to another screen from the middle of the page. Netflix, YouTube and
+    // Stremio all put navigation on the left edge for the same reason: asking a viewer to scroll
+    // back to a top bar to change tabs is a trap. It is an overlay, so the shelf keeps its place.
+    private var railPanel: LinearLayout? = null
+    private var railScrim: View? = null
+    private val railItems = ArrayList<View>()
+    private var railOpen = false
+    private var railReturn: View? = null
     private val clock = Handler(Looper.getMainLooper())
     private var rotationPaused = false
     // Apple's billboard never moves under the viewer's hands: any key on the remote rewinds the
@@ -93,6 +101,30 @@ class BrowseActivity : Activity() {
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             lastKeyAt = android.os.SystemClock.elapsedRealtime()
+            if (railOpen) {
+                when (event.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> { moveRail(-1); return true }
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { moveRail(1); return true }
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
+                    android.view.KeyEvent.KEYCODE_BACK -> { closeRail(); return true }
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                        val focused = railItems.firstOrNull { it.isFocused }
+                        focused?.performClick()
+                        return true
+                    }
+                }
+                return true
+            }
+            // LEFT at the left edge of a row (or a one-slide billboard) is the way into the rail.
+            // A LEFT that can still move within the row belongs to the row.
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT &&
+                shouldOpenRail(currentFocus)) {
+                openRail()
+                return true
+            }
             val adapter = browseAdapter
             val focus = currentFocus
             val heroFamily = app.theme.homeLayout.hero
@@ -416,6 +448,171 @@ class BrowseActivity : Activity() {
         return isInside(adapter.heroSelector, f)
     }
 
+    /**
+     * The left rail: every destination the top pill carries, plus the profile gate, in one vertical
+     * list that floats over the page. A viewer halfway down Home can change screens without a trip
+     * back to the top; the rail closes onto the exact tile they left.
+     */
+    private fun buildLeftRail(shell: FrameLayout) {
+        val theme = app.theme
+        val width = theme.px(340f)
+        val scrim = View(this).apply {
+            setBackgroundColor(Color.argb(170, 0, 0, 0))
+            visibility = View.GONE
+            isClickable = true
+            setOnClickListener { closeRail() }
+        }
+        shell.addView(scrim, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.argb(245, 9, 10, 14))
+            setPadding(theme.px(24f), theme.px(26f), theme.px(18f), theme.px(24f))
+            visibility = View.GONE
+            translationX = -width.toFloat()
+            elevation = theme.px(18f).toFloat()
+        }
+        panel.addView(Views.text(app, "li", 20f, theme.ink2, "SCENIX", bold = true).apply {
+            letterSpacing = 0.18f
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            leftMargin = theme.px(16f)
+            bottomMargin = theme.px(18f)
+        })
+        val destinations = listOf<Pair<String, () -> Unit>>(
+            "Switch profile" to {
+                startActivity(Intent(this, ProfilesActivity::class.java))
+            },
+            "Home" to { goTab("") },
+            "Movies" to { goTab("movies") },
+            "Series" to { goTab("series") },
+            "Games" to {
+                startActivity(Intent(this, GamesActivity::class.java)
+                    .putExtra(GamesActivity.EXTRA_PROFILE, profileId))
+            },
+            "Live TV" to {
+                startActivity(Intent(this, LiveChannelsActivity::class.java)
+                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
+            },
+            "Search" to {
+                startActivity(Intent(this, SearchActivity::class.java)
+                    .putExtra(SearchActivity.EXTRA_PROFILE, profileId))
+            },
+            "Settings" to {
+                startActivity(Intent(this, SettingsActivity::class.java)
+                    .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
+            },
+        )
+        for ((label, action) in destinations) {
+            panel.addView(railRow(label, action), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(66f)
+            ).apply { bottomMargin = theme.px(4f) })
+        }
+        shell.addView(panel, FrameLayout.LayoutParams(
+            width, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+        railPanel = panel
+        railScrim = scrim
+    }
+
+    private fun railRow(label: String, action: () -> Unit): View {
+        val theme = app.theme
+        val row = Views.text(app, "li", 23f, theme.ink, label, bold = true,
+            gravity = Gravity.CENTER_VERTICAL)
+        row.setPadding(theme.px(20f), 0, theme.px(16f), 0)
+        row.isFocusable = true
+        row.isClickable = true
+        row.contentDescription = label
+        val radius = theme.px(12f)
+        row.background = Views.rounded(Color.TRANSPARENT, radius)
+        Focus.attach(row, row, app, radius, scale = false, elevate = false,
+            onClick = { action() },
+            onFocus = { focused ->
+                // A rail destination is a solid pill when active, the way Netflix and tvOS draw it.
+                row.background = if (focused) Views.rounded(theme.brand, radius)
+                else Views.rounded(Color.TRANSPARENT, radius)
+                row.setTextColor(if (focused) theme.onBrand else theme.ink)
+            })
+        railItems += row
+        return row
+    }
+
+    private fun openRail() {
+        val panel = railPanel ?: return
+        if (railOpen) return
+        railOpen = true
+        railReturn = currentFocus
+        railScrim?.visibility = View.VISIBLE
+        panel.visibility = View.VISIBLE
+        panel.animate().translationX(0f).setDuration(180L).start()
+        val wanted = when (section) {
+            "movies" -> "Movies"
+            "series" -> "Series"
+            "games" -> "Games"
+            "live" -> "Live TV"
+            else -> "Home"
+        }
+        val target = railItems.firstOrNull { it.contentDescription == wanted } ?: railItems.firstOrNull()
+        target?.post { if (railOpen && !isFinishing && !isDestroyed) target.requestFocus() }
+    }
+
+    private fun closeRail() {
+        if (!railOpen) return
+        railOpen = false
+        railScrim?.visibility = View.GONE
+        val panel = railPanel
+        // Put the remote back before the panel leaves; hiding a focused subtree otherwise hands
+        // focus to whatever the framework finds first.
+        railReturn?.takeIf { it.isAttachedToWindow }?.requestFocus()
+        railReturn = null
+        panel?.animate()?.translationX(-(panel.width.takeIf { it > 0 }
+            ?: app.theme.px(340f)).toFloat())?.setDuration(160L)?.withEndAction {
+            if (!railOpen) panel.visibility = View.GONE
+        }?.start()
+    }
+
+    private fun moveRail(delta: Int) {
+        if (railItems.isEmpty()) return
+        val at = railItems.indexOfFirst { it.isFocused }
+        val next = if (at < 0) 0 else (at + delta).coerceIn(0, railItems.lastIndex)
+        railItems.getOrNull(next)?.requestFocus()
+    }
+
+    /**
+     * LEFT only belongs to the rail when it cannot move the page: the focused card is the first in
+     * its rail, the rail cannot scroll further left, or the billboard has one slide. Anything else is
+     * an intra-row step and stays with the row.
+     */
+    private fun shouldOpenRail(focus: View?): Boolean {
+        if (focus == null || railPanel == null) return false
+        val adapter = browseAdapter
+        if (adapter != null && isInside(adapter.heroRoot, focus)) {
+            return slides.size <= 1 || app.theme.homeLayout.hero != HomeLayoutSpec.Hero.SHARED_SLIDER
+        }
+        if (pillGroup != null && isInside(pillGroup, focus)) {
+            val first = pillStops.firstOrNull() ?: return false
+            return isInside(first, focus) || first === focus
+        }
+        var cur: View? = focus
+        while (cur != null) {
+            val parent = cur.parent
+            if (parent is RecyclerView && parent !== list) {
+                val position = parent.getChildAdapterPosition(cur)
+                return position <= 0 || !parent.canScrollHorizontally(-1)
+            }
+            cur = parent as? View
+        }
+        return false
+    }
+
+    override fun onBackPressed() {
+        if (railOpen) {
+            closeRail()
+            return
+        }
+        super.onBackPressed()
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -506,7 +703,13 @@ class BrowseActivity : Activity() {
             content.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             content.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(80f)))
         }
-        setContentView(root)
+        // Every pack draws its own page; the rail is a host overlay so no theme has to leave room
+        // for it. A FrameLayout shell works for both the stage composition and the stacked one.
+        val shell = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
+        shell.addView(root, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        buildLeftRail(shell)
+        setContentView(shell)
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 updateBrandFade()

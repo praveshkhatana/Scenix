@@ -35,6 +35,8 @@ class SystemActivity : Activity() {
     private var settings: JSONObject? = null
     private var languageNames: JSONObject? = null
     private var picker: View? = null
+    /** The row that had the remote before a picker opened; focus returns there on close. */
+    private var pickerReturn: View? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,6 +104,19 @@ class SystemActivity : Activity() {
     }
 
     private fun paint() {
+        // The first focusable view in a settings screen used to be the Back chevron in the top bar:
+        // a viewer who opened a section and pressed OK went straight back out (or, while the list
+        // was still loading, saw a dead remote). Land on the first real control instead; UP still
+        // reaches the bar.
+        // A rebuild (after a toggle or a save) used to drop focus to the Back chevron, so the next
+        // press went out of the screen. Remember the focused row by position and put the remote
+        // back there after the list is rebuilt; a first paint lands on the first real control.
+        val keepAt = (0 until rows.childCount).firstOrNull { rows.getChildAt(it).isFocused } ?: -1
+        rows.post {
+            if (isFinishing || isDestroyed) return@post
+            if (keepAt in 0 until rows.childCount) rows.getChildAt(keepAt).requestFocus()
+            else Focus.focusFirst(rows)
+        }
         rows.removeAllViews()
         val s = settings ?: return
         section("This hub", "Set once for the whole house. These are the values the hub is running with.")
@@ -309,6 +324,7 @@ class SystemActivity : Activity() {
 
     /** One value out of a fixed list; the tick marks the value the hub is running with. */
     private fun showPicker(title: String, options: List<Pair<String, String>>, current: String, onPick: (String) -> Unit) {
+        if (picker == null) pickerReturn = currentFocus
         closePicker()
         val layer = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(190, 0, 0, 0))
@@ -480,7 +496,12 @@ class SystemActivity : Activity() {
     private fun closePicker() {
         val layer = picker ?: return
         (layer.parent as? ViewGroup)?.removeView(layer)
+        val wasOpen = picker != null
         picker = null
+        if (wasOpen) {
+            pickerReturn?.takeIf { it.isAttachedToWindow }?.requestFocus()
+            pickerReturn = null
+        }
     }
 
     override fun onBackPressed() {

@@ -25,6 +25,8 @@ class AddonsActivity : Activity() {
     private lateinit var status: TextView
     private var installed: JSONArray? = null
     private var picker: View? = null
+    /** The row that had the remote before a picker opened; focus returns there on close. */
+    private var pickerReturn: View? = null
     private var renameAddon: String? = null
     private var renameCatalog: String? = null
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
@@ -82,6 +84,19 @@ class AddonsActivity : Activity() {
     }
 
     private fun paint() {
+        // The first focusable view in a settings screen used to be the Back chevron in the top bar:
+        // a viewer who opened a section and pressed OK went straight back out (or, while the list
+        // was still loading, saw a dead remote). Land on the first real control instead; UP still
+        // reaches the bar.
+        // A rebuild (after a toggle or a save) used to drop focus to the Back chevron, so the next
+        // press went out of the screen. Remember the focused row by position and put the remote
+        // back there after the list is rebuilt; a first paint lands on the first real control.
+        val keepAt = (0 until rows.childCount).firstOrNull { rows.getChildAt(it).isFocused } ?: -1
+        rows.post {
+            if (isFinishing || isDestroyed) return@post
+            if (keepAt in 0 until rows.childCount) rows.getChildAt(keepAt).requestFocus()
+            else Focus.focusFirst(rows)
+        }
         rows.removeAllViews()
         val list = installed ?: return
         for (i in 0 until list.length()) {
@@ -190,6 +205,7 @@ class AddonsActivity : Activity() {
     }
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+        if (picker == null) pickerReturn = currentFocus
         closePicker()
         val layer = FrameLayout(this).apply { setBackgroundColor(Color.argb(190, 0, 0, 0)) }
         val panel = LinearLayout(this).apply {
@@ -232,7 +248,12 @@ class AddonsActivity : Activity() {
 
     private fun closePicker() {
         picker?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        val wasOpen = picker != null
         picker = null
+        if (wasOpen) {
+            pickerReturn?.takeIf { it.isAttachedToWindow }?.requestFocus()
+            pickerReturn = null
+        }
     }
 
     @Deprecated("Activity result API")

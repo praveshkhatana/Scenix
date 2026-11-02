@@ -99,6 +99,19 @@ class LiveSettingsActivity : Activity() {
     }
 
     private fun paint() {
+        // The first focusable view in a settings screen used to be the Back chevron in the top bar:
+        // a viewer who opened a section and pressed OK went straight back out (or, while the list
+        // was still loading, saw a dead remote). Land on the first real control instead; UP still
+        // reaches the bar.
+        // A rebuild (after a toggle or a save) used to drop focus to the Back chevron, so the next
+        // press went out of the screen. Remember the focused row by position and put the remote
+        // back there after the list is rebuilt; a first paint lands on the first real control.
+        val keepAt = (0 until rows.childCount).firstOrNull { rows.getChildAt(it).isFocused } ?: -1
+        rows.post {
+            if (isFinishing || isDestroyed) return@post
+            if (keepAt in 0 until rows.childCount) rows.getChildAt(keepAt).requestFocus()
+            else Focus.focusFirst(rows)
+        }
         rows.removeAllViews()
         val s = settings ?: return
         val live = s.optJSONObject("live")
