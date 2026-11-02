@@ -207,20 +207,30 @@ class DetailActivity : Activity() {
         val isNew = record.optBoolean("isNew", false)
         val logoUrl = s(record, "logo", "").takeIf { it.isNotBlank() }
 
-        val split = app.theme.detailStyle == "split"
+        // The Kids stage is a wall page, not a dark cinema sheet. Its reference detail puts the
+        // words on the yellow wall at the left and the art as a tall panel at the right — the
+        // backdrop layout painted dark meta text over a bright poster and was unreadable.
+        val kids = app.theme.homeLayout.family == com.scenix.tv.core.HomeLayoutSpec.Family.KIDS
+        val split = app.theme.detailStyle == "split" || kids
         val heroHeight = if (split) app.theme.heroHeightPx else theme.px(600f)
-        val hero = FrameLayout(this).apply { setBackgroundColor(theme.surface2) }
+        val hero = FrameLayout(this).apply {
+            setBackgroundColor(if (kids) Color.TRANSPARENT else theme.surface2)
+        }
         body.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, heroHeight))
         val art = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        hero.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val artW = if (kids) (resources.displayMetrics.widthPixels * 0.58f).toInt()
+            else ViewGroup.LayoutParams.MATCH_PARENT
+        hero.addView(art, FrameLayout.LayoutParams(artW, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            if (kids) gravity = Gravity.END
+        })
         BrowseImages.load(art, backdrop.ifBlank { poster }, theme.px(1300f))
         // The art melts into the page with the pack's scrim, not a solid page-colour block:
         // on a wall background a flat fade bar reads as a stripe across the gradient.
-        hero.addView(View(this).apply {
+        if (!kids) hero.addView(View(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(theme.color("heroScrim", "rgba(6,16,30,0.50)"), Color.TRANSPARENT))
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (Screens.wall(app) != null) {
+        if (!kids && Screens.wall(app) != null) {
             // The hero plate's bottom edge is still a hard rectangle where the art ends and the
             // wall begins. A short band fading to the wall's own colour at that height dissolves
             // the seam — the same trick the home hero uses where its plates meet the wall.
@@ -249,7 +259,7 @@ class DetailActivity : Activity() {
         })
 
         // An editorial pack puts the poster beside the words instead of hiding it behind the backdrop.
-        if (split) {
+        if (split && !kids) {
             val posterView = ImageView(this).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
@@ -263,9 +273,14 @@ class DetailActivity : Activity() {
         val words = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = if (split) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.BOTTOM or Gravity.START
+            val right = when {
+                kids -> (resources.displayMetrics.widthPixels * 0.58f).toInt() + theme.gutter
+                split -> theme.px(340f) + theme.gutter
+                else -> theme.gutter
+            }
             setPadding(
-                if (split) theme.gutter + theme.px(340f) else theme.gutter,
-                theme.px(40f), theme.gutter, theme.px(36f)
+                if (kids) theme.gutter else if (split) theme.gutter + theme.px(340f) else theme.gutter,
+                theme.px(40f), right, theme.px(36f)
             )
         }
         // A long YouTube or file title must not fill the hero a line at a time. The web caps the
@@ -274,7 +289,8 @@ class DetailActivity : Activity() {
         val heading = Views.text(app, "h1", 54f, theme.ink, title, bold = true, maxLines = 3)
         heading.setTextSize(
             android.util.TypedValue.COMPLEX_UNIT_PX,
-            if (title.length > 42) theme.px(70f).toFloat() else theme.px(104f).toFloat(),
+            if (kids) theme.px(76f).toFloat()
+            else if (title.length > 42) theme.px(70f).toFloat() else theme.px(104f).toFloat(),
         )
         val logo = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_START
@@ -283,10 +299,14 @@ class DetailActivity : Activity() {
         words.addView(logo, LinearLayout.LayoutParams(theme.px(560f), theme.px(130f)).apply {
             bottomMargin = theme.px(8f)
         })
+        // Fill the padded words column; a fixed 1100 px child ran under the right-hand art panel
+        // and clipped the title ("Other Momm…") on the Kids split.
         words.addView(heading, LinearLayout.LayoutParams(
-            theme.px(1100f), ViewGroup.LayoutParams.WRAP_CONTENT,
+            if (kids) ViewGroup.LayoutParams.MATCH_PARENT else theme.px(1100f),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
-        if (logoUrl != null) {
+        // The Kids reference prints the title in the pack's own type, not an art logotype.
+        if (logoUrl != null && !kids) {
             logo.visibility = View.VISIBLE
             BrowseImages.load(logo, logoUrl, theme.px(560f)) { ok ->
                 logo.visibility = if (ok) View.VISIBLE else View.GONE
@@ -361,7 +381,9 @@ class DetailActivity : Activity() {
         // A title already started gets the honest second choice: Resume keeps the playhead, Start
         // over rewinds the hub's record and opens at zero. Visible, not buried under a long-press —
         // "watch from the beginning" is what people ask for mid-film.
-        if (posMs > 0L) {
+        // The Kids reference has Resume and My List only; a third action crowds the narrow wall
+        // column and clipped My List off the edge.
+        if (posMs > 0L && !kids) {
             val restart = Views.text(app, "button", 23f, theme.ink, "↺ Start over", bold = true, gravity = Gravity.CENTER)
             restart.setPadding(theme.px(28f), theme.px(16f), theme.px(28f), theme.px(16f))
             restart.background = Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
@@ -474,11 +496,13 @@ class DetailActivity : Activity() {
                         android.widget.Toast.makeText(this, error ?: "No trailer for this title",
                             android.widget.Toast.LENGTH_SHORT).show()
                     } else {
-                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                            .onFailure {
-                                android.widget.Toast.makeText(this, "No player for the trailer",
-                                    android.widget.Toast.LENGTH_SHORT).show()
-                            }
+                        // Play it in this app: a TV often has no browser or YouTube app to hand a
+                        // signed clip to, and "No player for the trailer" is not an answer.
+                        startActivity(
+                            Intent(this, TrailerActivity::class.java)
+                                .putExtra(TrailerActivity.EXTRA_URL, url)
+                                .putExtra(TrailerActivity.EXTRA_TITLE, s(record, "title", ""))
+                        )
                     }
                 }
             }
@@ -519,7 +543,9 @@ class DetailActivity : Activity() {
             clipToPadding = false
             addView(social)
         }
-        words.addView(socialScroll, LinearLayout.LayoutParams(
+        // Kids' reference detail carries Play / My List and then the cast and related titles;
+        // no second row of reaction pills. Reactions still exist on the other packs.
+        if (!kids) words.addView(socialScroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = theme.px(12f) })
         repaintReactions()
