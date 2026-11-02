@@ -37,8 +37,13 @@ function blankItem() {
  * screen shows, and it was the difference between a screen that scrolls and one that freezes. Only
  * over-sized URLs are rewritten: a provider that already chose w500 or w780 keeps its choice, a
  * non-TMDB host is untouched, and the client is still free to ask for its own width.
+ *
+ * Episode stills are the other place an `original` leaks through. They are shown at 300–400 px in
+ * every surface (the native episode rail, the web detail page), yet a single show can carry sixty
+ * of them — a Continue-watching tile that ships its whole episode list must not hand each client
+ * sixty 1 MB originals.
  */
-const TMDB_SIZE = { poster: 'w500', backdrop: 'w1280', logo: 'w500' };
+const TMDB_SIZE = { poster: 'w500', backdrop: 'w1280', logo: 'w500', thumb: 'w300' };
 function sizedImage(url, field) {
   const want = TMDB_SIZE[field];
   if (!want || typeof url !== 'string') return url;
@@ -51,6 +56,11 @@ function sizedImage(url, field) {
 function normalizeArt(item) {
   if (!item || typeof item !== 'object') return item;
   for (const f of ['poster', 'backdrop', 'logo']) item[f] = sizedImage(item[f], f);
+  if (Array.isArray(item.episodes)) {
+    for (const ep of item.episodes) {
+      if (ep && typeof ep === 'object' && ep.thumb) ep.thumb = sizedImage(ep.thumb, 'thumb');
+    }
+  }
   return item;
 }
 

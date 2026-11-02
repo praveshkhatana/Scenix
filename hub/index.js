@@ -903,6 +903,23 @@ function generalItems(rowId, items) {
   });
 }
 
+/**
+ * What a shelf tile actually is: the fields a card draws. `sources` (every copy of a title) and
+ * `episodes` (a whole season list) belong to the detail record, not to a poster — and every client
+ * asks for them again by identity when a tile is opened (`/app/v1/meta`). Shipping them on the rail
+ * made `/app/v1/home` ~1.9 MB, 83% of it data no card reads; on a 2 GB TV that parse was a visible
+ * part of opening Home, and a Continue-watching tile alone could carry sixty episode stills.
+ * Home, See all, search and genre lists are tile lists, so they all get the same shelf shape.
+ */
+function shelfItem(it) {
+  if (!it || typeof it !== 'object') return it;
+  const { sources, episodes, ...tile } = it;
+  return tile;
+}
+function shelfItems(items) {
+  return Array.isArray(items) ? items.map(shelfItem) : items;
+}
+
 // How many billboard tiles to answer with. The app paints the first one full-bleed; the rest are the
 // alternates it can cycle, and rows/hero.js proposes several times this many on purpose.
 const HERO_MAX = Number(process.env.HERO_MAX || 5);
@@ -4083,7 +4100,9 @@ async function handle(req, res) {
       // Every tile carries this viewer's own match percentage and one shared definition of "New".
       // The fingerprint is built from data/progress.json only; no recommendation service is involved.
       await taste.decorate(ctx, filled.flatMap((r) => r.items));
-      return send(res, 200, { rows: arrangeHome(filled) });
+      return send(res, 200, {
+        rows: arrangeHome(filled).map((r) => ({ ...r, items: shelfItems(r.items) })),
+      });
     }
 
     if (path === '/app/v1/games') {
@@ -4111,7 +4130,7 @@ async function handle(req, res) {
         : row.title;
       return send(res, 200, {
         id: row.id, title, card: row.card, order: row.order, scope: row.scope || 'all',
-        items,
+        items: shelfItems(items),
       });
     }
 
@@ -4140,7 +4159,7 @@ async function handle(req, res) {
       // where a result card was on screen a second ago.
       rememberItems(items);
       await taste.decorate(ctx, items);
-      return send(res, 200, { q, items });
+      return send(res, 200, { q, items: shelfItems(items) });
     }
 
     if (path === '/app/v1/genre') {
@@ -4181,7 +4200,7 @@ async function handle(req, res) {
       const items = generalItems('genre', await pipeline(raw, ctx)).slice(0, SEARCH_MAX * 4);
       rememberItems(items);
       await taste.decorate(ctx, items);
-      return send(res, 200, { genre, items });
+      return send(res, 200, { genre, items: shelfItems(items) });
     }
 
     if (path === '/app/v1/addon-catalog') {
@@ -4201,7 +4220,7 @@ async function handle(req, res) {
         await pipeline(raw || [], ctx)).slice(0, 120);
       rememberItems(items);
       await taste.decorate(ctx, items);
-      return send(res, 200, { addon: addonId, catalog: catalogId, items });
+      return send(res, 200, { addon: addonId, catalog: catalogId, items: shelfItems(items) });
     }
 
     m = /^\/app\/v1\/meta\/(.+)$/.exec(path);
