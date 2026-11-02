@@ -61,10 +61,10 @@ class DetailActivity : Activity() {
             finish()
             return
         }
+        // A title page is part of the same house as its home: packs with a wall background
+        // paint it here too; the legacy flat page colour stays for the rest.
+        val ground = Screens.wall(app)
         scroll = ScrollView(this).apply {
-            // A title page is part of the same house as its home: packs with a wall background
-            // paint it here too; the legacy flat page colour stays for the rest.
-            val ground = Screens.wall(app)
             if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
             // A ScrollView is itself a D-pad stop on Android; on a title page that stop is an
             // invisible full-screen ring. The page's controls are the only focus targets.
@@ -219,6 +219,23 @@ class DetailActivity : Activity() {
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(theme.color("heroScrim", "rgba(6,16,30,0.50)"), Color.TRANSPARENT))
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (Screens.wall(app) != null) {
+            // The hero plate's bottom edge is still a hard rectangle where the art ends and the
+            // wall begins. A short band fading to the wall's own colour at that height dissolves
+            // the seam — the same trick the home hero uses where its plates meet the wall.
+            val wa = theme.color("wallA", "#8FA5B8"); val wb = theme.color("wallB", "#54687C")
+            val t = 0.8f
+            val melt = Color.argb(255,
+                (android.graphics.Color.red(wa) * (1 - t) + android.graphics.Color.red(wb) * t).toInt(),
+                (android.graphics.Color.green(wa) * (1 - t) + android.graphics.Color.green(wb) * t).toInt(),
+                (android.graphics.Color.blue(wa) * (1 - t) + android.graphics.Color.blue(wb) * t).toInt())
+            hero.addView(View(this).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(Color.TRANSPARENT, melt))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
+                gravity = Gravity.BOTTOM
+            })
+        }
 
         val back = Views.text(app, "li", 28f, theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(theme.px(16f), theme.px(6f), theme.px(16f), theme.px(6f))
