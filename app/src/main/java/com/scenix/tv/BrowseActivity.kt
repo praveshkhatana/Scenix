@@ -1156,14 +1156,30 @@ class BrowseActivity : Activity() {
         if (section.isNotBlank()) {
             api.row(profileId, section) { _, items, error ->
                 if (isFinishing || isDestroyed) return@row
-                if (items.isNullOrEmpty()) {
-                    showSkeleton(false)
-                    status.visibility = View.VISIBLE
-                    status.text = error ?: "Nothing in this section yet"
+                if (!items.isNullOrEmpty()) {
+                    loaded = true
+                    present(deriveShelves(section, items))
                     return@row
                 }
-                loaded = true
-                present(deriveShelves(section, items))
+                // A hub need not carry generic movie/series rows for every profile — a kid
+                // profile answers "row not for this profile" and keeps only kids shelves.
+                // Fall back to the profile's own shelves filtered to this section, instead of
+                // printing the hub's raw error sentence on the page.
+                api.load(profileId) { rows, _ ->
+                    if (isFinishing || isDestroyed) return@load
+                    val pool = rows.orEmpty()
+                        .filter { it.id != "hero" && it.card != "channel" }
+                        .flatMap { it.items }
+                        .filter { it.type == if (section == "series") "series" else "movie" }
+                    if (pool.isEmpty()) {
+                        showSkeleton(false)
+                        status.visibility = View.VISIBLE
+                        status.text = error ?: "Nothing in this section yet"
+                        return@load
+                    }
+                    loaded = true
+                    present(deriveShelves(section, pool))
+                }
             }
             return
         }
@@ -1287,6 +1303,12 @@ class BrowseActivity : Activity() {
         for (lang in listOf("Hindi", "Telugu", "Tamil", "Malayalam", "Kannada", "Bengali", "Marathi")) {
             val pool = items.filter { it.languages.any { l -> l.contains(lang, ignoreCase = true) } }
             if (pool.size >= 8) add("lang:$lang", "Top $lang $label", pool.sortedByDescending { it.rating * 10 + it.match / 10 })
+        }
+        // A kid section holds a handful of titles, and every gate above reads a rail of four as too
+        // thin to print — the tab then showed a hero over an empty page. When nothing else passes,
+        // the section prints itself whole rather than showing a blank below the hero (owner round 7).
+        if (out.isEmpty() && items.isNotEmpty()) {
+            out.add(BrowseRow("all", "All $label", "poster", items.take(18), items.size))
         }
         return out
     }
@@ -1570,6 +1592,7 @@ class BrowseActivity : Activity() {
                                 list.smoothScrollToPosition(index + (if (hero != null) 1 else 0))
                             }
                         },
+                        section = this@BrowseActivity.section,
                     ),
                 )
                 surface.root.layoutParams = RecyclerView.LayoutParams(

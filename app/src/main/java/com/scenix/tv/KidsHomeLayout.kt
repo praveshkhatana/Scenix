@@ -47,6 +47,7 @@ internal class KidsHomeLayout(
         val onSearch: () -> Unit,
         val onSettings: () -> Unit,
         val onShelf: (String) -> Unit,
+        val section: String = "",
     )
 
     private val theme = app.theme
@@ -119,8 +120,15 @@ internal class KidsHomeLayout(
 
         val pill = KidsKit.tabCapsule(app, theme.space("kidsPillH", 62f))
         val sections = listOf("Movies" to "movies", "Series" to "series", "Live" to "live")
-        sections.forEachIndexed { index, (label, route) ->
-            pill.addView(makePillStop(label, route, index == 0))
+        sections.forEach { (label, route) ->
+            // Only the segment for the section actually on screen reads active; Home (no section)
+            // shows no selection (owner, round 7).
+            pill.addView(
+                makePillStop(label, route, route == callbacks.section),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
         }
         pill.addView(makeSearchDot(), LinearLayout.LayoutParams(
             theme.space("kidsKnob", 49f), theme.space("kidsKnob", 49f),
@@ -252,15 +260,29 @@ internal class KidsHomeLayout(
             onClick = { itemB?.let(callbacks.onOpen) })
 
         // --- black chip capsules: the household's real shelves ----------------------------------
+        // The row scrolls: eight shelf chips are wider than the page, and a plain LinearLayout
+        // left the last ones — and their focus — clipped off-screen with no way to reach them
+        // (owner, round 7: "it doesn't scroll so I can see the rest items").
+        val chipPad = theme.px(20f)
         chipRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             clipChildren = false
             clipToPadding = false
         }
-        content.addView(chipRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.space("kidsChipH", 86f),
-        ).apply { topMargin = theme.space("kidsChipTopGap", 50f) })
+        val chipScroll = android.widget.HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            clipChildren = false
+            clipToPadding = false
+            setPadding(chipPad, 0, chipPad, 0)
+            addView(chipRow, android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        content.addView(chipScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            theme.space("kidsChipH", 86f) + chipPad * 2,
+        ).apply { topMargin = theme.space("kidsChipTopGap", 50f) - chipPad })
 
         cardA.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
         cardB.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
@@ -273,6 +295,9 @@ internal class KidsHomeLayout(
             isClickable = true
             contentDescription = "$label section"
             setPadding(theme.px(22f), 0, theme.px(22f), 0)
+            // The stop spans the full capsule height: a WRAP-height stop made the focus ring a
+            // tiny band that cut straight through the label (owner, round 7: "navbar focus issue").
+            minimumHeight = theme.space("kidsPillH", 62f)
         }
         stop.addView(KidsKit.segmentText(app, label, active), LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,

@@ -69,7 +69,7 @@ class SearchActivity : Activity() {
         val queryShell = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(app.theme.px(24f), 0, app.theme.px(24f), 0)
-            background = Views.rounded(app.theme.surface2, app.theme.px(14f))
+            background = Views.rounded(app.theme.surface2, app.theme.radius("field", 14f))
         }
         queryView = Views.text(app, "li", 22f, app.theme.ink, "", bold = true, maxLines = 1)
         queryView.setTextSize(TypedValue.COMPLEX_UNIT_PX, app.theme.px(38f).toFloat())
@@ -192,12 +192,15 @@ class SearchActivity : Activity() {
                 fun paintKey(focused: Boolean) {
                     key.background = Views.rounded(
                         if (focused) app.theme.ink else app.theme.surface2,
-                        app.theme.px(10f),
+                        app.theme.radius("key", 10f),
                     )
                     key.setTextColor(if (focused) app.theme.bg else app.theme.ink)
                 }
                 paintKey(false)
-                Focus.attach(key, null, app, app.theme.px(10f), scale = false, elevate = false,
+                // The key carries the pack's own halo focus — the same control ring the stage
+                // pills and shelf chips get — instead of a colour swap alone.
+                Focus.attach(key, key, app, app.theme.radius("key", 10f), scale = false, elevate = false,
+                    glowInset = app.theme.focusGlowInsetSm, control = true,
                     onFocus = { focused -> paintKey(focused) })
                 line.addView(key, LinearLayout.LayoutParams(app.theme.px(88f), app.theme.px(64f)).apply {
                     if (label != row.first()) marginStart = app.theme.px(8f)

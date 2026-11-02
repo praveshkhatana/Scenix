@@ -161,25 +161,35 @@ internal object KidsKit {
             gravity = Gravity.CENTER
             background = Views.rounded(t.color("plateInk", "#050505"), t.radius("chip", 999f))
         }
-        chip.addView(Views.text(app, "chipIcon", 40f, Color.WHITE, glyph, bold = true,
-            gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT))
+        if (glyph.isNotEmpty()) {
+            chip.addView(Views.text(app, "chipIcon", 40f, Color.WHITE, glyph, bold = true,
+                gravity = Gravity.CENTER),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
         chip.addView(Views.text(app, "chip", 24f, Color.WHITE, label, bold = true,
             gravity = Gravity.CENTER, maxLines = 1).apply {
             ellipsize = android.text.TextUtils.TruncateAt.END
         },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = t.px(12f) })
+                ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    if (glyph.isNotEmpty()) marginStart = t.px(12f)
+                })
         return chip
     }
 
-    /** Chip glyphs are approximated in the deviation log: system-safe marks, one per shelf kind. */
+    /**
+     * Chip glyphs are approximated in the deviation log: system-safe marks, one per shelf kind.
+     * Round 7: no mark beats a wrong one — the "●" placeholder dot read as a broken chip, so
+     * shelves without a real glyph print their label alone; the heart's U+FE0E variation selector
+     * is ignored by the TV emoji font (it stayed red), so Trending takes the monochrome ▲ instead
+     * — the pack's glyphs are white text marks, never colour emoji.
+     */
     fun chipGlyph(label: String): String = when {
         label.contains("Continue", true) -> "▶"
-        label.contains("Trending", true) || label.contains("Hot", true) -> "♥"
+        label.contains("Trending", true) || label.contains("Hot", true) -> "▲"
         label.contains("New", true) -> "✶"
         label.contains("Top", true) || label.contains("rated", true) -> "★"
-        else -> "●"
+        else -> ""
     }
 }

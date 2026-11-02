@@ -86,10 +86,21 @@ letter-spacing ([m] letter gaps ~10 px ref). Hero title bold; card B lockup cent
    it doubles as the Home stop (round 6) — control halo, `onClick → onSection("home")`, LEFT
    from the first tab pill lands on it, RIGHT walks back.
 2. `tabPill(segments, knob)` — plateInk capsule, h=tabPill; segments text segActive/white; searchKnob = knobYellow disc, black glyph, flush at the pill's right end (3 px inset).
+   Segments fill the capsule height (`minimumHeight` kidsPillH, MATCH_PARENT layout height) so a
+   focused segment's control halo rings the whole capsule instead of slicing through the label
+   (owner round 7, "navbar focus issue"). Only the segment matching the active section paints
+   segActive — on Home no segment is selected (owner round 7).
 3. `profileStop(avatar)` — avatarDisc (page-ring 3) + plateInk pill h=profilePill: name bold white, sub quiet grey, chevron.
 4. `heroCardA(art,title,sub)` — photo full-bleed, radius 32; title white top-left, sub ink under it; playDisc bottom-left. The top/bottom ink-wash overlays carry the card's own cornerRadii — a square wash over rounded art painted grey wedges past the curve (owner round 6, "odd corners").
 6. `heroCardB(art,title)` — plate gradient, centred lockup, art bleeding from the RIGHT edge, playDisc bottom-left.
 7. `chip(label,icon)` — plateInk capsule, uniform width, white icon + white label.
+   The row scrolls in a HorizontalScrollView (no scrollbar, OVER_SCROLL_NEVER, clipChildren/
+   clipToPadding off, side padding px(20) so a focused chip rings free of the edge): walking
+   RIGHT reaches every chip and the focused one scrolls into view (owner round 7, "it doesn't
+   scroll so I can see the rest items"). Glyph vocabulary — ▶ Continue, ▲ Trending/Hot, ✶ New,
+   ★ Top/rated; shelves without a match print the label alone. No "●" placeholder dot (read as
+   a broken chip), no colour emoji: ♥ stayed red on the TV emoji font even with U+FE0E, so
+   Trending wears the monochrome ▲ (owner round 7, "these tabs issue").
 8. `tile(art,caption)` — tileFill plate r24, art fills, caption centred below.
 9. `focusHalo(view,radiusPx)` — bands of #FDDB6F out to the measured reach + 4 px #A88200 keyline; on tiles, pair with scale 1.11.
 
@@ -118,6 +129,7 @@ Every number first from theme.json `anim`/`focus`.
 - [c] Round 5 owner asks, implemented: hero logo lockups (`item.logo` over the title slot, printed title as fallback); brand disc wears the Scenix wordmark drawable; avatar+name merged into one pill with a drawn chevron; chips shortened (`shortChipLabel` strips the hub's conversational prefaces, glyph box 44→token chipIcon 40) because 219-px capsules truncated to "Continue watchi…"; shelf header → rail gap trimmed via `spacing.railPadV` (Kids 24 — the glow there is the page's own colour family, so the sliver above the first row is invisible).
 - [c] Round 5 readability: settings rows fill `colors.listFill` #F9C406 (was the page's own colour — rows had no boundaries); player menu sheets use `colors.panelScrim` #FFF6DC (dark-ink text on dark was unreadable); every list row lifts by `focus.rowScale` with widened padding, and compact controls take the stroke-only halo (component §3.9).
 - [c] Round 6: the mock's brand disc is decoration; ours doubles as the HOME stop (the section pill has no Home tab and goTab's CLEAR_TOP leaves Home underneath, so the owner found "no way to go back to home screen"). LEFT from the first tab pill reaches it, OK walks to the unfiltered mix; BACK from a section now returns Home first instead of exiting the app (BrowseActivity.dispatchKeyEvent).
+- [c] Round 7: a kid profile has no generic `movies`/`series` hub row — the API answers "row not for this profile", which the tab printed as raw error text. The section now falls back to filtering that profile's own shelves by item type; and when even the derived-shelf gates (≥6 per rail) all fail on a small pool, one `all` rail prints the whole section rather than a hero over an empty page ("All Movies"). The Search keyboard stopped hard-coding its plate radius: keys read `radii.key`/`radii.field` and wear the pack's control halo like every other compact control.
 
 ## 7. QA gates
 - `qa/kids/ref_grid.png` (50 px labelled grid over the reference) is the measurement sheet.
@@ -148,3 +160,11 @@ Owner round-5 list, verified on device (captures `qa/kids/r5-*.png`):
 ### Gate results — round 6 (2026-11-02, build md5 597660de6e3513ed56251d0d3bcff861, ui_zoom=1.3 functional)
 - Home affordance: Movies section → UP to pill → LEFT onto the brand disc (wordmark legible, keyline ring) → OK returns to the unfiltered Home mix (hero back to The Widower) ✓; BACK from Movies lands on Home, second BACK exits to the launcher ✓ (captures r6-homefocus.png, r6-backhome.png).
 - hero corners: Movies hero (Clayface, light art) top-left and bottom-right crops (r6-corner-tl.png, r6-corner-br.png) — washes follow the r32 curve, page colour shows through the corner, no grey wedges ✓.
+
+### Gate results — round 7 (2026-11-02, builds md5 3ebac552… / a4c94af5d561762d6cbd043680ce322d / f849bbaee9b1c037bb52eaad81eb962a, ui_zoom=1.3 functional)
+Owner round-7 list + full Kids-pack screen sweep, verified on emulator-5554 (captures `qa/kids/r7-*.png`):
+- navbar focus: focused segment now wears a clean full-height capsule halo — ring no longer cuts through the label (r7-segf-crop.png; segments fill kidsPillH).
+- active segment: Home prints NO selected tab (r7-home.png); Movies/Series mark only their own segment gold (r7-adult-movies.png, r7-adult-series.png).
+- chips: no "●" placeholders, Trending now ▲ and Top rated ★ print monochrome white; the row is a HorizontalScrollView — walking RIGHT from Trending scrolled Action/Thriller into view with the focused chip's ring unclipped (r7-adult-movies/-chips-end/-chips-action.png).
+- kid sections: Pinki Movies/Series fall back to her own shelves; tiny pool prints one "All Movies" rail instead of a hero over blank page (r7-movies-top.png vs r7-movies-all.png).
+- sweep: search (r7-search2.png — radii.key/field tokens + halo keys), settings (r7-settings.png), profiles (r7-profiles.png), detail incl episodes (r7-detail.png, r7-detail-scrolled.png), player + controls (r7-player.png, r7-player-controls.png), live wall (r7-live.png) — all read in-pack.
