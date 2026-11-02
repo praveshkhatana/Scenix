@@ -142,6 +142,14 @@ class PlayerActivity : Activity() {
     private var audioChosen = false
     private var subChosen = false
     private var speed = 1f
+    /**
+     * In-app volume, separate from the television's own hardware level: the remote owns the room,
+     * but a stream whose mix is louder than the rest still needs a per-player trim. The level is a
+     * field, not derived from ExoPlayer, so it survives source/episode switches for the session.
+     */
+    private var volume = 1f
+    private var muted = false
+    private var volumeBeforeMute = 1f
     private var durationMs = 0L
     /**
      * A ladder starts on a high rung on this household's LAN instead of waiting four seconds on
@@ -249,7 +257,13 @@ class PlayerActivity : Activity() {
     private lateinit var subButton: GlyphView
     private lateinit var speedButton: GlyphView
     private lateinit var qualityButton: GlyphView
+    private lateinit var volumeButton: GlyphView
     private var episodesButton: GlyphView? = null
+    private var volumeShowing = false
+    private var volumePanel: View? = null
+    private var volumeSlider: VolumeSlider? = null
+    private var volumeValue: TextView? = null
+    private var volumeIconView: ImageView? = null
     private lateinit var centerBox: LinearLayout
     private lateinit var centerSpinner: ProgressBar
     private lateinit var centerText: TextView
@@ -268,6 +282,8 @@ class PlayerActivity : Activity() {
     private var undoPositionMs = 0L
 
     private val hideRunnable = Runnable { hideChrome() }
+    /** Clears the scrub target bubble shortly after the last LEFT/RIGHT press. */
+    private var scrubClear: Runnable? = null
     private var ticker: Runnable? = null
     private var nextTicker: Runnable? = null
     private var undoRunnable: Runnable? = null
@@ -629,6 +645,9 @@ class PlayerActivity : Activity() {
         forcedRungHeight = 0
         seekLine.fraction = 0f
         seekLine.buffered = 0f
+        scrubClear?.let { handler.removeCallbacks(it) }
+        scrubClear = null
+        seekLine.targetMs = -1L
         seekLine.invalidate()
         elapsed.text = "0:00"
         remaining.text = ""
@@ -805,6 +824,9 @@ class PlayerActivity : Activity() {
         val mediaStart = if (live) C.TIME_UNSET
             else (capped - timelineOffsetMs).coerceAtLeast(0L)
         p.setMediaItem(item, mediaStart)
+        // A source switch, an episode roll and a failover all reuse the same ExoPlayer; re-asserting
+        // the session's trim here keeps a viewer's volume through every one of those paths.
+        p.volume = if (muted || volume <= 0.001f) 0f else volume
         pendingAudio = selectedAudioId
         pendingSub = selectedSubId
         audioApplied = false
@@ -1427,7 +1449,9 @@ class PlayerActivity : Activity() {
         seekLine.setOnClickListener { togglePlay() }
         Focus.attach(seekLine, seekLine, app, theme.radius("button", 6f), scale = false, elevate = false,
             onFocus = { focused -> showControlHint(if (focused) "Timeline · LEFT / RIGHT to seek" else null) })
-        val lineLp = LinearLayout.LayoutParams(0, theme.px(30f), 1f)
+        // Taller than the bar itself so the seek target bubble has room above the playhead. The
+        // bar is drawn low in this view, keeping the elapsed/remaining labels visually centred.
+        val lineLp = LinearLayout.LayoutParams(0, theme.px(56f), 1f)
         lineLp.marginStart = theme.px(18f)
         lineLp.marginEnd = theme.px(18f)
         lineRow.addView(elapsed, wrap())
@@ -1454,6 +1478,7 @@ class PlayerActivity : Activity() {
         nextButton = icon(GLYPH_NEXT, "Next episode", flat = false) { playNext() }.apply {
             visibility = View.GONE
         }
+        volumeButton = icon(GLYPH_VOLUME, "Volume 100%", flat = true) { openVolume() }
         audioButton = icon(GLYPH_AUDIO, "Audio", flat = true) { openMenu(MenuKind.AUDIO, audioButton) }
         subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
         speedButton = icon(GLYPH_SPEED, "Speed", flat = true) { openMenu(MenuKind.SPEED, speedButton) }
@@ -1479,7 +1504,8 @@ class PlayerActivity : Activity() {
             background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.px(26f))
             setPadding(theme.px(6f), theme.px(4f), theme.px(6f), theme.px(4f))
         }
-        options.addView(audioButton, wrap())
+        options.addView(volumeButton, wrap())
+        options.addView(audioButton, wrap().withStart(theme.px(4f)))
         options.addView(subButton, wrap().withStart(theme.px(4f)))
         options.addView(speedButton, wrap().withStart(theme.px(4f)))
         options.addView(qualityButton, wrap().withStart(theme.px(4f)))
@@ -1508,8 +1534,8 @@ class PlayerActivity : Activity() {
 
         barFocusable = listOf(
             backButton, playButton, rewindButton, forwardButton,
-            audioButton, subButton, speedButton, qualityButton,
-        ) + listOfNotNull(episodesButton) + listOf(seekLine)
+            volumeButton, audioButton, subButton, speedButton, qualityButton,
+        ) + listOfNotNull(nextButton, episodesButton) + listOf(seekLine)
         wireChromeFocus()
     }
 
@@ -1525,6 +1551,7 @@ class PlayerActivity : Activity() {
             nextButton?.takeIf { it.visibility == View.VISIBLE },
             rewindButton.takeIf { it.visibility == View.VISIBLE },
             forwardButton.takeIf { it.visibility == View.VISIBLE },
+            volumeButton,
             audioButton,
             subButton,
             speedButton.takeIf { it.visibility == View.VISIBLE },
@@ -2499,6 +2526,139 @@ class PlayerActivity : Activity() {
         armHide()
     }
 
+    // ---- in-app volume --------------------------------------------------------------------
+
+    /**
+     * A small card above the transport. The speaker pill opens it; LEFT/RIGHT is a 5% step, OK
+     * mutes/unmutes, and Up/Back put the ring back on the pill. It is deliberately a player-level
+     * trim, not a replacement for the television's hardware volume.
+     */
+    private fun openVolume() {
+        if (errorShowing) return
+        closeMenu(restore = false)
+        if (volumePanel == null) buildVolumePanel()
+        if (!controlsVisible()) revealChrome()
+        volumeShowing = true
+        cancelHide()
+        volumePanel?.visibility = View.VISIBLE
+        applyVolume()
+        volumeSlider?.post { if (volumeShowing) volumeSlider?.requestFocus() }
+    }
+
+    private fun buildVolumePanel() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(18f))
+            background = Views.rounded(
+                theme.color("panelScrim", "#E6000000"),
+                theme.radius("panel", 10f),
+                theme.px(1f),
+                theme.color("line", "#262626"),
+            )
+            elevation = theme.px(12f).toFloat()
+        }
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val icon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_player_volume)
+            imageTintList = ColorStateList.valueOf(theme.ink)
+        }
+        val value = Views.text(app, "li", 22f, theme.ink, "100%", bold = true, maxLines = 1,
+            gravity = Gravity.END)
+        volumeIconView = icon
+        volumeValue = value
+        head.addView(icon, LinearLayout.LayoutParams(theme.px(26f), theme.px(26f)))
+        head.addView(value, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        ).apply { marginStart = theme.px(12f) })
+        box.addView(head, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
+        val slider = VolumeSlider(this)
+        Focus.attach(
+            slider, slider, app, theme.px(8f), scale = false, elevate = false,
+            onClick = { toggleMute() },
+            onFocus = { focused -> if (focused) showControlHint(volumeWords()) },
+        )
+        box.addView(slider, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(48f)
+        ).apply { topMargin = theme.px(8f) })
+
+        volumePanel = box
+        volumeSlider = slider
+        overlay.addView(box, FrameLayout.LayoutParams(
+            theme.px(340f), ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = theme.gutter
+            bottomMargin = (bottomBar.height + theme.px(14f)).coerceAtLeast(theme.px(200f))
+        })
+        box.visibility = View.GONE
+    }
+
+    private fun closeVolume(restoreFocus: Boolean = true) {
+        if (!volumeShowing) return
+        volumeShowing = false
+        volumePanel?.visibility = View.GONE
+        if (restoreFocus) {
+            volumeButton.post { if (volumeButton.isShown) volumeButton.requestFocus() }
+        }
+        armHide()
+    }
+
+    private fun adjustVolume(delta: Float) {
+        if (muted) {
+            muted = false
+            if (volume <= 0.001f) volume = 0f
+        }
+        volume = Math.round((volume + delta).coerceIn(0f, 1f) * 100f) / 100f
+        if (volume <= 0.001f) {
+            volume = 0f
+            muted = true
+        } else {
+            volumeBeforeMute = volume
+        }
+        applyVolume()
+    }
+
+    private fun toggleMute() {
+        if (muted) {
+            muted = false
+            volume = if (volumeBeforeMute > 0.001f) volumeBeforeMute else volume
+        } else {
+            if (volume > 0.001f) volumeBeforeMute = volume
+            muted = true
+        }
+        applyVolume()
+    }
+
+    /** Player volume is the only side effect; every visible state follows from the two fields. */
+    private fun applyVolume() {
+        player?.volume = if (muted || volume <= 0.001f) 0f else volume
+        val words = volumeWords()
+        val isMute = muted || volume <= 0.001f
+        if (::volumeButton.isInitialized) {
+            volumeButton.muted = isMute
+            volumeButton.contentDescription = words
+        }
+        volumeSlider?.apply {
+            level = volume
+            this.muted = isMute
+            invalidate()
+        }
+        volumeValue?.text = if (isMute) "Muted" else "${Math.round(volume * 100f)}%"
+        volumeIconView?.setImageResource(
+            if (isMute) R.drawable.ic_player_mute else R.drawable.ic_player_volume
+        )
+        if (volumeShowing) showControlHint(words)
+    }
+
+    private fun volumeWords(): String =
+        if (muted || volume <= 0.001f) "Muted" else "Volume ${Math.round(volume * 100f)}%"
+
     private fun seekBy(deltaMs: Long) {
         if (live) return
         val p = player ?: return
@@ -2507,7 +2667,29 @@ class PlayerActivity : Activity() {
         val target = (filmPosition(p) + deltaMs).coerceIn(lower, upper)
         p.seekTo(mediaPosition(target))
         updatePosition()
+        showScrubTarget(target)
         armHide()
+    }
+
+    /**
+     * The seek itself commits at once, so the bar's played range jumps before the viewer has read
+     * where they landed. Keep a target-time bubble above the playhead for a beat after the last
+     * LEFT/RIGHT press; the elapsed/remaining labels keep showing the live position underneath.
+     */
+    private fun showScrubTarget(targetMs: Long) {
+        val p = player ?: return
+        val dur = fullDuration(p)
+        seekLine.targetMs = targetMs
+        seekLine.targetFraction = if (dur > 0)
+            (targetMs.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else seekLine.fraction
+        seekLine.invalidate()
+        scrubClear?.let { handler.removeCallbacks(it) }
+        val clear = Runnable {
+            seekLine.targetMs = -1L
+            seekLine.invalidate()
+        }
+        scrubClear = clear
+        handler.postDelayed(clear, 1500L)
     }
 
     /** The viewer's playhead in film time, including the start of a resume ladder. */
@@ -2711,7 +2893,7 @@ class PlayerActivity : Activity() {
      * film is playing, and the ring is moved out first so nothing is hidden while focused.
      */
     private fun hideChrome() {
-        if (panel != null || errorShowing || nextShowing || undoShowing) {
+        if (panel != null || errorShowing || nextShowing || undoShowing || volumeShowing) {
             armHide()
             return
         }
@@ -3148,6 +3330,9 @@ class PlayerActivity : Activity() {
         forcedRungHeight = 0
         seekLine.fraction = 0f
         seekLine.buffered = 0f
+        scrubClear?.let { handler.removeCallbacks(it) }
+        scrubClear = null
+        seekLine.targetMs = -1L
         hideNextCard()
         hideUndo()
         clearError()
@@ -3375,12 +3560,38 @@ class PlayerActivity : Activity() {
 
         if (code == KeyEvent.KEYCODE_BACK) {
             if (!down) return true
+            if (volumeShowing) {
+                closeVolume()
+                return true
+            }
             if (panel != null) {
                 closeMenu()
                 return true
             }
             finishToDetail()
             return true
+        }
+
+        // The volume card owns the D-pad while it is open: LEFT/RIGHT trims, OK mutes, and Up puts
+        // the ring back on the speaker pill. Both halves of each press are consumed so the slider
+        // cannot also move focus or activate behind the card.
+        if (volumeShowing) {
+            val handled = when (code) {
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE -> true
+                else -> false
+            }
+            if (handled) {
+                if (down) when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> adjustVolume(-0.05f)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> adjustVolume(0.05f)
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> closeVolume()
+                    else -> toggleMute()
+                }
+                return true
+            }
         }
 
         // Any input wakes the chrome. A direction/OK pressed while it is hidden is consumed so it does
@@ -3495,6 +3706,11 @@ class PlayerActivity : Activity() {
             set(value) {
                 if (field != value) { field = value; invalidate() }
             }
+        /** The speaker glyph is crossed out while the in-app volume is muted. */
+        var muted = false
+            set(value) {
+                if (field != value) { field = value; invalidate() }
+            }
 
         private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -3548,6 +3764,32 @@ class PlayerActivity : Activity() {
                     path.lineTo(cx - 4 * u, cy)
                     path.lineTo(cx + 3.5f * u, cy + 8 * u)
                     canvas.drawPath(path, stroke)
+                }
+                GLYPH_VOLUME -> {
+                    // A speaker with waves, crossed out when muted: this is the player's own trim,
+                    // distinct from the Audio pill, which picks a language track.
+                    val speaker = Path()
+                    speaker.moveTo(cx - 12 * u, cy - 4.5f * u)
+                    speaker.lineTo(cx - 6.5f * u, cy - 4.5f * u)
+                    speaker.lineTo(cx - 1 * u, cy - 10 * u)
+                    speaker.lineTo(cx - 1 * u, cy + 10 * u)
+                    speaker.lineTo(cx - 6.5f * u, cy + 4.5f * u)
+                    speaker.lineTo(cx - 12 * u, cy + 4.5f * u)
+                    speaker.close()
+                    canvas.drawPath(speaker, solid)
+                    if (muted) {
+                        canvas.drawLine(cx + 2 * u, cy - 4.5f * u, cx + 12 * u, cy + 4.5f * u, stroke)
+                        canvas.drawLine(cx + 12 * u, cy - 4.5f * u, cx + 2 * u, cy + 4.5f * u, stroke)
+                    } else {
+                        canvas.drawArc(
+                            RectF(cx + 1 * u, cy - 6 * u, cx + 9 * u, cy + 6 * u),
+                            -62f, 124f, false, stroke,
+                        )
+                        canvas.drawArc(
+                            RectF(cx + 1 * u, cy - 10 * u, cx + 15 * u, cy + 10 * u),
+                            -55f, 110f, false, stroke,
+                        )
+                    }
                 }
                 GLYPH_AUDIO -> {
                     // A waveform, not a speaker: the control picks a language track, and the bars read
@@ -3655,10 +3897,21 @@ class PlayerActivity : Activity() {
     private inner class SeekLine(context: android.content.Context) : View(context) {
         var fraction = 0f
         var buffered = 0f
+        /** Film time being sought to; -1 hides the bubble. Set by showScrubTarget(). */
+        var targetMs = -1L
+        var targetFraction = 0f
         private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.color("track", "#2F2F2F") }
         private val buf = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.color("lineStrong", "#8FFFFFFF") }
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.brand }
         private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.ink }
+        private val bubbleBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = theme.color("panelScrim", "#E6000000")
+        }
+        private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = theme.ink
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+        }
 
         override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
             super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
@@ -3667,13 +3920,15 @@ class PlayerActivity : Activity() {
 
         override fun onDraw(canvas: Canvas) {
             val h = height.toFloat()
-            val cy = h / 2f
             val w = width.toFloat()
+            val focused = isFocused
+            val bar = theme.px(if (focused) 10f else 7f).toFloat()
+            // The bar sits low in the view: the extra height above it is the seek bubble's room,
+            // so the row can keep a 56 px touch/focus box without moving the bottom bar.
+            val cy = (h - theme.px(22f)).coerceAtLeast(bar)
             // The timeline grows under the ring: on a 10-foot screen a 6 px bar is a hairline, and
             // the focused state is where a viewer actually reads it. Buffered and played ranges keep
             // their own colours so the three depths stay distinguishable at TV distance.
-            val focused = isFocused
-            val bar = theme.px(if (focused) 10f else 7f).toFloat()
             val r = bar / 2f
             canvas.drawRoundRect(0f, cy - bar / 2f, w, cy + bar / 2f, r, r, track)
             if (buffered > 0f) {
@@ -3687,6 +3942,66 @@ class PlayerActivity : Activity() {
                 // A dark cradle under the knob keeps it legible over the white played range.
                 canvas.drawCircle((w * fraction).coerceIn(knobR, w - knobR), cy, knobR + theme.px(2f), track)
                 canvas.drawCircle((w * fraction).coerceIn(knobR, w - knobR), cy, knobR, knob)
+            }
+            if (targetMs >= 0L) drawTarget(canvas, w, cy, bar / 2f)
+        }
+
+        /**
+         * The target time in a bubble over the playhead, clamped to the view so a seek at either end
+         * never draws a clipped pill. The played, buffered and knob layers underneath are untouched:
+         * the bubble is feedback about the press, not a second playhead.
+         */
+        private fun drawTarget(canvas: Canvas, w: Float, barCy: Float, barHalf: Float) {
+            val label = clock(targetMs)
+            val pad = theme.px(12f).toFloat()
+            bubbleText.textSize = theme.px(16f).toFloat()
+            val textW = bubbleText.measureText(label)
+            val bubbleH = theme.px(24f).toFloat()
+            val bubbleW = (textW + pad * 2).coerceAtMost(w)
+            val center = (w * targetFraction).coerceIn(0f, w)
+            val left = (center - bubbleW / 2f).coerceIn(0f, (w - bubbleW).coerceAtLeast(0f))
+            val bottom = (barCy - barHalf - theme.px(4f)).coerceAtLeast(bubbleH)
+            val top = bottom - bubbleH
+            canvas.drawRoundRect(RectF(left, top, left + bubbleW, bottom),
+                bubbleH / 2f, bubbleH / 2f, bubbleBg)
+            canvas.drawText(label, left + bubbleW / 2f,
+                top + bubbleH / 2f + bubbleText.textSize * 0.35f, bubbleText)
+        }
+    }
+
+    /**
+     * The volume card's bar. No separate seek semantics: LEFT/RIGHT on the remote is handled by the
+     * activity, which moves [level]; this view only mirrors the session's trim and handles a click
+     * (an air-mouse or touch panel) as mute.
+     */
+    private inner class VolumeSlider(context: android.content.Context) : View(context) {
+        var level = 1f
+            set(value) {
+                if (field != value) { field = value; invalidate() }
+            }
+        var muted = false
+            set(value) {
+                if (field != value) { field = value; invalidate() }
+            }
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.color("track", "#2F2F2F") }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.brand }
+        private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.ink }
+
+        override fun onDraw(canvas: Canvas) {
+            val cy = height / 2f
+            val w = width.toFloat()
+            val bar = theme.px(if (isFocused) 10f else 7f).toFloat()
+            val r = bar / 2f
+            canvas.drawRoundRect(0f, cy - bar / 2f, w, cy + bar / 2f, r, r, track)
+            val shown = if (muted) 0f else level
+            if (shown > 0f) {
+                canvas.drawRoundRect(0f, cy - bar / 2f, w * shown, cy + bar / 2f, r, r, fill)
+            }
+            val knobR = theme.px(if (isFocused) 13f else 9f).toFloat()
+            if (w > knobR * 2f) {
+                val x = (w * level).coerceIn(knobR, w - knobR)
+                canvas.drawCircle(x, cy, knobR + theme.px(2f), track)
+                canvas.drawCircle(x, cy, knobR, knob)
             }
         }
     }
@@ -3821,6 +4136,7 @@ class PlayerActivity : Activity() {
         private const val GLYPH_BACK = 7
         private const val GLYPH_EPISODES = 8
         private const val GLYPH_NEXT = 9
+        private const val GLYPH_VOLUME = 10
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
