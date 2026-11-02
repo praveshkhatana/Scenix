@@ -106,7 +106,10 @@ blur pass.
   width (measured scan of reference card A at y=190: solid rgb(34,91,145) to 40%, blended 50–65%,
   unobstructed art from ~65% right) — plus a bottom wash rgba(34,90,146,0.35) under the copy;
   title anchored TOP-left pad 40, Play row BOTTOM-left: disc 54 + label, over the scrim.
-  Card A narrower than B (7:10) — measured asymmetry.
+  Card A narrower than B (7:10) — measured asymmetry. The bottom wash is keyed PER TITLE: once
+  the key art loads, the plate averages its upper-left region, boosts saturation ×1.6 and keeps
+  the heroScrim alpha — the overlay rides the title's own colours, not one fixed blue (the
+  "fixed gradient" deviation is superseded).
 - Depth layers are SEPARATE: outer cast shadow = real view elevation (plate 16, poster 10,
   chip 6 canvas px — system shadow from the rounded outline, drawn OUTSIDE the surface; the
   focus lift rides on the same channel via translationZ); inner light = 1px specular rim +
@@ -119,7 +122,21 @@ blur pass.
 - Rail captions: name then "● rating · year" — dot is accent token, rating number light,
   year in captionSub (reference meta line). Poster art bare (no scrim) on glass wall.
 - Focus language = `glow`: pale-blue halo plates (#CFE3F5) + scale 1.03, 150 ms; controls get
-  keyline (shared Focus rules).
+  keyline (shared Focus rules). The SAME lift applies to rail tiles as to hero plates: elevated
+  art outline (posterElevation) casts its shadow at rest, focus rides translationZ on that
+  outline — a focused poster visibly lifts over its flat neighbours (owner ask 2026-11-02).
+- Tile material is a SEPARATE pack decision from tile geometry: `pack.card` picks where the
+  caption lives ("below" keeps the Glass pack's under-art names); `pack.tileMaterial="glass"`
+  activates the pack's plate stack on every rail surface. Genre tiles are never opaque plates:
+  the genre's diagonal colour wash at translucent alpha (0xA8 top / 0x88 bottom ≈ 66%/53% —
+  wall shows through) + hairline rim + top sheen + elevation shadow — measured: wall beside a
+  Comedy tile rgb(143,155,164), tile edge specular line rgb(157,196,189), interior teal lets
+  wall grain through. See-all tiles: frost wash seeAllGlassA rgba(232,240,248,0.16) →
+  seeAllGlassB rgba(196,210,224,0.08) + rim + sheen + discGlass chevron disc
+  rgba(255,255,255,0.16) with inkOnWall glyph — the wall texture reads THROUGH the plate.
+- Thumbnails ride card size: images decode at the TMDB width ladder nearest the target (w154…
+  w1280 by targetWidthPx), lazy placeholders at w92; full-res originals are never fetched for
+  tiles (wire-level: sizedUrl rewrites /original/ and stale /wNNN/ path segments).
 
 ## 4. Motion spec [c] (reference is a still; law from design/ui-tokens.md)
 
@@ -140,13 +157,13 @@ log as cover.
 | D1 vertical reflow | hero 397 (remeasured), rail captions brought above fold via host scroll | chosen | reference page scrolls (aspect 1.40); TV 16:9 fold must show nav+hero+chips+first rail |
 | Bell icon top-right | omitted | chosen | app has no notifications feature; an icon that promises one lies |
 | "Premium" subtitle under name | omitted | chosen | no plan data on profile API |
-| Chip icons | unicode glyphs mapped by shelf name (existing Clean precedent) | estimated | reference icons are bespoke pictograms; vector set can follow |
+| Chip icons | unicode glyphs mapped by shelf name (existing Clean precedent) | superseded 2026-11-02 | vector pictogram set shipped (ic_chip_play/trend/sparkle/star/heart/plus/globe, chipGlyph-sized ImageViews); reference's bespoke icons still not copied glyph-for-glyph |
 | Rating dot | accent #EF9F42 | estimated | AA-blended sample of small dot |
-| Card tints | fixed steel/periwinkle gradients | chosen | real liquid glass samples art colors at runtime; per-title tint extraction is a follow-up pass |
+| Card tints | fixed steel/periwinkle gradients | superseded 2026-11-02 | per-title extraction implemented: the hero plate samples its loaded key art (upper-left average, saturation ×1.6, heroScrim alpha kept) and repaints the overlay; visual close-judgement vs reference pending owner look |
 | Motion values | timing table §4 | chosen | still reference |
 | D6 chip labels | conversational tail cut ("Top 10 in this house"→"Top 10", "Browse by category"→"Browse"), cap 22 | chosen | equal-width frost chips (≈228px) truncate hub shelf names mid-word; the chip keeps its leading promise and still names its shelf |
 | Home pill segment | added as first word, active on unfiltered home | measured | reference pill shows Home lit; section switches rebuild the page so the pill paints where you stand |
-| D7 wall residual | wash = gradient + 8 soft blobs, not per-pixel grain | UNRESOLVED (owner: the 2026-11-02 "residual = wall grain" attribution was made with the hero seam masked out and was never isolated) | Honest re-attribution 2026-11-02 (NO content masked): full-frame pixel diff is meaningless on content bands — the hub features DIFFERENT titles than the reference (Blue Sword vs The Widower), so heroA/heroB/rail deltas measure artwork, not material. Wall-only bands (left gutter/top strip) now sit at d7–17 mean after the wallA/wallB retune; the reference frame's black rounded-corner mask pollutes edge columns and must be excluded. "Texture floor" claim WITHDRAWN until a same-title capture isolates it |
+| D7 wall residual | wash = gradient + 8 soft blobs, not per-pixel grain | UNRESOLVED (owner: the 2026-11-02 "residual = wall grain" attribution was made with the hero seam masked out and was never isolated) | Honest re-attribution 2026-11-02 (NO content masked): full-frame pixel diff is meaningless on content bands — the hub features DIFFERENT titles than the reference (Blue Sword vs The Widower), so heroA/heroB/rail deltas measure artwork, not material. Wall-only bands (left gutter/top strip) now sit at d7–17 mean after the wallA/wallB retune; the reference frame's black rounded-corner mask pollutes edge columns and must be excluded. "Texture floor" claim WITHDRAWN until a same-title capture isolates it. Update 2026-11-02: procedural film grain (wallGrain=1, 160×160 salt-and-pepper tile at 0x0B alpha, one BitmapShader over the wash) added so the wall stops banding like a vector gradient; still NOT the reference's photographic grain, and no same-title capture has isolated the residual yet — stays UNRESOLVED |
 
 ## 6. QA gates (three gates kept SEPARATE; run 2026-11-02, emulator scenix-glass/5558, ui_zoom 1.0)
 
@@ -164,6 +181,18 @@ APPEARANCE gate — INCOMPLETE, judged on specimens, no masks over the evaluated
 - Chips: centered icon+label, meaningful labels, chipGlyph 34; residual: reference pictograms are
   filled colour icons, mine are monochrome text glyphs (deviation, NOT approved).
 Full-frame diff number is reported but carries no acceptance weight on content bands (D7).
+
+APPEARANCE re-check 2026-11-02 (tile batch; root cause first): the rails' glass branches were DEAD
+CODE — `glass` keyed on `pack.card=="glass"` while the pack ships `"below"`, so genre tiles painted
+opaque and See-all a paper card (owner screenshots). After decoupling via `pack.tileMaterial`,
+re-captured: `qa/glass/impl_genres_glass.png` (category row: translucent washes, wall through,
+specular edge line), `qa/glass/spec_genre_tile_crop.png` (one tile enlarged: rim+sheen+grain
+through-plate), `qa/glass/spec_seeall_glass.png` (focused See-all: frost plate, disc chevron,
+"Hindi Web Series" caption bar), `qa/glass/impl_home_v4.png`
+(vector chip glyphs, per-title hero wash, grain wall). Focused-tile lift pair:
+`qa/glass/spec_poster_lift_pair.png` (halo + cast shadow vs flat neighbour). Geometry improved;
+visual fidelity: genre/See-all material, chips and hero wash now satisfy the owner's stated asks
+on-device; reference-pixel identity of the wall texture remains OPEN (D7).
 
 INTERACTION gate — captured 2026-11-02: unfocused-vs-focused poster pair
 (`/tmp/spec_poster_focus.png`: top row normal, bottom row halo + dimmed neighbours, cast shadow

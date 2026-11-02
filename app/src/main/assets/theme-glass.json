@@ -1,7 +1,7 @@
 {
   "id": "scenix-glass",
   "brandMark": "S",
-  "_read": "Liquid Glass pack, replicated from refs/glass/reference.png (design-contracts/glass.md): the whole page stands on a soft photographic wash; a dark centred pill carries section words with a LIGHT active segment and a light search knob; the wordmark floats white at left, one frosted household pill at right (no bell — no notifications feature); two UNEQUAL tinted glass plates — steel-blue 741 beside periwinkle 1067 — with white titles anchored top-left, dark-disc Play bottom-left, key art bleeding from the facing edge, hairline specular rims and inner sheens instead of drop shadows; frost chips (icon + label) jump to the household's real shelves; rails caption posters below the art with an accent-dot rating line. An original Scenix composition; no marks or assets copied from the reference.",
+  "_read": "Liquid Glass pack, replicated from refs/glass/reference.png (design-contracts/glass.md): the whole page stands on a soft photographic wash; a dark centred pill carries section words with a LIGHT active segment and a light search knob; the wordmark floats white at left, one frosted household pill at right (no bell \u2014 no notifications feature); two UNEQUAL tinted glass plates \u2014 steel-blue 741 beside periwinkle 1067 \u2014 with white titles anchored top-left, dark-disc Play bottom-left, key art bleeding from the facing edge, hairline specular rims and inner sheens instead of drop shadows; frost chips (icon + label) jump to the household's real shelves; rails caption posters below the art with an accent-dot rating line. An original Scenix composition; no marks or assets copied from the reference.",
   "canvas": {
     "width": 1920,
     "height": 1080
@@ -77,7 +77,10 @@
     "listStroke": "rgba(255,255,255,0.90)",
     "heroWashDeep": "rgba(34,90,146,0.95)",
     "heroWashLight": "rgba(126,156,203,0.86)",
-    "heroScrim": "rgba(34,90,146,0.35)"
+    "heroScrim": "rgba(34,90,146,0.35)",
+    "seeAllGlassA": "rgba(232,240,248,0.16)",
+    "seeAllGlassB": "rgba(196,210,224,0.08)",
+    "discGlass": "rgba(255,255,255,0.16)"
   },
   "spacing": {
     "gutter": 57,
@@ -299,6 +302,8 @@
     "featuredMarker": "rim",
     "wallBlobs": "50,5,90:#465A69:0.20;-8,55,45:#3A4A55:0.16;108,25,42:#2E3E4A:0.22;52,66,55:#BEC8D2:0.12;40,92,28:#D8C8B8:0.18;18,97,22:#C9C4B8:0.15;80,84,22:#C9B8A4:0.15;30,83,20:#A9B8C8:0.12",
     "heroFadePct": 62,
-    "chipGlyph": 34
+    "chipGlyph": 34,
+    "wallGrain": 1,
+    "tileMaterial": "glass"
   }
 }

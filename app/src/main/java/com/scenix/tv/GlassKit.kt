@@ -212,25 +212,53 @@ internal object GlassKit {
      * with exact stop positions — a plain 2-stop GradientDrawable would fade across the whole
      * width and wash the artwork out.
      */
-    fun heroOverlay(context: Context, app: AppContext, wash: Int): View {
-        val theme = app.theme
-        return object : View(context) {
-            private val paint = android.graphics.Paint()
-            override fun onDraw(canvas: android.graphics.Canvas) {
-                val w = width.toFloat(); val h = height.toFloat()
-                if (w < 1f || h < 1f) return
-                val fade = theme.packInt("heroFadePct", 62).coerceIn(25, 95) / 100f
-                paint.shader = android.graphics.LinearGradient(
-                    0f, 0f, w, 0f, intArrayOf(wash, Color.TRANSPARENT),
-                    floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP)
-                canvas.drawRect(0f, 0f, w, h, paint)
-                paint.shader = android.graphics.LinearGradient(
-                    0f, 0f, 0f, h,
-                    intArrayOf(Color.TRANSPARENT, theme.color("heroScrim", "rgba(6,16,30,0.50)")),
-                    floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP)
-                canvas.drawRect(0f, 0f, w, h, paint)
-            }
+    class HeroOverlay(context: Context, private val app: AppContext) : View(context) {
+        private val paint = android.graphics.Paint()
+        // The pack default until the loaded art is sampled; setWash re-keys the wash to the
+        // title's own palette — the real liquid-glass behaviour the first pass deferred.
+        private var wash = 0
+        fun setWash(color: Int) { if (color != wash) { wash = color; invalidate() } }
+        fun currentWash(): Int = wash
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            val w = width.toFloat(); val h = height.toFloat()
+            if (w < 1f || h < 1f || wash == 0) return
+            val theme = app.theme
+            val fade = theme.packInt("heroFadePct", 62).coerceIn(25, 95) / 100f
+            paint.shader = android.graphics.LinearGradient(
+                0f, 0f, w, 0f, intArrayOf(wash, Color.TRANSPARENT),
+                floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, w, h, paint)
+            paint.shader = android.graphics.LinearGradient(
+                0f, 0f, 0f, h,
+                intArrayOf(Color.TRANSPARENT, theme.color("heroScrim", "rgba(6,16,30,0.50)")),
+                floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, w, h, paint)
         }
+    }
+
+    fun heroOverlay(context: Context, app: AppContext, wash: Int): HeroOverlay =
+        HeroOverlay(context, app).apply { setWash(wash) }
+
+    /**
+     * A small tile's glass plate (category/See-all tiles): the tile's own colour wash at
+     * translucent alpha so the wall shows through, a hairline specular rim, and the inner top
+     * sheen — the same three inner layers the hero plates use. The cast shadow comes from the
+     * view's elevation, set by whoever places the tile.
+     */
+    fun tilePlate(app: AppContext, radiusPx: Int, washTop: Int, washBottom: Int): LayerDrawable {
+        val theme = app.theme
+        val wash = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR, intArrayOf(washTop, washBottom),
+        ).apply { cornerRadius = radiusPx.toFloat() }
+        return LayerDrawable(arrayOf(
+            wash,
+            Views.rounded(Color.TRANSPARENT, radiusPx, theme.px(1f),
+                theme.color("glassRim", "rgba(255,255,255,0.38)")),
+            GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(theme.color("sheenTop", "rgba(255,255,255,0.16)"), Color.TRANSPARENT),
+            ).apply { cornerRadius = radiusPx.toFloat() },
+        ))
     }
 
     /** A dark disc Play control welded to a bold word — one component, both hero plates and Detail. */
@@ -280,27 +308,25 @@ internal object GlassKit {
             elevation = theme.space("chipElevation", 6f).toFloat()
         }
         // Measured: reference glyphs are filled pictograms ~30px tall, far heavier than a text
-        // dot; the glyph size is a pack token (canvas px) so the weight is tunable with the
-        // rest of the pack.
-        val glyphSize = theme.packInt("chipGlyph", 32).toFloat()
-        val glyph = when {
-            label.contains("Continue", true) -> "\u25B6\uFE0E"
-            label.contains("Trending", true) -> "\u2197"
-            label.contains("New", true) -> "\u2726"
+        // dot; they are vector icons (deviation closed 2026-11-02: unicode text glyphs read as
+        // debug markers at TV distance), sized by the chipGlyph pack token (canvas px).
+        val glyphSize = theme.packInt("chipGlyph", 32)
+        val glyphRes = when {
+            label.contains("Continue", true) -> R.drawable.ic_chip_play
+            label.contains("Trending", true) -> R.drawable.ic_chip_trend
+            label.contains("New", true) || label.contains("Recommended", true) ->
+                R.drawable.ic_chip_sparkle
             label.contains("Top", true) || label.contains("rated", true) ||
-                label.contains("Acclaimed", true) -> "\u2605"
-            label.contains("Recommended", true) || label.contains("More like", true) -> "\u2727"
-            label.contains("My List", true) -> "\uFF0B"
-            label.contains("Language", true) || label.contains("Hindi", true) ||
-                label.contains("Tamil", true) || label.contains("Telugu", true) -> "\u2691"
-            label.contains("Horror", true) -> "\u2620"
-            label.contains("Romance", true) -> "\u2665"
-            label.contains("Family", true) || label.contains("Kids", true) -> "\u263A"
-            else -> "\u25C6"
+                label.contains("Acclaimed", true) -> R.drawable.ic_chip_star
+            label.contains("More like", true) -> R.drawable.ic_chip_heart
+            label.contains("My List", true) || label.contains("Just added", true) ->
+                R.drawable.ic_chip_plus
+            else -> R.drawable.ic_chip_globe
         }
-        chip.addView(Views.text(app, "meta", glyphSize, Color.WHITE, glyph, bold = true),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        chip.addView(ImageView(context).apply {
+            setImageResource(glyphRes)
+            setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+        }, LinearLayout.LayoutParams(theme.px(glyphSize.toFloat()), theme.px(glyphSize.toFloat())))
         chip.addView(Views.text(app, "chip", 21f, Color.WHITE, label, bold = true, maxLines = 1),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -317,6 +343,26 @@ internal object GlassKit {
      * "wallBlobs" ("x,y,r:color:alpha" triples, x/y/r in % of the stage) — original values,
      * no copied assets, and the same drawable on Home, Detail and every Settings page.
      */
+    private var grainCache: android.graphics.Bitmap? = null
+    private var grainStrength = -1
+    private fun grainBitmap(strength: Int): android.graphics.Bitmap {
+        grainCache?.takeIf { !it.isRecycled && grainStrength == strength }?.let { return it }
+        val side = 160
+        val bmp = android.graphics.Bitmap.createBitmap(side, side, android.graphics.Bitmap.Config.ARGB_8888)
+        val rnd = java.util.Random(20261102L)
+        val px = IntArray(side * side)
+        val r = java.util.Random(20261102L)
+        for (i in px.indices) {
+            // Film grain: a salt-and-pepper jitter of faint light and dark specks around the
+            // wash — symmetric so it never tints the wall one way.
+            px[i] = if (r.nextBoolean()) 0x0BFFFFFF else 0x0B000000
+        }
+        bmp.setPixels(px, 0, side, 0, 0, side, side)
+        grainCache = bmp
+        grainStrength = strength
+        return bmp
+    }
+
     fun wall(app: AppContext): android.graphics.drawable.Drawable {
         val theme = app.theme
         val base = GradientDrawable(
@@ -333,7 +379,8 @@ internal object GlassKit {
                     Color.parseColor(f[1]), f[2].toFloat())
             } catch (e: Exception) { null }
         }
-        if (blobs.isEmpty()) return base
+        val grain = theme.packInt("wallGrain", 0)
+        if (blobs.isEmpty() && grain <= 0) return base
         return object : android.graphics.drawable.Drawable() {
             private val paint = android.graphics.Paint()
             override fun draw(canvas: android.graphics.Canvas) {
@@ -347,6 +394,14 @@ internal object GlassKit {
                     paint.shader = android.graphics.RadialGradient(
                         cx, cy, r, a, 0, android.graphics.Shader.TileMode.CLAMP)
                     canvas.drawCircle(cx, cy, r, paint)
+                }
+                if (grain > 0) {
+                    // The reference wash is photographic film, not a vector gradient: procedural
+                    // grain (built once, tiled) breaks the banding without copying its asset.
+                    paint.shader = android.graphics.BitmapShader(
+                        grainBitmap(grain), android.graphics.Shader.TileMode.REPEAT,
+                        android.graphics.Shader.TileMode.REPEAT)
+                    canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
                 }
             }
             override fun setAlpha(alpha: Int) {}

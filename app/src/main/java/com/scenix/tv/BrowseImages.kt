@@ -76,7 +76,10 @@ object BrowseImages {
         }
 
         pool.execute {
-            val bitmap = decode(clean, targetWidthPx)
+            // Fetch at the size the card will actually show: TMDB serves the same picture at
+            // w300/w500/w780 for a fraction of the `original` bytes, so a 283px tile never
+            // downloads a 6.8 MB poster. (Decoding was already sampled; this trims the wire.)
+            val bitmap = decode(sizedUrl(clean, targetWidthPx), targetWidthPx)
             if (bitmap != null) cache.put(requestKey, bitmap)
             main.post {
                 if (view.tag == requestKey) {
@@ -100,6 +103,20 @@ object BrowseImages {
      * The same picture at a size that is almost free. TMDB is the household's dominant source;
      * anything else keeps its full URL and simply shows the gradient until it lands.
      */
+    /** TMDB width variant nearest the card's real width; non-TMDB URLs keep their own size. */
+    private fun sizedUrl(url: String, targetWidthPx: Int): String {
+        if (!url.contains("image.tmdb.org/t/p/")) return url
+        val w = when {
+            targetWidthPx <= 100 -> 154
+            targetWidthPx <= 170 -> 185
+            targetWidthPx <= 280 -> 300
+            targetWidthPx <= 440 -> 500
+            targetWidthPx <= 700 -> 780
+            else -> 1280
+        }
+        return tmdbSized.replace(url, "$1w$w$3")
+    }
+
     private fun tinyUrl(url: String): String? {
         if (!url.contains("image.tmdb.org/t/p/")) return null
         val small = tmdbSized.replace(url, "$1w92$3")

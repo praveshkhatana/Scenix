@@ -1688,7 +1688,11 @@ class BrowseActivity : Activity() {
         private val poster = if (landscape) false else style == "poster" || style == "rank" || style == "hero"
         private val ranked = style == "rank"
         private val frame = theme.cardStyle == "frame"
-        private val glass = theme.cardStyle == "glass"
+        // The pack's card token picks the tile GEOMETRY (overlay/glass/below/frame); the material
+        // is a separate decision. The Glass pack draws below-art captions yet wants its rails to
+        // carry the same translucent plates as its hero, so tileMaterial declares the material
+        // independently of the geometry.
+        private val glass = theme.cardStyle == "glass" || theme.packString("tileMaterial", "") == "glass"
         // Apple's scene cards keep the name under the art instead of over it.
         private val below = theme.cardStyle == "below"
         private val captionH = when {
@@ -1848,10 +1852,16 @@ class BrowseActivity : Activity() {
             // The See all tile's badge: a feather chevron on a quiet disc, hidden on every other tile.
             val chevron = ImageView(this@BrowseActivity).apply {
                 setImageResource(R.drawable.ic_chevron_right)
-                setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
                 setPadding(theme.px(20f), theme.px(20f), theme.px(20f), theme.px(20f))
-                background = Views.rounded(theme.surface2, theme.px(999f))
+                if (glass) {
+                    // On a frosted plate the disc is itself frost, with light ink.
+                    setColorFilter(theme.color("inkOnWall", "#FFFFFF"), android.graphics.PorterDuff.Mode.SRC_IN)
+                    background = Views.rounded(theme.color("discGlass", "rgba(255,255,255,0.16)"), theme.px(999f))
+                } else {
+                    setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+                    background = Views.rounded(theme.surface2, theme.px(999f))
+                }
                 visibility = View.GONE
             }
             card.addView(chevron, FrameLayout.LayoutParams(theme.px(78f), theme.px(78f)).apply {
@@ -1935,7 +1945,9 @@ class BrowseActivity : Activity() {
                 card.addView(slideState, markerLayout)
             }
             val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideState, imdb, cert, corner, chevron)
-            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
+            // Glass tiles lift on focus exactly like the hero plates (halo + elevation on the
+            // same resting cast shadow); other packs keep the flat, perf-first treatment.
+            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = glass,
                 glowInset = glowPad,
                 // The hero's rail is a loop, not a corridor: walking off either end lands on the
                 // other, the way the prototype's tiles wrap and the billboard never dead-ends.
@@ -2097,7 +2109,12 @@ class BrowseActivity : Activity() {
             holder.logo.tag = "see-all:" + row.id
             holder.art.setImageDrawable(null)
             holder.art.setBackgroundColor(Color.TRANSPARENT)
-            holder.art.background = Views.rounded(theme.surface, theme.radius("card", 6f), theme.px(1f), theme.line)
+            // Glass: a frosted translucent plate on the wall (fill + rim + sheen + cast shadow),
+            // not an opaque paper card — other packs keep their bordered sheet.
+            holder.art.background = if (glass) GlassKit.tilePlate(app, theme.radius("card", 6f),
+                theme.color("seeAllGlassA", "rgba(232,240,248,0.16)"),
+                theme.color("seeAllGlassB", "rgba(196,210,224,0.08)"))
+            else Views.rounded(theme.surface, theme.radius("card", 6f), theme.px(1f), theme.line)
             holder.name.text = row.title
             holder.name.visibility = View.VISIBLE
             holder.sub.visibility = View.GONE
@@ -2110,7 +2127,7 @@ class BrowseActivity : Activity() {
             holder.num.visibility = View.VISIBLE
             holder.num.setPadding(0, 0, 0, 0)
             holder.num.text = "See all"
-            holder.num.setTextColor(theme.ink2)
+            holder.num.setTextColor(if (glass) theme.color("inkOnWall", "#FFFFFF") else theme.ink2)
             holder.num.gravity = Gravity.CENTER
             holder.num.paint.style = android.graphics.Paint.Style.FILL
             holder.num.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
@@ -2142,7 +2159,13 @@ class BrowseActivity : Activity() {
             holder.logo.tag = "genre:" + item.identity
             holder.art.setImageDrawable(null)
             holder.art.setBackgroundColor(Color.TRANSPARENT)
-            holder.art.background = GradientDrawable(
+            // The Glass pack never prints an opaque plate: the genre's own colour wash sits at
+            // translucent alpha over the wall with the pack's rim + sheen, and the tile's
+            // elevation casts its shadow — same three material layers as every Glass surface.
+            holder.art.background = if (glass) GlassKit.tilePlate(app, theme.radius("card", 6f),
+                Color.HSVToColor(0xA8, floatArrayOf(hue, 0.55f, 0.78f)),
+                Color.HSVToColor(0x88, floatArrayOf((hue + 42f) % 360f, 0.80f, 0.42f)))
+            else GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(
                     Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.78f)),
