@@ -1,0 +1,63 @@
+{
+  "id": "template.settings",
+  "version": 1,
+  "level": "template",
+  "summary": "A secondary page from the Screens layer: the pack wall, back/title/status bar, grouped settings rows and the modal picker a row opens.",
+  "props": {
+    "title": {
+      "type": "string",
+      "default": "Settings",
+      "maxLength": 40
+    },
+    "sections": {
+      "type": "array",
+      "required": true,
+      "description": "Ordered groups with headings and rows."
+    },
+    "rows": {
+      "type": "array",
+      "description": "Flattened row data for the current section."
+    },
+    "picker": {
+      "type": "object",
+      "description": "Open picker title, options and selected value; absent when no sheet is open."
+    },
+    "status": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "wall": {
+      "type": "enum",
+      "default": "pack",
+      "enum": ["pack", "plain"],
+      "description": "Glass and Kids carry their Home wall into secondary pages."
+    },
+    "back": {
+      "type": "boolean",
+      "default": true
+    },
+    "pickerOpen": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "states": ["default", "focus", "loading", "empty", "error"],
+  "events": ["press", "change", "select", "open", "close", "focus"],
+  "slots": [
+    { "name": "header", "accepts": ["atom.button", "atom.label", "atom.progress"], "optional": true, "max": 4 },
+    { "name": "rows", "accepts": ["molecule.settings-row"], "optional": false, "max": 40 },
+    { "name": "picker", "accepts": ["molecule.settings-row"], "optional": true, "max": 16 },
+    { "name": "status", "accepts": ["atom.label"], "optional": true },
+    { "name": "wall", "accepts": ["organism.wall"], "optional": true }
+  ],
+  "a11y": {
+    "role": "list",
+    "label": "{{title}} settings"
+  },
+  "targets": {
+    "android": { "renderer": "Screens / SettingsActivity", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixSettingsTemplate", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-settings", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 200, "maxLayers": 5, "maxImageBytes": 0 }
+}

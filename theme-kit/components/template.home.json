@@ -1,0 +1,68 @@
+{
+  "id": "template.home",
+  "version": 1,
+  "level": "template",
+  "summary": "The Home page tree: pack wall, top navigation, feature hero, shelf chips and repeated rails, with the left overlay available to every family.",
+  "props": {
+    "title": {
+      "type": "string",
+      "default": "Home",
+      "maxLength": 40
+    },
+    "family": {
+      "type": "enum",
+      "default": "glass",
+      "enum": ["glass", "kids", "apple", "ps5", "roku", "clean"],
+      "description": "Composition family resolved from pack.homeLayout."
+    },
+    "nav": {
+      "type": "array",
+      "description": "Destinations bound to organism.nav.top."
+    },
+    "hero": {
+      "type": "array",
+      "description": "Feature records bound to organism.hero.glass."
+    },
+    "chips": {
+      "type": "array",
+      "description": "Shelf shortcut chips."
+    },
+    "rows": {
+      "type": "array",
+      "required": true,
+      "description": "Shelf records repeated into organism.rail."
+    },
+    "profile": {
+      "type": "object"
+    },
+    "safeArea": {
+      "type": "enum",
+      "default": "tv",
+      "enum": ["tv", "pad", "phone"]
+    },
+    "scroll": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "states": ["default", "loading", "empty", "error", "focus"],
+  "events": ["open", "select", "scroll", "focus"],
+  "slots": [
+    { "name": "wall", "accepts": ["organism.wall"], "optional": true },
+    { "name": "nav", "accepts": ["organism.nav.top"], "optional": false },
+    { "name": "hero", "accepts": ["organism.hero.glass"], "optional": false },
+    { "name": "chips", "accepts": ["atom.chip"], "optional": true, "max": 12 },
+    { "name": "rails", "accepts": ["organism.rail"], "optional": false, "max": 12 },
+    { "name": "overlay", "accepts": ["organism.rail.left"], "optional": true }
+  ],
+  "a11y": {
+    "role": "group",
+    "label": "{{title}} page"
+  },
+  "targets": {
+    "android": { "renderer": "HomeSurface / GlassHomeLayout / KidsHomeLayout", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixHomeTemplate", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-home", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 200, "maxLayers": 10, "maxImageBytes": 96000 }
+}

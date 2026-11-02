@@ -1,0 +1,88 @@
+{
+  "id": "template.player",
+  "version": 1,
+  "level": "template",
+  "summary": "The player chrome: title bar, timeline, transport, the translucent options capsule and the hint line that names the focused control.",
+  "props": {
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 120
+    },
+    "subtitle": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Season and episode line under the title."
+    },
+    "mode": {
+      "type": "enum",
+      "default": "vod",
+      "enum": ["vod", "live"]
+    },
+    "position": {
+      "type": "number",
+      "default": 0.38,
+      "min": 0,
+      "max": 1
+    },
+    "buffered": {
+      "type": "number",
+      "default": 0.61,
+      "min": 0,
+      "max": 1
+    },
+    "duration": {
+      "type": "number",
+      "default": 5400,
+      "min": 0,
+      "max": 86400,
+      "description": "Seconds; live uses the DVR window end."
+    },
+    "playing": {
+      "type": "boolean",
+      "default": true
+    },
+    "options": {
+      "type": "array",
+      "description": "Audio, subtitles, speed, quality and episodes icons."
+    },
+    "hint": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "The focused control named in words above the transport."
+    },
+    "skipIntro": {
+      "type": "boolean",
+      "default": false
+    },
+    "nextEpisode": {
+      "type": "boolean",
+      "default": false
+    },
+    "speed": {
+      "type": "number",
+      "default": 1,
+      "min": 0.25,
+      "max": 4
+    }
+  },
+  "states": ["default", "focus", "playing", "paused", "buffering", "live", "error"],
+  "events": ["play", "pause", "seek", "seekStart", "seekEnd", "press", "focus", "blur", "close"],
+  "slots": [
+    { "name": "title", "accepts": ["atom.label"], "optional": true },
+    { "name": "timeline", "accepts": ["molecule.seek-bar"], "optional": false },
+    { "name": "transport", "accepts": ["atom.button", "atom.icon"], "optional": false, "max": 6 },
+    { "name": "options", "accepts": ["atom.icon"], "optional": true, "max": 6 },
+    { "name": "hint", "accepts": ["atom.label"], "optional": true }
+  ],
+  "a11y": {
+    "role": "group",
+    "label": "Player controls for {{title}}"
+  },
+  "targets": {
+    "android": { "renderer": "PlayerActivity chrome", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixPlayerChrome", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-player-chrome", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 40, "maxLayers": 4, "maxImageBytes": 0 }
+}

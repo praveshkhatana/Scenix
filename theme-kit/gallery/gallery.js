@@ -15,6 +15,107 @@ const DEVICES = [
 
 const TILE_VARIANTS = ['poster', 'landscape', 'rank', 'continue'];
 
+
+const TILE_SAMPLES = {
+  poster: { title: 'Arrival', secondary: '2016 · Science fiction', progress: 0, badge: '4k', caption: 'below' },
+  landscape: { title: 'The Last of Us', secondary: 'S1 E4 · 52m', progress: 0, badge: 'hd', caption: 'below' },
+  rank: { title: 'Severance', secondary: '2022 · Drama', rank: 2, badge: 'new', caption: 'below' },
+  continue: { title: 'Dune: Part Two', secondary: '1h 12m left', progress: 0.46, badge: 'none', caption: 'overlay' }
+};
+
+const NAV_ITEMS = [
+  { label: 'Home', icon: 'home', route: 'home' },
+  { label: 'Movies', icon: 'films', route: 'movies' },
+  { label: 'Series', icon: 'series', route: 'series' },
+  { label: 'Games', icon: 'play', route: 'games' },
+  { label: 'Live', icon: 'live', route: 'live' }
+];
+
+const LEFT_ITEMS = [
+  { label: 'Switch profile', icon: 'profile', route: 'profile' },
+  { label: 'Search', icon: 'search', route: 'search' },
+  { label: 'Home', icon: 'home', route: 'home' },
+  { label: 'Movies', icon: 'films', route: 'movies' },
+  { label: 'Series', icon: 'series', route: 'series' },
+  { label: 'Games', icon: 'play', route: 'games' },
+  { label: 'Live TV', icon: 'live', route: 'live' },
+  { label: 'Settings', icon: 'settings', route: 'settings' }
+];
+
+const HERO_ITEMS = [
+  { title: 'The Last of Us', secondary: 'S1 E4 · 52m', badge: '4k' },
+  { title: 'Dune: Part Two', secondary: '2024 · Science fiction', badge: 'hd' }
+];
+
+const HERO_CHIPS = ['For you', 'Movies', 'Series', 'Games', 'Live', 'Kids', 'Top 10'];
+
+const RAIL_ITEMS = [
+  { title: 'Arrival', secondary: '2016', progress: 0, badge: '4k' },
+  { title: 'Severance', secondary: 'S2 E3', progress: 0, badge: 'new' },
+  { title: 'The Last of Us', secondary: 'S1 E4', progress: 0, badge: 'hd' },
+  { title: 'Dune: Part Two', secondary: '1h 12m left', progress: 0.46, badge: 'none' },
+  { title: 'Past Lives', secondary: '2023', progress: 0, badge: 'none' },
+  { title: 'Shōgun', secondary: 'S1 E7', progress: 0, badge: 'new' }
+];
+
+const HOME_ROWS = [
+  { title: 'Continue watching', variant: 'continue', caption: 'overlay', items: RAIL_ITEMS.slice(3) },
+  { title: 'New this week', variant: 'poster', caption: 'below', items: RAIL_ITEMS.slice(0, 4) }
+];
+
+const SETTINGS_SECTIONS = [
+  {
+    title: 'Playback',
+    rows: [
+      { label: 'Quality ceiling', note: 'The highest copy this TV may ask the hub for', value: '4K HDR', control: 'picker', icon: 'quality' },
+      { label: 'Preferred audio', note: 'Language order for the mixer', value: 'English', control: 'picker', icon: 'audio' },
+      { label: 'Subtitles', note: 'Forced tracks follow the audio choice', value: 'English', control: 'picker', icon: 'subtitles' }
+    ]
+  },
+  {
+    title: 'Household',
+    rows: [
+      { label: 'Profiles', note: 'People, avatars and kids mode', value: '4', control: 'chevron', icon: 'profile' },
+      { label: 'Theme pack', note: 'Tokens and composition for every screen', value: 'Glass', control: 'picker', icon: 'theme' },
+      { label: 'Auto-update', note: 'Install new builds overnight', value: 'On', control: 'toggle', icon: 'update', toggleOn: true }
+    ]
+  }
+];
+
+const PLAYER_OPTIONS = ['audio', 'subtitles', 'speed', 'quality', 'episodes'];
+
+const VARIANT_COMPONENTS = new Set([
+  'molecule.tile',
+  'organism.hero.glass',
+  'organism.nav.top',
+  'organism.rail',
+  'template.detail'
+]);
+
+const VARIANT_SAMPLES = {
+  'organism.hero.glass': {
+    'glass-cards': { ratio: '7:10', titleAlign: 'start' },
+    'kids-stage': { ratio: '40:60', titleAlign: 'start' },
+    'dual-cards': { ratio: 'equal', titleAlign: 'center' }
+  },
+  'organism.nav.top': {
+    pill: { active: 'home' },
+    kids: { active: 'movies' },
+    classic: { active: 'home' }
+  },
+  'organism.rail': {
+    poster: { caption: 'below' },
+    landscape: { caption: 'below' },
+    rank: { caption: 'below' },
+    continue: { caption: 'overlay' }
+  },
+  'template.detail': {
+    backdrop: { showReactions: true },
+    split: { showReactions: false },
+    stage: { showReactions: true }
+  }
+};
+
 const SAMPLES = {
   'atom.icon': { name: 'play', size: 34, tone: 'ink', stroke: 2 },
   'atom.label': { text: 'Continue watching', type: 'rowTitle', tone: 'ink', weight: 'bold', maxLines: 1 },
@@ -30,14 +131,57 @@ const SAMPLES = {
     label: 'Auto-update', note: 'Install new builds overnight', value: 'On',
     chevron: false, control: 'toggle', icon: 'update', toggleOn: true
   },
-  'molecule.seek-bar': { position: 0.38, buffered: 0.61, duration: 5400, live: false, knob: true, chapters: true, hint: 'time' }
-};
-
-const TILE_SAMPLES = {
-  poster: { title: 'Arrival', secondary: '2016 · Science fiction', progress: 0, badge: '4k', caption: 'below' },
-  landscape: { title: 'The Last of Us', secondary: 'S1 E4 · 52m', progress: 0, badge: 'hd', caption: 'below' },
-  rank: { title: 'Severance', secondary: '2022 · Drama', rank: 2, badge: 'new', caption: 'below' },
-  continue: { title: 'Dune: Part Two', secondary: '1h 12m left', progress: 0.46, badge: 'none', caption: 'overlay' }
+  'molecule.seek-bar': { position: 0.38, buffered: 0.61, duration: 5400, live: false, knob: true, chapters: true, hint: 'time' },
+  'organism.hero.glass': {
+    items: HERO_ITEMS, max: 2, ratio: '7:10', variant: 'glass-cards', halo: true,
+    chips: HERO_CHIPS, maxChips: 8, titleAlign: 'start'
+  },
+  'organism.nav.top': {
+    items: NAV_ITEMS, variant: 'pill', active: 'home', search: true, live: true,
+    wordmark: true, compact: false, profile: { name: 'Pravesh', initials: 'P' }
+  },
+  'organism.rail': {
+    title: 'Continue watching', items: RAIL_ITEMS, total: 24, variant: 'poster',
+    caption: 'below', seeAll: true, maxItems: 18, showCount: true
+  },
+  'organism.rail.left': {
+    items: LEFT_ITEMS, open: true, active: 'home', width: 340, scrim: true,
+    profileFirst: true, focusFill: '#FFFFFF', labels: true
+  },
+  'template.home': {
+    title: 'Home', family: 'glass', nav: NAV_ITEMS, hero: HERO_ITEMS, chips: HERO_CHIPS,
+    rows: HOME_ROWS, safeArea: 'tv', scroll: true
+  },
+  'template.detail': {
+    title: 'The Last of Us', variant: 'backdrop', art: '', overview:
+      'Twenty years after a fungal outbreak, a hardened survivor is hired to smuggle a teenager across a ruined country.',
+    meta: '96% match · 2023 · TV-MA · S1 E4 · Drama, Adventure',
+    actions: [
+      { label: 'Resume', kind: 'primary', icon: 'play' },
+      { label: '+ My List', kind: 'secondary' },
+      { label: '▶ Trailer', kind: 'ghost' }
+    ],
+    reactions: ['seen', 'like', 'love', 'dislike'], episodes: RAIL_ITEMS.slice(0, 4),
+    related: RAIL_ITEMS.slice(1, 5), progress: 0.46, showReactions: true
+  },
+  'template.settings': {
+    title: 'Settings', sections: SETTINGS_SECTIONS, status: 'All changes saved',
+    picker: {
+      title: 'Quality ceiling',
+      options: [
+        { label: 'Auto', value: 'Best available' },
+        { label: '4K HDR', value: 'Selected' },
+        { label: '1080p', value: 'Safer on Wi-Fi' }
+      ]
+    },
+    wall: 'pack', back: true, pickerOpen: true
+  },
+  'template.player': {
+    title: 'The Last of Us', subtitle: 'S1 E4 · Please Hold to My Hand',
+    mode: 'vod', position: 0.38, buffered: 0.61, duration: 3180, playing: true,
+    options: PLAYER_OPTIONS, hint: 'Timeline · LEFT / RIGHT to seek',
+    skipIntro: true, nextEpisode: true, speed: 1
+  }
 };
 
 const ART_PALETTES = [
@@ -83,6 +227,7 @@ const state = {
   theme: null,
   device: DEVICES[0],
   selectedId: null,
+  levelFilter: 'all',
   copyTimer: null
 };
 
@@ -246,13 +391,14 @@ function cssId(id) {
 }
 
 function currentVariant(component) {
+  if (!VARIANT_COMPONENTS.has(component.id)) return '';
   const enums = component.props && component.props.variant && component.props.variant.enum;
   return enums && enums.length ? enums[0] : '';
 }
 
 function buildCases(component) {
-  if (component.id === 'molecule.tile') {
-    const variants = component.props.variant && component.props.variant.enum ? component.props.variant.enum : TILE_VARIANTS;
+  if (VARIANT_COMPONENTS.has(component.id)) {
+    const variants = component.props.variant && component.props.variant.enum ? component.props.variant.enum : [];
     return variants.flatMap((variant) => component.states.map((stateName) => ({
       variant,
       state: stateName,
@@ -266,14 +412,21 @@ function sampleFor(component, variant) {
   const base = { ...(SAMPLES[component.id] || {}) };
   if (component.id === 'molecule.tile') {
     Object.assign(base, TILE_SAMPLES[variant] || TILE_SAMPLES.poster);
-    base.variant = variant;
+  } else if (VARIANT_SAMPLES[component.id] && VARIANT_SAMPLES[component.id][variant]) {
+    Object.assign(base, VARIANT_SAMPLES[component.id][variant]);
+  }
+  if (variant) base.variant = variant;
+  if (component.id === 'template.detail') {
+    base.kids = variant === 'split';
+    base.glass = variant !== 'split';
   }
   return base;
 }
 
 function classesFor(component, stateName) {
   const classes = [`state-${stateName}`];
-  if (stateName === 'focus' && component.id !== 'atom.focus-ring') classes.push('is-focus');
+  if (stateName === 'focus' && (component.level === 'atom' || component.level === 'molecule')
+    && component.id !== 'atom.focus-ring') classes.push('is-focus');
   return classes.join(' ');
 }
 
@@ -292,6 +445,14 @@ function renderCase(component, sample, stateName, variant) {
     case 'molecule.nav-item': return renderNav(sample, stateName, classes);
     case 'molecule.settings-row': return renderSettingsRow(sample, stateName, classes);
     case 'molecule.seek-bar': return renderSeekBar(sample, stateName, classes);
+    case 'organism.hero.glass': return renderHeroGlass(sample, stateName, classes);
+    case 'organism.nav.top': return renderNavTop(sample, stateName, classes);
+    case 'organism.rail': return renderRail(sample, stateName, classes);
+    case 'organism.rail.left': return renderRailLeft(sample, stateName, classes);
+    case 'template.home': return renderTemplateHome(sample, stateName, classes);
+    case 'template.detail': return renderTemplateDetail(sample, stateName, classes, variant);
+    case 'template.settings': return renderTemplateSettings(sample, stateName, classes);
+    case 'template.player': return renderTemplatePlayer(sample, stateName, classes);
     default: return `<div class="c-surface ${classes}"><span class="surface-sub">${esc(component.id)} has no gallery renderer yet.</span></div>`;
   }
 }
@@ -456,13 +617,322 @@ function renderSeekBar(sample, stateName, classes) {
     `${hint ? `<span class="seek-hint">${esc(hint)}</span>` : ''}</div>`;
 }
 
+/* ---------------- organisms ---------------- */
+
+function chipMarkup(label, icon, selected, tone = 'glass') {
+  const glyph = icon && icon !== 'none' ? `<span class="c-icon">${iconSvg(icon)}</span>` : '';
+  return `<span class="c-chip tone-${esc(tone)}${selected ? ' is-selected' : ''}">` +
+    `${glyph}<span>${esc(label)}</span></span>`;
+}
+
+function navAction(icon, cls = '') {
+  return `<span class="nav-action ${cls}" aria-hidden="true">${iconSvg(icon)}</span>`;
+}
+
+function renderHeroGlass(sample, stateName, classes) {
+  const variant = sample.variant || 'glass-cards';
+  const items = (Array.isArray(sample.items) ? sample.items : HERO_ITEMS)
+    .slice(0, Math.max(1, Number(sample.max) || 2));
+  const chips = (Array.isArray(sample.chips) ? sample.chips : HERO_CHIPS)
+    .slice(0, Math.max(0, Number(sample.maxChips) || 8));
+  const ratio = String(sample.ratio || '7:10').replace(':', '-');
+  const loading = stateName === 'loading';
+  const empty = stateName === 'empty';
+  const focus = stateName === 'focus';
+  const pressed = stateName === 'pressed';
+
+  const plates = items.map((item, index) => {
+    const deep = index === 0;
+    const art = artVars(item.title || 'Scene');
+    if (loading) return `<article class="hero-plate loading ${deep ? 'deep' : ''}" style="${art}"></article>`;
+    if (empty) return `<article class="hero-plate empty ${deep ? 'deep' : ''}"><span>No artwork</span></article>`;
+    return `<article class="hero-plate ${deep ? 'deep' : ''} ${focus && index === 0 ? 'plate-focus' : ''} ` +
+      `${pressed && index === 0 ? 'plate-pressed' : ''}" style="${art}">` +
+      '<i class="hero-art-shape s1"></i><i class="hero-art-shape s2"></i>' +
+      `<span class="hero-plate-monogram">${esc(initials(item.title))}</span>` +
+      '<span class="hero-plate-kicker">Featured</span>' +
+      `<span class="hero-plate-title">${esc(item.title)}</span>` +
+      `<span class="hero-plate-sub">${esc(item.secondary || '')}</span>` +
+      `<span class="hero-play">${iconSvg('play')}</span>` +
+      `${item.badge ? `<span class="hero-badge">${esc(item.badge)}</span>` : ''}` +
+      '</article>';
+  }).join('');
+
+  const copy = empty
+    ? '<span class="hero-empty-title">No featured titles</span>'
+    : '<span class="hero-eyebrow">Tonight on Scenix</span>' +
+      '<h3 class="hero-heading">Pick up where you left off</h3>' +
+      '<p class="hero-dek">Two household favourites, one press away.</p>' +
+      `<span class="hero-cta">${iconSvg('play')} Play</span>`;
+  const chipHtml = empty ? '' : chips.map((chip, index) => chipMarkup(chip, index === 0 ? 'play' : 'none', index === 0)).join('');
+
+  return `<div class="c-heroglass variant-${esc(variant)} ratio-${esc(ratio)} ${classes}">` +
+    `<div class="hero-copy ${sample.titleAlign === 'center' ? 'align-center' : ''}">${copy}</div>` +
+    `<div class="hero-plates">${plates}</div>` +
+    `<div class="hero-chip-band">${chipHtml}</div>` +
+    '</div>';
+}
+
+function renderNavTop(sample, stateName, classes) {
+  const variant = sample.variant || 'pill';
+  const active = String(sample.active || 'home').toLowerCase();
+  const items = (Array.isArray(sample.items) ? sample.items : NAV_ITEMS).slice(0, 5);
+  const focus = stateName === 'focus';
+  const stops = items.map((item, index) => {
+    const selected = String(item.route || item.label).toLowerCase() === active;
+    const isFocus = focus && index === 0;
+    return `<span class="nav-stop${selected ? ' is-active' : ''}${isFocus ? ' nav-focus' : ''}">` +
+      `${item.icon ? `<span class="c-icon">${iconSvg(item.icon)}</span>` : ''}` +
+      `<span>${esc(item.label)}</span></span>`;
+  }).join('');
+  const profile = `<span class="nav-profile" aria-label="${esc((sample.profile && sample.profile.name) || 'Profile')}">` +
+    `${esc((sample.profile && sample.profile.initials) || 'P')}</span>`;
+  const search = sample.search ? navAction('search', 'nav-search') : '';
+  const gear = navAction('settings');
+  const brand = sample.wordmark !== false ? '<span class="nav-wordmark">SCENIX</span>' : '';
+
+  if (variant === 'kids') {
+    return `<nav class="c-navtop variant-kids ${classes}">` +
+      '<span class="nav-brand-disc">S</span>' +
+      `<span class="nav-kids-pill">${stops}${search}</span>` +
+      `<span class="nav-household">${profile}${gear}</span></nav>`;
+  }
+  if (variant === 'classic') {
+    return `<nav class="c-navtop variant-classic ${classes}">${brand}` +
+      `<span class="nav-classic-links">${stops}</span>` +
+      `<span class="nav-household">${profile}${search}${gear}</span></nav>`;
+  }
+  return `<nav class="c-navtop variant-pill ${classes}">${brand}` +
+    `<span class="nav-pill">${profile}${stops}${search}</span>` +
+    `<span class="nav-household">${gear}</span></nav>`;
+}
+
+function renderRail(sample, stateName, classes) {
+  const variant = sample.variant || 'poster';
+  const caption = sample.caption || 'below';
+  const items = (Array.isArray(sample.items) ? sample.items : RAIL_ITEMS)
+    .slice(0, Math.max(1, Number(sample.maxItems) || 18));
+  const seeAll = Boolean(sample.seeAll) || (Number(sample.total) || 0) > items.length;
+  const count = sample.showCount && sample.total ? `<span class="rail-count">${esc(sample.total)}</span>` : '';
+  const head = `<div class="rail-head"><span class="rail-title">${esc(sample.title || 'Shelf')}</span>${count}` +
+    `${seeAll ? `<span class="rail-seeall-link">See all <span class="c-icon">${iconSvg('chevron')}</span></span>` : ''}</div>`;
+
+  if (stateName === 'loading') {
+    return `<div class="c-rail ${classes}">${head}<div class="rail-track">` +
+      Array.from({ length: 4 }).map(() => '<span class="rail-skeleton"></span>').join('') +
+      '</div></div>';
+  }
+  if (stateName === 'empty') {
+    return `<div class="c-rail ${classes}">${head}<div class="rail-empty">Nothing on this shelf yet.</div></div>`;
+  }
+  if (stateName === 'error') {
+    return `<div class="c-rail ${classes}">${head}<div class="rail-empty error">This shelf did not load. ` +
+      '<span class="rail-retry">Retry</span></div></div>';
+  }
+
+  const tiles = items.map((item, index) => {
+    const tileState = stateName === 'focus' && index === 0 ? 'focus'
+      : stateName === 'pressed' && index === 0 ? 'pressed' : 'default';
+    const tileClasses = classesFor({ level: 'molecule', id: 'molecule.tile' }, tileState);
+    return renderTile({ ...item, variant, caption }, tileState, tileClasses, variant);
+  }).join('');
+  const seeAllCard = seeAll
+    ? `<article class="rail-seeall"><span class="rail-seeall-disc">${iconSvg('forward')}</span><span>See all</span></article>`
+    : '';
+  return `<div class="c-rail ${classes}">${head}<div class="rail-track">${tiles}${seeAllCard}</div></div>`;
+}
+
+function renderRailLeft(sample, stateName, classes) {
+  const items = (Array.isArray(sample.items) ? sample.items : LEFT_ITEMS).slice(0, 8);
+  const active = String(sample.active || 'home').toLowerCase();
+  const focus = stateName === 'focus';
+  const rows = items.map((item, index) => {
+    const selected = String(item.route || item.label).toLowerCase() === active;
+    const isFocus = focus && index === 0;
+    return `<span class="railleft-row${selected ? ' is-selected' : ''}${isFocus ? ' row-focus' : ''}">` +
+      `<span class="railleft-icon">${iconSvg(item.icon || 'chevron')}</span>` +
+      `<span class="railleft-label">${esc(item.label)}</span>` +
+      `${selected ? `<span class="railleft-mark">${iconSvg('check')}</span>` : ''}</span>`;
+  }).join('');
+  return `<div class="c-railleft ${classes}">` +
+    '<span class="railleft-scrim"></span>' +
+    `<div class="railleft-panel"><span class="railleft-brand">SCENIX</span>${rows}</div>` +
+    '<div class="railleft-page"><span></span><span></span><span></span><span></span></div>' +
+    '</div>';
+}
+
+/* ---------------- templates ---------------- */
+
+function pageMessage(kind, title, body) {
+  return `<div class="c-page page-message ${kind}"><span class="page-message-mark">${iconSvg(kind === 'error' ? 'close' : 'films')}</span>` +
+    `<b>${esc(title)}</b><span>${esc(body)}</span></div>`;
+}
+
+function renderTemplateHome(sample, stateName, classes) {
+  if (stateName === 'loading') {
+    return `<div class="c-page c-home loading ${classes}">` +
+      '<span class="page-skeleton nav"></span><span class="page-skeleton hero"></span>' +
+      '<span class="page-skeleton rail"></span><span class="page-skeleton rail short"></span></div>';
+  }
+  if (stateName === 'empty') return pageMessage('empty', 'Nothing to watch yet', 'Add a hub or a profile, then this wall fills itself.');
+  if (stateName === 'error') return pageMessage('error', 'The hub is not answering', 'Retry from Settings or check the box on the LAN.');
+
+  const rows = Array.isArray(sample.rows) ? sample.rows : HOME_ROWS;
+  const focus = stateName === 'focus';
+  const nav = renderNavTop({
+    items: sample.nav || NAV_ITEMS,
+    variant: sample.family === 'kids' ? 'kids' : 'pill',
+    active: 'home', search: true,
+    profile: { name: 'Pravesh', initials: 'P' }
+  }, 'default', '');
+  const hero = renderHeroGlass({
+    items: sample.hero || HERO_ITEMS,
+    variant: sample.family === 'kids' ? 'kids-stage' : 'glass-cards',
+    chips: sample.chips || HERO_CHIPS, max: 2
+  }, focus ? 'focus' : 'default', '');
+  const rails = rows.slice(0, 2).map((row) => renderRail({
+    ...row, seeAll: true, total: row.total || 24, showCount: false
+  }, 'default', '')).join('');
+  return `<div class="c-page c-home family-${esc(sample.family || 'glass')} ${classes}">` +
+    `${nav}${hero}${rails}</div>`;
+}
+
+function renderTemplateDetail(sample, stateName, classes, variant) {
+  const style = variant || sample.variant || 'backdrop';
+  if (stateName === 'loading') {
+    return `<div class="c-page c-detail loading ${classes}">` +
+      '<span class="page-skeleton detail-hero"></span><span class="page-skeleton rail"></span></div>';
+  }
+  if (stateName === 'empty') return pageMessage('empty', 'Title not found', 'The hub answered without a record for this id.');
+  if (stateName === 'error') return pageMessage('error', 'This title did not load', 'The record came back empty. Retry or open it from the shelf again.');
+
+  const title = sample.title || 'Untitled';
+  const actions = (Array.isArray(sample.actions) ? sample.actions : [])
+    .map((action, index) => renderButton(action, 'default',
+      classesFor({ level: 'atom', id: 'atom.button' }, stateName === 'focus' && index === 0 ? 'focus' : 'default'))).join('');
+  const reactionGlyph = { seen: 'check', like: 'play', love: 'play', dislike: 'close' };
+  const reactions = (Array.isArray(sample.reactions) ? sample.reactions : [])
+    .map((tag, index) => `<span class="detail-reaction${index === 1 ? ' is-on' : ''}">` +
+      `${iconSvg(reactionGlyph[tag] || 'play')}<span>${esc(tag)}</span></span>`).join('');
+  const people = [
+    ['Pedro Pascal', 'PP'], ['Bella Ramsey', 'BR'], ['Anna Torv', 'AT'], ['Murray Bartlett', 'MB']
+  ].map(([name, mark]) => `<span class="detail-person"><span class="detail-face">${mark}</span><span>${esc(name)}</span></span>`).join('');
+  const episodes = (Array.isArray(sample.episodes) ? sample.episodes : RAIL_ITEMS.slice(0, 4))
+    .map((item) => renderTile({ ...item, variant: 'landscape', caption: 'below' }, 'default',
+      classesFor({ level: 'molecule', id: 'molecule.tile' }, 'default'), 'landscape')).join('');
+  const related = (Array.isArray(sample.related) ? sample.related : RAIL_ITEMS.slice(1, 5))
+    .map((item) => renderTile({ ...item, variant: 'poster', caption: 'below' }, 'default',
+      classesFor({ level: 'molecule', id: 'molecule.tile' }, 'default'), 'poster')).join('');
+
+  return `<div class="c-page c-detail variant-${esc(style)} ${classes}">` +
+    '<div class="detail-hero">' +
+      `<div class="detail-art" style="${artVars(title)}"><i class="hero-art-shape s1"></i><i class="hero-art-shape s2"></i>` +
+        `<span class="detail-monogram">${esc(initials(title))}</span>` +
+        `<span class="detail-art-caption">${esc(sample.meta || '')}</span></div>` +
+      '<div class="detail-words"><span class="detail-back">‹</span><span class="detail-kicker">Scenix</span>' +
+        `<h3 class="detail-title">${esc(title)}</h3>` +
+        `<p class="detail-meta">${esc(sample.meta || '')}</p>` +
+        `<p class="detail-overview">${esc(sample.overview || '')}</p>` +
+        `<div class="detail-actions">${actions}</div>` +
+        `${sample.showReactions === false ? '' : `<div class="detail-reactions">${reactions}</div>`}` +
+      '</div>' +
+    '</div>' +
+    '<div class="detail-content"><span class="detail-section">Cast</span>' +
+      `<div class="detail-cast">${people}</div>` +
+      '<span class="detail-section">Episodes</span>' +
+      `<div class="detail-episodes">${episodes}</div>` +
+      '<span class="detail-section">More like this</span>' +
+      `<div class="detail-related">${related}</div>` +
+    '</div></div>';
+}
+
+function renderTemplateSettings(sample, stateName, classes) {
+  if (stateName === 'loading') {
+    return `<div class="c-page c-settings loading ${classes}">` +
+      '<span class="settings-top"><span class="settings-back">‹</span><span class="settings-title">Settings</span></span>' +
+      Array.from({ length: 5 }).map(() => '<span class="page-skeleton row"></span>').join('') + '</div>';
+  }
+  if (stateName === 'empty') return pageMessage('empty', 'No settings for this profile', 'A kids profile hides the admin sections until a PIN unlocks them.');
+  if (stateName === 'error') return pageMessage('error', 'Preferences did not load', 'The hub did not answer. Retry from the back control.');
+
+  const sections = Array.isArray(sample.sections) ? sample.sections : SETTINGS_SECTIONS;
+  let rowIndex = 0;
+  const body = sections.map((section) => `<div class="settings-section">` +
+    `<span class="settings-heading">${esc(section.title)}</span>` +
+    (section.rows || []).map((row) => {
+      const isFocus = stateName === 'focus' && rowIndex === 0;
+      rowIndex += 1;
+      return renderSettingsRow(row, isFocus ? 'focus' : 'default',
+        isFocus ? 'state-focus is-focus' : 'state-default');
+    }).join('') + '</div>').join('');
+
+  const picker = sample.pickerOpen && sample.picker
+    ? `<div class="settings-picker"><span class="settings-picker-title">${esc(sample.picker.title)}</span>` +
+      (sample.picker.options || []).map((option, index) => renderSettingsRow({
+        label: option.label, value: option.value, control: 'chevron', chevron: false
+      }, index === 1 ? 'selected' : 'default', index === 1 ? 'state-selected is-selected' : 'state-default')).join('') +
+      '</div>'
+    : '';
+
+  return `<div class="c-page c-settings ${classes}">` +
+    `<div class="settings-top"><span class="settings-back">‹</span>` +
+      `<span class="settings-title">${esc(sample.title || 'Settings')}</span>` +
+      `<span class="settings-status">${esc(sample.status || '')}</span></div>` +
+    `<div class="settings-body">${body}</div>${picker}</div>`;
+}
+
+function renderTemplatePlayer(sample, stateName, classes) {
+  const live = sample.mode === 'live' || stateName === 'live';
+  const buffering = stateName === 'buffering';
+  const paused = stateName === 'paused' || (sample.playing === false && stateName === 'default');
+  const focus = stateName === 'focus';
+  const error = stateName === 'error';
+  const playing = !paused && !buffering && !error;
+  const position = live ? 1 : Math.max(0, Math.min(1, Number(sample.position) || 0));
+  const buffered = Math.max(position, Math.min(1, Number(sample.buffered) || 0));
+  const duration = Number(sample.duration) || 0;
+  const options = (Array.isArray(sample.options) ? sample.options : PLAYER_OPTIONS)
+    .map((icon) => `<span class="player-opt">${iconSvg(icon)}</span>`).join('');
+  const center = error
+    ? `<span class="player-error">This copy did not open. <span class="player-retry">Retry</span></span>`
+    : buffering
+      ? '<span class="player-buffer"><span class="c-spinner"></span> Buffering…</span>'
+      : '';
+
+  return `<div class="c-page c-player ${classes}"><div class="player-frame">` +
+    '<div class="player-video"></div>' +
+    `<span class="player-frame-title">${esc(sample.title || '')}</span>` +
+    center +
+    `<div class="player-top"><span class="player-back">‹</span>` +
+      `<span class="player-title">${esc(sample.title || '')}</span>` +
+      `<span class="player-meta">${esc(sample.subtitle || '')}</span>` +
+      `${live ? '<span class="player-live">LIVE</span>' : ''}</div>` +
+    '<div class="player-bottom"><div class="player-line">' +
+      `<span>${live ? 'LIVE' : formatTime(duration * position)}</span>` +
+      `<span class="player-seek${live ? ' is-live' : ''}">` +
+        `<i class="buffer" style="width:${buffered * 100}%"></i>` +
+        `<i class="played" style="width:${position * 100}%"></i>` +
+        `${live ? '' : `<b class="knob" style="left:${position * 100}%"></b>`}</span>` +
+      `<span>${formatTime(duration)}</span></div>` +
+      `<div class="player-transport">` +
+        `<span class="player-btn main${focus ? ' is-focus' : ''}">${iconSvg(playing ? 'pause' : 'play')}</span>` +
+        `${sample.nextEpisode ? `<span class="player-btn">${iconSvg('forward')}</span>` : ''}` +
+        `<span class="player-btn">${iconSvg('rewind')}</span>` +
+        `<span class="player-btn">${iconSvg('forward')}</span>` +
+        '<span class="player-spacer"></span>' +
+        `<span class="player-options">${options}</span></div>` +
+      `<span class="player-hint">${esc(sample.hint || '')}</span></div>` +
+    `${sample.skipIntro ? '<span class="player-skip">Skip intro</span>' : ''}` +
+    '</div></div>';
+}
+
 function componentSection(component) {
   const initialVariant = currentVariant(component);
   const initialState = component.states[0];
   const initialSample = sampleFor(component, initialVariant);
   const cases = buildCases(component);
   const budget = component.budget || {};
-  const variantControls = component.id === 'molecule.tile'
+  const variantControls = VARIANT_COMPONENTS.has(component.id)
     ? `<div class="control-group"><span class="control-label">Variant</span>${component.props.variant.enum
       .map((variant) => `<button type="button" class="variant-tab${variant === initialVariant ? ' active' : ''}" ` +
         `data-variant-tab="${esc(variant)}">${esc(variant)}</button>`).join('')}</div>`
@@ -472,8 +942,8 @@ function componentSection(component) {
       `data-state-tab="${esc(stateName)}">${esc(stateName)}</button>`).join('')}</div>`;
 
   const shortName = component.id.split('.').slice(1).join('.');
-  return `<section class="component" id="c-${cssId(component.id)}" data-id="${esc(component.id)}" ` +
-    `data-case-state="${esc(initialState)}" data-variant="${esc(initialVariant)}">` +
+  return `<section class="component level-${esc(component.level)}" id="c-${cssId(component.id)}" data-id="${esc(component.id)}" ` +
+    `data-level="${esc(component.level)}" data-case-state="${esc(initialState)}" data-variant="${esc(initialVariant)}">` +
     '<div class="component-head"><div class="component-name">' +
     `<span class="level-pill">${esc(component.level)}</span>` +
     `<h2>${esc(shortName)}</h2><code>${esc(component.id)} · v${component.version}</code></div>` +
@@ -492,6 +962,11 @@ function componentSection(component) {
     '</div></section>';
 }
 
+function visibleComponents() {
+  if (state.levelFilter === 'all') return state.components;
+  return state.components.filter((component) => component.level === state.levelFilter);
+}
+
 function renderStage(preserveScroll = false) {
   const stage = $('#device-stage');
   if (!stage || !state.theme) return;
@@ -499,14 +974,16 @@ function renderStage(preserveScroll = false) {
   const theme = state.theme;
   const caps = (theme.requires && theme.requires.caps) || [];
   const targetCount = (theme.targets || []).length;
+  const visible = visibleComponents();
+  const filterLabel = state.levelFilter === 'all' ? 'all levels' : `${state.levelFilter}s`;
 
   stage.innerHTML = `<div class="stage-inner">
     <header class="stage-head">
       <span class="stage-kicker">Scenix / ${esc(theme.name)} pack</span>
       <h1>Component gallery</h1>
-      <p>Every declared state, painted with resolved tokens. ${esc(state.components.length)} components · ${esc(targetCount)} targets · ${esc(caps.length)} capabilities. This is a web approximation; Android, iOS and web render the same contract through their registry.</p>
+      <p>Every declared state, painted with resolved tokens. ${esc(visible.length)} ${esc(filterLabel)} · ${esc(targetCount)} targets · ${esc(caps.length)} capabilities. This is a web approximation; Android, iOS and web render the same contract through their registry.</p>
     </header>
-    <div id="component-sections">${state.components.map(componentSection).join('')}</div>
+    <div id="component-sections">${visible.map(componentSection).join('')}</div>
   </div>`;
 
   if (preserveScroll) stage.scrollTop = scroll;
@@ -573,8 +1050,9 @@ function paintCase(section, component) {
 function renderSidebar() {
   const list = $('#component-list');
   if (!list) return;
+  const visible = visibleComponents();
   list.innerHTML = LEVELS.map((level) => {
-    const items = state.components.filter((component) => component.level === level);
+    const items = visible.filter((component) => component.level === level);
     if (!items.length) return '';
     return `<div class="level-group"><div class="level-name">${esc(level)}</div>` +
       items.map((component) => `<button type="button" class="comp-link" data-component="${esc(component.id)}">` +
@@ -582,7 +1060,7 @@ function renderSidebar() {
         `<span class="name">${esc(component.id.split('.').slice(1).join('.'))}</span>` +
         `<span class="v">v${component.version}</span></button>`).join('') +
       '</div>';
-  }).join('');
+  }).join('') || '<p class="sidebar-empty">No components at this level.</p>';
 
   $$('.comp-link', list).forEach((button) => {
     button.addEventListener('click', () => {
@@ -591,7 +1069,9 @@ function renderSidebar() {
   });
 
   const count = $('#component-count');
-  if (count) count.textContent = String(state.components.length);
+  if (count) count.textContent = String(visible.length);
+  const levelSelect = $('#level-select');
+  if (levelSelect) levelSelect.value = state.levelFilter;
 }
 
 function selectComponent(id, scroll) {
@@ -604,6 +1084,18 @@ function selectComponent(id, scroll) {
     const target = document.getElementById(`c-${cssId(id)}`);
     scrollStageTo(target, true);
   }
+}
+
+function setLevelFilter(level, updateUrl = true) {
+  state.levelFilter = LEVELS.includes(level) ? level : 'all';
+  const visible = visibleComponents();
+  if (visible.length && !visible.some((component) => component.id === state.selectedId)) {
+    state.selectedId = visible[0].id;
+  }
+  renderSidebar();
+  renderStage(false);
+  selectComponent(state.selectedId, false);
+  if (updateUrl) writeUrl();
 }
 
 /* ---------------- token panel ---------------- */
@@ -620,7 +1112,8 @@ function renderTokenPanel() {
   const host = $('#token-content');
   if (!host || !state.theme) return;
   const theme = state.theme;
-  const component = state.components.find((entry) => entry.id === state.selectedId) || state.components[0];
+  const component = state.components.find((entry) => entry.id === state.selectedId)
+    || visibleComponents()[0] || state.components[0];
   const tokens = theme.tokens || {};
   const colors = tokens.color || {};
   const spaces = tokens.space || {};
@@ -806,6 +1299,7 @@ function writeUrl() {
     const params = new URLSearchParams();
     params.set('theme', state.theme.id);
     params.set('device', state.device.id);
+    if (state.levelFilter !== 'all') params.set('level', state.levelFilter);
     if (state.selectedId) params.set('component', state.selectedId);
     history.replaceState(null, '', `${location.pathname}?${params.toString()}`);
   } catch (error) {
@@ -828,12 +1322,24 @@ function bootChrome() {
     deviceSelect.addEventListener('change', (event) => setDevice(event.target.value));
   }
 
+  const levelSelect = $('#level-select');
+  if (levelSelect) {
+    levelSelect.innerHTML = '<option value="all">All levels</option>' +
+      LEVELS.map((level) => `<option value="${level}">${level[0].toUpperCase()}${level.slice(1)}s</option>`).join('');
+    levelSelect.value = state.levelFilter;
+    levelSelect.addEventListener('change', (event) => setLevelFilter(event.target.value));
+  }
+
   const reset = $('#reset-view');
   if (reset) {
     reset.addEventListener('click', () => {
       setTheme(state.themes[0].id, false);
       setDevice('tv', false);
-      selectComponent(state.components[0].id, false);
+      state.levelFilter = 'all';
+      state.selectedId = state.components[0].id;
+      renderSidebar();
+      renderStage(false);
+      selectComponent(state.selectedId, false);
       const stage = $('#device-stage');
       if (stage) stage.scrollTop = 0;
       writeUrl();
@@ -869,14 +1375,18 @@ async function boot() {
     const params = new URLSearchParams(location.search);
     const requestedTheme = params.get('theme');
     const requestedDevice = params.get('device');
+    const requestedLevel = params.get('level');
     const requestedComponent = params.get('component');
 
     state.theme = state.themes.find((theme) => theme.id === requestedTheme
       || theme.name.toLowerCase() === String(requestedTheme || '').toLowerCase()) || state.themes[0];
     state.device = DEVICES.find((device) => device.id === requestedDevice) || DEVICES[0];
-    state.selectedId = state.components.some((component) => component.id === requestedComponent)
-      ? requestedComponent
-      : state.components[0].id;
+    state.levelFilter = LEVELS.includes(requestedLevel) ? requestedLevel : 'all';
+    const requested = state.components.find((component) => component.id === requestedComponent);
+    const visible = visibleComponents();
+    state.selectedId = requested && visible.includes(requested)
+      ? requested.id
+      : (visible[0] || state.components[0]).id;
 
     renderSidebar();
     bootChrome();

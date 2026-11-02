@@ -2,7 +2,7 @@
 
 The first concrete slice of [`design-contracts/THEME-PLATFORM.md`](../design-contracts/THEME-PLATFORM.md):
 typed component contracts, a portable theme-pack schema, three token fixtures derived from the
-shipping Android packs, two layout examples, and a dependency-free gallery.
+shipping Android packs, six layout examples, and a dependency-free gallery.
 
 This directory is a **contract + catalog prototype**. It is not `themec` yet: there is no compiler,
 no IR, no generated Android/web/iOS renderers. The gallery is a tokenised CSS approximation that lets
@@ -28,6 +28,7 @@ http://localhost:8000/gallery/?theme=scene.glass&device=tv&component=molecule.ti
 - `theme`: `scene.apple`, `scene.glass`, `scene.kids`
 - `device`: `tv` (1920×1080), `ipad` (1366×1024), `iphone` (393×852), `desktop` (1440×900)
 - `component`: any declared component id
+- `level`: `all`, `atom`, `molecule`, `organism` or `template`
 
 ## What is here
 
@@ -51,6 +52,14 @@ theme-kit/
     molecule.nav-item.json
     molecule.settings-row.json
     molecule.seek-bar.json
+    organism.hero.glass.json
+    organism.nav.top.json
+    organism.rail.json
+    organism.rail.left.json
+    template.home.json
+    template.detail.json
+    template.settings.json
+    template.player.json
   themes/
     index.json                 # theme + layout discovery
     apple.json                 # scene.apple   · derived from theme-apple.json
@@ -59,13 +68,17 @@ theme-kit/
     layout/
       home.glass.json          # Glass home composition
       home.kids.json           # Kids home composition
+      detail.glass.json        # Glass title page (backdrop + reactions)
+      detail.kids.json         # Kids title page (wall split)
+      settings.glass.json      # Glass secondary page (Screens rows + picker)
+      player.default.json      # Apple/default player chrome
   gallery/
     index.html
     gallery.css
     gallery.js
 ```
 
-Total added size is well under 300 KB. There are no images, fonts, CDN links or build steps.
+Total added size is about 320 KB. There are no images, fonts, CDN links or build steps.
 
 ## Component model
 
@@ -76,8 +89,8 @@ A manifest is one versioned contract in the five-level model:
 | token | `themes/*.json` token groups |
 | atom | icon, label, button, chip, focus-ring, surface, avatar, progress |
 | molecule | tile, nav-item, settings-row, seek-bar |
-| organism | referenced by the layout examples (`organism.wall`, `organism.nav.top`, `organism.hero.cards`, `organism.chip.row`, `organism.rail`); manifests are Phase 1 |
-| template | `home` composition in `themes/layout/*.json`; the schema accepts `template.*` ids for Phase 1 |
+| organism | hero.glass, nav.top, rail, rail.left |
+| template | home, detail, settings, player |
 
 Every manifest declares:
 
@@ -166,7 +179,7 @@ applying CSS variables. A pack that changes only tokens needs no gallery code.
 ## Validation
 
 Every `.json` in this directory parses with Python's `json` module. The two schemas are valid
-draft 2020-12 schemas and all 12 manifests plus the three theme packs validate against them.
+draft 2020-12 schemas and all 20 manifests plus the three theme packs validate against them.
 
 Reproduce the parse check:
 
@@ -211,9 +224,8 @@ From the plan:
 > - Acceptance: a new pack that only changes tokens renders identically in the gallery and
 >   on Android; a manifest with a missing state fails validation.
 
-This slice covers the schema, the requested 12 manifests (atoms, tile, nav item, settings row and
-seek bar — the plan's separate hero-card manifest is not in this requested set), token extraction, the
-pack format documentation and the gallery engine. Netflix, the Android registry replacement
+This slice covers the schema; 20 manifests (8 atoms, 4 molecules, 4 organisms and 4 templates);
+token extraction; six layout examples; the pack format documentation and the gallery engine. Netflix, the Android registry replacement
 (`Screens`/`HomeSurfaceFactory`) and the device-parity/golden-screenshot gate remain Phase 0
 follow-ups; the gallery currently has three themes and four device presets, as requested for this
 pass. There is no compiler/IR here yet, so the gallery reads manifests directly rather than a

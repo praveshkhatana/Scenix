@@ -1,0 +1,65 @@
+{
+  "id": "organism.nav.top",
+  "version": 1,
+  "level": "organism",
+  "summary": "Top navigation: the pack's pill stops plus search, profile and gear, with Home, Movies, Series, Games and Live in a fixed D-pad order.",
+  "props": {
+    "items": {
+      "type": "array",
+      "required": true,
+      "description": "Nav destinations: label, icon and route."
+    },
+    "variant": {
+      "type": "enum",
+      "default": "pill",
+      "enum": ["pill", "kids", "classic"],
+      "description": "Apple/Glass centred pill, Kids brand-disc capsule, or the classic wordmark bar."
+    },
+    "active": {
+      "type": "string",
+      "default": "home",
+      "maxLength": 24,
+      "description": "Route currently standing; never inferred from geometry."
+    },
+    "search": {
+      "type": "boolean",
+      "default": true
+    },
+    "live": {
+      "type": "boolean",
+      "default": true,
+      "description": "Live only appears when the hub actually carries the live row."
+    },
+    "wordmark": {
+      "type": "boolean",
+      "default": true
+    },
+    "compact": {
+      "type": "boolean",
+      "default": false,
+      "description": "Icon-only form for narrow profile and gear stops."
+    },
+    "profile": {
+      "type": "object",
+      "description": "Current household member: name, initials and avatar URL."
+    }
+  },
+  "states": ["default", "focus", "pressed", "selected", "disabled"],
+  "events": ["press", "focus", "blur", "select"],
+  "slots": [
+    { "name": "brand", "accepts": ["atom.label", "atom.icon"], "optional": true },
+    { "name": "stops", "accepts": ["molecule.nav-item"], "optional": false, "max": 8 },
+    { "name": "actions", "accepts": ["atom.icon", "atom.button"], "optional": true, "max": 3 },
+    { "name": "profile", "accepts": ["atom.avatar"], "optional": true }
+  ],
+  "a11y": {
+    "role": "navigation",
+    "label": "Primary navigation"
+  },
+  "targets": {
+    "android": { "renderer": "BrowseActivity topBar / GlassKit pill", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixTopNav", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-nav-top", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 40, "maxLayers": 4, "maxImageBytes": 96000 }
+}

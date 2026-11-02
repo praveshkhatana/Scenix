@@ -1,0 +1,64 @@
+{
+  "id": "organism.rail.left",
+  "version": 1,
+  "level": "organism",
+  "summary": "The host overlay rail: icon destinations with Profile first and Search second, a white focus pill, and a scrim that closes onto the exact tile the viewer left.",
+  "props": {
+    "items": {
+      "type": "array",
+      "required": true,
+      "description": "Destination rows in host order: Profile, Search, Home, Movies, Series, Games, Live TV, Settings."
+    },
+    "open": {
+      "type": "boolean",
+      "default": false
+    },
+    "active": {
+      "type": "string",
+      "default": "home",
+      "maxLength": 24
+    },
+    "width": {
+      "type": "number",
+      "default": 340,
+      "min": 240,
+      "max": 480
+    },
+    "scrim": {
+      "type": "boolean",
+      "default": true
+    },
+    "profileFirst": {
+      "type": "boolean",
+      "default": true,
+      "description": "Search sits after Profile, above Home, as the owner requested."
+    },
+    "focusFill": {
+      "type": "color",
+      "default": "#FFFFFF",
+      "description": "The host owns the white pill; a pack brand fill disappeared on Kids and Glass."
+    },
+    "labels": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "states": ["default", "focus", "pressed", "selected", "disabled"],
+  "events": ["press", "focus", "blur", "open", "close", "select"],
+  "slots": [
+    { "name": "items", "accepts": ["molecule.nav-item"], "optional": false, "max": 8 },
+    { "name": "brand", "accepts": ["atom.label"], "optional": true },
+    { "name": "icons", "accepts": ["atom.icon"], "optional": true, "max": 8 },
+    { "name": "scrim", "accepts": ["atom.surface"], "optional": true }
+  ],
+  "a11y": {
+    "role": "navigation",
+    "label": "Quick navigation"
+  },
+  "targets": {
+    "android": { "renderer": "BrowseActivity buildLeftRail", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixSideRail", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-rail-left", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 32, "maxLayers": 3, "maxImageBytes": 0 }
+}
