@@ -101,8 +101,15 @@ class Theme private constructor(
      */
     val focusGlowAlphas: IntArray get() {
         val a = focus.optJSONArray("glowAlphas")
-        return if (a == null || a.length() < 3) intArrayOf(8, 12, 18)
-        else intArrayOf(a.optInt(0, 8), a.optInt(1, 12), a.optInt(2, 18))
+        if (a != null && a.length() >= 3) {
+            return intArrayOf(a.optInt(0, 8), a.optInt(1, 12), a.optInt(2, 18))
+        }
+        // Older packs (Glass) dial the three bands with one multiplier instead of an array.
+        // Dropping that key made the hero halo almost invisible on the light wall — the exact
+        // "good focus effect" the reference shows and our build lost (owner, 2026-11-03).
+        val mult = focus.optDouble("glowAlpha", 1.0).toFloat().coerceAtLeast(0f)
+        fun band(base: Int) = (base * mult).toInt().coerceIn(1, 255)
+        return intArrayOf(band(8), band(12), band(18))
     }
 
     /**
