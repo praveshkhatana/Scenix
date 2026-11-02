@@ -119,7 +119,24 @@ object Screens {
         chevron: Boolean,
         onClick: () -> Unit,
     ) {
-        list.addView(row(ctx, app, label, value, note, chevron, onClick),
+        val item = row(ctx, app, label, value, note, chevron, onClick)
+        if (item.id == View.NO_ID) item.id = View.generateViewId()
+        // A settings page is a list, so its D-pad route is the list: each row names its neighbours.
+        // Geometric search across a ScrollView could stop at the last painted row (the admin
+        // sections below it were unreachable until the viewer touch-scrolled) and DOWN from the
+        // bottom could wrap onto the Back chevron. Explicit links make the walk total and stable
+        // for every pack, including one whose rows are taller than the visible band.
+        var previous: View? = null
+        for (i in list.childCount - 1 downTo 0) {
+            val c = list.getChildAt(i)
+            if (c.isFocusable) { previous = c; break }
+        }
+        if (previous != null) {
+            previous.nextFocusDownId = item.id
+            item.nextFocusUpId = previous.id
+        }
+        item.nextFocusDownId = item.id
+        list.addView(item,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = listGap(app)
             })

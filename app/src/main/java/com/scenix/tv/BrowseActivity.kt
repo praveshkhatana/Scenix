@@ -672,7 +672,11 @@ class BrowseActivity : Activity() {
         if (focus == null || railPanel == null) return false
         val adapter = browseAdapter
         if (adapter != null && isInside(adapter.heroRoot, focus)) {
-            return slides.size <= 1 || app.theme.homeLayout.hero != HomeLayoutSpec.Hero.SHARED_SLIDER
+            // A multi-slide Apple billboard owns LEFT for its carousel. Every other hero — the
+            // Glass cards, the Kids stage — only hands LEFT to the rail from the first card of a
+            // row: LEFT on the second card is a step back to the first, not a jump to the menu.
+            if (slides.size > 1 && app.theme.homeLayout.hero == HomeLayoutSpec.Hero.SHARED_SLIDER) return false
+            return firstInItsRow(focus)
         }
         if (pillGroup != null && isInside(pillGroup, focus)) {
             val first = pillStops.firstOrNull() ?: return false
@@ -691,6 +695,16 @@ class BrowseActivity : Activity() {
             cur = parent as? View
         }
         return false
+    }
+
+    /** True when no focusable sibling sits to the left in the same row. */
+    private fun firstInItsRow(v: View): Boolean {
+        val parent = v.parent as? ViewGroup ?: return true
+        for (i in 0 until parent.indexOfChild(v)) {
+            val c = parent.getChildAt(i)
+            if (c.isFocusable && c.visibility == View.VISIBLE) return false
+        }
+        return true
     }
 
     override fun onBackPressed() {
