@@ -209,7 +209,7 @@ function ready() {
 }
 
 function statusNote(c) {
-  if (!c.enabled) return 'off: no debrid account; torrents use the gateway and direct links play as they are';
+  if (!c.enabled) return 'off: no debrid account; P2P copies use the gateway and direct links play as they are';
   if (!c.provider) return 'enabled, but no provider is chosen';
   if (!c.providerModule) return 'enabled, but provider "' + c.provider + '" is not installed';
   if (!c.token) return 'enabled for ' + c.providerModule.label + ', but no token is stored';
