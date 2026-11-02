@@ -19,6 +19,7 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
 import com.scenix.tv.core.s
 import com.scenix.tv.core.sa
@@ -34,6 +35,10 @@ import org.json.JSONObject
 class DetailActivity : Activity() {
 
     private lateinit var app: AppContext
+    // Detail borrows the home pack's control material only on the Glass pack; every other
+    // pack keeps its solid brand buttons.
+    private val isGlassPack get() =
+        app.theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
     private lateinit var profileId: String
     private lateinit var identity: String
     private var expectedTitle = ""
@@ -57,7 +62,10 @@ class DetailActivity : Activity() {
             return
         }
         scroll = ScrollView(this).apply {
-            setBackgroundColor(app.theme.bg)
+            // A title page is part of the same house as its home: packs with a wall background
+            // paint it here too; the legacy flat page colour stays for the rest.
+            val ground = Screens.wall(app)
+            if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
             // A ScrollView is itself a D-pad stop on Android; on a title page that stop is an
             // invisible full-screen ring. The page's controls are the only focus targets.
             isFocusable = false
@@ -205,8 +213,11 @@ class DetailActivity : Activity() {
         val art = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         hero.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         BrowseImages.load(art, backdrop.ifBlank { poster }, theme.px(1300f))
+        // The art melts into the page with the pack's scrim, not a solid page-colour block:
+        // on a wall background a flat fade bar reads as a stripe across the gradient.
         hero.addView(View(this).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(theme.bg, Color.TRANSPARENT))
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(theme.color("heroScrim", "rgba(6,16,30,0.50)"), Color.TRANSPARENT))
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         val back = Views.text(app, "li", 28f, theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
@@ -313,9 +324,16 @@ class DetailActivity : Activity() {
         val playSeason = if (resumeSeason > 0) resumeSeason else first?.optInt("season", 0) ?: 0
         val playEpisode = if (resumeEpisode > 0) resumeEpisode else first?.optInt("episode", 0) ?: 0
         val playText = if ((progress?.optLong("positionMs", 0L) ?: 0L) > 0L) "Resume" else "Play"
-        val play = Views.text(app, "button", 23f, theme.onBrand, playText, bold = true, gravity = Gravity.CENTER)
+        val play = Views.text(app, "button", 23f,
+            if (isGlassPack) theme.color("ink1", "#FFFFFF") else theme.onBrand,
+            playText, bold = true, gravity = Gravity.CENTER)
         play.setPadding(theme.px(38f), theme.px(16f), theme.px(38f), theme.px(16f))
-        play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
+        // The Glass pack has no solid brand button: Play is a lit translucent chip with the
+        // pack's rim — the same control material the home hero and category chips use.
+        play.background = if (isGlassPack)
+            Views.rounded(theme.color("chipFillActive", "rgba(255,255,255,0.16)"),
+                theme.radius("button", 6f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.30)"))
+        else Views.rounded(theme.brand, theme.radius("button", 6f))
         play.isFocusable = true
         play.isClickable = true
         play.setOnClickListener { startPlay(playSeason, playEpisode) }
@@ -835,7 +853,10 @@ class DetailActivity : Activity() {
                 clipChildren = false
             }
             val wash = View(this).apply {
-                background = Views.rounded(theme.brand, theme.px(999f))
+                background = if (isGlassPack)
+                    Views.rounded(theme.color("chipFillActive", "rgba(255,255,255,0.16)"),
+                        theme.px(999f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.30)"))
+                else Views.rounded(theme.brand, theme.px(999f))
                 visibility = View.INVISIBLE
             }
             val label = Views.text(app, "button", 19f, theme.ink, "Season $season", bold = true,

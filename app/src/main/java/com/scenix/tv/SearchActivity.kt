@@ -23,6 +23,7 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
 
 /**
@@ -60,7 +61,10 @@ class SearchActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
+            // The Glass pack's search stands on the same wall as every other screen; the
+            // legacy flat page colour stays for the other packs.
+            val ground = Screens.wall(app)
+            if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
         }
         root.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
 
