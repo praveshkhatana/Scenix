@@ -56,6 +56,23 @@ object Screens {
     }
 
     /**
+     * The plate a FOCUSED row wears. Packs whose rows sit on their own wall (the glow packs) define
+     * `colors.listFillFocused` a step deeper than `listFill` — the halo alone washed into the page
+     * and the owner could not tell which row had focus; a dark surfHover plate under unchanged ink
+     * text hid the content outright. Undefined elsewhere, so classic packs keep halo-only focus.
+     */
+    fun rowFillFocused(app: AppContext): GradientDrawable? {
+        val focused = app.theme.colorOr("listFillFocused", -0x1)
+        if (focused == -0x1) return null
+        val radius = listRadius(app)
+        val stroke = app.theme.colorOr("listStroke", 0)
+        return if (stroke != 0)
+            Views.rounded(focused, radius, maxOf(1, app.theme.px(1.5f)), stroke)
+        else
+            Views.rounded(focused, radius)
+    }
+
+    /**
      * One settings/list row: bold label with its quiet note beneath, the current value and a
      * chevron on the right when the row leads somewhere. Focus is the pack's keyline at exactly
      * the row's own radius — never a rectangle that disagrees with the tile under it.
@@ -144,7 +161,11 @@ object Screens {
         ))
         Focus.attach(wrap, ringOn, app, radius,
             scale = app.theme.focusRowScale > 1f, scaleTo = app.theme.focusRowScale,
-            elevate = false, glowInset = glowPad, control = true, onClick = onClick)
+            elevate = false, glowInset = glowPad, control = true, onClick = onClick,
+            onFocus = { has ->
+                val deep = rowFillFocused(app)
+                if (deep != null) row.background = if (has) deep else rowFill(app)
+            })
         return wrap
     }
 
@@ -257,10 +278,11 @@ object Screens {
         // keyline disappears, so the row also rides a focus plate — the same tint the selected
         // row carries — giving every picker option a visible, unambiguous focused state.
         Focus.attach(row, row, app, radius, scale = false, elevate = false,
-            glowInset = app.theme.focusGlowInsetSm,
+            glowInset = app.theme.focusGlowInsetSm, control = true,
             onFocus = { has ->
                 if (!selected) row.background =
-                    if (has) Views.rounded(app.theme.surface2, radius) else null
+                    if (has) Views.rounded(app.theme.colorOr("listFillFocused", app.theme.surface2), radius)
+                    else null
             })
         return row
     }

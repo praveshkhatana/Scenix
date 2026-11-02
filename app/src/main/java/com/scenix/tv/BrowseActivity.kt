@@ -2027,9 +2027,13 @@ class BrowseActivity : Activity() {
             }
             holder.badge.text = facts.joinToString(" · ")
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
-            BrowseImages.load(holder.art,
-                if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop, cardW)
-            if (!item.logo.isNullOrBlank()) {
+            val thumb = if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop
+            BrowseImages.load(holder.art, thumb, cardW)
+            // A tile with a real thumbnail prints its name below and wears no logo on the art —
+            // the title is already in both places and the lockup just fought the poster (owner
+            // round 8). The logo earns its place only when the hub has no artwork at all. Scene
+            // packs, which hide the name under a logo card, keep their overlay.
+            if (!item.logo.isNullOrBlank() && !(below && !thumb.isNullOrBlank())) {
                 holder.logo.visibility = View.VISIBLE
                 BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE

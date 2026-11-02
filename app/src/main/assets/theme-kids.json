@@ -37,7 +37,8 @@
     "track": "#2A2C34",
     "chipBg": "rgba(255,255,255,0.14)",
     "surfHover": "#1D1F26",
-    "keyBg": "rgba(50,54,62,0.66)",
+    "keyBg": "#050505",
+    "keyInk": "#FFFFFF",
     "key": "#2B2E36",
     "navIdle": "rgba(255,255,255,0.72)",
     "numeralFill": "rgba(0,0,0,0)",
@@ -68,6 +69,7 @@
     "stageDeep": "#FBD364",
     "accentYellow": "#FDB916",
     "listFill": "#F9C406",
+    "listFillFocused": "#F2AE01",
     "stageSheet": "#FBD364",
     "modalPanel": "#FFF6DC",
     "modalDim": "rgba(20,17,13,0.38)",
@@ -202,7 +204,7 @@
   "cards": {
     "poster": {
       "width": 270,
-      "aspect": 1.0,
+      "aspect": 1.44,
       "caption": true,
       "fullBleed": false
     },

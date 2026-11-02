@@ -64,15 +64,19 @@ class PinActivity : Activity() {
         for (labels in rows) {
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             for (label in labels) {
-                val b = Views.text(app, "li", if (label.length > 1) 18f else 28f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
+                val b = Views.text(app, "li", if (label.length > 1) 18f else 28f,
+                    app.theme.colorOr("keyInk", app.theme.ink), label, bold = true, gravity = Gravity.CENTER)
                 b.setPadding(app.theme.px(8f), 0, app.theme.px(8f), 0)
-                // The keypad keys are the pack's keys: same rounded plate language as Settings' PIN pad.
+                // The keypad keys are solid plates with a control halo — the pack's chip language.
+                // A translucent grey key on a yellow page read as mud, and the corner-bracket focus
+                // was nearly invisible (owner round 8).
                 val keyRadius = app.theme.radius("key", 12f)
                 b.background = Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
                 b.isFocusable = true
                 b.isClickable = true
                 b.setOnClickListener { press(label) }
-                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false)
+                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false,
+                    glowInset = app.theme.focusGlowInsetSm, control = true)
                 line.addView(b, LinearLayout.LayoutParams(app.theme.px(150f), app.theme.px(74f)).apply {
                     marginStart = app.theme.px(8f); marginEnd = app.theme.px(8f)
                 })

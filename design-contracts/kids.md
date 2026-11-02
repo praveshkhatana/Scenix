@@ -50,6 +50,9 @@ default + one focused tile (LOAF); all other states are inferred (§3 matrix).
 | inkOnLight quiet meta | #6E6250 | [c] "Permium" sub-line grey; reference grey unresolved through JPEG |
 | labelWhite | #FFFFFF | [m] chip labels, hero title |
 | segActive | #FBD364 | [e] active segment glyph (≈ #C6A84E over black) — reads page-yellow |
+| keyBg (PIN-pad keys) | #050505 | [c] round 8: the old translucent grey (rgba(50,54,62,.66)) over yellow read as mud; PIN keys are plateInk capsules like every other pack control (owner "fix button style/color so it clearly visibly") |
+| keyInk | #FFFFFF | [c] digits/labels on ink keys — same white as chip labels |
+| listFillFocused | #F2AE01 | [c] focused settings-row plate — one step deeper than listFill #F9C406 (heroPlateL family); the old dark surfHover slab under dark ink hid the row's content and the halo alone washed into the yellow page (owner round 8 "focus is in black so no content is visible") |
 
 ### Geometry (canvas px = ref × 0.803, rounded)
 | token | ref | canvas |
@@ -65,7 +68,7 @@ default + one focused tile (LOAF); all other states are inferred (§3 matrix).
 | playDisc d (hero) | 55 | 44 |
 | chip | 273×107 pitch 292 | 219×86 pitch 234 gap 15, r=43 (full) |
 | chipIcon box | 55 | 44 |
-| tile | 336×336 r30 pitch 413 | 270×270 r24 pitch 332 gap 62 |
+| tile | 336×336 r30 pitch 413 | 270×**389** r24 pitch 332 gap 62 — `cards.poster.aspect` 1.44 (owner round 8: taller portrait plates matching the owner's reference tile, w/h ≈ 0.70; width and pitch unchanged so the rails' rhythm holds) |
 | tile focused | 373×373, border ~5, glow band ~40 | 300 (scale 1.11), keyline 4, glow reach 40 |
 | caption gap / unfocus caps / focus caps | 20 / 22 / 31 | 16 / font 24 / font 34 |
 | nav text | ~26 | 21 |
@@ -102,7 +105,18 @@ letter-spacing ([m] letter gaps ~10 px ref). Hero title bold; card B lockup cent
    a broken chip), no colour emoji: ♥ stayed red on the TV emoji font even with U+FE0E, so
    Trending wears the monochrome ▲ (owner round 7, "these tabs issue").
 8. `tile(art,caption)` — tileFill plate r24, art fills, caption centred below.
+   Portrait plate (`cards.poster.aspect` 1.44). A title lockup (`item.logo`) prints over the art
+   ONLY when the hub has no thumbnail for the item — a real poster already carries the name and
+   the caption prints it again below, so the lockup just fought the artwork (owner round 8
+   "it should not have any movie logo on it because we already have name on the poster").
+   Scene packs, which hide the caption under the logo, keep their overlay.
 9. `focusHalo(view,radiusPx)` — bands of #FDDB6F out to the measured reach + 4 px #A88200 keyline; on tiles, pair with scale 1.11.
+10. `keyCap(label)` (PIN pads in PinActivity and Settings) — plateInk capsule r=`radii.key`
+    (`keyBg`), keyInk white bold digits, focus = the stroke-only control halo (compact-control
+    language, §3.9); no bracket corners, no translucent fill (owner round 8).
+11. List rows in glow packs (Settings `Screens.row/haloRow`, pairing hub/action rows): unfocused
+    plate `listFill`/`surface`; focused plate deepens to `listFillFocused` with the same corner
+    radius plus the halo — never a dark fill under dark ink, never an empty pill (owner round 8).
 
 State matrix (every interactive component): default [m] / focused [m] (tile: scale + keyline +
 bands; pills/chips/hero: bands + keyline, no scale) / pressed [c] (sink alpha .85, 120 ms) /
@@ -130,6 +144,7 @@ Every number first from theme.json `anim`/`focus`.
 - [c] Round 5 readability: settings rows fill `colors.listFill` #F9C406 (was the page's own colour — rows had no boundaries); player menu sheets use `colors.panelScrim` #FFF6DC (dark-ink text on dark was unreadable); every list row lifts by `focus.rowScale` with widened padding, and compact controls take the stroke-only halo (component §3.9).
 - [c] Round 6: the mock's brand disc is decoration; ours doubles as the HOME stop (the section pill has no Home tab and goTab's CLEAR_TOP leaves Home underneath, so the owner found "no way to go back to home screen"). LEFT from the first tab pill reaches it, OK walks to the unfiltered mix; BACK from a section now returns Home first instead of exiting the app (BrowseActivity.dispatchKeyEvent).
 - [c] Round 7: a kid profile has no generic `movies`/`series` hub row — the API answers "row not for this profile", which the tab printed as raw error text. The section now falls back to filtering that profile's own shelves by item type; and when even the derived-shelf gates (≥6 per rail) all fail on a small pool, one `all` rail prints the whole section rather than a hero over an empty page ("All Movies"). The Search keyboard stopped hard-coding its plate radius: keys read `radii.key`/`radii.field` and wear the pack's control halo like every other compact control.
+- [c] Round 8 owner asks, implemented: PIN-pad keys became solid plateInk capsules with white digits and the control halo (the translucent grey over yellow read as mud and the default bracket focus was nearly invisible); poster tiles went portrait (`cards.poster.aspect` 1.0 → 1.44) on the owner's reference tile, and a lockup never paints over a real thumbnail; focused list rows deepen to `listFillFocused` #F2AE01 instead of the dark surfHover slab that swallowed the text ("focus is in black so no content is visible"), and picker rows (theme modal) take the compact control halo so the glow band stopped printing across short rows as a stray gold bar.
 
 ## 7. QA gates
 - `qa/kids/ref_grid.png` (50 px labelled grid over the reference) is the measurement sheet.
@@ -168,3 +183,20 @@ Owner round-7 list + full Kids-pack screen sweep, verified on emulator-5554 (cap
 - chips: no "●" placeholders, Trending now ▲ and Top rated ★ print monochrome white; the row is a HorizontalScrollView — walking RIGHT from Trending scrolled Action/Thriller into view with the focused chip's ring unclipped (r7-adult-movies/-chips-end/-chips-action.png).
 - kid sections: Pinki Movies/Series fall back to her own shelves; tiny pool prints one "All Movies" rail instead of a hero over blank page (r7-movies-top.png vs r7-movies-all.png).
 - sweep: search (r7-search2.png — radii.key/field tokens + halo keys), settings (r7-settings.png), profiles (r7-profiles.png), detail incl episodes (r7-detail.png, r7-detail-scrolled.png), player + controls (r7-player.png, r7-player-controls.png), live wall (r7-live.png) — all read in-pack.
+
+### Gate results — round 8 (2026-11-03, build md5 dd2d22d80c0b817915ff836d89066b1b, ui_zoom=1.3 functional)
+Owner round-8 list, verified on emulator-5554 (device base.apk md5 == build), captures `qa/kids/r8-*.png`:
+- PIN pad (PinActivity, r8-pin-pad.png): keys are solid plateInk capsules with white digits — the
+  translucent grey-over-yellow mud is gone; focused key wears the compact control halo, unmistakable ✓
+- tiles: poster rail plates measure 367×536 device px at zoom 1.3 → canvas 270×~412, aspect ≈1.46 vs
+  token 1.44 (rounding + corner shadow) ✓; posters print clean — Hanuman Ansh / Lucky Baskhar /
+  Bad Boys carry no lockup over the art, name lives below (r8-home-tiles.png); NEW/match/★ overlays
+  unchanged; a poster-less item keeps the logo overlay (code path gated on `thumb == null` only) ✓
+- settings rows (r8-settings.png): focused row deepens to #F2AE01 with keyline — content fully legible,
+  never a dark slab under dark ink ✓
+- pairing screen (r8-pairing.png): focused hub row = deep gold plate + ring, name/address/action all
+  readable; unfocused rows cream plates (owner's "black focus" gone) ✓
+- theme modal (r8-theme-modal.png, r8-theme-focus.png): selected row keeps its plate+keyline+✓; an
+  unselected focused row gets a light plate + ring — the empty-pill-with-gold-bar halo artifact is gone ✓
+- regression: kid Movies section still prints hero + derived shelves + "All Movies" fallback with the
+  new taller tiles (r8-kid-movies.png); chip row, navbar halo, Home unmarked (unchanged code paths) ✓
