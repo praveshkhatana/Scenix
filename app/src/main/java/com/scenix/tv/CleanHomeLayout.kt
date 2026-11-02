@@ -101,6 +101,9 @@ internal class CleanHomeLayout(
             setPadding(theme.px(6f), theme.px(6f), theme.px(6f), theme.px(6f))
         }
         val sections = listOf(
+            // The reference pill starts at Home; without it Clean had no one-press way back to the
+            // top from Movies/Series. The wordmark stays a mark, not a second hidden stop.
+            "Home" to "",
             "Movies" to "movies",
             "Series" to "series",
             "Games" to "games",
@@ -347,9 +350,13 @@ internal class CleanHomeLayout(
             gravity = Gravity.CENTER_VERTICAL
             contentDescription = "Jump to $label"
             setPadding(theme.px(20f), theme.px(13f), theme.px(20f), theme.px(13f))
+            // A LIGHT frosted plate on the light wall, not the old dark navy pill: the reference's
+            // chips are translucent white with a hairline rim, the active one a shade brighter.
             background = Views.rounded(
-                if (active) theme.color("pill", "#1E252E") else theme.color("chipFrost", "#3A4552"),
-                theme.radius("chip", 999f))
+                if (active) theme.color("chipFillActive", "rgba(255,255,255,0.22)")
+                else theme.color("chipFill", "rgba(255,255,255,0.10)"),
+                theme.radius("chip", 999f), theme.px(1f),
+                theme.color("glassRim", "rgba(255,255,255,0.38)"))
         }
         val glyph = when {
             label.contains("Trending", true) -> "\u2197"
@@ -370,6 +377,24 @@ internal class CleanHomeLayout(
         return chip
     }
 
+    /**
+     * Short destination labels, as the reference draws them: Continue, Recommended, More like,
+     * Top 10, Trending, Acclaimed. The conversational shelf title is not a chip caption.
+     */
+    private fun chipLabel(raw: String): String {
+        var s = raw.trim().removePrefix("New on ")
+        if (s.contains("continue", true)) s = "Continue"
+        if (s.contains("because you", true)) s = "Recommended"
+        if (s.contains("more like", true)) s = "More like"
+        if (s.contains("top 10", true)) s = "Top 10"
+        if (s.contains("trending", true)) s = "Trending"
+        if (s.contains("acclaim", true)) s = "Acclaimed"
+        s = s.replace(Regex("(?i)^(\\S+)\\s(movies|classics|cinema|films|shows|collection|specials)\\b.*"), "$1")
+        s = s.replace(Regex("(?i)\\s+(in|on|to|by|from|for|of|that|with|you)\\s.*"), "")
+        if (s.length > 14) s = s.take(13).trimEnd() + "…"
+        return s
+    }
+
     /** The shelf titles the host actually rendered below; each chip jumps to its shelf. */
     fun setChips(shelves: List<Pair<String, String>>) {
         val ids = shelves.map { it.first }
@@ -377,7 +402,7 @@ internal class CleanHomeLayout(
         chipIds = ids
         chipRow.removeAllViews()
         shelves.take(7).forEachIndexed { index, (id, label) ->
-            val chip = makeChip(id, label.trim().removePrefix("New on "), index == 0)
+            val chip = makeChip(id, chipLabel(label), index == 0)
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(52f))
             if (chipRow.childCount > 0) lp.marginStart = theme.px(14f)
             chipRow.addView(chip, lp)
