@@ -530,7 +530,9 @@ class BrowseActivity : Activity() {
         val radius = theme.px(12f)
         row.background = Views.rounded(Color.TRANSPARENT, radius)
         Focus.attach(row, row, app, radius, scale = false, elevate = false,
-            onClick = { action() },
+            // Choosing a destination closes the rail first: leaving it up would cover the page the
+            // viewer just asked for, and coming back from another activity would still show it.
+            onClick = { closeRail(); action() },
             onFocus = { focused ->
                 // A rail destination is a solid pill when active, the way Netflix and tvOS draw it.
                 row.background = if (focused) Views.rounded(theme.brand, radius)
@@ -601,8 +603,11 @@ class BrowseActivity : Activity() {
         while (cur != null) {
             val parent = cur.parent
             if (parent is RecyclerView && parent !== list) {
+                // Only the first tile of a rail hands LEFT to the navigation rail. A tile at
+                // position 1 must still be reachable from position 2, even when the rail cannot
+                // scroll further; "cannot scroll left" was too eager and skipped that step.
                 val position = parent.getChildAdapterPosition(cur)
-                return position <= 0 || !parent.canScrollHorizontally(-1)
+                return position <= 0
             }
             cur = parent as? View
         }
