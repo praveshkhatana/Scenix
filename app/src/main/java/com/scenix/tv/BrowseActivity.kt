@@ -1921,11 +1921,17 @@ class BrowseActivity : Activity() {
             }
             holder.badge.text = facts.joinToString(" · ")
             holder.badge.visibility = if (facts.isEmpty()) View.GONE else View.VISIBLE
-            BrowseImages.load(holder.art,
-                if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop, cardW)
-            if (!item.logo.isNullOrBlank()) {
+            val artUrl = if (landscape) item.backdrop ?: item.poster else item.poster ?: item.backdrop
+            val logoUrl = item.logo
+            // Posters first, logos after. The image queue is newest-first, so enqueueing a card's
+            // logo immediately after its poster put every logo in front of the artwork it decorates:
+            // a cold scroll painted floating logos over grey tiles and made a ready poster wait for
+            // it. The logo is polish; the poster is the shelf. Waiting for the poster's job to settle
+            // (whether it succeeded or not) keeps the row's artwork ahead of its decoration.
+            BrowseImages.load(holder.art, artUrl, cardW) {
+                if (logoUrl.isNullOrBlank()) return@load
                 holder.logo.visibility = View.VISIBLE
-                BrowseImages.load(holder.logo, item.logo, cardW) { ok ->
+                BrowseImages.load(holder.logo, logoUrl, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
                     // A scene card keeps its name under the art even when the art carries a logo.
                     holder.name.visibility = if (ok && !below) View.GONE else View.VISIBLE

@@ -36,11 +36,13 @@ object BrowseImages {
     private val tinyPool = ThreadPoolExecutor(
         1, 1, 30, TimeUnit.SECONDS, LinkedBlockingDeque()
     ) { r -> Thread(r, "scenix-image-tiny").apply { isDaemon = true } }.apply { allowCoreThreadTimeOut(true) }
-    // Two workers keep artwork loading progressive without competing with focus and layout on the
-    // main render thread. The queue is LIFO: the card the viewer just scrolled to is the newest
-    // request and runs first, instead of waiting behind the tiles that already left the screen.
+    // Three workers keep artwork loading progressive without competing with focus and layout on the
+    // main render thread. Each card is a 20–40 KB CDN copy, so a cold row of six paints in about two
+    // round trips instead of three; the queue is LIFO, so the card the viewer just scrolled to is
+    // always the newest request and runs first, instead of waiting behind the tiles that already
+    // left the screen.
     private val pool = ThreadPoolExecutor(
-        2, 2, 30, TimeUnit.SECONDS, NewestFirstQueue()
+        3, 3, 30, TimeUnit.SECONDS, NewestFirstQueue()
     ).apply { allowCoreThreadTimeOut(true) }
     private val main = Handler(Looper.getMainLooper())
 
