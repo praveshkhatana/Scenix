@@ -132,12 +132,84 @@ function fingerprint(watches, byId) {
   };
 }
 
+/**
+ * A reaction is a stronger statement than a watch: a like says "more of this", a love says "much
+ * more", a dislike says "not this". They are folded into the same fingerprint as a watch (with a
+ * longer memory, because a person means it) and dislikes become a small negative set that the
+ * affinity score subtracts.
+ */
+const REACTION_WEIGHT = { like: 2.4, love: 4.0, dislike: 4.0 };
+
+function reactionRecency(at, now) {
+  const ageDays = Math.max(0, (now - (Number(at) || now)) / DAY);
+  // Likes fade slower than a single watch: a favourite from last year still says something.
+  return Math.pow(0.5, ageDays / (HALF_LIFE_DAYS * 4));
+}
+
 function signals(ctx, byId) {
   const now = Number(ctx.now) || Date.now();
   // Exactly one profile's history, no household merge: taste is personal, and a number on a tile has to
   // mean "because THIS viewer watched" or it means nothing.
   const watches = historyFor(ctx.store, ctx.profile && ctx.profile.id, now);
-  return fingerprint(watches, byId);
+  const profileId = ctx.profile && ctx.profile.id;
+  const reactions = (ctx.store && typeof ctx.store.reactionsFor === 'function')
+    ? ctx.store.reactionsFor(profileId) : {};
+  const positive = new Map();
+  for (const w of watches) positive.set(w.identity, (positive.get(w.identity) || 0) + w.weight);
+  const disliked = [];
+  let latest = 0;
+  for (const [identity, entry] of Object.entries(reactions)) {
+    const reaction = entry && entry.reaction;
+    if (!reaction) continue;
+    const weight = REACTION_WEIGHT[reaction] || 0;
+    if (!weight) continue;
+    const at = Number(entry.updatedAt) || now;
+    latest = Math.max(latest, at);
+    if (reaction === 'dislike') disliked.push({ identity, weight, updatedAt: at });
+    else positive.set(identity, (positive.get(identity) || 0) + weight * reactionRecency(at, now));
+  }
+  const merged = [...positive.entries()].map(([identity, weight]) => ({ identity, weight, updatedAt: latest }));
+  const fp = fingerprint(merged, byId);
+  if (fp && disliked.length) fp.bad = fingerprint(disliked, byId);
+  return fp;
+}
+
+/** The fingerprint for a ctx, loading the library once. Used by the mood-board row. */
+async function fingerprintFor(ctx) {
+  const byId = new Map();
+  try {
+    const library = await ctx.library();
+    for (const it of library) if (it && it.identity) byId.set(String(it.identity), it);
+  } catch (e) { /* an empty library has no fingerprint */ }
+  return signals(ctx, byId);
+}
+
+/**
+ * A shelf built from what this person liked and watched: the highest-affinity titles they have not
+ * seen, with a per-genre cap so it does not become fourteen copies of the same blockbuster. This is
+ * the row the hub can offer without a recommendation service — every input is already on this box.
+ */
+async function moodBoard(ctx, items, limit = 18) {
+  const fp = await fingerprintFor(ctx);
+  if (!fp || !Array.isArray(items)) return [];
+  const seen = (fp.seen && fp.seen) || new Set();
+  const scored = items
+    .filter((it) => it && it.identity && !seen.has(String(it.identity)))
+    .filter((it) => it.type === 'movie' || it.type === 'series' || it.type === 'video')
+    .filter((it) => (ctx.store && ctx.store.reactionFor ? ctx.store.reactionFor(ctx.profile && ctx.profile.id, it.identity) !== 'dislike' : true))
+    .map((it) => ({ it, score: affinity(it, fp) }))
+    .sort((a, b) => b.score - a.score);
+  const out = [];
+  const byGenre = new Map();
+  for (const { it } of scored) {
+    const band = (it.genres && String(it.genres[0] || '').toLowerCase()) || it.type || 'other';
+    const n = byGenre.get(band) || 0;
+    if (n >= 4) continue;
+    byGenre.set(band, n + 1);
+    out.push(it);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /** How much a title shares with the fingerprint, 0–1 before it is turned into a percentage. */
@@ -157,7 +229,13 @@ function affinity(item, fp) {
   // A film from the viewer's own era is a weak signal next to genre or a familiar face: 15 years is
   // roughly one generation of cinema, and the curve should not reward a decade over a director.
   const y = (year > 1880 && fp.meanYear) ? Math.exp(-Math.abs(year - fp.meanYear) / 15) : 0;
-  return clamp01(0.62 * g + 0.16 * c + 0.08 * d + 0.08 * l + 0.04 * t + 0.02 * y);
+  let score = clamp01(0.62 * g + 0.16 * c + 0.08 * d + 0.08 * l + 0.04 * t + 0.02 * y);
+  if (fp.bad) {
+    const bg = share(genreList(item), fp.bad.genres, fp.bad.genreTop);
+    const bc = share(peopleList(item, 'cast').slice(0, 8), fp.bad.cast, fp.bad.castTop);
+    score = clamp01(score - 0.55 * (0.75 * bg + 0.25 * bc));
+  }
+  return score;
 }
 
 /** A 55–99 percentage, the range a viewer reads as "worth my evening" rather than a grade. */
@@ -219,4 +297,4 @@ async function decorate(ctx, items) {
   return items;
 }
 
-module.exports = { decorate, isNew, percent, affinity, historyFor, watchWeight, NEW_ADDED_DAYS, NEW_RELEASE_DAYS };
+module.exports = { decorate, isNew, percent, affinity, historyFor, watchWeight, fingerprintFor, moodBoard, NEW_ADDED_DAYS, NEW_RELEASE_DAYS };

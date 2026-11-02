@@ -5,6 +5,7 @@
  *   data/library.json    { "<identity>": <addedAt ms> }   first time the hub ever saw that identity
  *   data/progress.json   { "<profile>": { "<identity>": { positionMs, watchedMs, updatedAt, dismissedAt? } } }
  *   data/list.json       { "<profile>": ["<identity>", …] } that profile's My List, newest first
+ *   data/reactions.json  { "<profile>": { "<identity>": { reaction?, seenAt? } } } likes/loves/dislikes and seen
  *   data/profiles.json   optional runtime override of hub/profiles.json (merged by profile id)
  *   hub/profiles.json    the household itself - NOT in the repo (real names), so hub/profiles.example.json
  *                        (generic ids) ships instead and is the fallback when the real one is absent
@@ -43,6 +44,7 @@ class Store {
     this.libraryFile = path.join(this.dataDir, 'library.json');
     this.progressFile = path.join(this.dataDir, 'progress.json');
     this.listFile = path.join(this.dataDir, 'list.json');
+    this.reactionsFile = path.join(this.dataDir, 'reactions.json');
     this.profilesSeedFile = path.join(root, 'profiles.json');
     this.profilesExampleFile = path.join(root, 'profiles.example.json');
     this.profilesFile = path.join(this.dataDir, 'profiles.json');
@@ -51,6 +53,7 @@ class Store {
     this.library = readJson(this.libraryFile, {}); // identity -> addedAt(ms)
     this.progress = readJson(this.progressFile, {}); // profile -> identity -> progress
     this.list = readJson(this.listFile, {}); // profile -> [identity, …] newest first
+    this.reactions = readJson(this.reactionsFile, {}); // profile -> identity -> { reaction?, seenAt? }
     this._dirty = new Set();
     this._timer = null;
     this._profiles = null;
@@ -154,6 +157,62 @@ class Store {
     cur.dismissedAt = Date.now();
     this._markDirty('progress');
     return true;
+  }
+
+  // ---- reactions and seen state per profile -------------------------------------------------------
+  //
+  // Like / love / dislike and "seen" are the profile's own signals. They live beside progress and
+  // My List for the same reason: the living room, the bedroom and the browser must agree about what
+  // this person liked, and a recommendation that disagreed would be a different person's taste.
+
+  reactionsFor(profileId) {
+    return this.reactions[String(profileId)] || {};
+  }
+
+  reactionFor(profileId, identity) {
+    const e = this.reactionsFor(profileId)[String(identity)];
+    return e && (e.reaction === 'like' || e.reaction === 'love' || e.reaction === 'dislike')
+      ? e.reaction : null;
+  }
+
+  seenFor(profileId, identity) {
+    const e = this.reactionsFor(profileId)[String(identity)];
+    return Boolean(e && e.seenAt);
+  }
+
+  /** Set or clear a reaction; returns the new reaction (null for none). */
+  setReaction(profileId, identity, reaction) {
+    if (!profileId || !identity) return null;
+    const pkey = String(profileId);
+    const ikey = String(identity);
+    const p = this.reactions[pkey] || (this.reactions[pkey] = {});
+    const cur = p[ikey] || {};
+    const next = { ...cur };
+    if (reaction === 'like' || reaction === 'love' || reaction === 'dislike') next.reaction = reaction;
+    else delete next.reaction;
+    next.updatedAt = Date.now();
+    if (!next.reaction && !next.seenAt) delete p[ikey];
+    else p[ikey] = next;
+    this.touch(ikey);
+    this._markDirty('reactions');
+    return next.reaction || null;
+  }
+
+  /** Mark a title (or the current episode) seen, or clear the mark. */
+  setSeen(profileId, identity, seen) {
+    if (!profileId || !identity) return false;
+    const pkey = String(profileId);
+    const ikey = String(identity);
+    const p = this.reactions[pkey] || (this.reactions[pkey] = {});
+    const cur = p[ikey] || {};
+    const next = { ...cur };
+    if (seen) next.seenAt = Date.now(); else delete next.seenAt;
+    next.updatedAt = Date.now();
+    if (!next.reaction && !next.seenAt) delete p[ikey];
+    else p[ikey] = next;
+    this.touch(ikey);
+    this._markDirty('reactions');
+    return Boolean(next.seenAt);
   }
 
   // ---- My List per profile ------------------------------------------------------------------------
@@ -364,6 +423,7 @@ class Store {
       if (what.has('library')) writeJsonAtomic(this.libraryFile, this.library);
       if (what.has('progress')) writeJsonAtomic(this.progressFile, this.progress);
       if (what.has('list')) writeJsonAtomic(this.listFile, this.list);
+      if (what.has('reactions')) writeJsonAtomic(this.reactionsFile, this.reactions);
       this.writes++;
     } catch (e) {
       console.error(new Date().toISOString(), 'store flush failed:', e.message);

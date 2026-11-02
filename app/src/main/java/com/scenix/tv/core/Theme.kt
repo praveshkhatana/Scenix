@@ -311,7 +311,7 @@ class Theme private constructor(
             // The household zoom multiplies the whole canvas, so text, tiles, gaps and the hero all
             // grow together — a size option for far couches and weak eyes, not a font patch.
             val scale = minOf(screenW.toFloat() / cw.toFloat(), screenH.toFloat() / ch.toFloat()) *
-                zoom.coerceIn(1f, 1.3f)
+                zoom.coerceIn(0.85f, 1.5f)
             Log.i(TAG, "theme ${root.optString("id", "?")} scale=$scale (${screenW}x$screenH)")
             return Theme(
                 id = root.optString("id", DEFAULT_ID),

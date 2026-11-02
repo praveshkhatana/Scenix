@@ -409,6 +409,18 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
             done(root?.optBoolean("inList", add) ?: add)
         }
 
+    /** Like / love / dislike, per profile; `none` clears it. */
+    fun react(profileId: String, identity: String, reaction: String, done: (String?) -> Unit = { }) =
+        request("/app/v1/reaction", "", "POST",
+            JSONObject().put("profile", profileId).put("identity", identity).put("reaction", reaction),
+            6000) { root, _, _ -> done(root?.optString("reaction").orEmpty().takeIf { it.isNotBlank() }) }
+
+    /** Mark a title (or the episode the player reports) seen, or clear the mark. */
+    fun setSeen(profileId: String, identity: String, seen: Boolean, done: (Boolean) -> Unit = { }) =
+        request("/app/v1/seen", "", "POST",
+            JSONObject().put("profile", profileId).put("identity", identity).put("seen", seen),
+            6000) { root, _, _ -> done(root?.optBoolean("seen", seen) ?: seen) }
+
     /**
      * `GET /app/v1/trailer/<identity>` — the hub looks the clip up on its own box and answers a
      * playable URL. The proxied form is preferred: a signed clip demands headers a bare player

@@ -4296,6 +4296,10 @@ async function handle(req, res) {
         // The detail page prints the same personal match and New state as the card that opened it.
         await taste.decorate(ctx, [kept]);
       }
+      if (kept) {
+        kept.reaction = store.reactionFor(profile.id, identity) || null;
+        kept.seen = store.seenFor(profile.id, identity);
+      }
       send(res, kept ? 200 : 403, kept || { identity, droppedByRule: true });
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,
       // and by the time they press play the answer is in the cache instead of costing 1.5 s.
@@ -4710,6 +4714,32 @@ async function handle(req, res) {
       if (on) store.listAdd(who, body.identity); else store.listRemove(who, body.identity);
       return send(res, 200, { ok: true, identity: body.identity, inList: on,
         ids: store.myListIds(who, 400) });
+    }
+
+    // Reactions and seen state, per profile. "Like"/"love" feed the taste fingerprint; "dislike"
+    // subtracts; "seen" keeps a watched title out of the mood board while it stays on My List.
+    if (path === '/app/v1/reaction' && req.method === 'GET') {
+      const who = u.searchParams.get('profile') || u.searchParams.get('profileId') || 'default';
+      return send(res, 200, { profile: who, reactions: store.reactionsFor(who) });
+    }
+    if (path === '/app/v1/reaction' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body || !body.identity) return send(res, 400, { error: 'identity required' });
+      const who = body.profile || body.profileId || 'default';
+      const allowed = ['like', 'love', 'dislike', 'none'];
+      const reaction = String(body.reaction || 'none').toLowerCase();
+      if (!allowed.includes(reaction)) {
+        return send(res, 400, { error: 'reaction must be like, love, dislike or none', reaction });
+      }
+      const now = store.setReaction(who, body.identity, reaction);
+      return send(res, 200, { ok: true, identity: body.identity, reaction: now });
+    }
+    if (path === '/app/v1/seen' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body || !body.identity) return send(res, 400, { error: 'identity required' });
+      const who = body.profile || body.profileId || 'default';
+      const seen = store.setSeen(who, body.identity, body.seen !== false);
+      return send(res, 200, { ok: true, identity: body.identity, seen });
     }
 
     return send(res, 404, { error: 'not found', path });

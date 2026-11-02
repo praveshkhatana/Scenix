@@ -264,19 +264,29 @@ class SettingsActivity : Activity() {
             }
             // Accessibility, not taste: one multiplier over the whole theme so text, tiles, gaps and
             // the hero all grow together for far seats and weak eyes. No admin door on this one.
-            val zoomNames = listOf("Default", "Large", "Largest")
-            val zoomSteps = listOf(1f, 1.15f, 1.3f)
+            // A slider reads as a size, not a secret cycle. The values mirror the way a desktop
+            // or Stremio presents interface zoom; 150% is the ceiling the TV layouts are tested at.
+            val zoomSteps = listOf(1f, 1.15f, 1.3f, 1.5f)
+            val zoomNames = listOf("100%", "115%", "130%", "150%")
             val z = app.prefs.uiZoom()
-            val zoomNow = if (z < 1.05f) 0 else if (z < 1.25f) 1 else 2
-            addRow("Text & tile size", zoomNames[zoomNow], "Everything on screen grows together — for far seats and weak eyes") {
-                app.prefs.setUiZoom(zoomSteps[(zoomNow + 1) % 3])
-                (application as ScenixApp).reloadTheme()
-                // The task rebuilds so every screen lays out at the new size, the way a real TV
-                // relaunches when its zoom changes.
-                startActivity(
-                    Intent(this, ProfilesActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                )
+            val zoomNow = zoomSteps.indices.minByOrNull { kotlin.math.abs(zoomSteps[it] - z) } ?: 0
+            addRow("Interface zoom", zoomNames[zoomNow],
+                "Text, tiles and spacing grow together — for far seats and weak eyes", chevron = true) {
+                showPicker("Interface zoom",
+                    zoomSteps.mapIndexed { i, v -> v.toString() to zoomNames[i] },
+                    z.toString()) { picked ->
+                    val value = picked.toFloatOrNull() ?: return@showPicker
+                    app.prefs.setUiZoom(value)
+                    (application as ScenixApp).reloadTheme()
+                    // Let the preference and the reloaded theme settle, then rebuild the task so
+                    // every native screen lays out at the new size.
+                    window.decorView.postDelayed({
+                        startActivity(
+                            Intent(this, ProfilesActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        )
+                    }, 120L)
+                }
             }
             Screens.section(this, app, rows, "Household")
             addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks", chevron = true) {

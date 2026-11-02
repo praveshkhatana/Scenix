@@ -102,6 +102,10 @@ class PlayerActivity : Activity() {
     private var live = false
     private var displayTitle = ""
     private var currentSourceLabel = ""
+    /** The copy the viewer explicitly picked; empty means Auto (the hub's ranked pick). */
+    private var chosenSourceKey = ""
+    /** Set while a manual switch is in flight, so success can record the choice. */
+    private var pendingSourceKey = ""
     private var audioTracks = JSONArray()
     /** Languages this title can play, including donors the hub can mix into the picture. */
     private var audioOptions = JSONArray()
@@ -718,6 +722,8 @@ class PlayerActivity : Activity() {
             audioCatalog.clear()
             sourceCatalog.clear()
             audioCatalogKey = catalogKey
+            chosenSourceKey = ""
+            pendingSourceKey = ""
         }
         mergeAudioOptions(reply.optJSONArray("audioOptions") ?: JSONArray())
         audioOptions = JSONArray(audioCatalog.values.toList())
@@ -1299,6 +1305,7 @@ class PlayerActivity : Activity() {
             }
             sameCopyRetries = 0
             recoveryScheduled = false
+            if (!automatic) chosenSourceKey = pendingSourceKey
             start(reply!!, positionMs, playWhenReady)
             if (!automatic) setStatus("Switched to ${currentSourceLabel.ifBlank { "another copy" }}")
         }
@@ -1437,9 +1444,9 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         playButton = icon(GLYPH_PLAY, "Play") { togglePlay() }
-        rewindButton = icon(GLYPH_REWIND, "Back ${seekBackMs / 1000} seconds",
+        rewindButton = icon(GLYPH_REWIND, "Back ${seekBackMs / 1000} seconds", hint = false,
             seconds = (seekBackMs / 1000).toInt()) { seekBy(-seekBackMs) }
-        forwardButton = icon(GLYPH_FORWARD, "Forward ${seekForwardMs / 1000} seconds",
+        forwardButton = icon(GLYPH_FORWARD, "Forward ${seekForwardMs / 1000} seconds", hint = false,
             seconds = (seekForwardMs / 1000).toInt()) { seekBy(seekForwardMs) }
         audioButton = icon(GLYPH_AUDIO, "Audio", flat = true) { openMenu(MenuKind.AUDIO, audioButton) }
         subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
@@ -1983,7 +1990,8 @@ class PlayerActivity : Activity() {
         // a ladder, the top rows are its own rungs and the copy list moves below a heading.
         val rungs = ladderRungs()
         val currentKey = answer?.optJSONObject("picked")?.let { sourceKey(it) }.orEmpty()
-        val others = sourceCatalog.values.filter { sourceKey(it) != currentKey }
+        val others = sourceCatalog.values.toList()
+        val automatic = chosenSourceKey.isEmpty()
         if (rungs.isNotEmpty()) {
             val current = if (forcedRungHeight > 0) forcedRungHeight else selectedVideoHeight()
             parent.addView(menuRow("Auto", "follow the link", forcedRungHeight == 0) {
@@ -1996,15 +2004,18 @@ class PlayerActivity : Activity() {
             }
             if (others.isNotEmpty()) parent.addView(noteRow("Other copies"))
         } else {
-            parent.addView(menuRow("Auto", "best copy the hub can feed", false) {
+            parent.addView(menuRow("Auto", "best copy the hub can feed", automatic) {
                 switchTo(null)
             })
         }
         if (rungs.isNotEmpty() && others.isNotEmpty()) {
-            parent.addView(menuRow("Best copy", "let the hub choose again", false) { switchTo(null) })
+            parent.addView(menuRow("Best copy", "let the hub choose again", automatic) { switchTo(null) })
         }
         for (src in others) {
-            parent.addView(menuRow(sourceWords(src), sourceNote(src), false) {
+            val key = sourceKey(src)
+            val picked = key.isNotBlank() && key == chosenSourceKey
+            val note = sourceNote(src) + if (key == currentKey) " · playing" else ""
+            parent.addView(menuRow(sourceWords(src), note, picked) {
                 switchTo(src)
             })
         }
@@ -2437,6 +2448,7 @@ class PlayerActivity : Activity() {
         val spec = spec ?: return
         val pos = player?.let { filmPosition(it) } ?: 0L
         val playing = player?.playWhenReady ?: true
+        pendingSourceKey = src?.let { sourceKey(it) } ?: ""
         closeMenu()
         val exclude = tried.toMutableSet()
         val source = src?.let {

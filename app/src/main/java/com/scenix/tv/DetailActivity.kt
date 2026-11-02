@@ -2,6 +2,7 @@ package com.scenix.tv
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -417,6 +418,111 @@ class DetailActivity : Activity() {
         words.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = theme.px(24f)
         })
+
+        // The second band is the title's opinion of itself: trailer, seen, like, love, dislike,
+        // share. Reactions live on the hub beside progress and My List (see hub/core/taste.js), so
+        // the mood board on Home is informed by what this person actually pressed here.
+        var reaction = record.optString("reaction").takeIf { it == "like" || it == "love" || it == "dislike" }
+        var seen = record.optBoolean("seen", false)
+        val social = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        fun socialChip(label: String, active: Boolean, click: () -> Unit): TextView {
+            val b = Views.text(app, "button", 18f, if (active) theme.onBrand else theme.ink,
+                label, bold = true, gravity = Gravity.CENTER)
+            b.setPadding(theme.px(18f), theme.px(10f), theme.px(18f), theme.px(10f))
+            b.background = if (active) Views.rounded(theme.brand, theme.radius("button", 6f))
+                else Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            b.isFocusable = true
+            b.isClickable = true
+            b.setOnClickListener { click() }
+            Focus.attach(b, b, app, theme.radius("button", 6f), scale = false, elevate = false)
+            return b
+        }
+        fun repaintReactions() {
+            // Rebuild labels in place: a like can turn a love off, and the visible state must say so.
+            for (i in 0 until social.childCount) {
+                val v = social.getChildAt(i) as? TextView ?: continue
+                val tag = v.tag as? String ?: continue
+                val active = when (tag) {
+                    "like", "love", "dislike" -> reaction == tag
+                    "seen" -> seen
+                    else -> false
+                }
+                val base = when (tag) {
+                    "like" -> "Like"; "love" -> "Love"; "dislike" -> "Dislike"
+                    "seen" -> "Seen"; else -> v.text.toString().removePrefix("✓ ")
+                }
+                v.text = if (active) "✓ $base" else base
+                v.setTextColor(if (active) theme.onBrand else theme.ink)
+                v.background = if (active) Views.rounded(theme.brand, theme.radius("button", 6f))
+                    else Views.rounded(theme.surface, theme.radius("button", 6f), theme.px(1f), theme.line)
+            }
+        }
+        fun setReaction(next: String) {
+            reaction = if (reaction == next) null else next
+            repaintReactions()
+            api.react(profileId, identity, reaction ?: "none") { confirmed ->
+                val value = confirmed
+                if ((value ?: "none") != (reaction ?: "none")) {
+                    runOnUiThread { reaction = value; repaintReactions() }
+                }
+            }
+        }
+        val trailerBtn = socialChip("▶ Trailer", false) {
+            api.trailer(identity) { url, error ->
+                runOnUiThread {
+                    if (url.isNullOrBlank()) {
+                        android.widget.Toast.makeText(this, error ?: "No trailer for this title",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                            .onFailure {
+                                android.widget.Toast.makeText(this, "No player for the trailer",
+                                    android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                    }
+                }
+            }
+        }
+        trailerBtn.tag = "trailer"
+        social.addView(trailerBtn)
+        val seenBtn = socialChip(if (seen) "✓ Seen" else "Seen", seen) {
+            seen = !seen
+            repaintReactions()
+            api.setSeen(profileId, identity, seen) { confirmed ->
+                if (confirmed != seen) runOnUiThread { seen = confirmed; repaintReactions() }
+            }
+        }
+        seenBtn.tag = "seen"
+        social.addView(seenBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = theme.px(10f) })
+        for ((tag, label) in listOf("like" to "Like", "love" to "Love", "dislike" to "Dislike")) {
+            val chip = socialChip(if (reaction == tag) "✓ $label" else label, reaction == tag) {
+                setReaction(tag)
+            }
+            chip.tag = tag
+            social.addView(chip, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = theme.px(10f) })
+        }
+        val shareBtn = socialChip("Share", false) {
+            val text = "Watch " + s(record, "title", "") + " on Scenix"
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+            runCatching { startActivity(Intent.createChooser(send, "Share")) }
+        }
+        shareBtn.tag = "share"
+        social.addView(shareBtn);
+        val socialScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFocusable = false
+            isFocusableInTouchMode = false
+            clipToPadding = false
+            addView(social)
+        }
+        words.addView(socialScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(12f) })
+        repaintReactions()
         hero.addView(words, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         val content = LinearLayout(this).apply {
