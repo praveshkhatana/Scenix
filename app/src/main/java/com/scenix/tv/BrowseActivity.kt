@@ -220,7 +220,7 @@ class BrowseActivity : Activity() {
      */
     private fun heroSlotHeight(wantedPx: Int): Int {
         val theme = app.theme
-        val room = resources.displayMetrics.heightPixels - theme.px(200f)
+        val room = resources.displayMetrics.heightPixels - theme.space("heroReserve", 200f)
         return wantedPx.coerceAtMost(maxOf(room, theme.px(420f)))
     }
 
@@ -1597,7 +1597,9 @@ class BrowseActivity : Activity() {
                     isNestedScrollingEnabled = false
                     // 44px of clear space lets a lifted, glowing lockup remain fully visible;
                     // the former 18px top inset clipped focus so it looked like an underline.
-                    setPadding(theme.gutter, theme.px(44f), theme.gutter, theme.px(44f))
+                    // A pack whose halo reaches further (the Kids bands) gets that much more.
+                    val railPadV = maxOf(theme.px(44f), theme.focusGlowInset + theme.px(12f))
+                    setPadding(theme.gutter, railPadV, theme.gutter, railPadV)
                     clipToPadding = false
                     clipChildren = false
                 }
@@ -1660,9 +1662,15 @@ class BrowseActivity : Activity() {
             frame -> theme.px(56f)
             else -> 0
         }
-        private val cardW = theme.px(if (landscape) 480f else if (poster) 280f else 320f)
-        private val cardH = theme.px(if (landscape) 270f else if (poster) 420f else 180f)
-        private val radius = theme.radius("card", 6f)
+        // A pack that squares its shelf tiles (the Kids stage) sizes them from its own
+        // `cards.poster` spec — the contract's tile geometry — instead of the classic portrait.
+        private val tileSquare = theme.packInt("tileSquare", 0) == 1
+        private val cardW = if (poster && tileSquare) theme.posterTilePx().first
+            else theme.px(if (landscape) 480f else if (poster) 280f else 320f)
+        private val cardH = if (poster && tileSquare) theme.posterTilePx().second
+            else theme.px(if (landscape) 270f else if (poster) 420f else 180f)
+        private val radius = if (poster && tileSquare) theme.radius("tile", 24f)
+            else theme.radius("card", 6f)
         // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
         private val seeAll = !featured && row.total > row.items.size
 
@@ -1671,8 +1679,9 @@ class BrowseActivity : Activity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CardHolder {
             val card = FrameLayout(this@BrowseActivity)
             card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH).apply {
-                // Apple's shelves breathe; tiles never touch each other.
-                marginEnd = theme.px(26f)
+                // Apple's shelves breathe; tiles never touch each other. The Kids contract measures
+                // a wider plate gap; packs that don't set it keep 26.
+                marginEnd = theme.space("cardGap", 26f)
             }
             card.isFocusable = true
             card.isFocusableInTouchMode = true
@@ -1693,10 +1702,11 @@ class BrowseActivity : Activity() {
             // its own yellow) gets chunky framed tiles: the photo sits INSIDE a rounded plate with
             // a soft glow, as in the reference, never pasted bare onto the sheet.
             val tilePlate = if (below) theme.colorOr("cardTint", 0) else 0
-            val tileInset = if (tilePlate != 0) theme.px(12f) else 0
+            val tileInset = if (tilePlate != 0) theme.space("kidsTileInset", 12f) else 0
             if (tilePlate != 0) {
                 card.addView(View(this@BrowseActivity).apply {
-                    background = Views.rounded(tilePlate, radius + theme.px(10f))
+                    background = Views.rounded(tilePlate,
+                        if (poster && tileSquare) radius else radius + theme.px(10f))
                     elevation = theme.px(10f).toFloat()
                 }, FrameLayout.LayoutParams(cardW, cardH).apply { gravity = Gravity.TOP })
             }
@@ -1757,12 +1767,17 @@ class BrowseActivity : Activity() {
             val name = Views.text(app, "caption", if (below) 18f else 19f,
                 theme.colorOr("captionInk", theme.ink), "", bold = true,
                 maxLines = if (below) 1 else 2)
+            if (poster && tileSquare) {
+                // The Kids contract prints captions as letter-spaced capitals.
+                name.isAllCaps = true
+                name.letterSpacing = 0.12f
+            }
             name.setPadding(theme.px(if (below) 4f else 12f), 0,
                 theme.px(if (below) 4f else 12f), theme.px(if (below) 0f else 10f))
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
                 bottomMargin = when {
-                    below -> theme.px(26f)
+                    below -> if (poster && tileSquare) theme.space("kidsCaptionGap", 16f) else theme.px(26f)
                     frame -> theme.px(8f)
                     else -> 0
                 }

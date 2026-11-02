@@ -72,7 +72,7 @@ object Focus {
                     Views.rounded(Color.argb(alphas[1], r, g, b), ringRadiusPx + middle),
                     Views.rounded(Color.argb(alphas[2], r, g, b), ringRadiusPx + near),
                     Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
-                        ringRadiusPx + keyOutset, maxOf(1, theme.px(2f))),
+                        ringRadiusPx + keyOutset, theme.focusKeylinePx),
                 ))
                 halo.setLayerInset(0, inset(outer), inset(outer), inset(outer), inset(outer))
                 halo.setLayerInset(1, inset(middle), inset(middle), inset(middle), inset(middle))

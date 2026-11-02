@@ -2,11 +2,9 @@ package com.scenix.tv
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -17,21 +15,19 @@ import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
 
 /**
- * The bright stage composition for kids packs (`homeHero: kids-stage`).
+ * The bright stage composition for kids packs (`homeHero: kids-stage`), assembled entirely from
+ * `KidsKit` builders so every Kids plate speaks one language. Geometry and colour come ONLY
+ * from the contract in design-contracts/kids.md (corrected reference, uniform scale 0.803):
+ * a flat #FBD364 page; black brand disc (d88) + black tab capsule (h62) with a yellow search
+ * knob (d49) at its end; an avatar disc standing on the page beside a black name capsule (h64)
+ * and a gear disc; two oversized feature cards 355 tall split 40/60 — full-art printed title,
+ * and a deep→bright gradient plate with key art bleeding from the outer edge, each carrying the
+ * black play disc (d44) bottom-left; uniform black chips 219×86 pitch 234; and below the hero,
+ * the host's rails draw square #F9C406 captioned tiles 270 r24 gap 62.
  *
- * The mockup's rounded outer frame is only a presentation border; on a real TV the WHOLE screen is
- * the sunshine-yellow stage, deepening slightly toward the bottom, with every block sitting directly
- * on it: a black circular brand mark at top-left with its BLACK tab pill welded beside it and a
- * yellow search dot at the pill's end; one household stop at right — a single black pill holding
- * the avatar and the profile's name, welded beside a black settings gear, both reachable from the
- * search dot with the D-pad (a bell for a feature this app does not have would be decoration);
- * two oversized feature cards — one full-art with the title printed over the top and a play
- * circle at the foot, one yellow plate with key art BLEEDING out of its inner edge into the plate
- * — each carrying a soft standing shadow so it glows off the sheet; a row of
- * black chip pills naming the household's real shelves; and below the hero, the host's rails draw
- * chunky square captioned tiles. Focus is the pack's warm liquid-glass halo — filled soft plates
- * rising off the tile with a bright keyline at its edge — never a black border (owner round 3: the
- * thick ink keyline read as a hard box drawn on the page, not as light).
+ * Focus is the reference's own language (measured on the corrected reference): solid #FDDB6F
+ * bands out to 40 closed by a 4px warm-dark #A88200 keyline, tiles scaling to 1.11 — never a
+ * hard box, never a border-only cue (owner rounds 3–4).
  */
 internal class KidsHomeLayout(
     context: Context,
@@ -55,7 +51,7 @@ internal class KidsHomeLayout(
     val root: View get() = this
     val primaryControl: View get() = cardA
     val navigationAnchor: View? get() = pillStops.firstOrNull()
-    val preferredHeightPx: Int get() = theme.px(theme.packInt("kidsHomeHeight", 470).toFloat())
+    val preferredHeightPx: Int get() = theme.px(theme.packInt("kidsHomeHeight", 660).toFloat())
 
     private val cardA: FrameLayout
     private val cardB: FrameLayout
@@ -76,10 +72,9 @@ internal class KidsHomeLayout(
     private lateinit var gearStop: FrameLayout
 
     init {
-        // Transparent: the host paints the sunshine stage across the entire screen behind this
-        // composition and the rails below it; the yellow stage IS the page.
-        // Nothing in the hero band may crop the focus halos: the oversized canvases reach a
-        // glowInset past their tiles, and a clipped band looked like a cut-off hero section.
+        // Transparent: the host paints the flat sunshine stage across the entire screen behind
+        // this composition and the rails below it; the yellow stage IS the page. Nothing in the
+        // hero band may crop the focus halos: their canvases reach a glowInset past their tiles.
         clipChildren = false
         clipToPadding = false
 
@@ -90,36 +85,30 @@ internal class KidsHomeLayout(
         }
         addView(content, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-        ).apply { setMargins(theme.px(56f), theme.px(26f), theme.px(56f), 0) })
+        ).apply { setMargins(theme.gutter, theme.space("kidsTopMargin", 50f), theme.gutter, 0) })
 
-        // --- header: brand circle + its tab pill at left, household cluster at right ------------
+        // --- header: brand disc + its tab capsule at left, household cluster at right ----------
+        val headerH = theme.space("kidsNavH", 88f)
         val header = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
         val leftGroup = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
-        val mark = Views.text(app, "h2", 26f, Color.WHITE, "S", bold = true,
-            gravity = Gravity.CENTER).apply {
-            background = Views.rounded(theme.ink, theme.px(999f))
-        }
-        leftGroup.addView(mark, LinearLayout.LayoutParams(theme.px(60f), theme.px(60f)))
+        leftGroup.addView(KidsKit.brandDisc(app, headerH, theme.brandMark))
 
-        val pill = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = Views.rounded(theme.color("pill", "#1E252E"), theme.px(999f))
-            setPadding(theme.px(8f), theme.px(7f), theme.px(7f), theme.px(7f))
-        }
+        val pill = KidsKit.tabCapsule(app, theme.space("kidsPillH", 62f))
         val sections = listOf("Movies" to "movies", "Series" to "series", "Live" to "live")
         sections.forEachIndexed { index, (label, route) ->
             pill.addView(makePillStop(label, route, index == 0))
         }
-        pill.addView(makeSearchDot(), LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)).apply {
-            marginStart = theme.px(8f)
-        })
+        pill.addView(makeSearchDot(), LinearLayout.LayoutParams(
+            theme.space("kidsKnob", 49f), theme.space("kidsKnob", 49f),
+        ).apply { marginStart = theme.px(6f) })
         leftGroup.addView(pill, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(60f),
-        ).apply { marginStart = theme.px(18f) })
+            ViewGroup.LayoutParams.WRAP_CONTENT, theme.space("kidsPillH", 62f),
+        ).apply { marginStart = theme.space("kidsLogoGap", 33f) })
         header.addView(leftGroup, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
@@ -130,10 +119,9 @@ internal class KidsHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
-        // ONE household stop, not three. The avatar and the name are the same job — switching who
-        // watches — so they weld into one black pill: a face disc, the profile's name, and its
-        // quiet chevron. There is no bell: this app has no notifications yet, and an icon that
-        // lies about a feature is worse than empty space.
+        // ONE household stop in the reference's shape: a face disc standing on the page, a narrow
+        // gap, then the black name capsule. No bell — no notifications feature yet (owner rule);
+        // the gear keeps a real door to the TV's settings instead.
         profilePill = LinearLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
@@ -141,64 +129,73 @@ internal class KidsHomeLayout(
             contentDescription = "Profiles"
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = Views.rounded(theme.ink, theme.px(999f))
-            setPadding(theme.px(7f), theme.px(7f), theme.px(20f), theme.px(7f))
+            clipChildren = false
+            clipToPadding = false
         }
+        val avatarD = theme.space("kidsAvatar", 64f)
+        val avatarWrap = KidsKit.avatarDisc(app, avatarD)
         avatarFace = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() {
+            outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(v: View, o: android.graphics.Outline) {
                     o.setOval(0, 0, v.width, v.height)
                 }
             }
         }
-        avatarIni = Views.text(app, "meta", 18f, Color.WHITE, "?", bold = true,
+        avatarIni = Views.text(app, "meta", 20f, Color.WHITE, "?", bold = true,
             gravity = Gravity.CENTER).apply {
-            background = Views.rounded(Color.argb(60, 255, 255, 255), theme.px(999f))
+            background = Views.rounded(theme.color("stageDeep", "#FBD364"), theme.px(999f))
         }
-        profilePill.addView(avatarIni, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
-        profilePill.addView(avatarFace, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
-        namePlate = Views.text(app, "nav", 17f, Color.WHITE, "", bold = true, maxLines = 1)
-        profilePill.addView(namePlate, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        val inner = FrameLayout(context)
+        inner.addView(avatarIni, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        inner.addView(avatarFace, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        inner.clipToOutline = true
+        inner.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(v: View, o: android.graphics.Outline) {
+                o.setOval(0, 0, v.width, v.height)
+            }
+        }
+        avatarWrap.addView(inner, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        profilePill.addView(avatarWrap, LinearLayout.LayoutParams(avatarD, avatarD))
+        val capsule = KidsKit.nameCapsule(app, theme.space("kidsProfileH", 64f))
+        namePlate = Views.text(app, "profileName", 26f, Color.WHITE, "", bold = true, maxLines = 1)
+        capsule.addView(namePlate, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        capsule.addView(Views.text(app, "nav", 21f, Color.WHITE, "⌄", bold = true,
+            gravity = Gravity.CENTER), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { marginStart = theme.px(12f) })
-        val down = Views.text(app, "nav", 15f, theme.color("accentYellow", "#FFD34E"), "⌄",
-            bold = true, gravity = Gravity.CENTER)
-        profilePill.addView(down, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { marginStart = theme.px(8f) })
+        profilePill.addView(capsule, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, theme.space("kidsProfileH", 64f),
+        ).apply { marginStart = theme.space("kidsAvatarGap", 11f) })
         Focus.attach(profilePill, profilePill, app, theme.px(999f), scale = false, elevate = false,
-            onClick = callbacks.onProfile)
+            glowInset = theme.focusGlowInsetSm, onClick = callbacks.onProfile)
         pillStops += profilePill
         household.addView(profilePill, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(60f)))
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // The settings gear: without it a kids household has no door to the TV's own settings.
-        gearStop = FrameLayout(context).apply {
+        gearStop = KidsKit.gearDisc(app, R.drawable.ic_nav_settings,
+            theme.space("kidsProfileH", 64f)).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Settings"
-            background = Views.rounded(theme.ink, theme.px(999f))
         }
-        gearStop.addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_nav_settings)
-            setColorFilter(Color.WHITE)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(theme.px(12f), theme.px(12f), theme.px(12f), theme.px(12f))
-        }, LayoutParams(theme.px(50f), theme.px(50f)))
         Focus.attach(gearStop, gearStop, app, theme.px(999f), scale = false, elevate = false,
-            onClick = callbacks.onSettings)
+            glowInset = theme.focusGlowInsetSm, onClick = callbacks.onSettings)
         pillStops += gearStop
-        household.addView(gearStop, LinearLayout.LayoutParams(theme.px(52f), theme.px(52f)).apply {
-            marginStart = theme.px(12f)
-        })
+        household.addView(gearStop, LinearLayout.LayoutParams(
+            theme.space("kidsProfileH", 64f), theme.space("kidsProfileH", 64f),
+        ).apply { marginStart = theme.space("kidsGearGap", 15f) })
         header.addView(household, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
         content.addView(header, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)))
+            ViewGroup.LayoutParams.MATCH_PARENT, headerH))
 
         // The top-right stops were previously decoration the remote could never reach: spell out
         // the walk RIGHT out of the search dot — profile pill, then the gear.
@@ -213,27 +210,29 @@ internal class KidsHomeLayout(
             clipChildren = false
             clipToPadding = false
         }
+        val heroH = theme.space("kidsHeroH", 355f)
         val a = makeCard(fullArt = true)
         cardA = a.first; artA = a.third.first; titleA = a.third.second
         val b = makeCard(fullArt = false)
         cardB = b.first; artB = b.third.first; titleB = b.third.second
-        cardRow.addView(cardA, LinearLayout.LayoutParams(0, theme.px(280f), 40f))
-        cardRow.addView(cardB, LinearLayout.LayoutParams(0, theme.px(280f), 60f).apply {
-            marginStart = theme.px(22f)
+        cardRow.addView(cardA, LinearLayout.LayoutParams(0, heroH, 40f))
+        cardRow.addView(cardB, LinearLayout.LayoutParams(0, heroH, 60f).apply {
+            marginStart = theme.space("kidsHeroGap", 54f)
         })
         content.addView(cardRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(280f),
-        ).apply { topMargin = theme.px(20f) })
+            ViewGroup.LayoutParams.MATCH_PARENT, heroH,
+        ).apply { topMargin = theme.space("kidsHeroTopGap", 53f) })
         // The halo stands on its own oversized canvas behind the art — the rail tiles' pattern —
         // so the glow reaches past the card's edge instead of being cropped by it.
-        Focus.attach(cardA, a.second, app, theme.radius("card", 26f), scale = false,
+        val heroRadius = theme.radius("card", 32f)
+        Focus.attach(cardA, a.second, app, heroRadius, scale = false,
             elevate = false, glowInset = theme.focusGlowInset,
             onClick = { itemA?.let(callbacks.onOpen) })
-        Focus.attach(cardB, b.second, app, theme.radius("card", 26f), scale = false,
+        Focus.attach(cardB, b.second, app, heroRadius, scale = false,
             elevate = false, glowInset = theme.focusGlowInset,
             onClick = { itemB?.let(callbacks.onOpen) })
 
-        // --- black chip pills: the household's real shelves -------------------------------------
+        // --- black chip capsules: the household's real shelves ----------------------------------
         chipRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -241,8 +240,8 @@ internal class KidsHomeLayout(
             clipToPadding = false
         }
         content.addView(chipRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(58f),
-        ).apply { topMargin = theme.px(22f) })
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.space("kidsChipH", 86f),
+        ).apply { topMargin = theme.space("kidsChipTopGap", 50f) })
 
         cardA.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
         cardB.nextFocusUpId = pillStops.firstOrNull()?.id ?: View.NO_ID
@@ -254,45 +253,35 @@ internal class KidsHomeLayout(
             isFocusable = true
             isClickable = true
             contentDescription = "$label section"
-            setPadding(theme.px(20f), theme.px(11f), theme.px(20f), theme.px(11f))
-            background = if (active) Views.rounded(
-                theme.color("pillActive", "#26221B"), theme.px(999f)) else null
+            setPadding(theme.px(22f), 0, theme.px(22f), 0)
         }
-        stop.addView(Views.text(app, "nav", 17f,
-            if (active) theme.color("stageYellow", "#FFC93A") else Color.WHITE,
-            label, bold = true, gravity = Gravity.CENTER), LayoutParams(
+        stop.addView(KidsKit.segmentText(app, label, active), LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.CENTER })
         Focus.attach(stop, stop, app, theme.px(999f), scale = false, elevate = false,
-            onClick = { callbacks.onSection(route) })
+            glowInset = theme.focusGlowInsetSm, onClick = { callbacks.onSection(route) })
         pillStops += stop
         return stop
     }
 
     private fun makeSearchDot(): View {
-        val dot = FrameLayout(context).apply {
+        val dot = KidsKit.searchKnob(app, R.drawable.ic_nav_search,
+            theme.space("kidsKnob", 49f)).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Search"
-            background = Views.rounded(theme.color("accentYellow", "#FFD34E"), theme.px(999f))
         }
         searchStop = dot
-        dot.addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_nav_search)
-            setColorFilter(theme.ink)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(theme.px(12f), theme.px(12f), theme.px(12f), theme.px(12f))
-        }, LayoutParams(theme.px(46f), theme.px(46f)))
         Focus.attach(dot, dot, app, theme.px(999f), scale = false, elevate = false,
-            onClick = callbacks.onSearch)
+            glowInset = theme.focusGlowInsetSm, onClick = callbacks.onSearch)
         pillStops += dot
         return dot
     }
 
-    /** fullArt = the backdrop covers the whole card, the title prints over its top and a black
-     *  play circle sits at its foot; tinted = a yellow plate with key art bleeding from the inner
-     *  edge, the title in ink and the same play circle at the foot, exactly as the mockup shows. */
+    /** fullArt = the backdrop covers the whole card and the title prints over its top; plate =
+     *  the reference's gradient card with key art bleeding from the inner (right) edge and the
+     *  lockup centred. Both carry a black play disc at the foot, exactly as measured. */
     private fun makeCard(
         fullArt: Boolean,
     ): Triple<FrameLayout, View, Pair<ImageView, TextView>> {
@@ -304,15 +293,8 @@ internal class KidsHomeLayout(
             clipChildren = false
             clipToPadding = false
             contentDescription = "Featured title. Open details"
-            background = if (fullArt) Views.rounded(theme.ink, theme.radius("card", 26f))
-            else Views.rounded(theme.color("cardTint", "#FFD866"), theme.radius("card", 26f))
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(v: View, o: android.graphics.Outline) {
-                    o.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 26f).toFloat())
-                }
-            }
-            // The card does NOT clip to that outline: a clipped card cropped the focus halo at the
-            // card's edge, so the hero section looked cut off on focus. The artwork rounds itself.
+            background = KidsKit.heroPlate(app, fullArt)
+            outlineProvider = KidsKit.heroOutline(app)
             // A soft standing shadow: the plate glows off the sheet, as in the reference.
             elevation = theme.px(16f).toFloat()
         }
@@ -322,40 +304,27 @@ internal class KidsHomeLayout(
         ).apply { setMargins(-glowPad, -glowPad, -glowPad, -glowPad) })
         val art = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            // The artwork rounds itself now that the card no longer clips — the plate keeps its
-            // rounded corners and the focus halo keeps its full reach outside them.
+            // The artwork rounds itself; the card does NOT clip to its outline — a clipped card
+            // cropped the focus halo at the card's edge (round 3).
             clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(v: View, o: android.graphics.Outline) {
-                    o.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 26f).toFloat())
-                }
-            }
+            outlineProvider = KidsKit.heroOutline(app)
         }
-        val title = Views.text(app, "h2", 34f, Color.WHITE, "", bold = true, maxLines = 2)
-        val playRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        playRow.addView(Views.text(app, "meta", 18f, Color.WHITE, "\u25B6", bold = true,
-            gravity = Gravity.CENTER).apply {
-            background = Views.rounded(theme.ink, theme.px(999f))
-        }, LinearLayout.LayoutParams(theme.px(46f), theme.px(46f)))
-        playRow.addView(Views.text(app, "sub", 16f, Color.WHITE, "Play", bold = true),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = theme.px(12f) })
+        val title = Views.text(app, "h2", 56f, Color.WHITE, "", bold = true, maxLines = 2)
+        val playRow = KidsKit.playRow(app, if (fullArt) "Play trailer" else "Play")
         if (fullArt) {
             card.addView(art, LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             // Soft ink washes top and bottom so printed text survives any backdrop.
             card.addView(View(context).apply {
-                background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                background = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
                     intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT))
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(150f)).apply {
                 gravity = Gravity.TOP
             })
             card.addView(View(context).apply {
-                background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                background = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
                     intArrayOf(Color.argb(150, 20, 18, 14), Color.TRANSPARENT))
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
                 gravity = Gravity.BOTTOM
@@ -364,13 +333,13 @@ internal class KidsHomeLayout(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
                 gravity = Gravity.START or Gravity.TOP
-                setMargins(theme.px(26f), theme.px(20f), theme.px(20f), 0)
+                setMargins(theme.px(30f), theme.px(26f), theme.px(20f), 0)
             })
             card.addView(playRow, LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply {
                 gravity = Gravity.START or Gravity.BOTTOM
-                setMargins(theme.px(20f), 0, theme.px(16f), theme.px(18f))
+                setMargins(theme.px(24f), 0, theme.px(16f), theme.px(22f))
             })
         } else {
             val artBox = FrameLayout(context)
@@ -379,15 +348,17 @@ internal class KidsHomeLayout(
             // The key art bleeds out of the plate: a tint gradient eats the photo's inner edge
             // instead of leaving the hard seam a pasted rectangle gives.
             artBox.addView(View(context).apply {
-                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                    intArrayOf(theme.color("cardTint", "#FFD866"), Color.TRANSPARENT))
+                background = android.graphics.drawable.GradientDrawable(
+                    android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                    intArrayOf(theme.color("heroPlateL", "#F2AE01"), Color.TRANSPARENT))
             }, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            // The left column stacks the ink title at the top and the play row at the foot.
+            // The lockup centres in the plate's left field; the play disc rides its foot.
             val textCol = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(theme.px(28f), theme.px(22f), theme.px(10f), theme.px(20f))
+                setPadding(theme.px(28f), theme.px(22f), theme.px(10f), theme.px(22f))
             }
             title.setTextColor(theme.ink)
+            title.gravity = Gravity.CENTER
             textCol.addView(title, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             textCol.addView(View(context), LinearLayout.LayoutParams(
@@ -402,33 +373,15 @@ internal class KidsHomeLayout(
         return Triple(card, ringOn, Pair(art, title))
     }
 
-    private fun makeChip(shelfId: String, label: String, active: Boolean): View {
-        val chip = LinearLayout(context).apply {
+    private fun makeChip(shelfId: String, label: String): View {
+        val chip = KidsKit.chip(app, KidsKit.chipGlyph(label), label).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
             contentDescription = "Jump to $label"
-            setPadding(theme.px(22f), theme.px(13f), theme.px(22f), theme.px(13f))
-            background = Views.rounded(theme.ink, theme.radius("chip", 999f))
         }
-        val glyph = when {
-            label.contains("Trending", true) -> "\u2665"
-            label.contains("New", true) -> "\u2726"
-            label.contains("Top", true) || label.contains("rated", true) -> "\u2605"
-            else -> "\u25CF"
-        }
-        chip.addView(Views.text(app, "meta", 15f, Color.WHITE, glyph, bold = true),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        chip.addView(Views.text(app, "chip", 16f,
-            if (active) theme.color("accentYellow", "#FFD34E") else Color.WHITE, label, bold = true),
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = theme.px(9f) })
         Focus.attach(chip, chip, app, theme.radius("chip", 999f), scale = false, elevate = false,
-            onClick = { callbacks.onShelf(shelfId) })
+            glowInset = theme.focusGlowInsetSm, onClick = { callbacks.onShelf(shelfId) })
         return chip
     }
 
@@ -438,10 +391,11 @@ internal class KidsHomeLayout(
         if (ids == chipIds) return
         chipIds = ids
         chipRow.removeAllViews()
-        shelves.take(7).forEachIndexed { index, (id, label) ->
-            val chip = makeChip(id, label.trim().removePrefix("New on "), index == 0)
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, theme.px(52f))
-            if (chipRow.childCount > 0) lp.marginStart = theme.px(14f)
+        shelves.take(8).forEach { (id, label) ->
+            val chip = makeChip(id, label.trim().removePrefix("New on "))
+            val lp = LinearLayout.LayoutParams(theme.space("kidsChipW", 219f),
+                theme.space("kidsChipH", 86f))
+            if (chipRow.childCount > 0) lp.marginStart = theme.space("kidsChipGap", 15f)
             chipRow.addView(chip, lp)
         }
         cardA.nextFocusDownId = chipRow.getChildAt(0)?.id ?: View.NO_ID
@@ -455,7 +409,7 @@ internal class KidsHomeLayout(
         avatarIni.text = trimmed.take(1).uppercase()
         namePlate.text = trimmed.take(18)
         if (!avatarUrl.isNullOrBlank()) {
-            BrowseImages.load(avatarFace, avatarUrl, theme.px(46f)) { ok ->
+            BrowseImages.load(avatarFace, avatarUrl, theme.space("kidsAvatar", 64f)) { ok ->
                 if (ok) avatarIni.visibility = View.GONE
             }
         }

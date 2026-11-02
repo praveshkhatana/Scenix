@@ -42,6 +42,9 @@ class Theme private constructor(
     private val player: JSONObject,
     private val pack: JSONObject,
 ) {
+    /** The single letter a pack prints on its brand disc ("S" unless the pack names another). */
+    val brandMark: String get() = root.optString("brandMark", "S").ifBlank { "S" }
+
     // ---- colours ---------------------------------------------------------------------------
     fun color(name: String, fallback: String = "#FFFFFF"): Int = parseColor(colors.optString(name, fallback))
 
@@ -104,6 +107,17 @@ class Theme private constructor(
     val focusKeylineColor get(): Int =
         if (focus.has("keylineColor")) parseColor(focus.optString("keylineColor")) else focusGlowColor
     val focusKeylineExplicit get() = focus.has("keylineColor")
+
+    /** The keyline's weight. Packs that measured a heavier reference edge raise it; the rest keep 2. */
+    val focusKeylinePx get() = px(focus.optDouble("keylineWidth", 2.0).toFloat())
+
+    /** The shelf tile spec from `cards.poster` (width, height in device px); aspect is height/width. */
+    fun posterTilePx(): Pair<Int, Int> {
+        val c = root.optJSONObject("cards")?.optJSONObject("poster")
+        val w = (c?.optDouble("width", 280.0) ?: 280.0).toFloat()
+        val asp = (c?.optDouble("aspect", 1.5) ?: 1.5).toFloat()
+        return px(w) to px(w * asp)
+    }
 
     /**
      * Android TV exposes "remove animations" through the system animator scale.  A focus change
