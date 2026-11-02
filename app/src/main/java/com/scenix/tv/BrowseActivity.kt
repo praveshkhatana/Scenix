@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.HomeLayoutSpec
@@ -47,6 +48,39 @@ class BrowseActivity : Activity() {
     private lateinit var status: TextView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var loaded = false
+    /**
+     * The pack's answer to an empty or failed shelf (owner ruling: a bare line of text on the
+     * wall reads as a bug, not a state). A frost plate stands in the middle of the page — glyph,
+     * what happened, and a focusable Try again that re-runs the load. Non-glass packs keep the
+     * plain status line, which is their language.
+     */
+    private var emptyOverlay: View? = null
+
+    private fun isGlassPack(): Boolean =
+        app.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS
+
+    private fun showEmpty(title: String, sub: String) {
+        hideEmpty()
+        val host = window.decorView.findViewById<ViewGroup>(android.R.id.content)
+        val wrap = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        val card = GlassKit.emptyState(this, app, title, sub, true) { load() }
+        wrap.addView(card, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        host.addView(wrap, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        emptyOverlay = wrap
+        if (app.theme.motionEnabled) Motion.sheetIn(card, app.theme)
+        card.post { card.findViewWithTag<View>("retry")?.requestFocus() }
+    }
+
+    private fun hideEmpty() {
+        (emptyOverlay as? ViewGroup)?.let { host ->
+            window.decorView.findViewById<ViewGroup>(android.R.id.content).removeView(host)
+        }
+        emptyOverlay = null
+    }
     private var stage: Stage? = null
     /** Last shelf card which changed the room. Avoids repeating backdrop work on the same card. */
     private var roamingCard: View? = null
@@ -56,8 +90,9 @@ class BrowseActivity : Activity() {
     private var section = ""
     private var skeleton: View? = null
     private var contentRoot: ViewGroup? = null
-    /** The wordmark fades once the page scrolls, so a row heading never sits under it. */
-    private var brandMark: View? = null
+    /** The floating nav fades once the billboard has gone under it, and always shows when the
+     * remote is standing on it or back at the top of the page. */
+    private var chromeBar: View? = null
 
     // The hero and the first shelf are ONE section, the way Apple's shelf-top works: the slides the
     // hero shows are the tiles of the Featured row, and whichever side moves, the other follows.
@@ -190,10 +225,13 @@ class BrowseActivity : Activity() {
                 if (focus != null && adapter != null && isInside(list, focus)) {
                     val down = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN
                     val from = outerPositionOf(focus)
-                    // The focused-hub surface owns the relationship between its system strip,
-                    // content tiles and Details action. Let its explicit next-focus graph answer
-                    // UP/DOWN rather than forcing the Apple carousel hierarchy onto it.
-                    if (heroFamily == HomeLayoutSpec.Hero.FOCUSED_HUB &&
+                    // The focused-hub and dual-card surfaces own the relationship between their
+                    // navigation strip, content tiles and actions. Let their explicit next-focus
+                    // graph answer UP/DOWN rather than forcing the Apple carousel hierarchy on them.
+                    if (heroFamily in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
+                            HomeLayoutSpec.Hero.DUAL_CARDS,
+                            HomeLayoutSpec.Hero.GLASS_CARDS,
+                            HomeLayoutSpec.Hero.KIDS_STAGE) &&
                         isInside(adapter.heroRoot, focus)) {
                         return super.dispatchKeyEvent(event)
                     }
@@ -233,19 +271,28 @@ class BrowseActivity : Activity() {
     }
 
     /**
-     * The wordmark belongs to the top of the page. It steps aside once the billboard has actually
-     * gone under the bar, so a shelf heading never sits beneath it — measured from the hero's own
-     * frame, because the RecyclerView's scroll offset is an estimate with variable-height rows and
-     * reported a scrolled page while the hero was still filling the screen.
+     * The floating bar belongs to the top of the page: the whole bar — wordmark, pill, and action
+     * icons together — steps aside once the billboard has actually gone under it, so a shelf
+     * heading never sits beneath it. It is measured from the hero's own frame, because the
+     * RecyclerView's scroll offset is an estimate with variable-height rows. A strict threshold
+     * with nothing re-asserting it is how Home kept no nav at all after a DOWN-and-UP: the fade
+     * animates (opacity only), and standing on the bar or on the billboard always brings it back,
+     * so a focus stop is never invisible.
      */
     private fun updateBrandFade() {
-        val mark = brandMark ?: return
+        val bar = chromeBar ?: return
+        val f = currentFocus
+        val onTopChrome = f != null && (isInside(bar, f) || outerPositionOf(f) == 0)
         val lm = list.layoutManager as? LinearLayoutManager
         val hero = lm?.findViewByPosition(0)
-        // Before the list is laid out there is no hero frame to measure; the mark starts visible.
+        // Before the list is laid out there is no hero frame to measure; the bar starts visible.
         // Hiding it on "not measured yet" is how Home came up with no wordmark at all.
-        if (hero == null) return
-        mark.alpha = if (hero.bottom > app.theme.px(96f)) 1f else 0f
+        val visible = onTopChrome || (hero != null && hero.bottom > app.theme.px(96f))
+        val target = if (visible) 1f else 0f
+        if (bar.alpha == target) return
+        val ms = app.theme.token("anim", "navFadeMs", 180.0).toLong().coerceIn(60L, 400L)
+        bar.animate().cancel()
+        bar.animate().alpha(target).setDuration(ms).start()
     }
 
     /**
@@ -258,6 +305,38 @@ class BrowseActivity : Activity() {
         val theme = app.theme
         val room = resources.displayMetrics.heightPixels - theme.px(200f)
         return wantedPx.coerceAtMost(maxOf(room, theme.px(420f)))
+    }
+
+    /**
+     * The Glass caption line: "● 7.8 · 2023" — an accent dot welded to the rating, the year
+     * quieter after it, exactly as the reference prints it under every poster.
+     */
+    private fun captionDotLine(item: Item): CharSequence {
+        val theme = app.theme
+        val sb = android.text.SpannableStringBuilder()
+        val rating = when {
+            item.rating > 0 -> String.format(java.util.Locale.US, "%.1f", item.rating)
+            item.match > 0 -> "${item.match}%"
+            else -> null
+        }
+        if (rating != null) {
+            sb.append("●")
+            sb.setSpan(android.text.style.ForegroundColorSpan(theme.color("match", "#EF9F42")),
+                0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sb.append(" ").append(rating)
+            sb.setSpan(android.text.style.ForegroundColorSpan(theme.color("captionInk", "#EAF1F6")),
+                2, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (item.year > 0) sb.append("   ").append(item.year.toString())
+        } else if (item.year > 0) {
+            sb.append(item.year.toString())
+        }
+        if (item.isNew) {
+            if (sb.isNotEmpty()) sb.append("   ")
+            sb.append("New")
+            sb.setSpan(android.text.style.ForegroundColorSpan(theme.color("match", "#EF9F42")),
+                sb.length - 3, sb.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return sb
     }
 
     /** Advance the visible hero exactly one slide, wrapping like the Featured rail. */
@@ -654,10 +733,39 @@ class BrowseActivity : Activity() {
             HomeLayoutSpec.Navigation.UTILITY,
             HomeLayoutSpec.Navigation.NONE,
         )
+        // The Clean and Kids compositions sit their blocks directly on the wallpaper, so the
+        // wall is the whole page's background — fixed behind the rails while they scroll —
+        // not a hero-slot backdrop with a seam where the hero ends.
+        val fullWall: android.graphics.drawable.Drawable? = when (app.theme.homeLayout.hero) {
+            HomeLayoutSpec.Hero.DUAL_CARDS -> GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(app.theme.color("wallA", "#8FA5B8"), app.theme.color("wallB", "#54687C")),
+            )
+            // One shared wash component — the same drawable Home, Detail and Settings paint.
+            HomeLayoutSpec.Hero.GLASS_CARDS -> GlassKit.wall(app)
+            HomeLayoutSpec.Hero.KIDS_STAGE -> {
+                // The reference is not flat sunshine: the page edge keeps a saturated yellow rim,
+                // while the whole content sits on one huge lighter-yellow sheet with soft corners.
+                val ground = GradientDrawable(
+                    GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(app.theme.color("stageYellow", "#FFC93A"), app.theme.color("stageDeep", "#F4B81E")),
+                )
+                val sheet = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = app.theme.px(56f).toFloat()
+                    setColor(app.theme.color("stageSheet", "#FFF3D0"))
+                }
+                android.graphics.drawable.LayerDrawable(arrayOf(ground, sheet)).apply {
+                    setLayerInset(1, app.theme.px(36f), app.theme.px(18f), app.theme.px(36f), 0)
+                }
+            }
+            else -> null
+        }
         val content: ViewGroup = if (stageMode) FrameLayout(this) else LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
         }
+        fullWall?.let { content.background = it }
         val root: View = if (stageMode) {
             val frame = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
             val s = Stage()
@@ -675,7 +783,7 @@ class BrowseActivity : Activity() {
             layoutManager = LinearLayoutManager(this@BrowseActivity)
             setHasFixedSize(true)
             setItemViewCacheSize(24)
-            setBackgroundColor(if (stageMode) Color.TRANSPARENT else app.theme.bg)
+            setBackgroundColor(if (stageMode || fullWall != null) Color.TRANSPARENT else app.theme.bg)
             itemAnimator = null
             clipToPadding = false
             clipChildren = false
@@ -723,11 +831,15 @@ class BrowseActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         buildLeftRail(shell)
         setContentView(shell)
+        Motion.enter(app.theme, root)
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 updateBrandFade()
             }
         })
+        // A focus change without a scroll — UP from the first row lands on the bar itself — must
+        // bring the bar back too, or the ring sits on an invisible stop.
+        window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, _ -> updateBrandFade() }
         load()
         maybeCheckUpdate()
     }
@@ -1026,7 +1138,6 @@ class BrowseActivity : Activity() {
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }
-        if (transparent) brandMark = brand
         val profile = navButton("Profile") {
             startActivity(
                 Intent(this@BrowseActivity, ProfilesActivity::class.java)
@@ -1146,6 +1257,7 @@ class BrowseActivity : Activity() {
             ).apply { gravity = Gravity.CENTER })
             // DOWN from anywhere on the bar returns to the top of the shelves.
             for (i in 0 until pill.childCount) pill.getChildAt(i).nextFocusDownId = shelfListId
+            if (transparent) chromeBar = bar
             return bar
         }
         // Classic/Netflix navigation uses the wordmark as its Home stop.  It used to be only
@@ -1162,8 +1274,10 @@ class BrowseActivity : Activity() {
         // The wordmark itself has no opaque surface for Android to paint a keyline onto.  A
         // FrameLayout lets Focus use its foreground, keeping the compact ring above the mark
         // without letting a background child influence the bar's wrap-content measurement.
+        // The mark's vector canvas is 351x81 dp — enormous if left at wrap-content, where it
+        // towered over the bar. The wordmark is a signature, not the page's hero.
         homeBrand.addView(brand, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            theme.px(132f), theme.px(30f)
         ).apply { gravity = Gravity.CENTER })
         Focus.attach(homeBrand, homeBrand, app, theme.radius("button", 6f), scale = false, elevate = false,
             onFocus = { if (it) onChromeFocused() })
@@ -1215,6 +1329,7 @@ class BrowseActivity : Activity() {
         pillStops = listOf(homeBrand, movies, series, games, profile, search, settings)
         wirePillFocus()
         for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
+        if (transparent) chromeBar = bar
         return bar
     }
 
@@ -1404,8 +1519,14 @@ class BrowseActivity : Activity() {
                 if (isFinishing || isDestroyed) return@row
                 if (items.isNullOrEmpty()) {
                     showSkeleton(false)
-                    status.visibility = View.VISIBLE
-                    status.text = error ?: "Nothing in this section yet"
+                    if (isGlassPack()) {
+                        status.visibility = View.GONE
+                        showEmpty("Nothing in this section yet",
+                            error ?: "The hub may still be warming its shelves. Try again in a moment.")
+                    } else {
+                        status.visibility = View.VISIBLE
+                        status.text = error ?: "Nothing in this section yet"
+                    }
                     return@row
                 }
                 loaded = true
@@ -1418,13 +1539,21 @@ class BrowseActivity : Activity() {
             if (rows == null) {
                 loaded = false
                 showSkeleton(false)
-                status.visibility = View.VISIBLE
-                status.text = error ?: "The hub is not answering"
+                if (isGlassPack()) {
+                    status.visibility = View.GONE
+                    showEmpty("The hub is not answering",
+                        error ?: "Check that the hub is awake, then try again.")
+                } else {
+                    status.visibility = View.VISIBLE
+                    status.text = error ?: "The hub is not answering"
+                }
                 return@load
             }
             loaded = true
-            // The pill's Live TV tab appears only for households whose hub actually carries it.
-            liveSeen = rows.any { it.id == "live" || it.card == "channel" }
+            // The pill's Live TV tab appears only for households whose hub actually carries it —
+            // and then never withdraws: a hub mid re-warm briefly answers with stale empty rows,
+            // and a tab that keeps changing shape under the thumb is worse than one that arrives late.
+            if (rows.any { it.id == "live" || it.card == "channel" }) liveSeen = true
             liveTab?.visibility = if (liveSeen) View.VISIBLE else View.GONE
             wirePillFocus()
             // Live has a whole tab and a wall of its own; the Home shelves are for films and shows,
@@ -1438,10 +1567,15 @@ class BrowseActivity : Activity() {
             // now live *inside* the HeroComponent, so the data source does not become a duplicate
             // Featured shelf below it.
             val maxSlides = app.theme.token("hero", "maxItems", 5.0).toInt().coerceAtLeast(1)
+            // A slide with no artwork at all still gets a tile, but its selector square is an empty
+            // dark hole — the blank tiles in the Featured strip. Only titles with real art become
+            // slides; a hub row of artless items keeps its shelf but never becomes the hero.
+            fun pickSlides(items: List<Item>) =
+                items.filter { !it.backdrop.isNullOrBlank() || !it.poster.isNullOrBlank() }.take(maxSlides)
             val heroRow = rows.firstOrNull { it.id == "hero" }
             val shelves: List<BrowseRow>
             if (heroRow != null && heroRow.items.isNotEmpty()) {
-                slides = heroRow.items.take(maxSlides)
+                slides = pickSlides(heroRow.items)
                 shelves = others
             } else {
                 val first = others.firstOrNull()
@@ -1449,10 +1583,29 @@ class BrowseActivity : Activity() {
                     slides = emptyList()
                     shelves = others
                 } else {
-                    slides = first.items.take(maxSlides)
+                    slides = pickSlides(first.items)
                     // If the first shelf supplied the hero, do not draw that same row again under
                     // it. The hero owns its compact previews; subsequent rows remain browse rows.
                     shelves = others.drop(1)
+                }
+            }
+            // The console-style rail IS the home screen: two lonely tiles read as a broken strip,
+            // while the reference's launch rail spans the screen. When the hub's featured row is
+            // thin, the rail borrows the next titles the household actually has — real items, no
+            // invention — and the shelf below still shows them in full. The dual-card pack needs
+            // the same guarantee: two distinct titles, never one duplicated across both cards.
+            if (app.theme.homeLayout.hero in setOf(HomeLayoutSpec.Hero.FOCUSED_HUB,
+                    HomeLayoutSpec.Hero.DUAL_CARDS,
+                    HomeLayoutSpec.Hero.GLASS_CARDS,
+                    HomeLayoutSpec.Hero.KIDS_STAGE) &&
+                slides.size in 1 until maxSlides) {
+                val seen = slides.mapTo(HashSet()) { it.identity.ifBlank { it.title } }
+                for (row in others) {
+                    if (slides.size >= maxSlides) break
+                    slides = slides + row.items.filter {
+                        (!it.backdrop.isNullOrBlank() || !it.poster.isNullOrBlank()) &&
+                            seen.add(it.identity.ifBlank { it.title })
+                    }.take(maxSlides - slides.size)
                 }
             }
             present(shelves)
@@ -1599,6 +1752,7 @@ class BrowseActivity : Activity() {
         emptyPanel?.visibility = View.GONE
         showSkeleton(false)
         status.visibility = View.GONE
+        hideEmpty()
         heroPos = 0
         heroItem = slides.firstOrNull()
         stage?.show(heroItem?.backdrop ?: heroItem?.poster
@@ -1736,6 +1890,8 @@ class BrowseActivity : Activity() {
                 .putExtra(EXTRA_TAB, tab)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         )
+        // Section switches rebuild the page; the new one rises under the old instead of snapping.
+        overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
     }
 
     /** A full-list page for one shelf: the hub's row by id, or a search for a derived shelf's tag. */
@@ -1900,20 +2056,39 @@ class BrowseActivity : Activity() {
                                     .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
                             )
                         },
+                        onShelf = { shelfId ->
+                            // A Clean chip is a shortcut into the real page below, not a fake tab.
+                            val index = shelves.indexOfFirst { it.id == shelfId }
+                            if (index >= 0) {
+                                list.smoothScrollToPosition(index + (if (hero != null) 1 else 0))
+                            }
+                        },
                     ),
                 )
                 surface.root.layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     heroSlotHeight(surface.preferredHeightPx),
                 )
+                // Clean and Kids headers print the household's name and face in their own corner;
+                // surfaces without a header cluster ignore the update.
+                api.profiles { people, _ ->
+                    if (isFinishing || isDestroyed) return@profiles
+                    val me = people?.firstOrNull { it.id == profileId } ?: return@profiles
+                    surface.setProfile(
+                        me.name,
+                        if (me.avatar.isNotBlank()) api.absolute(me.avatar) else null,
+                    )
+                }
                 HeroHolder(surface)
             } else {
                 val box = LinearLayout(this@BrowseActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    setPadding(0, theme.px(18f), 0, 0)
+                    setPadding(0, theme.space("railTopGap", 18f), 0, 0)
                 }
-                val head = Views.text(app, "rowTitle", 28f, theme.ink, "", bold = true)
+                // Packs that print rails on a light wallpaper override these two colours in the
+                // pack JSON; every other pack keeps reading them in its own ink.
+                val head = Views.text(app, "rowTitle", 28f, theme.colorOr("rowInk", theme.ink), "", bold = true)
                 head.setPadding(theme.gutter, 0, theme.gutter, theme.px(12f))
                 box.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 val rail = RailView(this@BrowseActivity).apply {
@@ -1924,7 +2099,7 @@ class BrowseActivity : Activity() {
                     isNestedScrollingEnabled = false
                     // 44px of clear space lets a lifted, glowing lockup remain fully visible;
                     // the former 18px top inset clipped focus so it looked like an underline.
-                    setPadding(theme.gutter, theme.px(44f), theme.gutter, theme.px(44f))
+                    setPadding(theme.gutter, theme.space("railGlowPad", 44f), theme.gutter, theme.space("railGlowPad", 44f))
                     clipToPadding = false
                     clipChildren = false
                 }
@@ -1946,6 +2121,7 @@ class BrowseActivity : Activity() {
                 holder.surface.setNextFocusUp(
                     (holder.surface.navigationAnchor ?: navAnchor)?.id ?: View.NO_ID,
                 )
+                holder.surface.setChips(shelves.map { it.id to it.title })
             } else if (holder is ShelfHolder) {
                 val row = shelves[position - (if (hero != null) 1 else 0)]
                 holder.head.text = row.title
@@ -1978,16 +2154,25 @@ class BrowseActivity : Activity() {
         private val poster = if (landscape) false else style == "poster" || style == "rank" || style == "hero"
         private val ranked = style == "rank"
         private val frame = theme.cardStyle == "frame"
-        private val glass = theme.cardStyle == "glass"
+        // The pack's card token picks the tile GEOMETRY (overlay/glass/below/frame); the material
+        // is a separate decision. The Glass pack draws below-art captions yet wants its rails to
+        // carry the same translucent plates as its hero, so tileMaterial declares the material
+        // independently of the geometry.
+        private val glass = theme.cardStyle == "glass" || theme.packString("tileMaterial", "") == "glass"
         // Apple's scene cards keep the name under the art instead of over it.
         private val below = theme.cardStyle == "below"
         private val captionH = when {
-            below -> theme.px(62f)
+            below -> theme.space("captionBlock", 62f)
             frame -> theme.px(56f)
             else -> 0
         }
-        private val cardW = theme.px(if (landscape) 480f else if (poster) 280f else 320f)
-        private val cardH = theme.px(if (landscape) 270f else if (poster) 420f else 180f)
+        // A pack may resize the poster lockup from its spacing tokens (Glass replicates the
+        // reference's 264×373 tiles at 27px gaps); packs that omit the keys keep the classic
+        // geometry byte for byte.
+        private val cardW = if (poster) theme.space("posterWidth", if (landscape) 480f else 280f)
+                            else theme.px(320f)
+        private val cardH = if (poster) theme.space("posterHeight", if (landscape) 270f else 420f)
+                            else theme.px(180f)
         private val radius = theme.radius("card", 6f)
         // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
         private val seeAll = !featured && row.total > row.items.size
@@ -2003,7 +2188,7 @@ class BrowseActivity : Activity() {
             val card = FrameLayout(this@BrowseActivity)
             card.layoutParams = RecyclerView.LayoutParams(cardW, cardH + captionH).apply {
                 // Apple's shelves breathe; tiles never touch each other.
-                marginEnd = theme.px(26f)
+                marginEnd = theme.space("posterGap", 26f)
             }
             card.isFocusable = true
             card.isFocusableInTouchMode = true
@@ -2012,7 +2197,7 @@ class BrowseActivity : Activity() {
             // This transparent, oversized view is the focus treatment's canvas. It must be the
             // first child so the artwork masks the centre of the halo; adding it last painted the
             // former focus bands over the poster and caption.
-            val glowPad = theme.px(24f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@BrowseActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, cardH + glowPad * 2).apply {
@@ -2020,18 +2205,37 @@ class BrowseActivity : Activity() {
                 leftMargin = -glowPad
                 topMargin = -glowPad
             })
+            // A pack whose below-captions name a plate colour (the Kids stage frames every tile in
+            // its own yellow) gets chunky framed tiles: the photo sits INSIDE a rounded plate with
+            // a soft glow, as in the reference, never pasted bare onto the sheet.
+            val tilePlate = if (below) theme.colorOr("cardTint", 0) else 0
+            val tileInset = if (tilePlate != 0) theme.px(12f) else 0
+            if (tilePlate != 0) {
+                card.addView(View(this@BrowseActivity).apply {
+                    background = Views.rounded(tilePlate, radius + theme.px(10f))
+                    elevation = theme.px(10f).toFloat()
+                }, FrameLayout.LayoutParams(cardW, cardH).apply { gravity = Gravity.TOP })
+            }
             val art = ImageView(this@BrowseActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setBackgroundColor(theme.surface2)
                 clipToOutline = true
+                // The plate sits at elevation 10 to cast its glow; the photo must sit above it or
+                // Android's z-order paints the plate over the artwork.
+                if (tilePlate != 0) elevation = theme.px(12f).toFloat()
+                // Glass tiles are bare art plates: the pack's depth cue is a real cast shadow
+                // under the rounded outline, separate from the focus glow painted behind.
+                if (glass) elevation = theme.space("posterElevation", 10f).toFloat()
                 outlineProvider = object : ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) {
                         outline.setRoundRect(0, 0, v.width, v.height, theme.radius("card", 6f).toFloat())
                     }
                 }
             }
-            card.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardH).apply {
+            card.addView(art, FrameLayout.LayoutParams(cardW - tileInset * 2, cardH - tileInset * 2).apply {
                 gravity = Gravity.TOP
+                leftMargin = tileInset
+                topMargin = tileInset
             })
             if (!frame && !below) {
                 val shade = View(this@BrowseActivity).apply {
@@ -2039,6 +2243,8 @@ class BrowseActivity : Activity() {
                         GradientDrawable.Orientation.BOTTOM_TOP,
                         intArrayOf(Color.argb(if (glass) 190 else 235, 0, 0, 0), Color.TRANSPARENT)
                     )
+                    // Parents paint by Z: the elevated glass art would cover a Z-0 shade.
+                    if (glass) elevation = theme.space("posterElevation", 10f) + 2f
                 }
                 card.addView(shade, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
                     gravity = Gravity.BOTTOM
@@ -2054,7 +2260,11 @@ class BrowseActivity : Activity() {
                 card.addView(View(this@BrowseActivity).apply {
                     background = Views.ring(theme.line, radius, theme.px(1f))
                 }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            } else if (glass) {
+            } else if (glass && !below) {
+                // A glass tile that OVERLAYS its name gets a darker name strip welded to the art.
+                // A below-caption pack must NOT get one: the strip would paint as a stray grey box
+                // floating on the wall under every poster (owner ruling 2026-11-03 — the reference
+                // rail caption is bare text on the wall; the tile itself is the plate).
                 card.addView(View(this@BrowseActivity).apply {
                     // A console pack's glass is cool blue; a cinema pack can keep the neutral
                     // dark plate. The card shape stays shared while colour remains declarative.
@@ -2069,19 +2279,20 @@ class BrowseActivity : Activity() {
                     leftMargin = theme.px(8f); rightMargin = theme.px(8f); bottomMargin = theme.px(8f)
                 })
             }
-            val name = Views.text(app, "caption", if (below) 18f else 19f, theme.ink, "", bold = true,
+            val name = Views.text(app, "caption", if (below) 18f else 19f,
+                theme.colorOr("captionInk", theme.ink), "", bold = true,
                 maxLines = if (below) 1 else 2)
             name.setPadding(theme.px(if (below) 4f else 12f), 0,
                 theme.px(if (below) 4f else 12f), theme.px(if (below) 0f else 10f))
             card.addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.BOTTOM
                 bottomMargin = when {
-                    below -> theme.px(26f)
+                    below -> theme.space("captionNameBottom", 26f)
                     frame -> theme.px(8f)
                     else -> 0
                 }
             })
-            val sub = Views.text(app, "meta", 14f, theme.ink3, "", maxLines = 1)
+            val sub = Views.text(app, "meta", 14f, theme.colorOr("captionSub", theme.ink3), "", maxLines = 1)
             sub.setPadding(theme.px(4f), 0, theme.px(4f), theme.px(4f))
             sub.visibility = if (below) View.VISIBLE else View.GONE
             card.addView(sub, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -2116,10 +2327,16 @@ class BrowseActivity : Activity() {
             // The See all tile's badge: a feather chevron on a quiet disc, hidden on every other tile.
             val chevron = ImageView(this@BrowseActivity).apply {
                 setImageResource(R.drawable.ic_chevron_right)
-                setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
                 setPadding(theme.px(20f), theme.px(20f), theme.px(20f), theme.px(20f))
-                background = Views.rounded(theme.surface2, theme.px(999f))
+                if (glass) {
+                    // On a frosted plate the disc is itself frost, with light ink.
+                    setColorFilter(theme.color("inkOnWall", "#FFFFFF"), android.graphics.PorterDuff.Mode.SRC_IN)
+                    background = Views.rounded(theme.color("discGlass", "rgba(255,255,255,0.16)"), theme.px(999f))
+                } else {
+                    setColorFilter(theme.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+                    background = Views.rounded(theme.surface2, theme.px(999f))
+                }
                 visibility = View.GONE
             }
             card.addView(chevron, FrameLayout.LayoutParams(theme.px(78f), theme.px(78f)).apply {
@@ -2174,7 +2391,7 @@ class BrowseActivity : Activity() {
             val slideState = if (featured) View(this@BrowseActivity).apply {
                 // Featured tiles are previews of the hero, not a second focus target. Apple gets
                 // one short active-slide marker; other packs retain their existing full rim.
-                background = if (theme.id == "scenix-apple") {
+                background = if (theme.packString("featuredMarker", "rim") == "bar") {
                     // A black cradle keeps the white marker legible even over a bright poster;
                     // this is state, not another card outline, so it cannot be mistaken for focus.
                     LayerDrawable(arrayOf(
@@ -2190,7 +2407,7 @@ class BrowseActivity : Activity() {
                 visibility = View.GONE
             } else null
             if (slideState != null) {
-                val markerLayout = if (theme.id == "scenix-apple") {
+                val markerLayout = if (theme.packString("featuredMarker", "rim") == "bar") {
                     FrameLayout.LayoutParams(theme.px(84f), theme.px(10f)).apply {
                         gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
                         bottomMargin = captionH + theme.px(10f)
@@ -2203,7 +2420,9 @@ class BrowseActivity : Activity() {
                 card.addView(slideState, markerLayout)
             }
             val holder = CardHolder(card, art, name, sub, logo, badge, num, progress, slideState, imdb, cert, corner, chevron)
-            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
+            // Glass tiles lift on focus exactly like the hero plates (halo + elevation on the
+            // same resting cast shadow); other packs keep the flat, perf-first treatment.
+            Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = glass,
                 glowInset = glowPad,
                 // The hero's rail is a loop, not a corridor: walking off either end lands on the
                 // other, the way the prototype's tiles wrap and the billboard never dead-ends.
@@ -2265,20 +2484,26 @@ class BrowseActivity : Activity() {
             holder.name.visibility = View.VISIBLE
             holder.sub.visibility = if (below) View.VISIBLE else View.GONE
             if (below) {
-                val sub = ArrayList<String>()
-                // Scene cards put their facts below the artwork; overlay and glass cards use the
-                // on-art badge/corner treatment instead. This is a card-layout decision, not a
-                // named-theme exception, so any future spacious pack inherits it cleanly.
-                if (ranked && below) sub.add("#${position + 1}")
-                if (below && item.isNew) sub.add("New")
-                if (item.year > 0) sub.add(item.year.toString())
-                if (item.match > 0) sub.add("${item.match}% match")
-                if (below && item.rating > 0) {
-                    sub.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
+                if (theme.packString("captionMeta", "") == "dot") {
+                    // The glass reference prints "● 7.8 · 2023": an accent dot welded to the
+                    // rating, the year quieter behind it. One shared format for the whole pack.
+                    holder.sub.text = captionDotLine(item)
+                } else {
+                    val sub = ArrayList<String>()
+                    // Scene cards put their facts below the artwork; overlay and glass cards use the
+                    // on-art badge/corner treatment instead. This is a card-layout decision, not a
+                    // named-theme exception, so any future spacious pack inherits it cleanly.
+                    if (ranked && below) sub.add("#${position + 1}")
+                    if (below && item.isNew) sub.add("New")
+                    if (item.year > 0) sub.add(item.year.toString())
+                    if (item.match > 0) sub.add("${item.match}% match")
+                    if (below && item.rating > 0) {
+                        sub.add(String.format(java.util.Locale.US, "★ %.1f", item.rating))
+                    }
+                    if (below && item.maturity.isNotBlank()) sub.add(item.maturity)
+                    item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { sub.add(it) }
+                    holder.sub.text = sub.joinToString(" · ")
                 }
-                if (below && item.maturity.isNotBlank()) sub.add(item.maturity)
-                item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { sub.add(it) }
-                holder.sub.text = sub.joinToString(" · ")
             }
             holder.logo.visibility = View.GONE
             holder.logo.tag = item.identity + ":logo"
@@ -2311,7 +2536,7 @@ class BrowseActivity : Activity() {
             // it. The logo is polish; the poster is the shelf. Waiting for the poster's job to settle
             // (whether it succeeded or not) keeps the row's artwork ahead of its decoration.
             BrowseImages.load(holder.art, artUrl, cardW) {
-                if (logoUrl.isNullOrBlank()) return@load
+                if (logoUrl.isNullOrBlank() || !landscape) return@load
                 holder.logo.visibility = View.VISIBLE
                 BrowseImages.load(holder.logo, logoUrl, cardW) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
@@ -2388,7 +2613,12 @@ class BrowseActivity : Activity() {
             holder.logo.tag = "see-all:" + row.id
             holder.art.setImageDrawable(null)
             holder.art.setBackgroundColor(Color.TRANSPARENT)
-            holder.art.background = Views.rounded(theme.surface, theme.radius("card", 6f), theme.px(1f), theme.line)
+            // Glass: a frosted translucent plate on the wall (fill + rim + sheen + cast shadow),
+            // not an opaque paper card — other packs keep their bordered sheet.
+            holder.art.background = if (glass) GlassKit.tilePlate(app, theme.radius("card", 6f),
+                theme.color("seeAllGlassA", "rgba(232,240,248,0.16)"),
+                theme.color("seeAllGlassB", "rgba(196,210,224,0.08)"))
+            else Views.rounded(theme.surface, theme.radius("card", 6f), theme.px(1f), theme.line)
             holder.name.text = row.title
             holder.name.visibility = View.VISIBLE
             holder.sub.visibility = View.GONE
@@ -2401,7 +2631,7 @@ class BrowseActivity : Activity() {
             holder.num.visibility = View.VISIBLE
             holder.num.setPadding(0, 0, 0, 0)
             holder.num.text = "See all"
-            holder.num.setTextColor(theme.ink2)
+            holder.num.setTextColor(if (glass) theme.color("inkOnWall", "#FFFFFF") else theme.ink2)
             holder.num.gravity = Gravity.CENTER
             holder.num.paint.style = android.graphics.Paint.Style.FILL
             holder.num.setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
@@ -2433,7 +2663,13 @@ class BrowseActivity : Activity() {
             holder.logo.tag = "genre:" + item.identity
             holder.art.setImageDrawable(null)
             holder.art.setBackgroundColor(Color.TRANSPARENT)
-            holder.art.background = GradientDrawable(
+            // The Glass pack never prints an opaque plate: the genre's own colour wash sits at
+            // translucent alpha over the wall with the pack's rim + sheen, and the tile's
+            // elevation casts its shadow — same three material layers as every Glass surface.
+            holder.art.background = if (glass) GlassKit.tilePlate(app, theme.radius("card", 6f),
+                Color.HSVToColor(0xA8, floatArrayOf(hue, 0.55f, 0.78f)),
+                Color.HSVToColor(0x88, floatArrayOf((hue + 42f) % 360f, 0.80f, 0.42f)))
+            else GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(
                     Color.HSVToColor(floatArrayOf(hue, 0.55f, 0.78f)),

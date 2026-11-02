@@ -115,7 +115,16 @@ object BrowseImages {
             if (bitmap != null) cache.put(requestKey, bitmap)
             main.post {
                 if (view.tag == requestKey) {
-                    if (bitmap != null) view.setImageBitmap(bitmap)
+                    if (bitmap != null) {
+                        // Art that arrives after the placeholder was placed should fade up into it
+                        // (opacity only, entry family), not pop into existence mid-scroll.
+                        val wasEmpty = view.drawable == null
+                        view.setImageBitmap(bitmap)
+                        if (wasEmpty) {
+                            view.alpha = 0f
+                            view.animate().alpha(1f).setDuration(240).start()
+                        }
+                    }
                     onResult?.invoke(bitmap != null)
                 }
             }
@@ -153,6 +162,16 @@ object BrowseImages {
             return episodeStill.replace(url, "$1" + (if (t <= 360) "w300" else "w780") + "$3")
         }
         return url
+    }
+
+    /**
+     * A blurred/tiny stand-in for glass cards while the real poster flies. Only TMDB publishes a
+     * 92 px copy, and a URL that does not change is not worth a second request.
+     */
+    private fun tinyUrl(url: String): String? {
+        if (!tmdbSized.containsMatchIn(url)) return null
+        val small = tmdbSized.replace(url, "$1w92$3")
+        return if (small != url) small else null
     }
 
     private fun cacheKey(url: String, targetWidthPx: Int): String {

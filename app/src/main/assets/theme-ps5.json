@@ -50,7 +50,9 @@
     "panelRow": "rgba(194,225,255,0.09)",
     "panelValue": "#9BD2FF",
     "matBorder": "rgba(222,242,255,0.30)",
-    "hdInk": "#020814"
+    "hdInk": "#020814",
+    "listFill": "rgba(15,48,90,0.68)",
+    "listStroke": "rgba(203,232,255,0.34)"
   },
   "spacing": {
     "gutter": 80,
@@ -68,14 +70,15 @@
     "panelPad": 30,
     "panelPadV": 26,
     "panelRowGap": 10,
-    "listItem": 14
+    "listItem": 88,
+    "listGap": 10
   },
   "radii": {
     "card": 16,
     "badge": 999,
     "chip": 999,
     "button": 999,
-    "listItem": 12,
+    "listItem": 14,
     "field": 14,
     "key": 14,
     "modal": 22,
@@ -123,7 +126,9 @@
     "durationMs": 150,
     "shadowElevation": 18,
     "glass": 1,
-    "glassPad": 8
+    "glassPad": 8,
+    "glowInset": 18,
+    "glowInsetSm": 14
   },
   "anim": {
     "cardFadeInMs": 180,
@@ -247,9 +252,9 @@
     "heroTitleLines": 2,
     "ps5HomeHeight": 780,
     "ps5RailHeight": 300,
-    "ps5RailBottom": 320,
-    "ps5TileWidth": 180,
-    "ps5TileHeight": 180,
+    "ps5RailBottom": 150,
+    "ps5TileWidth": 150,
+    "ps5TileHeight": 225,
     "rows": "landscape",
     "card": "glass",
     "focus": "glow",

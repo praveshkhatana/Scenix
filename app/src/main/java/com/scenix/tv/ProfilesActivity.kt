@@ -16,8 +16,10 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.HubEndpoint
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
 
 /** The native front door: pick a person before Browse draws a shelf. PINs are checked by the hub. */
@@ -61,6 +63,18 @@ class ProfilesActivity : Activity() {
     /** A `tv://detail`/`tv://play` route that waits for the person to be chosen. */
     private var pendingRoute: String? = null
 
+    /**
+     * The glass pack's wall is a LIGHT surface (measured ~(157,172,179)): every regular ink in the
+     * pack is near-white, tuned for dark plates, and vanished into it here — the owner's "text are
+     * not readable" (2026-11-02). Text that stands bare on the wall wears the wall's own dark ink;
+     * buttons still ride the pack's dark pill with white type.
+     */
+    private val glass get() = app.theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
+    private fun wallInk() = if (glass) app.theme.color("wallInk", "#101821") else app.theme.ink
+    private fun wallInk2() = if (glass) app.theme.color("wallInk2", "#41505C") else app.theme.ink2
+    private fun wallFaint() = if (glass) app.theme.color("wallInk2", "#41505C") else app.theme.ink3
+    private fun wallRing() = if (glass) app.theme.color("wallLine", "rgba(16,24,32,0.50)") else app.theme.line
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -71,21 +85,32 @@ class ProfilesActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(app.theme.bg)
+            // The front door belongs to the pack too: the glass household stands on its wall,
+            // not on flat black (pack-means-everything ruling; screen pass splash → profile).
+            Screens.wall(app)?.let { background = it }
             setPadding(app.theme.px(64f), app.theme.px(50f), app.theme.px(64f), app.theme.px(40f))
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         // The same wordmark file the Home bar uses, so the front door and the shelves wear one brand.
         head.addView(ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
-            setColorFilter(app.theme.brand)
+            // Same rule as the splash: on the Glass pack the mark floats white on the wall;
+            // the brand colour is the wordmark's voice only on the packs that use it.
+            setColorFilter(if (app.theme.homeLayout.hero ==
+                com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
+            ) Color.WHITE else app.theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }, LinearLayout.LayoutParams(app.theme.px(91f), app.theme.px(32f)))
         head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         // Managing the household belongs on the household's own door, not two screens away in
         // Settings. The button opens the same editor, PIN gate included.
-        val manage = Views.text(app, "li", 20f, app.theme.ink2, "Edit profiles", bold = true, gravity = Gravity.CENTER)
+        val manage = Views.text(app, "li", 20f,
+            if (glass) app.theme.color("inkOnWall", "#FFFFFF") else app.theme.ink2,
+            "Edit profiles", bold = true, gravity = Gravity.CENTER)
         manage.setPadding(app.theme.px(17f), app.theme.px(9f), app.theme.px(17f), app.theme.px(9f))
+        if (glass) manage.background =
+            Views.rounded(app.theme.color("pill", "rgba(8,16,28,0.86)"), app.theme.px(999f))
         manage.isFocusable = true
         manage.isClickable = true
         manage.setOnClickListener {
@@ -100,7 +125,7 @@ class ProfilesActivity : Activity() {
         manageProfilesButton = manage
         head.addView(manage)
         root.addView(head, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        heading = Views.text(app, "h1", 52f, app.theme.ink, "Who's watching?", bold = true)
+        heading = Views.text(app, "h1", 52f, wallInk(), "Who's watching?", bold = true)
         root.addView(heading,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = app.theme.px(38f)
@@ -124,12 +149,13 @@ class ProfilesActivity : Activity() {
         root.addView(scroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = app.theme.px(34f)
         })
-        status = Views.text(app, "sub", 22f, app.theme.ink2, "Reading the household…", gravity = Gravity.CENTER)
+        status = Views.text(app, "sub", 22f, wallInk2(), "Reading the household…", gravity = Gravity.CENTER)
         root.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(64f)))
         recovery = buildRecovery()
         recovery.visibility = View.GONE
         root.addView(recovery, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
@@ -289,13 +315,17 @@ class ProfilesActivity : Activity() {
             for (p in profiles) row.addView(profileTile(p))
             row.addView(addTile())
             // The gate wakes up, it doesn't snap into place: each face rises a hand-width behind the
-            // last. A dozen views, transform and alpha only — cheap even on the 2 GB panel.
+            // last. A dozen views, transform and alpha only — cheap even on the 2 GB panel. Every
+            // number comes from the pack's anim tokens; faces step wider apart than shelf sections.
             val theme = app.theme
+            val riseMs = theme.token("anim", "fadeUpMs", 600.0).toLong() * 2L / 5L
+            val stepMs = theme.token("anim", "fadeUpStagger", 30.0).toLong() * 3L
+            val lift = theme.px(theme.token("anim", "fadeUpShift", 20.0).toFloat()).toFloat()
             for (i in 0 until row.childCount) {
                 val c = row.getChildAt(i)
                 c.alpha = 0f
-                c.translationY = theme.px(26f).toFloat()
-                c.animate().alpha(1f).translationY(0f).setStartDelay(i * 90L).setDuration(240L).start()
+                c.translationY = lift
+                c.animate().alpha(1f).translationY(0f).setStartDelay(i * stepMs).setDuration(riseMs).start()
             }
             // Android often gives the only early control ("Edit profiles") focus while the
             // household is loading. Once the face tiles are present, land on the remembered
@@ -415,18 +445,18 @@ class ProfilesActivity : Activity() {
         // Apple's household is a circle of faces, not a wall of posters.
         val face = ProfileAvatar.create(this, app, p.name, p.kids, p.avatar, api, faceSize)
         tile.addView(face, LinearLayout.LayoutParams(faceSize, faceSize))
-        tile.addView(Views.text(app, "li", 24f, theme.ink, p.name, bold = true, gravity = Gravity.CENTER),
+        tile.addView(Views.text(app, "li", 24f, wallInk(), p.name, bold = true, gravity = Gravity.CENTER),
             LinearLayout.LayoutParams(faceSize, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(16f)
             })
         if (p.locked) {
-            tile.addView(Views.text(app, "meta", 17f, theme.ink3, "PIN", gravity = Gravity.CENTER),
+            tile.addView(Views.text(app, "meta", 17f, wallFaint(), "PIN", gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(faceSize + theme.px(60f), ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         // The ring of light rides the face itself, glowing outward into the padding around it,
         // and the face lifts gently under the ring — the gate has motion, like the real thing.
         Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
-            elevate = false, glowInset = theme.px(22f),
+            elevate = false, glowInset = theme.focusGlowInset,
             onFocus = { focused -> paintProfileFocus(face, faceSize, focused) })
         // See [focusInitialProfile]: the first visible TV target must accept focus while the
         // system is still transitioning out of touch mode on cold start.
@@ -451,17 +481,17 @@ class ProfilesActivity : Activity() {
         }
         val face = FrameLayout(this).apply {
             background = Views.rounded(
-                Color.TRANSPARENT, faceSize / 2, theme.px(2f), theme.line)
+                Color.TRANSPARENT, faceSize / 2, theme.px(2f), wallRing())
         }
-        face.addView(Views.text(app, "h1", 70f, theme.ink3, "+", bold = true, gravity = Gravity.CENTER),
+        face.addView(Views.text(app, "h1", 70f, wallFaint(), "+", bold = true, gravity = Gravity.CENTER),
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, faceSize))
         tile.addView(face, LinearLayout.LayoutParams(faceSize, faceSize))
-        tile.addView(Views.text(app, "li", 24f, theme.ink2, "Add profile", bold = true, gravity = Gravity.CENTER),
+        tile.addView(Views.text(app, "li", 24f, wallInk2(), "Add profile", bold = true, gravity = Gravity.CENTER),
             LinearLayout.LayoutParams(faceSize, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(16f)
             })
         Focus.attach(tile, face, app, faceSize / 2, scale = true, animateScale = true,
-            elevate = false, glowInset = theme.px(22f),
+            elevate = false, glowInset = theme.focusGlowInset,
             onFocus = { focused -> paintProfileFocus(face, faceSize, focused) })
         tile.isFocusableInTouchMode = true
         tile.setOnClickListener {
@@ -480,7 +510,7 @@ class ProfilesActivity : Activity() {
      */
     private fun paintProfileFocus(face: View, faceSize: Int, focused: Boolean) {
         face.foreground = if (focused) {
-            Views.ring(Color.argb(238, 255, 255, 255), faceSize / 2, app.theme.px(4f))
+            Views.ring(Color.argb(238, 255, 255, 255), faceSize / 2, app.theme.focusRingPx)
         } else null
     }
 
@@ -492,6 +522,7 @@ class ProfilesActivity : Activity() {
                     .putExtra(PinActivity.EXTRA_NAME, p.name),
                 REQ_PIN
             )
+            overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
             return
         }
         open(p)
@@ -529,6 +560,8 @@ class ProfilesActivity : Activity() {
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         startActivity(intent)
+        // Home rises into the gate — one continuous motion law across the whole start flow.
+        overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
         finish()
     }
 

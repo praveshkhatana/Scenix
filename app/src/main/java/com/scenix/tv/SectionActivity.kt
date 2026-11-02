@@ -16,7 +16,10 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.HomeLayoutSpec
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Views
 
@@ -52,6 +55,8 @@ class SectionActivity : Activity() {
 
         val theme = app.theme
         val root = FrameLayout(this).apply { setBackgroundColor(theme.bg) }
+        // A pack is a complete pack: the glass section stands on the same wall as its Home.
+        Screens.wall(app)?.let { root.background = it }
         grid = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@SectionActivity, 6)
             setHasFixedSize(true)
@@ -73,6 +78,7 @@ class SectionActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
         ).apply { gravity = Gravity.BOTTOM })
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
@@ -166,12 +172,47 @@ class SectionActivity : Activity() {
         }
     }
 
+    /**
+     * The glass pack answers an empty or failed shelf with a plate standing in the middle of the
+     * page — glyph, what happened, and a focusable Try again — not a bare line at the bottom edge
+     * (owner ruling). Other packs keep their quiet status row.
+     */
+    private var emptyOverlay: View? = null
+
+    private fun showEmpty(title: String, sub: String) {
+        hideEmpty()
+        val wrap = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        val card = GlassKit.emptyState(this, app, title, sub, true) { load() }
+        wrap.addView(card, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        window.decorView.findViewById<ViewGroup>(android.R.id.content).addView(wrap,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT))
+        emptyOverlay = wrap
+        if (app.theme.motionEnabled) Motion.sheetIn(card, app.theme)
+        card.post { card.findViewWithTag<View>("retry")?.requestFocus() }
+    }
+
+    private fun hideEmpty() {
+        (emptyOverlay as? ViewGroup)?.let {
+            window.decorView.findViewById<ViewGroup>(android.R.id.content).removeView(it)
+        }
+        emptyOverlay = null
+    }
+
     private fun show(items: List<Item>?, error: String?, emptyText: String) {
         if (isFinishing || isDestroyed) return
         if (items.isNullOrEmpty()) {
-            status.text = error ?: emptyText
+            if (app.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS) {
+                status.visibility = View.GONE
+                showEmpty(emptyText, error ?: "The hub may still be warming this catalogue. Try again in a moment.")
+            } else {
+                status.text = error ?: emptyText
+            }
             return
         }
+        hideEmpty()
         status.visibility = View.GONE
         grid.adapter = CardAdapter(items)
         grid.postDelayed({
@@ -200,7 +241,7 @@ class SectionActivity : Activity() {
             card.isClickable = true
             // Keep the halo underneath the image. A glow added after the caption paints opaque
             // bands over the artwork instead of light around the lockup.
-            val glowPad = theme.px(24f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@SectionActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(

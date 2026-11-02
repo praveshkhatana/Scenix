@@ -33,7 +33,7 @@ class ScenixApp : Application() {
         // Packs come and go between builds. A TV still holding a retired theme id lands on the
         // default look at boot instead of wandering through fallbacks with a stale label.
         if (Theme.catalog(assets).none { it.id == prefs.theme() }) prefs.setTheme(Theme.DEFAULT_ID)
-        theme = Theme.load(assets, w, h, Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
+        theme = Theme.load(this, assets, w, h, Theme.assetFor(this, assets, prefs.theme()), prefs.uiZoom())
         ctx = AppContext(this, theme, prefs)
     }
 
@@ -60,8 +60,8 @@ class ScenixApp : Application() {
     /** Reload the chosen theme in place; screens built by the new activities then read it. */
     fun reloadTheme() {
         val metrics = resources.displayMetrics
-        val next = Theme.load(assets, metrics.widthPixels, metrics.heightPixels,
-            Theme.assetFor(assets, prefs.theme()), prefs.uiZoom())
+        val next = Theme.load(this, assets, metrics.widthPixels, metrics.heightPixels,
+            Theme.assetFor(this, assets, prefs.theme()), prefs.uiZoom())
         theme = next
         ctx.theme = next
     }

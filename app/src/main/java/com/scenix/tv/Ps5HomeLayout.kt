@@ -21,10 +21,12 @@ import com.scenix.tv.core.Views
 /**
  * Console-style Home composition for packs which opt into `homeLayout: ps5`.
  *
- * This is deliberately not a variation of [HeroComponent].  PS5's visual grammar is a quiet
- * system/status line, a compact context strip, one centre-stage sequence of near-square content
- * tiles, and an information/action block driven by the focused tile.  The rail *is* the hero: it
- * owns the backdrop and the metadata, so it never renders a second banner or an Apple-style pill.
+ * This is deliberately not a variation of [HeroComponent].  The reference console's grammar, read
+ * frame by frame from the owner's clip, is: one quiet status line, a separate compact uppercase
+ * filter strip beneath it, full-bleed key art that crossfades as the selection moves, ONE bottom
+ * rail of portrait key-art tiles bleeding to the screen edges with the focused tile simply larger,
+ * a tiny platform micro-label under the rail, and an outlined action chip in the lower right.
+ * There is no title block: the artwork carries the name.  The rail *is* the hero.
  *
  * The component is completely data- and callback-driven. Browse can therefore choose it through a
  * pack value without baking a `scenix-ps5` branch into navigation code.
@@ -68,13 +70,13 @@ internal class Ps5HomeLayout(
     val navigationAnchor: View? get() = categoryStops.firstOrNull()
     val preferredHeightPx: Int get() = theme.px(theme.packInt("ps5HomeHeight", 780).toFloat())
 
-    private val backdrop: ImageView
+    private val stageA: ImageView
+    private val stageB: ImageView
+    private var stageFront: ImageView
+    private var stageBack: ImageView
     private val rail: LinearLayout
     private val tileScroll: HorizontalScrollView
     private val details: TextView
-    private val title: TextView
-    private val meta: TextView
-    private val eyebrow: TextView
     private val categoryStops = ArrayList<View>()
     private val utilityStops = ArrayList<View>()
 
@@ -83,44 +85,50 @@ internal class Ps5HomeLayout(
         clipChildren = false
         clipToPadding = false
 
-        backdrop = ImageView(context).apply {
+        // Two full-bleed layers so a selection can crossfade like the console's ambient room,
+        // not snap to the next key art. Only alpha animates — transform/opacity motion law.
+        fun stageLayer() = ImageView(context).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             setBackgroundColor(theme.surface)
         }
-        addView(backdrop, LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
+        stageA = stageLayer()
+        stageB = stageLayer().apply { alpha = 0f }
+        stageFront = stageA
+        stageBack = stageB
+        addView(stageA, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        addView(stageB, LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ))
 
-        // The sampled backdrop needs depth but not a second card/surface. A left reading gradient
-        // and a bottom fade keep the selected tile and its metadata legible at a glance.
+        // The reference keeps the art visible almost everywhere and only vignettes the reading
+        // edges. A left gradient that approaches opaque was flattening the whole stage to navy.
         val atmosphere = View(context).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(
-                    Color.argb(236, 2, 8, 20),
-                    Color.argb(158, 2, 8, 20),
-                    Color.argb(32, 2, 8, 20),
+                    Color.argb(176, 2, 8, 20),
+                    Color.argb(96, 2, 8, 20),
+                    Color.argb(16, 2, 8, 20),
                 ),
             )
         }
         addView(atmosphere, LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ))
         val lowerVeil = View(context).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(
-                    Color.argb(238, 2, 8, 20),
-                    Color.argb(110, 2, 8, 20),
+                    Color.argb(200, 2, 8, 20),
+                    Color.argb(84, 2, 8, 20),
                     Color.TRANSPARENT,
                 ),
             )
         }
         addView(lowerVeil, LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ))
 
         addView(makeSystemStrip(), LayoutParams(
@@ -133,12 +141,46 @@ internal class Ps5HomeLayout(
             topMargin = theme.px(20f)
         })
 
+        // The reference's category strip is its own row beneath the status line: quiet uppercase
+        // text with only the active filter boxed. It never shares a line with brand or utilities.
+        val categories = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        val sections = listOf(
+            "All" to "",
+            "Movies" to "movies",
+            "Series" to "series",
+            "Games" to "games",
+            "Live" to "live",
+        )
+        sections.forEachIndexed { index, (label, route) ->
+            val stop = makeCategory(label, route, index == 0)
+            categoryStops += stop
+            categories.addView(stop)
+        }
+        addView(categories, LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            theme.px(44f),
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = theme.gutter
+            topMargin = theme.px(112f)
+        })
+        // Each top row walks within itself; the vertical step between the two lines is left to
+        // natural focus search so "Live" never leaps sideways into the Profile avatar.
+        wireStops(categoryStops)
+
         rail = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             clipChildren = false
             clipToPadding = false
-            setPadding(theme.gutter, theme.px(34f), theme.gutter, theme.px(34f))
+            // The reference rail bleeds nearly to the screen edges; a full 80 px gutter made the
+            // tiles look like an inset shelf rather than a launch rail.
+            setPadding(theme.px(56f), theme.px(30f), theme.px(56f), theme.px(30f))
         }
         tileScroll = HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
@@ -157,27 +199,32 @@ internal class Ps5HomeLayout(
             theme.px(theme.packInt("ps5RailHeight", 300).toFloat()),
         ).apply {
             gravity = Gravity.BOTTOM
-            bottomMargin = theme.px(theme.packInt("ps5RailBottom", 196).toFloat())
+            bottomMargin = theme.px(theme.packInt("ps5RailBottom", 150).toFloat())
         })
 
-        val information = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-            setPadding(theme.gutter, 0, theme.gutter, theme.px(30f))
-        }
-        eyebrow = Views.text(app, "meta", 16f, theme.ink2, "SCENIX · HOME", bold = true)
-        // Keep a two-line title in the dedicated lower information zone. The rail above it is
-        // never allowed to become a background behind text, even for a long series name.
-        title = Views.text(app, "h2", 36f, theme.ink, "", bold = true, maxLines = 2)
-        meta = Views.text(app, "sub", 20f, theme.ink2, "", maxLines = 1)
-        details = Views.text(app, "button", 18f, theme.onBrand, "Details", bold = true,
+        // Under the rail the reference places only a tiny platform micro-label — the artwork on
+        // the focused tile already names the title, so no headline block competes with it.
+        val microLabel = Views.text(app, "meta", 14f, theme.ink3, "SCENIX", bold = true)
+        addView(microLabel, LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            leftMargin = theme.gutter
+            bottomMargin = theme.px(44f)
+        })
+
+        // The console's lower-right action cluster: a compact outlined chip (the same idiom as its
+        // START THE GAME box), not a filled brand pill. The small legend marks to its left speak
+        // for the remote that is actually in hand.
+        details = Views.text(app, "button", 17f, theme.ink, "Details", bold = true,
             gravity = Gravity.CENTER).apply {
             id = View.generateViewId()
             isFocusable = true
             isClickable = true
             contentDescription = "Open selected title details"
-            setPadding(theme.px(24f), theme.px(11f), theme.px(24f), theme.px(11f))
-            background = Views.rounded(theme.brand, theme.radius("button", 999f))
+            setPadding(theme.px(26f), theme.px(10f), theme.px(26f), theme.px(10f))
+            background = Views.rounded(Color.TRANSPARENT, theme.radius("button", 999f),
+                theme.px(2f), theme.color("focusRing", "#EAF7FF"))
         }
         Focus.attach(
             details,
@@ -188,22 +235,41 @@ internal class Ps5HomeLayout(
             elevate = false,
             onClick = { items.getOrNull(selectedIndex)?.let(callbacks.onItemOpen) },
         )
-        information.addView(eyebrow, LinearLayout.LayoutParams(
+        val cluster = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        cluster.addView(makeLegendMark("↔", "NAVIGATE"))
+        cluster.addView(makeLegendMark("OK", "SELECT"))
+        cluster.addView(details, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { bottomMargin = theme.px(8f) })
-        information.addView(title, LinearLayout.LayoutParams(
-            theme.px(720f), ViewGroup.LayoutParams.WRAP_CONTENT,
-        ))
-        information.addView(meta, LinearLayout.LayoutParams(
-            theme.px(740f), ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = theme.px(10f) })
-        information.addView(details, LinearLayout.LayoutParams(
+        ).apply { marginStart = theme.px(30f) })
+        addView(cluster, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = theme.px(18f) })
-        addView(information, LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { gravity = Gravity.BOTTOM })
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = theme.gutter
+            bottomMargin = theme.px(40f)
+        })
+    }
+
+    private fun makeLegendMark(glyph: String, label: String): View {
+        val group = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val mark = Views.text(app, "badge", 12f, theme.ink2, glyph, bold = true,
+            gravity = Gravity.CENTER).apply {
+            background = Views.rounded(Color.TRANSPARENT, theme.px(999f), theme.px(1f), theme.line)
+        }
+        group.addView(mark, LayoutParams(theme.px(30f), theme.px(30f)))
+        group.addView(Views.text(app, "meta", 12f, theme.ink3, label.uppercase(), bold = true),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = theme.px(8f) })
+        return group
     }
 
     /** Feed one shelf's items into the PS5 rail. The focused card is the sole active title. */
@@ -213,8 +279,7 @@ internal class Ps5HomeLayout(
             rail.removeAllViews()
             tiles.clear()
             tileIds = emptyList()
-            title.text = ""
-            meta.text = ""
+            details.text = ""
             return
         }
         val ids = items.map { it.identity.ifBlank { it.title } }
@@ -236,7 +301,7 @@ internal class Ps5HomeLayout(
     /** Selection lives on the card, not on a separate banner; reveal the focused card as needed. */
     fun focusTile(index: Int, tries: Int = 0) {
         val tile = tileAt(index) ?: return
-        tileScroll.scrollTo((tile.left - theme.gutter).coerceAtLeast(0), 0)
+        tileScroll.scrollTo((tile.left - theme.px(56f)).coerceAtLeast(0), 0)
         if (tile.requestFocus()) return
         if (tries < 8) tileScroll.postDelayed({ focusTile(index, tries + 1) }, 32L)
     }
@@ -255,8 +320,8 @@ internal class Ps5HomeLayout(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        // The owner's wordmark, not styled text: the PS5 strip is a brand placement like every
-        // other, and its letterforms must not depend on the television's font.
+        // The owner's wordmark, not styled text: the console status line is a brand placement like
+        // every other, and its letterforms must not depend on the television's font.
         val brand = android.widget.ImageView(context).apply {
             setImageResource(R.drawable.scenix_wordmark)
             setColorFilter(theme.brand)
@@ -266,20 +331,6 @@ internal class Ps5HomeLayout(
         left.addView(brand, LinearLayout.LayoutParams(theme.px(80f), theme.px(28f)).apply {
             marginEnd = theme.px(24f)
         })
-        val sections = listOf(
-            // These are compact content filters, modelled on the reference's ALL/RACING/etc.
-            // strip—not a conventional application navbar.
-            "All" to "",
-            "Movies" to "movies",
-            "Series" to "series",
-            "Games" to "games",
-            "Live" to "live",
-        )
-        sections.forEachIndexed { index, (label, route) ->
-            val stop = makeCategory(label, route, index == 0)
-            categoryStops += stop
-            left.addView(stop)
-        }
         strip.addView(left, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
@@ -301,10 +352,9 @@ internal class Ps5HomeLayout(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL })
 
-        // The reference keeps context filters and system actions on one quiet top strip. They
-        // remain visually separated, but the remote must be able to walk from Live to Profile
-        // rather than getting trapped at the last filter.
-        wireStops(categoryStops + utilityStops)
+        // The reference keeps system actions on one quiet top line. They remain visually separated
+        // from the filter row below, but the remote must be able to walk between them.
+        wireStops(utilityStops)
         return strip
     }
 
@@ -314,14 +364,14 @@ internal class Ps5HomeLayout(
             isFocusable = true
             isClickable = true
             contentDescription = "$label section"
-            setPadding(theme.px(12f), theme.px(8f), theme.px(12f), theme.px(8f))
-            background = if (active) Views.rounded(
-                Color.argb(64, Color.red(theme.brand), Color.green(theme.brand), Color.blue(theme.brand)),
-                theme.radius("badge", 999f),
-            ) else null
+            setPadding(theme.px(14f), theme.px(8f), theme.px(14f), theme.px(8f))
+            // The reference boxes only the ACTIVE filter, with a hairline outline — never a filled
+            // chip, and never more than one box in the strip at a time.
+            background = if (active) Views.rounded(Color.TRANSPARENT,
+                theme.radius("badge", 999f), theme.px(2f), theme.brand) else null
         }
-        val labelView = Views.text(app, "meta", 15f, if (active) theme.ink else theme.ink2, label, bold = true,
-            gravity = Gravity.CENTER)
+        val labelView = Views.text(app, "meta", 14f, if (active) theme.ink else theme.ink2,
+            label.uppercase(), bold = true, gravity = Gravity.CENTER)
         stop.addView(labelView, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply { gravity = Gravity.CENTER })
@@ -364,10 +414,12 @@ internal class Ps5HomeLayout(
     }
 
     private fun makeTile(index: Int, item: Item): Tile {
-        val width = theme.px(theme.packInt("ps5TileWidth", 174).toFloat())
-        val height = theme.px(theme.packInt("ps5TileHeight", 226).toFloat())
-        val outerPad = theme.px(18f)
-        val radius = theme.radius("card", 10f)
+        // The reference rail is portrait key art with the title printed in the artwork itself —
+        // the same thing our posters are. Landscapes belong on the stage, not the rail.
+        val width = theme.px(theme.packInt("ps5TileWidth", 150).toFloat())
+        val height = theme.px(theme.packInt("ps5TileHeight", 225).toFloat())
+        val outerPad = theme.focusGlowInsetSm
+        val radius = theme.radius("card", 8f)
         val root = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
@@ -376,7 +428,7 @@ internal class Ps5HomeLayout(
             clipToPadding = false
             contentDescription = "${item.title}. Open details"
             layoutParams = LinearLayout.LayoutParams(width, height).apply {
-                marginEnd = theme.px(18f)
+                marginEnd = theme.px(16f)
             }
         }
         val halo = View(context)
@@ -395,16 +447,7 @@ internal class Ps5HomeLayout(
             }
         }
         root.addView(art, LayoutParams(width, height))
-        // Console lockups are near-square media tiles, not portrait poster cards. Prefer the
-        // cinematic backdrop so adjacent tiles read as one horizontal launch rail.
-        BrowseImages.load(art, item.backdrop ?: item.poster, width)
-        val fade = View(context).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.BOTTOM_TOP,
-                intArrayOf(Color.argb(120, 0, 0, 0), Color.TRANSPARENT),
-            )
-        }
-        root.addView(fade, LayoutParams(width, theme.px(62f)).apply { gravity = Gravity.BOTTOM })
+        BrowseImages.load(art, item.poster ?: item.backdrop, width)
         val activePlate = View(context).apply {
             visibility = View.INVISIBLE
             background = Views.ring(theme.focusGlowColor, radius, theme.px(3f))
@@ -416,7 +459,9 @@ internal class Ps5HomeLayout(
             halo,
             app,
             radius,
-            scale = false,
+            // The focused console tile is simply LARGER than its neighbours — that scale is the
+            // focus. The halo stays a whisper behind it rather than the primary signal.
+            scale = true,
             elevate = false,
             glowInset = outerPad,
             onClick = { callbacks.onItemOpen(item) },
@@ -442,24 +487,7 @@ internal class Ps5HomeLayout(
         val changed = clamped != selectedIndex
         selectedIndex = clamped
         val item = items[selectedIndex]
-        val generation = ++renderGeneration
-        BrowseImages.load(backdrop, item.backdrop ?: item.poster, theme.px(760f)) {
-            // Ignore old background completions when a rapid D-pad sweep has already selected
-            // another tile. BrowseImages also tags views, this guards our future presentation work.
-            if (generation != renderGeneration) return@load
-        }
-        eyebrow.text = when {
-            item.type.equals("series", true) -> "SCENIX · SERIES"
-            item.isLive() -> "SCENIX · LIVE"
-            else -> "SCENIX · MOVIES"
-        }
-        title.text = item.title
-        val facts = ArrayList<String>()
-        if (item.year > 0) facts += item.year.toString()
-        if (item.maturity.isNotBlank()) facts += item.maturity
-        item.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { facts += it }
-        if (item.rating > 0) facts += String.format(java.util.Locale.US, "★ %.1f", item.rating)
-        meta.text = facts.joinToString(" · ")
+        setStage(item.backdrop ?: item.poster)
         details.text = if (item.type.equals("series", true)) "Episodes" else "Details"
         details.contentDescription = "Open ${item.title} details"
         tiles.forEachIndexed { tileIndex, tile ->
@@ -470,5 +498,27 @@ internal class Ps5HomeLayout(
         tiles.forEach { it.root.nextFocusDownId = details.id }
         (categoryStops + utilityStops).forEach { it.nextFocusDownId = selectedTileId }
         if (changed && notify) callbacks.onItemFocused(selectedIndex)
+    }
+
+    /** Crossfade the ambient key art exactly as the console does when a tile takes focus. */
+    private fun setStage(url: String?) {
+        val generation = ++renderGeneration
+        val target = stageBack
+        val fadeMs = theme.token("hero", "rotateFadeMs", 260.0).toLong().coerceIn(80L, 600L)
+        BrowseImages.load(target, url, theme.px(960f)) { ok ->
+            if (!ok || generation != renderGeneration) return@load
+            target.animate().cancel()
+            stageFront.animate().cancel()
+            if (!theme.motionEnabled) {
+                stageFront.alpha = 0f
+                target.alpha = 1f
+            } else {
+                stageFront.animate().alpha(0f).setDuration(fadeMs).start()
+                target.animate().alpha(1f).setDuration(fadeMs).start()
+            }
+            val previous = stageFront
+            stageFront = target
+            stageBack = previous
+        }
     }
 }

@@ -16,8 +16,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
 import com.scenix.tv.core.s
 import com.scenix.tv.core.sa
@@ -33,6 +35,10 @@ import org.json.JSONObject
 class DetailActivity : Activity() {
 
     private lateinit var app: AppContext
+    // Detail borrows the home pack's control material only on the Glass pack; every other
+    // pack keeps its solid brand buttons.
+    private val isGlassPack get() =
+        app.theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
     private lateinit var profileId: String
     private lateinit var identity: String
     private var expectedTitle = ""
@@ -55,8 +61,11 @@ class DetailActivity : Activity() {
             finish()
             return
         }
+        // A title page is part of the same house as its home: packs with a wall background
+        // paint it here too; the legacy flat page colour stays for the rest.
+        val ground = Screens.wall(app)
         scroll = ScrollView(this).apply {
-            setBackgroundColor(app.theme.bg)
+            if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
             // A ScrollView is itself a D-pad stop on Android; on a title page that stop is an
             // invisible full-screen ring. The page's controls are the only focus targets.
             isFocusable = false
@@ -68,6 +77,7 @@ class DetailActivity : Activity() {
         }
         scroll.addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         setContentView(scroll)
+        Motion.enter(app.theme, scroll)
         loading()
         api.meta(identity, profileId) { record, error ->
             if (isFinishing || isDestroyed) return@meta
@@ -203,9 +213,29 @@ class DetailActivity : Activity() {
         val art = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         hero.addView(art, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         BrowseImages.load(art, backdrop.ifBlank { poster }, theme.px(1300f))
+        // The art melts into the page with the pack's scrim, not a solid page-colour block:
+        // on a wall background a flat fade bar reads as a stripe across the gradient.
         hero.addView(View(this).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(theme.bg, Color.TRANSPARENT))
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(theme.color("heroScrim", "rgba(6,16,30,0.50)"), Color.TRANSPARENT))
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (Screens.wall(app) != null) {
+            // The hero plate's bottom edge is still a hard rectangle where the art ends and the
+            // wall begins. A short band fading to the wall's own colour at that height dissolves
+            // the seam — the same trick the home hero uses where its plates meet the wall.
+            val wa = theme.color("wallA", "#8FA5B8"); val wb = theme.color("wallB", "#54687C")
+            val t = 0.8f
+            val melt = Color.argb(255,
+                (android.graphics.Color.red(wa) * (1 - t) + android.graphics.Color.red(wb) * t).toInt(),
+                (android.graphics.Color.green(wa) * (1 - t) + android.graphics.Color.green(wb) * t).toInt(),
+                (android.graphics.Color.blue(wa) * (1 - t) + android.graphics.Color.blue(wb) * t).toInt())
+            hero.addView(View(this).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    intArrayOf(Color.TRANSPARENT, melt))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(140f)).apply {
+                gravity = Gravity.BOTTOM
+            })
+        }
 
         val back = Views.text(app, "li", 28f, theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
         back.setPadding(theme.px(16f), theme.px(6f), theme.px(16f), theme.px(6f))
@@ -312,9 +342,16 @@ class DetailActivity : Activity() {
         val playEpisode = if (resumeEpisode > 0) resumeEpisode else first?.optInt("episode", 0) ?: 0
         val posMs = progress?.optLong("positionMs", 0L) ?: 0L
         val playText = if (posMs > 0L) "Resume" else "Play"
-        val play = Views.text(app, "button", 23f, theme.onBrand, playText, bold = true, gravity = Gravity.CENTER)
+        val play = Views.text(app, "button", 23f,
+            if (isGlassPack) theme.color("ink1", "#FFFFFF") else theme.onBrand,
+            playText, bold = true, gravity = Gravity.CENTER)
         play.setPadding(theme.px(38f), theme.px(16f), theme.px(38f), theme.px(16f))
-        play.background = Views.rounded(theme.brand, theme.radius("button", 6f))
+        // The Glass pack has no solid brand button: Play is a lit translucent chip with the
+        // pack's rim — the same control material the home hero and category chips use.
+        play.background = if (isGlassPack)
+            Views.rounded(theme.color("chipFillActive", "rgba(255,255,255,0.16)"),
+                theme.radius("button", 6f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.30)"))
+        else Views.rounded(theme.brand, theme.radius("button", 6f))
         play.isFocusable = true
         play.isClickable = true
         play.setOnClickListener { startPlay(playSeason, playEpisode) }
@@ -442,6 +479,9 @@ class DetailActivity : Activity() {
             }.sortedByDescending { it.genres.count { g -> genres.contains(g) } * 100 + it.match }
                 .take(14)
             if (picks.isEmpty()) {
+                // The empty-state rule again: the heading stays only with an honest line under it,
+                // and the placeholder rail collapses so there is no blank band pretending to load.
+                rail.visibility = View.GONE
                 contentSlot?.addView(Views.text(app, "sub", 20f, theme.ink3,
                     "This hub has not found anything similar yet."),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -470,7 +510,7 @@ class DetailActivity : Activity() {
             card.isFocusable = true
             card.isClickable = true
             // The glow sits beneath the artwork, leaving the poster and its caption clean.
-            val glowPad = theme.px(22f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@DetailActivity)
             card.clipChildren = false
             card.addView(ringOn, FrameLayout.LayoutParams(cardW + glowPad * 2, artH + glowPad * 2).apply {
@@ -526,21 +566,43 @@ class DetailActivity : Activity() {
     ) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view)
 
     private fun castRow(parent: LinearLayout, cast: JSONArray, theme: com.scenix.tv.core.Theme) {
+        // Empty-state rule for the whole page: a heading never paints above content that has
+        // nothing to show. An entry with no name prints nothing, so it does not count as content;
+        // if no entry counts, the Cast block simply is not there (Wildwood showed a bare heading).
+        val people = ArrayList<JSONObject>()
+        for (i in 0 until minOf(cast.length(), 8)) {
+            // The hub answers with enriched people ({name, character, profile}) when the face
+            // lookup had budget, and bare names when it did not; both are people. A bare name
+            // rides the initial disc below.
+            val person = when (val entry = cast.opt(i)) {
+                is JSONObject -> entry
+                is String -> JSONObject().put("name", entry)
+                else -> continue
+            }
+            if (s(person, "name", "").isBlank()) continue
+            people.add(person)
+        }
+        if (people.isEmpty()) return
         parent.addView(Views.text(app, "rowTitle", 27f, theme.ink, "Cast", bold = true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(18f); bottomMargin = theme.px(12f)
             })
         val strip = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (i in 0 until minOf(cast.length(), 8)) {
-            val person = cast.optJSONObject(i) ?: continue
+        for (person in people) {
             val box = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(theme.px(8f), 0, theme.px(8f), 0)
             }
+            // A face without a photo is still a face: the disc carries the person's initial,
+            // which steps aside only when the hub supplied a real portrait.
+            val faceSlot = FrameLayout(this)
+            faceSlot.addView(Views.text(app, "h3", 34f, theme.ink2,
+                s(person, "name", " ").trim().take(1).uppercase(), bold = true, gravity = Gravity.CENTER).apply {
+                background = Views.rounded(theme.surface2, theme.px(999f))
+            }, FrameLayout.LayoutParams(theme.px(112f), theme.px(112f)))
             val face = ImageView(this).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setBackgroundColor(theme.surface2)
                 clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) {
@@ -548,8 +610,13 @@ class DetailActivity : Activity() {
                     }
                 }
             }
-            box.addView(face, LinearLayout.LayoutParams(theme.px(112f), theme.px(112f)))
-            BrowseImages.load(face, s(person, "profile", ""), theme.px(112f))
+            faceSlot.addView(face, FrameLayout.LayoutParams(theme.px(112f), theme.px(112f)))
+            box.addView(faceSlot, LinearLayout.LayoutParams(theme.px(112f), theme.px(112f)))
+            BrowseImages.load(face, s(person, "profile", ""), theme.px(112f)) { ok ->
+                if (!isFinishing && !isDestroyed && ok) {
+                    (faceSlot.getChildAt(0) as? TextView)?.visibility = View.GONE
+                }
+            }
             box.addView(Views.text(app, "caption", 18f, theme.ink, s(person, "name", ""), maxLines = 1, gravity = Gravity.CENTER),
                 LinearLayout.LayoutParams(theme.px(150f), ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = theme.px(8f) })
             box.addView(Views.text(app, "meta", 15f, theme.ink3, s(person, "character", ""), maxLines = 1, gravity = Gravity.CENTER),
@@ -692,7 +759,7 @@ class DetailActivity : Activity() {
             val artH = theme.px(243f)
             val copyH = theme.px(104f)
             val cardH = artH + copyH
-            val haloPad = if (theme.focusStyle == "glow") theme.px(24f) else theme.px(5f)
+            val haloPad = if (theme.focusStyle == "glow") theme.focusGlowInset else theme.px(5f)
             val tile = FrameLayout(this).apply {
                 id = View.generateViewId()
                 isFocusable = true
@@ -792,7 +859,7 @@ class DetailActivity : Activity() {
             episodeTiles.clear()
 
             val cardH = theme.px(243f) + theme.px(104f)
-            val haloPad = if (theme.focusStyle == "glow") theme.px(24f) else theme.px(5f)
+            val haloPad = if (theme.focusStyle == "glow") theme.focusGlowInset else theme.px(5f)
             val rail = HorizontalScrollView(this).apply {
                 isHorizontalScrollBarEnabled = false
                 isFillViewport = false
@@ -841,7 +908,10 @@ class DetailActivity : Activity() {
                 clipChildren = false
             }
             val wash = View(this).apply {
-                background = Views.rounded(theme.brand, theme.px(999f))
+                background = if (isGlassPack)
+                    Views.rounded(theme.color("chipFillActive", "rgba(255,255,255,0.16)"),
+                        theme.px(999f), theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.30)"))
+                else Views.rounded(theme.brand, theme.px(999f))
                 visibility = View.INVISIBLE
             }
             val label = Views.text(app, "button", 19f, theme.ink, "Season $season", bold = true,

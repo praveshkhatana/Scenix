@@ -14,8 +14,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Prefs
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Updates
 import com.scenix.tv.core.Views
@@ -67,13 +69,16 @@ class SettingsActivity : Activity() {
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         if (profileId.isBlank()) { finish(); return }
 
-        root = FrameLayout(this).apply { setBackgroundColor(app.theme.bg) }
+        root = FrameLayout(this).apply {
+            val ground = Screens.wall(app)
+            if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
+        }
         page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
             visibility = View.INVISIBLE
         }
-        page.addView(topBar(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
+        val bar = topBar()
+        page.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)))
         val scroll = ScrollView(this).apply {
             isFocusable = false
             isFocusableInTouchMode = false
@@ -86,29 +91,13 @@ class SettingsActivity : Activity() {
         page.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
     private fun topBar(): View {
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(app.theme.surface)
-        }
-        val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
-        back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
-        back.isFocusable = true
-        back.isClickable = true
-        back.setOnClickListener { finish() }
-        Focus.attach(back, back, app, app.theme.px(10f), scale = false, elevate = false)
-        bar.addView(back, LinearLayout.LayoutParams(app.theme.px(56f), app.theme.px(50f)))
-        val title = Views.text(app, "li", 26f, app.theme.ink, "Settings", bold = true)
-        title.setPadding(app.theme.px(20f), 0, 0, 0)
-        bar.addView(title)
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        status = Views.text(app, "meta", 19f, app.theme.ink2, "", maxLines = 1)
-        bar.addView(status)
+        val (bar, s) = Screens.topBar(this, app, "Settings") { finish() }
+        status = s
         return bar
     }
 
@@ -131,6 +120,8 @@ class SettingsActivity : Activity() {
         }
     }
 
+    private var enteredOnce = false
+
     /** Settings carries the row metadata and its hidden/order config; the editor is optional. */
     private fun loadRows() {
         api.settings { root, _ ->
@@ -144,8 +135,17 @@ class SettingsActivity : Activity() {
             }
             paint()
             page.visibility = View.VISIBLE
+            // Entering a screen lands on its first content stop, never on chrome: the back chevron
+            // is reached by walking UP from the rows, like every other list screen. Re-entry after
+            // an action keeps wherever the person left focus.
+            if (!enteredOnce) {
+                enteredOnce = true
+                firstRow?.post { firstRow?.requestFocus() }
+            }
         }
     }
+
+    private var firstRow: View? = null
 
     private fun paint() {
         // The first focusable view in a settings screen used to be the Back chevron in the top bar:
@@ -162,7 +162,9 @@ class SettingsActivity : Activity() {
             else Focus.focusFirst(rows)
         }
         rows.removeAllViews()
+        firstRow = null
         val p = prefs ?: return
+        Screens.section(this, app, rows, "Your watching")
         addRow("Audio language", languageName(firstOf(p, "audioLanguages")), "The hub mixes this language into copies that lack it") {
             showLanguagePicker("Audio language", "audioLanguages")
         }
@@ -177,9 +179,9 @@ class SettingsActivity : Activity() {
             val hidden = effectiveHidden()
             val visible = rowIds().filter { profileKind != "kids" || rowScope(it) != "adult" }
             addRow("Home rows", "${visible.count { it !in hidden }} of ${visible.size} shown",
-                "This profile's shelves — hide, show or reorder") { showHomeRows() }
+                "This profile's shelves — hide, show or reorder", chevron = true) { showHomeRows() }
         }
-        addRow("Live TV channels", "This profile's lineup", "Choose the channels and their zap order") {
+        addRow("Live TV channels", "This profile's lineup", "Choose the channels and their zap order", chevron = true) {
             startActivity(
                 Intent(this, LiveChannelsActivity::class.java)
                     .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
@@ -188,7 +190,7 @@ class SettingsActivity : Activity() {
         addRow("Controllers", controllersSummary(), "See what is connected, test its buttons, pair a new pad") {
             startActivity(Intent(this, ControllersActivity::class.java))
         }
-        addRow("Profiles", "Switch person", "The native who's-watching gate") {
+        addRow("Profiles", "Switch person", "The native who's-watching gate", chevron = true) {
             startActivity(Intent(this, ProfilesActivity::class.java))
         }
         // Auto-update (core/Updates.kt): the builds live as GitHub Releases on the project repo.
@@ -225,6 +227,7 @@ class SettingsActivity : Activity() {
         // A kids profile never sees the admin rows, lock or no lock. An authorised person uses an
         // adult profile and proves the admin PIN there.
         if (profileKind != "kids") {
+            Screens.section(this, app, rows, "This television")
             // The backend is a property of this television, not of a person: a new hub address, a
             // different box on the LAN, or standalone. It lives behind the same admin door as the
             // other household settings, and a kids profile never sees it at all.
@@ -237,21 +240,27 @@ class SettingsActivity : Activity() {
                 else -> "Hub · $hubUrl"
             }
             addRow("Hub connection", backendValue,
-                "Change hub, enter an address, or use this TV on its own") {
+                "Change hub, enter an address, or use this TV on its own", chevron = true) {
                 requireAdmin {
                     startActivity(
                         Intent(this, MainActivity::class.java).putExtra("setup", true)
                     )
                 }
             }
-            val picked = Theme.catalog(assets).firstOrNull { it.id == app.prefs.theme() }
+            val picked = Theme.catalog(this, assets).firstOrNull { it.id == app.prefs.theme() }
             val themeName = when {
                 picked == null -> app.prefs.theme()
                 picked.pack.isBlank() -> picked.name
                 else -> picked.name + " · " + picked.pack
             }
-            addRow("Theme", themeName, "The look of the native screens and the web UI") {
+            addRow("Theme", themeName, "The look of the native screens and the web UI", chevron = true) {
                 requireAdmin { pickTheme() }
+            }
+            val installedPacks = Theme.catalog(this, assets).count { it.installed }
+            addRow("Pack themes",
+                if (installedPacks == 0) "None installed" else "$installedPacks installed",
+                "Paint a curated pack with your own colours and sizes from a JSON URL", chevron = true) {
+                requireAdmin { showPackThemes() }
             }
             // Accessibility, not taste: one multiplier over the whole theme so text, tiles, gaps and
             // the hero all grow together for far seats and weak eyes. No admin door on this one.
@@ -269,10 +278,11 @@ class SettingsActivity : Activity() {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
                 )
             }
-            addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks") {
+            Screens.section(this, app, rows, "Household")
+            addRow("System", "Name, languages, limits", "The hub's own name, the languages its addons search, and how many copies it ranks", chevron = true) {
                 requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
             }
-            addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips") {
+            addRow("Live TV", "Playlist and groups", "The household playlist address and the genres every profile skips", chevron = true) {
                 requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
             }
             // Only standalone has files on this machine. Against a hub, this TV has no folder of its
@@ -291,33 +301,38 @@ class SettingsActivity : Activity() {
                     requireAdmin { pickLocalFolder() }
                 }
             }
-            addRow("Categories", "Shelves built from your catalogues", "Name a catalogue or genre this hub carries as its own Home shelf") {
+            addRow("Categories", "Shelves built from your catalogues", "Name a catalogue or genre this hub carries as its own Home shelf", chevron = true) {
                 requireAdmin { startActivity(Intent(this, CategoriesActivity::class.java)) }
             }
-            addRow("Manage profiles", "Add, rename, PINs", "Create people, set their kind and remove them") {
+            addRow("Manage profiles", "Add, rename, PINs", "Create people, set their kind and remove them", chevron = true) {
                 requireAdmin { startActivity(Intent(this, ManageProfilesActivity::class.java)) }
             }
-            addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language") {
+            Screens.section(this, app, rows, "Sources")
+            addRow("Source packs", "Audio donors and picture packs", "The audio the hub mixes into a copy missing your language", chevron = true) {
                 requireAdmin { startActivity(Intent(this, SourcePacksActivity::class.java)) }
             }
-            addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL") {
+            addRow("Add-ons", "Sources the hub reads", "Turn one off, remove it, or add a manifest URL", chevron = true) {
                 requireAdmin { startActivity(Intent(this, AddonsActivity::class.java)) }
             }
-            addRow("Debrid", "Cached copies", "Provider, token and the on/off switch") {
+            addRow("Debrid", "Cached copies", "Provider, token and the on/off switch", chevron = true) {
                 requireAdmin { startActivity(Intent(this, DebridActivity::class.java)) }
             }
+            Screens.section(this, app, rows, "Access")
             if (profileKind != "kids") {
                 addRow("Settings lock", if (adminOn) "On" else "Off",
                     "A separate admin PIN for add-ons, packs and these common settings") {
                     changeLock()
                 }
                 if (adminOn) {
-                    addRow("Change admin PIN", "Choose a new common-settings PIN", "The current PIN is needed") {
+                    addRow("Change admin PIN", "Choose a new common-settings PIN", "The current PIN is needed", chevron = true) {
                         changePin()
                     }
                 }
             }
         }
+        // Repainting swaps every row out; the screen must never be left without a focus anchor,
+        // so the walk resumes at the first real row (past any heading), exactly like on first entry.
+        firstRow?.post { firstRow?.requestFocus() }
     }
 
     /** What the Controllers row says about the TV right now — honest, not "Connected?" guessing. */
@@ -398,7 +413,13 @@ class SettingsActivity : Activity() {
     @Deprecated("Activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_LOCAL_TREE || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
+        if (requestCode == REQ_PACK_URL) {
+            val url = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT)?.trim().orEmpty()
+            if (url.isNotBlank()) installPack(url)
+            return
+        }
+        if (requestCode != REQ_LOCAL_TREE) return
         val uri = data?.data ?: return
         try {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -410,31 +431,16 @@ class SettingsActivity : Activity() {
         saveLocalTree(uri.toString(), label)
     }
 
-    private fun addRow(label: String, value: String, note: String, action: () -> Unit) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.px(24f), 0, app.theme.px(24f), 0)
-            background = Views.rounded(app.theme.surface, app.theme.px(10f))
-            isFocusable = true
-            isClickable = true
-            setOnClickListener { action() }
-        }
-        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        texts.addView(Views.text(app, "li", 24f, app.theme.ink, label, bold = true, maxLines = 1))
-        if (note.isNotBlank()) {
-            texts.addView(Views.text(app, "meta", 16f, app.theme.ink3, note, maxLines = 1),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(2f)
-                })
-        }
-        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val v = Views.text(app, "meta", 20f, app.theme.ink2, value, maxLines = 1, gravity = Gravity.END)
-        row.addView(v)
-        Focus.attach(row, row, app, app.theme.px(10f), scale = false, elevate = false)
-        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)).apply {
-            bottomMargin = app.theme.px(10f)
-        })
+    private fun addRow(
+        label: String,
+        value: String,
+        note: String,
+        chevron: Boolean = false,
+        action: () -> Unit,
+    ) {
+        val before = rows.childCount
+        Screens.addRow(this, app, rows, label, value, note, chevron, action)
+        if (firstRow == null && rows.childCount > before) firstRow = rows.getChildAt(before)
     }
 
     // ---- Home rows -------------------------------------------------------------------------
@@ -591,6 +597,7 @@ class SettingsActivity : Activity() {
     private fun showLanguagePicker(title: String, key: String) {
         val current = firstOf(prefs ?: return, key)
         val options = ArrayList<Pair<String, String>>()
+        options.add("" to "Not set")
         for (l in LANGUAGES) options.add(l.first to l.second)
         if (current.isNotBlank() && options.none { it.first == current }) options.add(0, current to current.uppercase())
         showPicker(title, options, current) { code ->
@@ -635,8 +642,7 @@ class SettingsActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(28f), app.theme.px(22f), app.theme.px(28f), app.theme.px(22f))
-            background = Views.rounded(app.theme.color("panelScrim", "#E6000000"), app.theme.px(12f),
-                app.theme.px(1f), app.theme.line)
+            background = Screens.modalFill(app)
             elevation = app.theme.px(16f).toFloat()
         }
         panel.addView(Views.text(app, "li", 26f, app.theme.ink, title, bold = true),
@@ -647,24 +653,10 @@ class SettingsActivity : Activity() {
         val firstRows = ArrayList<View>()
         for ((value, label) in options) {
             val selected = value == current
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(app.theme.px(16f), 0, app.theme.px(16f), 0)
-                background = Views.rounded(if (selected) app.theme.surface2 else Color.TRANSPARENT, app.theme.px(8f))
-                isFocusable = true
-                isClickable = true
-                setOnClickListener {
-                    closePicker()
-                    onPick(value)
-                }
+            val row = Screens.pickerRow(this, app, label, selected) {
+                closePicker()
+                onPick(value)
             }
-            val tick = if (selected) "✓" else " "
-            row.addView(Views.text(app, "li", 22f,
-                if (selected) app.theme.color("panelValue", "#F2C33A") else app.theme.ink,
-                "$tick  $label", bold = selected, maxLines = 1),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Focus.attach(row, row, app, app.theme.px(8f), scale = false, elevate = false)
             list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(60f)).apply {
                 topMargin = app.theme.px(4f)
             })
@@ -819,7 +811,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun pickTheme() {
-        val choices = Theme.catalog(assets)
+        val choices = Theme.catalog(this, assets)
         showPicker("Theme", choices.map {
             it.id to if (it.pack.isBlank()) it.name else it.name + " · " + it.pack
         }, app.prefs.theme()) { id ->
@@ -834,6 +826,94 @@ class SettingsActivity : Activity() {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             )
         }
+    }
+
+    /**
+     * The installed tier of the pack system: token reskins of the curated packs, each one JSON at
+     * `files/packs/<id>.json` naming its base in `basedOn`. A reskin paints colours, radii,
+     * spacing, type, focus bands and size numbers — the layout itself stays the curated pack's,
+     * so an installed pack can never make Home unusable.
+     */
+    private fun showPackThemes() {
+        val installed = Theme.catalog(this, assets).filter { it.installed }
+        val options = ArrayList<Pair<String, String>>()
+        options.add("add" to "Add a pack theme from a URL")
+        for (c in installed) options.add("remove:" + c.id to "Remove " + c.name)
+        showPicker("Pack themes", options, "") { value ->
+            when {
+                value == "add" -> startActivityForResult(
+                    Intent(this, TextEntryActivity::class.java)
+                        .putExtra(TextEntryActivity.EXTRA_TITLE, "Add a pack theme")
+                        .putExtra(TextEntryActivity.EXTRA_HINT, "https://…/pack.json"),
+                    REQ_PACK_URL,
+                )
+                value.startsWith("remove:") -> removePack(value.removePrefix("remove:"))
+            }
+        }
+    }
+
+    private fun installPack(url: String) {
+        status.text = "Fetching the pack…"
+        Thread {
+            val outcome = try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.inputStream.use { inp ->
+                    val text = inp.bufferedReader().use { it.readText() }.take(65_536)
+                    val o = JSONObject(text)
+                    val id = o.optString("id").trim()
+                    val baseId = o.optString("basedOn").trim()
+                    when {
+                        !Regex("^[a-z][a-z0-9-]{1,31}$").matches(id) ->
+                            "The pack id must be lowercase letters, digits and dashes"
+                        Theme.catalog(assets).none { it.id == baseId } ->
+                            "It is not based on one of the five packs this TV carries"
+                        else -> {
+                            val dir = java.io.File(filesDir, "packs").apply { mkdirs() }
+                            java.io.File(dir, "$id.json").writeText(o.toString())
+                            null
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                "The pack could not be fetched or read"
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                status.text = outcome ?: "The pack is installed — pick it under Theme"
+                paint()
+            }
+        }.start()
+    }
+
+    private fun removePack(id: String) {
+        // Read the base before deleting: if this pack is the one being worn, the TV falls back to
+        // the curated pack it was painting, not to some unrelated default.
+        val file = java.io.File(java.io.File(filesDir, "packs"), "$id.json")
+        val baseId = try {
+            JSONObject(file.readText()).optString("basedOn").trim()
+        } catch (t: Throwable) {
+            ""
+        }
+        try {
+            file.delete()
+        } catch (t: Throwable) {
+            status.text = "The pack could not be removed"
+        }
+        if (app.prefs.theme() == id) {
+            // A screen cannot keep painting a pack that no longer exists: fall back to its base
+            // and rebuild the task, the way switching themes does.
+            val fallback = Theme.catalog(this, assets).firstOrNull { it.id == baseId }?.id
+                ?: Theme.catalog(this, assets).first { !it.installed }.id
+            app.prefs.setTheme(fallback)
+            (application as ScenixApp).reloadTheme()
+            startActivity(
+                Intent(this, ProfilesActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            )
+        }
+        paint()
     }
 
     private fun changeLock() {
@@ -884,11 +964,26 @@ class SettingsActivity : Activity() {
         pinIsGate = gate
         pinBuf.setLength(0)
         pinOnDone = onDone
-        val layer = FrameLayout(this).apply { setBackgroundColor(Color.rgb(16, 16, 16)) }
+        val layer = FrameLayout(this).apply {
+            // The keypad is a full-screen page, not a small modal: it stands on the pack's own
+            // ground so every ink on it stays readable in this pack.
+            val ground = Screens.wall(app)
+            if (ground != null) background = ground else setBackgroundColor(app.theme.bg)
+        }
+        val glassKeys = app.theme.homeLayout.hero ==
+            com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(app.theme.px(48f), app.theme.px(36f), app.theme.px(48f), app.theme.px(24f))
+            // The pad wears the same deep glass plate as the household's PIN gate: the pack's
+            // white inks were standing bare on the light wall and washing out (2026-11-02).
+            if (glassKeys) {
+                val plateR = app.theme.radius("hero", 26f)
+                background = Views.rounded(app.theme.color("gatePlate", "rgba(8,16,28,0.88)"),
+                    plateR, app.theme.px(1.5f), app.theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                elevation = app.theme.space("plateElevation", 16f) / 2f
+            }
         }
         panel.addView(Views.text(app, "li", 34f, app.theme.ink, title, bold = true, gravity = Gravity.CENTER))
         pinSub = Views.text(app, "meta", 19f, app.theme.ink3, subtitle, gravity = Gravity.CENTER, maxLines = 2)
@@ -910,7 +1005,12 @@ class SettingsActivity : Activity() {
                 val b = Views.text(app, "li", 24f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
                 b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
                     app.theme.px(if (label.length > 1) 17f else 26f).toFloat())
-                b.background = Views.rounded(app.theme.surface2, app.theme.px(10f))
+                val keyRadius = app.theme.radius("key", 12f)
+                b.background = if (glassKeys) Views.rounded(
+                    app.theme.color(if (label == "OK") "chipFillActive" else "keyGlass",
+                        "rgba(255,255,255,0.10)"),
+                    keyRadius, app.theme.px(1f), app.theme.color("glassRim", "rgba(255,255,255,0.38)"))
+                else Views.rounded(app.theme.colorOr("keyBg", app.theme.surface2), keyRadius)
                 b.isFocusable = true
                 b.isClickable = true
                 b.setOnClickListener {
@@ -920,7 +1020,7 @@ class SettingsActivity : Activity() {
                         else -> addPinDigit(label.toInt())
                     }
                 }
-                Focus.attach(b, b, app, app.theme.px(10f), scale = false, elevate = false)
+                Focus.attach(b, b, app, keyRadius, scale = false, elevate = false)
                 line.addView(b, LinearLayout.LayoutParams(app.theme.px(120f), app.theme.px(64f)).apply {
                     marginStart = app.theme.px(6f)
                     marginEnd = app.theme.px(6f)
@@ -980,7 +1080,8 @@ class SettingsActivity : Activity() {
     companion object {
         const val EXTRA_PROFILE = "profile"
         private const val REQ_LOCAL_TREE = 9001
-        private const val REQ_LOCAL_PERMISSION = 9002
+        private const val REQ_PACK_URL = 9002
+        private const val REQ_LOCAL_PERMISSION = 9003
         private val LANGUAGES = listOf(
             "hin" to "Hindi", "eng" to "English", "pan" to "Punjabi", "tam" to "Tamil",
             "tel" to "Telugu", "ben" to "Bengali", "mar" to "Marathi", "mal" to "Malayalam",

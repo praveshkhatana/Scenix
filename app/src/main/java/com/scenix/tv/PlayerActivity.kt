@@ -50,6 +50,7 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Programme
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.player.Ceilings
 import org.json.JSONArray
@@ -1646,7 +1647,7 @@ class PlayerActivity : Activity() {
 
     private fun rebuildMenu(kind: MenuKind, keepFocus: Boolean = true) {
         val focused = if (keepFocus) currentFocus else null
-        panel?.let { overlay.removeView(it) }
+        panel?.let { overlay.removeView(it) }  // replaced by the fresh sheet on the same frame
         panel = null
         panelRows = emptyList()
 
@@ -1712,6 +1713,7 @@ class PlayerActivity : Activity() {
             bottomMargin = bottom
         })
         panel = container
+        Motion.sheetIn(container, theme)
 
         trapFocus()
         val preservedEpisode = if (kind == MenuKind.EPISODES) pendingEpisodeFocus else null
@@ -2395,7 +2397,13 @@ class PlayerActivity : Activity() {
 
     private fun closeMenu(restore: Boolean = true) {
         val had = panel != null
-        panel?.let { overlay.removeView(it) }
+        panel?.let { p ->
+            // A menu leaves the way chrome does: a quick fade, never a hard pop.
+            Motion.outAlpha(p, theme,
+                (theme.token("anim", "cardFadeInMs", 220.0).toLong() * 2 / 3).coerceIn(60L, 400L)) {
+                if (p.parent === overlay) overlay.removeView(p)
+            }
+        }
         panel = null
         panelKind = null
         panelRows = emptyList()
@@ -2624,8 +2632,15 @@ class PlayerActivity : Activity() {
 
     private fun controlsVisible(): Boolean = overlay.visibility == View.VISIBLE
 
-    private fun showChrome(focus: Boolean) {
+    /** Chrome comes back by fading in — never a hard visibility pop over the film. */
+    private fun revealChrome() {
         overlay.visibility = View.VISIBLE
+        Motion.inAlpha(overlay, theme,
+            theme.token("anim", "navFadeMs", 180.0).toLong().coerceIn(60L, 400L))
+    }
+
+    private fun showChrome(focus: Boolean) {
+        revealChrome()
         armHide()
         if (!focus) return
         val target = when {
@@ -2675,7 +2690,10 @@ class PlayerActivity : Activity() {
             return
         }
         currentFocus?.clearFocus()
-        overlay.visibility = View.INVISIBLE
+        Motion.outAlpha(overlay, theme,
+            (theme.token("anim", "navFadeMs", 180.0).toLong() * 2 / 3).coerceIn(60L, 400L)) {
+            if (overlay.alpha < 0.05f) overlay.visibility = View.INVISIBLE
+        }
     }
 
     /**
@@ -2689,7 +2707,7 @@ class PlayerActivity : Activity() {
     private fun showCenter(text: String, spinner: Boolean) {        // Buffering can begin while the chrome has faded. The message is the one thing that must not
         // be invisible, so bring the layer back without stealing the ring.
         if (overlay.visibility != View.VISIBLE) {
-            overlay.visibility = View.VISIBLE
+            revealChrome()
             armHide()
         }
         centerText.text = text
@@ -2746,7 +2764,21 @@ class PlayerActivity : Activity() {
         return false
     }
 
-    private fun showError(message: String, title: String = "This copy could not be played") {
+    /** Hub answers arrive as lowercase machine words; the page answers in sentences. */
+    private fun humaniseError(raw: String): String {
+        val t = raw.trim()
+        if (t.isEmpty()) return "The hub gave no reason."
+        val said = when {
+            t.contains("warm", true) || t.contains("prepar", true) ->
+                "The hub is still preparing this copy — try again in a moment"
+            t.contains("not found", true) -> "No source in this hub carries this title"
+            else -> t.replaceFirstChar { it.uppercaseChar() }
+        }
+        return if (said.endsWith(".") || said.endsWith("…")) said else "$said."
+    }
+
+    private fun showError(rawMessage: String, title: String = "This copy could not be played") {
+        val message = humaniseError(rawMessage)
         // A card over a running picture is the bug the viewer reported: the old copy is fine, the
         // hub was merely late with another one. Say it in the status line and leave the picture be.
         if (pictureLive()) {
@@ -2761,10 +2793,11 @@ class PlayerActivity : Activity() {
         clearErrorCard()
         errorShowing = true
         cancelHide()
-        overlay.visibility = View.VISIBLE
+        revealChrome()
         val card = cardBox()
-        card.addView(Views.text(app, "panelTitle", 28f, theme.color("brand", "#E50914"),
-            title, bold = true))
+        // One heading language across the app: ink, never a coloured title — the pack's accent
+        // already rides on the chips below.
+        card.addView(Views.text(app, "panelTitle", 28f, theme.ink, title, bold = true))
         card.addView(Views.text(app, "sub", 21f, theme.ink2, message, maxLines = 3),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2860,7 +2893,7 @@ class PlayerActivity : Activity() {
         clearError()
         nextShowing = true
         cancelHide()
-        overlay.visibility = View.VISIBLE
+        revealChrome()
         val season = next.optInt("season", 0)
         val episode = next.optInt("episode", 0)
         val epTitle = str(next, "title")
@@ -2978,7 +3011,7 @@ class PlayerActivity : Activity() {
             leftMargin = theme.gutter
             bottomMargin = (bottomBar.height + theme.px(16f)).coerceAtLeast(theme.px(190f))
         })
-        overlay.visibility = View.VISIBLE
+        revealChrome()
         cancelHide()
         undo.post { undo.requestFocus() }
         val r = Runnable { hideUndo(); armHide() }

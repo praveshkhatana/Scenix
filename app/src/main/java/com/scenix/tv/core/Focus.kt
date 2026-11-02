@@ -70,10 +70,21 @@ object Focus {
                 val near = (glowInset * 0.30f).toInt().coerceAtLeast(theme.px(4f))
                 val keyOutset = theme.px(3f).coerceAtMost(glowInset)
                 fun inset(outset: Int) = (glowInset - outset).coerceAtLeast(0)
+                // IMPORTANT for callers: this math assumes ringOn's bounds are the artwork grown
+                // by glowInset on every side (the padded glow-canvas pattern every screen uses —
+                // see BrowseActivity's rail holder). Passing the artwork view itself as ringOn
+                // instead puts every plate INSIDE the art: the keyline paints as a pale hairline
+                // deep in the plate with a mismatched corner radius (the hero's odd bottom-left
+                // edge, owner report 2026-11-02).
+                // The band alphas are a pack dial: on a LIGHT wall (glass measures ~(157,172,179))
+                // the bare 8/12/18 blend is a 3–7% shift — the halo never read (owner note,
+                // 2026-11-02). glowAlpha scales the soft falloff; dark packs leave it at 1.
+                val ga = theme.token("focus", "glowAlpha", 1.0).toFloat()
+                fun a(base: Int) = (base * ga).toInt().coerceIn(1, 255)
                 val halo = LayerDrawable(arrayOf(
-                    Views.rounded(Color.argb(8, r, g, b), ringRadiusPx + outer),
-                    Views.rounded(Color.argb(12, r, g, b), ringRadiusPx + middle),
-                    Views.rounded(Color.argb(18, r, g, b), ringRadiusPx + near),
+                    Views.rounded(Color.argb(a(8), r, g, b), ringRadiusPx + outer),
+                    Views.rounded(Color.argb(a(12), r, g, b), ringRadiusPx + middle),
+                    Views.rounded(Color.argb(a(18), r, g, b), ringRadiusPx + near),
                     Views.ring(Color.argb(224, r, g, b), ringRadiusPx + keyOutset,
                         maxOf(1, theme.px(2f))),
                 ))

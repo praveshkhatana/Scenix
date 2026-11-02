@@ -81,6 +81,7 @@ internal class HeroComponent(
         val root: FrameLayout,
         val active: View,
         val art: ImageView,
+        val caption: TextView,
         val item: Item,
     )
 
@@ -392,7 +393,11 @@ internal class HeroComponent(
             // Home staged a download for every slide in the carousel (a 1920×1080 backdrop per
             // 232 px preview tile), which saturated both image workers and left the shelves blank.
             if (kotlin.math.abs(index - activeIndex) <= 2) {
-                BrowseImages.load(tile.art, tile.item.backdrop ?: tile.item.poster, theme.px(232f))
+                BrowseImages.load(tile.art, tile.item.backdrop ?: tile.item.poster, theme.px(232f)) { ok ->
+                    tile.caption.visibility = if (ok) View.GONE else View.VISIBLE
+                }
+            } else {
+                tile.caption.visibility = View.GONE
             }
         }
     }
@@ -406,7 +411,7 @@ internal class HeroComponent(
         val width = theme.px(232f)
         val height = theme.px(96f)
         val radius = theme.radius("card", 6f)
-        val haloPad = theme.px(16f)
+        val haloPad = theme.focusGlowInsetSm
         val root = FrameLayout(context).apply {
             id = View.generateViewId()
             isFocusable = true
@@ -437,7 +442,14 @@ internal class HeroComponent(
             }
         }
         root.addView(art, FrameLayout.LayoutParams(width, height))
-        // Art is bound by syncSelectors, which only asks for the slides near the active one.
+        // A dead image edge is transient on these sources; if the art never lands, the tile names
+        // its slide instead of staying a dark square under the remote. Bound by syncSelectors, so
+        // this is a fallback label, never a second eager download.
+        val caption = Views.text(app, "meta", 15f, theme.ink, item.title, bold = true,
+            gravity = Gravity.CENTER, maxLines = 1).apply {
+            setBackgroundColor(Color.argb(150, 0, 0, 0))
+            visibility = View.GONE
+        }
         val shade = View(context).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
@@ -447,6 +459,7 @@ internal class HeroComponent(
         root.addView(shade, FrameLayout.LayoutParams(width, theme.px(42f)).apply {
             gravity = Gravity.BOTTOM
         })
+        root.addView(caption, FrameLayout.LayoutParams(width, height))
         val active = View(context).apply {
             background = Views.rounded(theme.ink, theme.px(999f))
             visibility = View.INVISIBLE
@@ -475,7 +488,7 @@ internal class HeroComponent(
                 }
             },
         )
-        return SelectorTile(root, active, art, item)
+        return SelectorTile(root, active, art, caption, item)
     }
 
     private fun paintDots(slides: List<Item>, activeIndex: Int) {

@@ -40,7 +40,9 @@ data class HomeLayoutSpec(
         PS5_HUB,
         ROKU_GRID,
         CLEAN,
+        KIDS,
         MAGNIFIER,
+        GLASS,
     }
 
     /** The global Home route is intentionally separate from the visible control treatment. */
@@ -63,6 +65,12 @@ data class HomeLayoutSpec(
         CINEMA_BILLBOARD,
         /** Focused content hub: the selected large tile is the stage and the rail is the navigator. */
         FOCUSED_HUB,
+        /** Two glass feature cards side by side above a chip row; a light, calm composition. */
+        DUAL_CARDS,
+        /** The measured liquid-glass replica: tinted specular plates on a photo wash, chip rail, captioned posters. */
+        GLASS_CARDS,
+        /** A bright stage with black pill navigation and two feature cards for young households. */
+        KIDS_STAGE,
         /** No billboard: content begins with the primary browse surface. */
         NONE,
     }
@@ -102,6 +110,8 @@ data class HomeLayoutSpec(
             "ps5", "ps5-hub", "console", "console-hub" -> Family.PS5_HUB
             "roku", "roku-grid", "grid" -> Family.ROKU_GRID
             "clean", "minimal" -> Family.CLEAN
+            "glass", "liquid-glass" -> Family.GLASS
+            "kids" -> Family.KIDS
             "magnifier", "accessible", "large" -> Family.MAGNIFIER
             else -> Family.LEGACY
         }
@@ -116,6 +126,9 @@ data class HomeLayoutSpec(
         private fun hero(value: String) = when (normalized(value)) {
             "cinema", "cinema-billboard", "billboard" -> Hero.CINEMA_BILLBOARD
             "hub", "focused-hub", "focus-hub" -> Hero.FOCUSED_HUB
+            "dual", "dual-cards", "clean-cards" -> Hero.DUAL_CARDS
+            "glass", "glass-cards", "liquid-glass" -> Hero.GLASS_CARDS
+            "kids", "kids-stage" -> Hero.KIDS_STAGE
             "none", "off", "grid" -> Hero.NONE
             else -> Hero.SHARED_SLIDER
         }
@@ -131,14 +144,17 @@ data class HomeLayoutSpec(
             Family.NETFLIX_CINEMA -> "top-bar"
             Family.PS5_HUB -> "utility"
             Family.ROKU_GRID -> "top-bar"
-            Family.CLEAN, Family.MAGNIFIER -> "none"
+            Family.CLEAN, Family.KIDS, Family.MAGNIFIER, Family.GLASS -> "none"
             else -> "pack"
         }
 
         private fun defaultHero(family: Family) = when (family) {
             Family.NETFLIX_CINEMA -> "cinema-billboard"
             Family.PS5_HUB -> "focused-hub"
-            Family.ROKU_GRID, Family.CLEAN -> "none"
+            Family.CLEAN -> "dual-cards"
+            Family.GLASS -> "glass-cards"
+            Family.KIDS -> "kids-stage"
+            Family.ROKU_GRID -> "none"
             else -> "shared-slider"
         }
 

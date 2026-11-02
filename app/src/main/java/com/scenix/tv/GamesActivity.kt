@@ -17,6 +17,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -94,6 +95,7 @@ class GamesActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
         ).apply { gravity = Gravity.BOTTOM })
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
@@ -381,7 +383,7 @@ class GamesActivity : Activity() {
                 gravity = Gravity.TOP or Gravity.START
                 leftMargin = theme.px(10f); topMargin = theme.px(10f)
             })
-            val glowPad = theme.px(26f)
+            val glowPad = theme.focusGlowInset
             val ringOn = View(this@GamesActivity)
             card.addView(ringOn, FrameLayout.LayoutParams(cardW, artH + glowPad * 2).apply {
                 gravity = Gravity.TOP or Gravity.START

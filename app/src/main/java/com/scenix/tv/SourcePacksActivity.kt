@@ -9,8 +9,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 import org.json.JSONArray
@@ -47,35 +50,27 @@ class SourcePacksActivity : Activity() {
         app = (application as ScenixApp).ctx
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
+            val wall = Screens.wall(app)
+            if (wall != null) background = wall else setBackgroundColor(app.theme.bg)
         }
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-            setBackgroundColor(app.theme.surface)
-        }
-        val back = Views.text(app, "li", 26f, app.theme.ink, "‹", bold = true, gravity = Gravity.CENTER)
-        back.setPadding(app.theme.px(16f), app.theme.px(6f), app.theme.px(16f), app.theme.px(6f))
-        back.isFocusable = true
-        back.isClickable = true
-        back.setOnClickListener { finish() }
-        Focus.attach(back, back, app, app.theme.px(10f), scale = false, elevate = false)
-        bar.addView(back, LinearLayout.LayoutParams(app.theme.px(56f), app.theme.px(50f)))
-        bar.addView(Views.text(app, "li", 26f, app.theme.ink, "Source packs", bold = true).apply {
-            setPadding(app.theme.px(20f), 0, 0, 0)
-        })
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        status = Views.text(app, "meta", 19f, app.theme.ink2, "", maxLines = 1)
-        bar.addView(status)
+        val (bar, barStatus) = Screens.topBar(this, app, "Source packs") { finish() }
+        status = barStatus
         root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
 
         rows = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.gutter, app.theme.px(18f), app.theme.gutter, app.theme.px(40f))
         }
-        root.addView(rows, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        // The pack list outgrows the screen on a warm hub; unscrolled, the last rows are clipped and
+        // unreachable by D-pad. Same ScrollView wrapper Settings uses — it scrolls focused children in.
+        val scroll = ScrollView(this).apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+        scroll.addView(rows)
+        root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        Motion.enter(app.theme, root)
         load()
     }
 
@@ -128,15 +123,14 @@ class SourcePacksActivity : Activity() {
     }
 
     private fun section(title: String, note: String) {
-        rows.addView(Views.text(app, "li", 26f, app.theme.ink, title, bold = true),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(18f)
-            })
-        rows.addView(Views.text(app, "meta", 17f, app.theme.ink3, note, maxLines = 2),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(2f)
-                bottomMargin = app.theme.px(10f)
-            })
+        Screens.section(this, app, rows, title)
+        if (note.isNotBlank()) {
+            rows.addView(Views.text(app, "meta", 17f, app.theme.ink3, note, maxLines = 2),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = app.theme.px(2f)
+                    bottomMargin = app.theme.px(10f)
+                })
+        }
     }
 
     private fun packs(s: JSONObject, kind: String, audio: Boolean) {
@@ -168,23 +162,7 @@ class SourcePacksActivity : Activity() {
     }
 
     private fun addRow(label: String, note: String, action: () -> Unit) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(app.theme.px(20f), 0, app.theme.px(20f), 0)
-            background = Views.rounded(app.theme.surface, app.theme.px(10f))
-            isFocusable = true
-            isClickable = true
-            setOnClickListener { action() }
-        }
-        row.addView(Views.text(app, "li", 23f, app.theme.ink, label, bold = true, maxLines = 1),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(Views.text(app, "meta", 17f, app.theme.ink3, note, maxLines = 1, gravity = Gravity.END),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        Focus.attach(row, row, app, app.theme.px(10f), scale = false, elevate = false)
-        rows.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(78f)).apply {
-            bottomMargin = app.theme.px(8f)
-        })
+        Screens.addRow(this, app, rows, label, value = note, note = "", chevron = true, onClick = action)
     }
 
     private fun showActions(kind: String, index: Int, name: String) {
@@ -200,27 +178,16 @@ class SourcePacksActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(app.theme.px(26f), app.theme.px(20f), app.theme.px(26f), app.theme.px(20f))
-            background = Views.rounded(app.theme.color("panelScrim", "#E6000000"), app.theme.px(12f),
-                app.theme.px(1f), app.theme.line)
+            background = Screens.modalFill(app)
         }
         panel.addView(Views.text(app, "li", 25f, app.theme.ink, title, bold = true, maxLines = 2))
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         var first: View? = null
         for ((value, label) in options) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(app.theme.px(14f), 0, app.theme.px(14f), 0)
-                isFocusable = true
-                isClickable = true
-                setOnClickListener {
-                    closePicker()
-                    onPick(value)
-                }
+            val row = Screens.pickerRow(this, app, label, selected = false) {
+                closePicker()
+                onPick(value)
             }
-            row.addView(Views.text(app, "li", 21f, app.theme.ink, label, maxLines = 1),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            Focus.attach(row, row, app, app.theme.px(8f), scale = false, elevate = false)
             list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(58f)))
             if (first == null) first = row
         }

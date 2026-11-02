@@ -14,6 +14,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
 
@@ -38,7 +40,8 @@ class TextEntryActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(app.theme.bg)
+            val wall = Screens.wall(app)
+            if (wall != null) background = wall else setBackgroundColor(app.theme.bg)
             setPadding(app.theme.gutter, app.theme.px(42f), app.theme.gutter, app.theme.px(34f))
         }
         root.addView(Views.text(app, "li", 30f, app.theme.ink, title.ifBlank { "Enter a value" }, bold = true))
@@ -96,6 +99,7 @@ class TextEntryActivity : Activity() {
 
         root.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         setContentView(root)
+        Motion.enter(app.theme, root)
         field.requestFocus()
         field.postDelayed({
             field.requestFocus()

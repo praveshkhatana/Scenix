@@ -18,6 +18,12 @@ import java.io.InputStreamReader
  * happen to be similar. The native screens ask [packString] rather than branching on a theme id, so
  * a developer adds a pack by writing the JSON and one assets/themes.json row.
  *
+ * Packs come in two tiers. The FIVE curated packs are complete layouts living in assets. An
+ * INSTALLED pack is a token reskin in the app's files dir (`files/packs/<id>.json` with `basedOn`
+ * naming a curated pack): it paints that layout's colours, radii, spacing, type, focus bands,
+ * player ceilings and size numbers, but the structural pack keys (hero, rows, card, focus style…)
+ * are the base's — a reskin can never make Home unusable or fake a layout family it cannot draw.
+ *
  * The mockup is authored at 1920x1080 in pixels. Device pixels are those numbers times
  * `scale = min(screenW/1920, screenH/1080)`, which keeps the layout identical to the mockup on
  * the 1080p BRAVIA and correct on a 720p set, without depending on the TV's odd density bucket.
@@ -38,6 +44,10 @@ class Theme private constructor(
 ) {
     // ---- colours ---------------------------------------------------------------------------
     fun color(name: String, fallback: String = "#FFFFFF"): Int = parseColor(colors.optString(name, fallback))
+
+    /** A colour that falls back to an already-parsed one, e.g. wall-printed headings default to ink. */
+    fun colorOr(name: String, fallbackColor: Int): Int =
+        if (colors.has(name)) color(name) else fallbackColor
 
     val bg get() = color("bg", "#141414")
     val surface get() = color("surface", "#181818")
@@ -66,6 +76,13 @@ class Theme private constructor(
     val focusScale get() = focus.optDouble("scale", 1.05).toFloat()
     val focusDurationMs get() = focus.optInt("durationMs", 200)
     val focusElevationPx get() = px(focus.optDouble("shadowElevation", 12.0).toFloat())
+
+    /**
+     * The halo bands every shelf, grid and tile shares: the content-tile inset and the compact-
+     * chrome inset. Screens must never hand-pick a number again — this is THE vocabulary.
+     */
+    val focusGlowInset get() = px(focus.optDouble("glowInset", 24.0).toFloat())
+    val focusGlowInsetSm get() = px(focus.optDouble("glowInsetSm", 16.0).toFloat())
 
     /**
      * Android TV exposes "remove animations" through the system animator scale.  A focus change
@@ -188,8 +205,29 @@ class Theme private constructor(
          */
         const val DEFAULT_ID = "scenix-apple"
 
-        /** One selectable theme from assets/themes.json. `pack` names its layout family. */
-        data class Choice(val id: String, val name: String, val asset: String, val pack: String = "")
+        /**
+         * One selectable theme. Curated packs come from assets/themes.json; an INSTALLED pack is a
+         * token reskin sitting in the app's files dir (`packs/<id>.json` with `basedOn` naming a
+         * curated pack). `pack` names the layout family — for an installed pack that is its base's
+         * family, because a reskin paints a curated layout, it never chooses one.
+         */
+        data class Choice(
+            val id: String,
+            val name: String,
+            val asset: String,
+            val pack: String = "",
+            val installed: Boolean = false,
+        )
+
+        /**
+         * Pack keys that decide WHICH layout a pack is. A reskin may paint colours, radii, spacing,
+         * type, focus bands, player ceilings and size numbers, but it cannot swap the layout family
+         * out from under the curated native surface — the five references stay exact by design.
+         */
+        private val STRUCTURAL_PACK_KEYS = setOf(
+            "hero", "heroAlign", "rows", "card", "focus", "motion", "detail", "nav",
+            "featuredMarker", "family", "homeSurface",
+        )
 
         /** What the settings picker offers. A missing manifest keeps the built-in default only. */
         fun catalog(assets: AssetManager): List<Choice> {
@@ -219,19 +257,53 @@ class Theme private constructor(
                 ?: ASSET
         }
 
-        fun load(assets: AssetManager, screenW: Int, screenH: Int, asset: String = ASSET, zoom: Float = 1f): Theme {
-            var root = JSONObject()
+        /** Curated packs plus every installed reskin in `files/packs/`. */
+        fun catalog(context: android.content.Context, assets: AssetManager): List<Choice> {
+            val out = ArrayList(catalog(assets))
+            val taken = out.map { it.id }.toHashSet()
             try {
-                assets.open(asset).use { inp ->
-                    BufferedReader(InputStreamReader(inp, "UTF-8")).use { r ->
-                        val sb = StringBuilder()
-                        var line: String?
-                        while (r.readLine().also { line = it } != null) sb.append(line)
-                        root = JSONObject(sb.toString())
+                val dir = java.io.File(context.filesDir, "packs")
+                val files: Array<java.io.File> =
+                    dir.listFiles(java.io.FileFilter { f -> f.isFile && f.name.endsWith(".json") })
+                        ?.sortedBy { it.name }?.toTypedArray() ?: emptyArray()
+                for (f in files) {
+                    try {
+                        val o = JSONObject(f.readText())
+                        val id = o.optString("id").trim()
+                        val baseId = o.optString("basedOn").trim()
+                        if (id.isBlank() || baseId.isBlank() || id in taken) continue
+                        val base = out.firstOrNull { it.id == baseId } ?: continue
+                        if (base.installed) continue // reskins stack on curated packs only
+                        out.add(Choice(id, o.optString("name", id), "file:" + f.absolutePath,
+                            base.pack, true))
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "installed pack ${f.name} unreadable", t)
                     }
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "assets/$asset missing or unreadable — using built-in defaults", t)
+                Log.w(TAG, "installed packs dir unreadable", t)
+            }
+            return out
+        }
+
+        fun assetFor(context: android.content.Context, assets: AssetManager, id: String): String =
+            catalog(context, assets).firstOrNull { it.id == id }?.asset ?: ASSET
+
+        fun load(
+            context: android.content.Context,
+            assets: AssetManager,
+            screenW: Int,
+            screenH: Int,
+            asset: String = ASSET,
+            zoom: Float = 1f,
+        ): Theme {
+            var root = readRoot(assets, asset)
+            // An installed reskin is not a pack by itself: it paints on top of the curated pack it
+            // names in `basedOn`. Structural pack keys are dropped so the layout family is the base's.
+            val basedOn = root.optString("basedOn").trim()
+            if (basedOn.isNotBlank()) {
+                val baseAsset = catalog(assets).firstOrNull { it.id == basedOn }?.asset ?: ASSET
+                root = mergeSkin(readRoot(assets, baseAsset), root)
             }
             val canvas = root.optJSONObject("canvas")
             val cw = canvas?.optInt("width", 1920) ?: 1920
@@ -255,6 +327,51 @@ class Theme private constructor(
                 player = root.optJSONObject("player") ?: JSONObject(),
                 pack = root.optJSONObject("pack") ?: JSONObject(),
             )
+        }
+
+        /** Read a pack root from assets, or from the files dir when the asset is `file:<path>`. */
+        private fun readRoot(assets: AssetManager, asset: String): JSONObject {
+            try {
+                val text = if (asset.startsWith("file:")) {
+                    java.io.File(asset.removePrefix("file:")).readText()
+                } else {
+                    assets.open(asset).bufferedReader().use { it.readText() }
+                }
+                return JSONObject(text)
+            } catch (t: Throwable) {
+                Log.w(TAG, "$asset missing or unreadable — using built-in defaults", t)
+                return JSONObject()
+            }
+        }
+
+        /**
+         * Paint an installed reskin onto its curated base: token groups merge key by key, and the
+         * `pack` block takes only its non-structural keys, so sizes like `cleanHomeHeight` are the
+         * householder's to tune while the layout family stays the base's.
+         */
+        private fun mergeSkin(base: JSONObject, skin: JSONObject): JSONObject {
+            val out = JSONObject(base.toString())
+            for (group in listOf("colors", "radii", "spacing", "type", "focus", "player")) {
+                val over = skin.optJSONObject(group) ?: continue
+                val into = out.optJSONObject(group) ?: JSONObject().also { out.put(group, it) }
+                val keys = over.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    into.put(k, over.get(k))
+                }
+            }
+            val packOver = skin.optJSONObject("pack")
+            if (packOver != null) {
+                val packInto = out.optJSONObject("pack") ?: JSONObject().also { out.put("pack", it) }
+                val keys = packOver.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    if (k in STRUCTURAL_PACK_KEYS) continue
+                    packInto.put(k, packOver.get(k))
+                }
+            }
+            out.put("id", skin.optString("id", out.optString("id", "scenix-dark")))
+            return out
         }
 
         /** `#RGB`, `#RRGGBB`, `#AARRGGBB` and `rgba(r,g,b,a)` — the forms used by the mockup CSS. */

@@ -50,7 +50,9 @@
     "numeralFillRed": "#000000",
     "numeralStrokeRed": "#FF453A",
     "matBorder": "rgba(255,255,255,0.28)",
-    "hdInk": "#F2F3F5"
+    "hdInk": "#F2F3F5",
+    "listFill": "#101219",
+    "listStroke": "#1B1D24"
   },
   "spacing": {
     "gutter": 72,
@@ -68,14 +70,15 @@
     "panelPad": 28,
     "panelPadV": 24,
     "panelRowGap": 10,
-    "listItem": 14
+    "listItem": 88,
+    "listGap": 10
   },
   "radii": {
     "card": 14,
     "badge": 8,
     "chip": 8,
     "button": 999,
-    "listItem": 8,
+    "listItem": 10,
     "field": 12,
     "key": 12,
     "modal": 18,
@@ -123,7 +126,9 @@
     "durationMs": 280,
     "shadowElevation": 24,
     "glass": 1,
-    "glassPad": 6
+    "glassPad": 6,
+    "glowInset": 24,
+    "glowInsetSm": 16
   },
   "anim": {
     "cardFadeInMs": 220,
@@ -251,6 +256,7 @@
     "cardNewLabel": "inline",
     "searchBadges": "hide",
     "rank": "compact",
-    "stage": "focus"
+    "stage": "focus",
+    "featuredMarker": "bar"
   }
 }
