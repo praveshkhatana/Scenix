@@ -66,7 +66,11 @@ class ProfilesActivity : Activity() {
         // The same wordmark file the Home bar uses, so the front door and the shelves wear one brand.
         head.addView(ImageView(this).apply {
             setImageResource(R.drawable.scenix_wordmark)
-            setColorFilter(app.theme.brand)
+            // Same rule as the splash: on the Glass pack the mark floats white on the wall;
+            // the brand colour is the wordmark's voice only on the packs that use it.
+            setColorFilter(if (app.theme.homeLayout.hero ==
+                com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS
+            ) Color.WHITE else app.theme.brand)
             scaleType = ImageView.ScaleType.FIT_START
             contentDescription = "Scenix"
         }, LinearLayout.LayoutParams(app.theme.px(140f), app.theme.px(32f)))
