@@ -1,0 +1,57 @@
+{
+  "id": "nav.top",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "Top navigation for every pack: the pack's own stop treatment, search, the household and the gear. Home, Movies and Series are always present; Games and Live TV are doors the host draws only when the household installed those add-ons.",
+  "source": { "android": "BrowseActivity.topBar / GlassHomeLayout / KidsHomeLayout / Ps5HomeLayout" },
+  "tokens": ["color.pill", "color.pillInk", "color.segInk", "color.pillActive", "space.segPad", "radius.pill", "type.nav"],
+  "anatomy": [
+    { "part": "brand", "note": "Wordmark or brand disc; on Apple/Netflix/Classic it is also the Home stop." },
+    { "part": "stops", "note": "Home, Movies, Series, then Games and Live TV only when installed, in that order." },
+    { "part": "search", "note": "Should be a knob/dot at the end of the pill, never an afterthought at the far edge." },
+    { "part": "household", "note": "Profile disc plus Settings gear; gear is the last stop." }
+  ],
+  "geometry": {
+    "bandHeight": "96dp on classic packs; pack nav band token on Glass/Kids/PS5",
+    "glassPill": { "height": "space.navBand", "segPad": "space.segPad", "radius": "radius.pill" },
+    "kidsPill": { "height": "space.kidsPillH", "knob": "space.kidsKnob" },
+    "classic": { "wordmark": "132x30dp", "stopGap": "18dp after the first 22dp" }
+  },
+  "states": ["idle", "active", "focused", "disabled"],
+  "copy": {
+    "stops": ["Home", "Movies", "Series", "Games", "Live TV"],
+    "liveLabelIsShort": "Packs that draw a four-word pill may shorten Live TV to Live; the content description stays 'Live TV'."
+  },
+  "focus": {
+    "order": ["brand", "Home", "Movies", "Series", "Games", "Live TV", "Search", "Profile", "Settings"],
+    "rules": [
+      "LEFT at the first stop stops there (or opens the rail on packs that own one); it never wraps.",
+      "RIGHT at the last stop stops there.",
+      "DOWN from any stop returns to the top of the shelves.",
+      "UP from the hero/shelves lands on the stop of the section the viewer is standing in, not at the far end."
+    ]
+  },
+  "behaviour": [
+    "An active stop is a brighter ink/plate, never a coloured brand fill that fights the pack's focus language.",
+    "A stop is present only when its destination exists: Games needs an enabled games add-on, Live TV needs the live add-on and a playlist.",
+    "Switching section rebuilds the page; the bar never changes shape mid-walk.",
+    "The bar fades with the chrome where a pack scrolls the hero under it; it returns on any key or when focus reaches it."
+  ],
+  "platformDeltas": {
+    "ios": "Same order and copy; household becomes the leading avatar, settings moves to the trailing end. No hover; pressed state uses the same active plate.",
+    "windows": "Keyboard LEFT/RIGHT mirrors the remote; add a visible focus ring and mouse hover only on the pointer, not on TV.",
+    "apple-tv": "Focus lift replaces the ring; keep the same order and gated stops."
+  },
+  "a11y": {
+    "role": "navigation",
+    "label": "Primary navigation",
+    "minTarget": "48x48dp (TV: 66dp rows, 68dp pill)",
+    "contrast": "active and idle ink each >= 4.5:1 against the pill"
+  },
+  "evidence": {
+    "catalog": "nav.top",
+    "status": "blocked: host-owned builder not yet extracted from BrowseActivity",
+    "goldens": "goldens/android/nav.top/<state>/<theme>.png"
+  }
+}

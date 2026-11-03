@@ -23,3 +23,6 @@ hub/media/
 
 .idea/
 .DS_Store
+
+# design-system capture scratch (goldens are committed; the transient shots are not)
+design-system/.captures/

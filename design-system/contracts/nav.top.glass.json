@@ -1,0 +1,25 @@
+{
+  "id": "nav.top.glass",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "The Glass header pill built from GlassKit: section words on a dark pill, one search knob, a profile pill and a gear. Games and Live are doors, not permanent words.",
+  "source": { "android": "GlassKit.segment / searchKnob / profilePill / roundStop; GlassHomeLayout" },
+  "tokens": ["color.pill", "color.pillInk", "color.segInk", "color.pillActive", "space.segPad", "space.navBand", "color.searchKnob", "color.profilePill"],
+  "anatomy": [
+    { "part": "pill", "note": "Fully rounded dark glass, 6dp inset; words sit close." },
+    { "part": "stop", "note": "19dp bold; active is brighter ink on a barely-there plate, never a bright fill." },
+    { "part": "search", "note": "48dp knob at the end of the pill." },
+    { "part": "household", "note": "Profile pill and gear sit outside the pill, right-aligned." }
+  ],
+  "geometry": { "pillHeight": "space.navBand (68dp)", "segPad": "space.segPad (24dp)", "knob": "48dp" },
+  "states": ["idle", "active", "focused"],
+  "copy": { "stops": ["Home", "Movies", "Series", "Games", "Live"] },
+  "focus": { "rules": ["LEFT/RIGHT step the words then the knob.", "UP from the hero lands on the standing section."] },
+  "platformDeltas": {
+    "ios": "Same pill; profile becomes the leading avatar outside the pill.",
+    "windows": "Keep the pill but allow a pointer hover on words."
+  },
+  "a11y": { "role": "navigation", "label": "Primary navigation" },
+  "evidence": { "catalog": "glass.nav", "status": "real: GlassKit", "goldens": "goldens/android/glass.nav/<state>/<theme>.png" }
+}

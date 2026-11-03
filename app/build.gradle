@@ -30,6 +30,9 @@ def hubRoot = {
 // its own backend for a face and never learns a third-party hostname, so the offline start screen still
 // shows the characters a household chose.
 def hubUiDir = layout.buildDirectory.dir('generated/scenixAssets')
+// The design system's catalog manifest and fixtures are the same files the repository's gates read.
+// Carried in at build time so the Studio cannot show a component the contract folder does not know.
+def studioAssetsDir = layout.buildDirectory.dir('generated/studioAssets')
 
 android {
     namespace 'com.scenix.tv'
@@ -38,6 +41,7 @@ android {
     sourceSets {
         main {
             assets.srcDirs += hubUiDir
+            assets.srcDirs += studioAssetsDir
         }
     }
 
@@ -100,7 +104,14 @@ def copyHubUi = tasks.register('copyHubUi', Copy) {
         }
     }
 }
-tasks.named('preBuild') { dependsOn copyHubUi }
+def copyStudio = tasks.register('copyStudio', Copy) {
+    group = 'scenix'
+    description = 'Carry design-system/studio.json and its fixtures into the APK as assets.'
+    into studioAssetsDir
+    from(new File(projectDir.parentFile, 'design-system/studio.json'))
+    from(new File(projectDir.parentFile, 'design-system/fixtures')) { into 'fixtures' }
+}
+tasks.named('preBuild') { dependsOn copyHubUi, copyStudio }
 if (hubRoot == null) {
     logger.warn("scenix: no hub found near ${projectDir}, so this APK carries no character faces. " +
         'Pass -Pscenix.hub=<dir> to point at one.')

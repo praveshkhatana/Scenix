@@ -1,0 +1,44 @@
+{
+  "id": "settings.row",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "One settings line: label, quiet second line, current value on the right, optional chevron. Rows are the only focus stops in a settings page and each names its neighbours, so the walk is total even across a ScrollView.",
+  "source": { "android": "core/Screens.row / addRow / section" },
+  "tokens": ["space.listItem", "space.listGap", "radius.listItem", "color.ink", "color.ink2", "color.ink3", "type.li", "type.meta", "type.liMeta"],
+  "anatomy": [
+    { "part": "label", "note": "24dp bold, one line." },
+    { "part": "note", "note": "16dp ink3, one line, 3dp below the label." },
+    { "part": "value", "note": "20dp ink2, end-aligned, 20dp after the text block." },
+    { "part": "chevron", "note": "26dp ink3 '›', 12dp after the value, 28dp wide." },
+    { "part": "section", "note": "Uppercase 19dp heading, 26dp above (0 for the first), 10dp below; not focusable." }
+  ],
+  "geometry": { "minHeight": "space.listItem (88dp)", "radius": "space.listItem radius", "padding": "28dp / 14dp / 22dp / 14dp", "gap": "space.listGap" },
+  "states": ["idle", "focused", "pressed", "disabled"],
+  "copy": {
+    "examples": ["Audio language · Hindi", "Subtitles · Hindi", "Quality ceiling · 1080P", "Home rows · 31 of 32 shown ›", "Auto-update · On"]
+  },
+  "focus": {
+    "rules": [
+      "UP/DOWN step rows, skipping section headings.",
+      "The first row's UP goes to the page back control; the last row's DOWN stays (never wraps onto Back).",
+      "LEFT/RIGHT on a row with a picker opens/closes the picker, not another row."
+    ]
+  },
+  "behaviour": [
+    "A row never shows a value it cannot set; read-only facts are notes, not fake pickers.",
+    "Focus is the pack's language: ring, lift or glow; no row changes height on focus.",
+    "The value column is right-aligned and never truncates the label below half its width."
+  ],
+  "platformDeltas": {
+    "ios": "Same anatomy with a 44dp minimum row height; DisclosureGroup/chevron semantics.",
+    "windows": "Hover row, keyboard focus ring; same value alignment.",
+    "apple-tv": "Focus lift; sections collapse into grouped lists with the same copy."
+  },
+  "a11y": { "role": "button", "label": "{{label}}, {{value}}" },
+  "evidence": {
+    "catalog": "settings.row",
+    "status": "real: Screens.row",
+    "goldens": "goldens/android/settings.row/<state>/<theme>.png"
+  }
+}

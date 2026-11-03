@@ -55,6 +55,7 @@ import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Programme
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.player.Ceilings
 import org.json.JSONArray
@@ -124,6 +125,8 @@ class PlayerActivity : Activity() {
     private var loadedAnswer: JSONObject? = null
     private var answer: JSONObject? = null
     private var live = false
+    /** Debug catalogue: draw the real chrome on a sample title, without asking the hub for a copy. */
+    private var previewMode = false
     private var displayTitle = ""
     private var currentSourceLabel = ""
     /** The copy the viewer explicitly picked; empty means Auto (the hub's ranked pick). */
@@ -352,7 +355,19 @@ class PlayerActivity : Activity() {
         app = (application as ScenixApp).ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         val identity = intent?.getStringExtra(EXTRA_IDENTITY).orEmpty()
-        if (profileId.isBlank() || identity.isBlank()) {
+        previewMode = intent?.getBooleanExtra(EXTRA_PREVIEW, false) == true
+        // A catalogue capture may ask for a pack the television is not currently wearing. Load it for
+        // this activity only; the next process start returns to the household's saved theme.
+        if (previewMode) {
+            intent?.getStringExtra(EXTRA_THEME)?.takeIf { it.isNotBlank() }?.let { id ->
+                val dm = resources.displayMetrics
+                app.theme = Theme.load(this, assets, dm.widthPixels, dm.heightPixels,
+                    Theme.assetFor(assets, id), app.prefs.uiZoom())
+            }
+        }
+        // The catalogue opens the chrome on a sample title; a real play still requires a profile and
+        // an identity, exactly as before.
+        if (!previewMode && (profileId.isBlank() || identity.isBlank())) {
             finish()
             return
         }
@@ -367,6 +382,10 @@ class PlayerActivity : Activity() {
         buildPlayer()
         buildViews()
         setContentView(root)
+        if (previewMode) {
+            showChromePreview()
+            return
+        }
         open(spec, intent?.getLongExtra(EXTRA_POSITION_MS, 0L) ?: 0L)
         if (live || spec.type == "channel" || spec.type == "live") prefetchLiveChannels()
         ticker = object : Runnable {
@@ -1518,7 +1537,7 @@ class PlayerActivity : Activity() {
             bottomMargin = theme.px(122f)
         })
         skipChip = skip
-        if (!liveIntent()) buildPreloader()
+        if (!liveIntent() && !previewMode) buildPreloader()
     }
 
     private fun liveIntent(): Boolean {
@@ -1669,6 +1688,46 @@ class PlayerActivity : Activity() {
             preloadStatus = null
             preloadDismissing = false
         }.start()
+    }
+
+    /**
+     * The component catalogue's player entry: the real chrome, painted with a sample title and a
+     * sample playhead. No hub call, no decoder, no ticker — so what the Studio captures is exactly
+     * the bar a viewer gets, not a second drawing of it.
+     */
+    private fun showChromePreview() {
+        val state = intent?.getStringExtra(EXTRA_PREVIEW_STATE).orEmpty().ifBlank { "default" }
+        live = state == "live" || state == "live-error"
+        // A live channel is the title in this story, not the film the sample borrowed its chrome from.
+        displayTitle = if (live) "&TV"
+            else intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "The Last of Us" }
+        durationMs = 3_180_000L
+        finishPreloader()
+        overlay.visibility = View.VISIBLE
+        titleView.text = displayTitle
+        ratingBadge.text = "TV-MA"
+        ratingBadge.visibility = if (live) View.GONE else View.VISIBLE
+        metaView.text = if (live) "Now: Music Countdown · 24 min left" else "S01E04 · Please Hold to My Hand"
+        liveBadge.visibility = if (live) View.VISIBLE else View.GONE
+        qualityBadge.text = "1080p · 12 peers"
+        qualityBadge.visibility = if (live) View.GONE else View.VISIBLE
+        seekLine.fraction = 0.38f
+        seekLine.buffered = 0.61f
+        seekLine.invalidate()
+        elapsed.text = clock(1_208_000L)
+        remaining.text = " / " + clock(durationMs)
+        playButton.playing = true
+        paintTransport(ready = true)
+        skipChip?.visibility = View.GONE
+        revealChrome()
+        cancelHide()
+        // The app's chrome opens with the ring on Play; the catalogue should show the same.
+        focusSoon(playButton)
+        if (state == "error") {
+            showError("No source in this hub carries this title.")
+        } else if (state == "live-error") {
+            showError("This channel is off the air. Try another channel.")
+        }
     }
 
     private fun buildTopBar() {
@@ -4992,6 +5051,9 @@ class PlayerActivity : Activity() {
         const val EXTRA_BACKDROP = "backdrop"
         const val EXTRA_LOGO = "logo"
         const val EXTRA_ADVISORIES = "advisories"
+        const val EXTRA_PREVIEW = "preview"
+        const val EXTRA_PREVIEW_STATE = "previewState"
+        const val EXTRA_THEME = "theme"
 
         private const val TAG = "ScenixPlayer"
         private const val STALL_AFTER_MS = 12_000L

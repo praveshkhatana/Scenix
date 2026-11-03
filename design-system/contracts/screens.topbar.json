@@ -1,0 +1,23 @@
+{
+  "id": "screens.topbar",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "The secondary-screen top strip: a focusable back chevron, the page title and the status line actions write into. It carries no plate; the pack wall shows through.",
+  "source": { "android": "core/Screens.topBar" },
+  "tokens": ["color.wallInk", "color.wallInk2", "radius.button", "type.h2", "type.meta"],
+  "anatomy": [
+    { "part": "back", "note": "56x50dp, 26dp chevron, focus ring, reads 'Back'." },
+    { "part": "title", "note": "h2, 30dp bold, 18dp after the back stop." },
+    { "part": "status", "note": "End-aligned meta line; actions write sentences here, never toasts." }
+  ],
+  "geometry": { "height": "96dp", "gutter": "space.gutter" },
+  "states": ["default", "focused"],
+  "focus": { "rules": ["Back is the first stop; DOWN from it goes to the first row.", "The title/status are not focusable."] },
+  "platformDeltas": {
+    "ios": "Navigation bar with a leading chevron and trailing status caption.",
+    "windows": "Back button plus title in the app chrome; keyboard Esc mirrors Back."
+  },
+  "a11y": { "role": "heading", "label": "{{title}}" },
+  "evidence": { "catalog": "screens.topbar", "status": "real: Screens.topBar", "goldens": "goldens/android/screens.topbar/default/<theme>.png" }
+}

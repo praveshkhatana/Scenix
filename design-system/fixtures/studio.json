@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "titles": [
+    {
+      "id": "breaking-bad",
+      "title": "Breaking Bad",
+      "year": 2008,
+      "certificate": "TV-MA",
+      "meta": "S01E04 · Please Hold to My Hand",
+      "overview": "A chemistry teacher diagnosed with inoperable lung cancer turns to manufacturing and selling methamphetamine."
+    },
+    {
+      "id": "long-title",
+      "title": "The Extraordinarily Long Title That Must Truncate Without Losing Its Meaning",
+      "year": 2026,
+      "certificate": "PG-13",
+      "meta": "2026 · Drama · 2h 14m"
+    },
+    {
+      "id": "no-art",
+      "title": "No Artwork Copy",
+      "year": 2024,
+      "certificate": "U",
+      "meta": "2024 · Family · 1h 32m"
+    }
+  ],
+  "live": {
+    "channel": "&TV",
+    "now": "Now: Music Countdown · 24 min left"
+  },
+  "player": {
+    "title": "The Last of Us",
+    "meta": "S01E04 · Please Hold to My Hand",
+    "certificate": "TV-MA",
+    "quality": "1080p",
+    "peers": 12,
+    "durationMs": 3180000,
+    "positionMs": 1208000,
+    "bufferedMs": 1939000
+  }
+}

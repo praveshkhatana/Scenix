@@ -1,0 +1,53 @@
+{
+  "id": "card.tile",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "One title in a shelf or grid: poster or landscape art, facts on the art (rating, NEW/HOT, certificate, progress), and a caption below or over the art. Hold opens the confirmation sheet; OK opens the title or resumes it.",
+  "source": { "android": "BrowseActivity CardHolder / poster card builders; SearchActivity and SectionActivity reuse the same cards" },
+  "tokens": ["space.posterWidth", "space.cardRadius", "color.ink", "color.ink2", "color.badgeBg", "radius.card", "type.cardTitle", "type.cardMeta", "focus.scale", "focus.glowInset"],
+  "anatomy": [
+    { "part": "art", "note": "Poster 2:3 or landscape 16:9; inset plate for Glass; rounded to radius.card." },
+    { "part": "badges", "note": "Top-left: rating (star + value), NEW/HOT; top-right: certificate; bottom: progress for Continue." },
+    { "part": "title", "note": "Below art (or over it when caption=overlay), 1 line, ellipsis." },
+    { "part": "meta", "note": "Year · genre, or S01E04 · 52m; 1 line, ink2." },
+    { "part": "focus", "note": "Pack focus language: ring, lift or glow; scale and glow come from tokens." }
+  ],
+  "geometry": {
+    "poster": { "width": "space.posterWidth (280dp)", "height": "3:2 poster ratio", "caption": "below" },
+    "landscape": { "width": "space.posterWidthLandscape (480dp)", "ratio": "16:9" },
+    "continue": { "ratio": "16:9", "progress": "4dp bar at the caption edge" },
+    "rank": { "numeral": "0.8 of card width, behind/beside the poster" },
+    "channel": { "ratio": "16:9", "logo": "centred, contain, 80% width" }
+  },
+  "states": ["idle", "focused", "pressed", "held", "watching", "unavailable"],
+  "copy": {
+    "holdSheet": ["Add to My List", "Remove from My List", "Remove from Continue watching"],
+    "badges": ["4K", "HD", "NEW", "99% match", "PG-13", "U", "A"]
+  },
+  "focus": {
+    "rules": [
+      "A shelf is one row: LEFT/RIGHT step tiles, and LEFT on the first tile may open the rail.",
+      "UP/DOWN move between shelves keeping the horizontal position (nearest overlapping tile).",
+      "OK on a hero tile plays; OK on a shelf tile opens Detail; OK on Continue resumes.",
+      "Hold opens the confirmation sheet and never acts immediately."
+    ]
+  },
+  "behaviour": [
+    "Badges ride on the art with a scrim so the poster still reads; no badge floats in the caption.",
+    "A title with no art still gets a tile; its fallback is the title on the pack surface, not a blank hole.",
+    "Progress is the profile's real playhead, saved every 10s and on pause/stop.",
+    "Tile width never changes between themes; only the radius, wash and focus language do."
+  ],
+  "platformDeltas": {
+    "ios": "Long-press opens the same sheet as a context menu; hover/press lifts, not scales.",
+    "windows": "Hover reveals the same badges/title; right-click opens the sheet; keyboard focus ring.",
+    "apple-tv": "Focus lift + parallax; caption appears on focus; hold = same sheet."
+  },
+  "a11y": { "role": "button", "label": "{{title}}, {{year}}", "minTarget": "card face" },
+  "evidence": {
+    "catalog": "card.tile",
+    "status": "blocked: host-owned builder not yet extracted from BrowseActivity",
+    "goldens": "goldens/android/card.tile/<variant>/<state>/<theme>.png"
+  }
+}

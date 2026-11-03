@@ -220,6 +220,16 @@ class SettingsActivity : Activity() {
                 }
             }
         }
+        // The component catalogue exists only in debug builds. It is how the design-system parity
+        // gate captures the real components; a release television has no use for a studio.
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            addRow("Component studio",
+                "Design system catalogue",
+                "The real components in every state and theme — captured for the parity gate",
+                chevron = true) {
+                startActivity(Intent(this, StudioActivity::class.java))
+            }
+        }
         // The admin areas are a separate door from the profile PINs. With no admin lock set, a kids
         // profile does not see them at all (the default-safe state). Once the household turns the lock
         // on, the rows exist for everyone and the admin PIN is what opens them — a person who knows it
