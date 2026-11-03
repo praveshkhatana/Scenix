@@ -33,6 +33,20 @@ A component is not "done" when it looks right once. It is done when this reposit
 Items 1 and 4 are automated. 2 and 3 are reviewed. An agent or a person can disagree about taste;
 they cannot make a missing golden pass.
 
+## Reference device
+
+Goldens are captured on the **`scenix-tv` Android TV AVD** (1080p, 1920×1080, density 320), not on
+the household television. The emulator is reproducible, does not occupy the living room, and gives
+the same frame every run. Start it and target it explicitly:
+
+```sh
+$ANDROID_HOME/emulator/emulator -avd scenix-tv -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
+ADB_SERIAL=emulator-5554 scripts/studio-capture.sh --write
+```
+
+The panel in the living room is still the acceptance target for *feel*; the emulator is the
+reference for *pixels in the repository*.
+
 ## Run the gates
 
 ```sh

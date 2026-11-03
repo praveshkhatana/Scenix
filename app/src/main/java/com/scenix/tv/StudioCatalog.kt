@@ -8,8 +8,12 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.Item
+import com.scenix.tv.core.Progress
 import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
 
@@ -30,6 +34,7 @@ internal object StudioCatalog {
             "glass.nav" -> glassNav(activity, app, state)
             "glass.chips" -> glassChips(activity, app, state)
             "kids.chips" -> kidsChips(activity, app)
+            "card.tile" -> cardTiles(activity, app, state)
             "settings.rows" -> settingsRows(activity, app, state)
             "screens.topbar" -> screenTopBar(activity, app)
             else -> null
@@ -169,6 +174,61 @@ internal object StudioCatalog {
             ).apply { marginEnd = theme.px(16f) })
         }
         col.addView(row)
+        return col
+    }
+
+    // ---- shelves ------------------------------------------------------------------------
+
+    /**
+     * The real shelf tile through [ShelfAdapter]. No artwork URL is used: the tile's own fallback
+     * plate is what a cold or artless hub shows, and it keeps the golden deterministic.
+     */
+    private fun cardTiles(context: Activity, app: AppContext, state: String): View {
+        val theme = app.theme
+        val items = listOf(
+            Item(identity = "studio:breaking-bad", type = "series", title = "Breaking Bad", year = 2008,
+                match = 99, isNew = true, rating = 9.5, maturity = "TV-MA", genres = listOf("Crime"),
+                progress = Progress(1_400_000, 2_940_000)),
+            Item(identity = "studio:dune", type = "movie", title = "Dune: Part Two", year = 2024,
+                match = 96, rating = 8.5, maturity = "PG-13", genres = listOf("Science fiction")),
+            Item(identity = "studio:last-of-us", type = "series", title = "The Last of Us", year = 2023,
+                match = 93, rating = 8.7, maturity = "TV-MA", genres = listOf("Drama")),
+            Item(identity = "studio:past-lives", type = "movie", title = "Past Lives", year = 2023,
+                match = 88, rating = 7.8, maturity = "PG-13", genres = listOf("Romance")),
+            Item(identity = "studio:shogun", type = "series", title = "Shōgun", year = 2024,
+                match = 91, isNew = true, rating = 8.6, maturity = "TV-MA", genres = listOf("Drama")),
+        )
+        val row = BrowseRow(id = "studio", title = "Trending now", card = "poster",
+            items = items, total = items.size)
+        val rail = RecyclerView(context).apply {
+            layoutManager = LinearLayoutManager(context, RecyclerView.HORIZONTAL, false)
+            setBackgroundColor(theme.bg)
+            clipToPadding = false
+            setPadding(theme.gutter, theme.px(18f), theme.gutter, theme.px(18f))
+        }
+        val api = BrowseApi(context, app.prefs)
+        rail.adapter = ShelfAdapter(context, object : ShelfHost {
+            override fun app() = app
+            override fun api() = api
+            override fun profileId() = "studio"
+            override fun heroPos() = 0
+            override fun navAnchorId() = View.NO_ID
+            override fun onCardFocused(card: View, item: Item) {}
+            override fun onSlideFocused(position: Int) {}
+            override fun focusFeatured(position: Int) {}
+            override fun openDetail(item: Item) {}
+            override fun openLive(item: Item) {}
+            override fun openRowFull(row: BrowseRow) {}
+        }, row)
+        val col = stage(context, app)
+        col.addView(Views.text(app, "meta", 16f, theme.ink3,
+            "ShelfAdapter, the same tile Home, Search and My List use."))
+        col.addView(rail, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(580f)
+        ).apply { topMargin = theme.px(18f) })
+        if (state == "focused") {
+            rail.post { (rail.layoutManager as? LinearLayoutManager)?.findViewByPosition(1)?.requestFocus() }
+        }
         return col
     }
 
