@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.CardActionSheet
 import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
@@ -139,6 +140,17 @@ class BrowseActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // A hold sheet owns the page. Its rows keep the D-pad and Back closes the sheet — the shelf
+        // behind it, the rail and the section-walk all stay deaf until it is down.
+        if (CardActionSheet.isOpen()) {
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+                event.action == android.view.KeyEvent.ACTION_UP
+            ) {
+                CardActionSheet.close()
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
         // A section tab re-launches BrowseActivity with CLEAR_TOP, so Home is not underneath in
         // the task stack and a bare BACK would leave the app. From a section, BACK walks to the
         // unfiltered Home first; the next BACK from Home exits, as expected (owner, round 6).
@@ -737,6 +749,11 @@ class BrowseActivity : Activity() {
     }
 
     override fun onBackPressed() {
+        // A hold sheet owns the page while it is up: Back closes the sheet, it does not leave Home.
+        if (CardActionSheet.isOpen()) {
+            CardActionSheet.close()
+            return
+        }
         if (railOpen) {
             closeRail()
             return
@@ -1334,6 +1351,15 @@ class BrowseActivity : Activity() {
                     .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
             )
         }.apply { id = View.generateViewId() }
+        // Live TV belongs in every pack's bar, not just the Apple pill. The Netflix and Classic bars
+        // were the one place a household with channels could not reach them without the left rail.
+        val live = navButton("Live TV") {
+            startActivity(
+                Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
+                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+            )
+        }.apply { id = View.generateViewId() }
+        live.visibility = if (liveSeen) View.VISIBLE else View.GONE
         profile.id = View.generateViewId()
         search.id = View.generateViewId()
         settings.id = View.generateViewId()
@@ -1356,6 +1382,10 @@ class BrowseActivity : Activity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = theme.px(18f)
             })
+        bar.addView(live,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = theme.px(18f)
+            })
         bar.addView(profile, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = theme.px(24f)
         })
@@ -1369,7 +1399,7 @@ class BrowseActivity : Activity() {
         // bar, and on TV that made the Home/Play boundary impossible to traverse reliably.
         navAnchor = homeBrand
         pillGroup = bar
-        pillStops = listOf(homeBrand, movies, series, games, profile, search, settings)
+        pillStops = listOf(homeBrand, movies, series, games, live, profile, search, settings)
         wirePillFocus()
         for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
         if (transparent) chromeBar = bar
@@ -2090,7 +2120,19 @@ class BrowseActivity : Activity() {
                         onPlay = ::playItem,
                         onOpen = ::openDetail,
                         onFavourite = { item ->
-                            CardActions.toggleMyList(this@BrowseActivity, app, api, profileId, item)
+                            // The hero answers a hold with the same sheet as a shelf card, so the
+                            // confirmation is identical wherever the ring happens to be standing.
+                            CardActionSheet.open(
+                                this@BrowseActivity, app, item.title,
+                                listOf(CardActionSheet.Choice(
+                                    if (CardActions.inList(app, profileId, item))
+                                        "Remove from My List" else "Add to My List",
+                                ) {
+                                    CardActions.toggleMyList(
+                                        this@BrowseActivity, app, api, profileId, item,
+                                    )
+                                }),
+                            )
                         },
                         onSelected = ::onSlideFocused,
                         onStep = ::stepHero,
@@ -2578,29 +2620,25 @@ class BrowseActivity : Activity() {
             holder.item = item
             holder.itemView.contentDescription = CardActions.announcement(
                 app, profileId, item, itemAnnouncement(item),
-                holdHint = if (dismissible && item.progress != null)
-                    "holding takes it off Continue watching" else null,
+                holdHint = "holding opens its options",
             )
             if (item.type == "genre") {
                 bindGenre(holder, item)
                 return
             }
-            // Hold OK on a card. On Continue that takes the title off Home; anywhere else it puts the
-            // title into (or out of) the profile's list. Every theme walks this one adapter, so the
-            // gesture and its wording belong to the app rather than to a pack.
+            // Hold OK on a card asks first: the hold opens the choice sheet and a second OK on a
+            // row is the confirmation. Acting on the hold itself dropped Continue tiles the instant
+            // a viewer rested a thumb on one (owner report, 2026-11-03). Every theme walks this one
+            // adapter, so the gesture and its wording belong to the app rather than to a pack.
             holder.itemView.isLongClickable = item.type != "genre"
             holder.itemView.setOnLongClickListener {
                 if (item.isLive() || item.type == "genre") return@setOnLongClickListener false
                 val at = holder.bindingAdapterPosition
-                if (dismissible && item.progress != null) {
-                    CardActions.dismissContinue(this@BrowseActivity, api, profileId, item)
-                    if (at in shown.indices) {
-                        shown.removeAt(at)
-                        notifyItemRemoved(at)
-                        notifyItemRangeChanged(at, shown.size - at)
-                    }
-                } else {
-                    CardActions.toggleMyList(this@BrowseActivity, app, api, profileId, item) { onList ->
+                if (at !in shown.indices) return@setOnLongClickListener false
+                CardActions.holdSheet(
+                    this@BrowseActivity, app, api, profileId, item,
+                    canDismissContinue = dismissible,
+                    afterList = { onList ->
                         val now = holder.bindingAdapterPosition
                         if (!onList && myListRow && now in shown.indices) {
                             shown.removeAt(now)
@@ -2610,8 +2648,16 @@ class BrowseActivity : Activity() {
                         holder.itemView.contentDescription =
                             CardActions.announcement(app, profileId, shown.getOrNull(now) ?: item,
                                 itemAnnouncement(item))
-                    }
-                }
+                    },
+                    afterDismiss = {
+                        val now = holder.bindingAdapterPosition
+                        if (now in shown.indices) {
+                            shown.removeAt(now)
+                            notifyItemRemoved(now)
+                            notifyItemRangeChanged(now, shown.size - now)
+                        }
+                    },
+                )
                 true
             }
             holder.chevron.visibility = View.GONE

@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.CardActionSheet
 import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Motion
@@ -326,10 +327,12 @@ class SectionActivity : Activity() {
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
                 }
             }
-            // A full row/grid is where a viewer actually builds their list, so the hold works here too.
+            // A full row/grid is where a viewer actually builds their list, so the hold works here
+            // too — as a sheet, never as an instant write.
             holder.itemView.isLongClickable = !item.isLive()
             holder.itemView.setOnLongClickListener {
-                CardActions.toggleMyList(this@SectionActivity, app, api, profileId, item)
+                CardActions.holdSheet(this@SectionActivity, app, api, profileId, item,
+                    canDismissContinue = false)
                 true
             }
             holder.itemView.setOnClickListener {
@@ -340,6 +343,15 @@ class SectionActivity : Activity() {
                 )
             }
         }
+    }
+
+    override fun onBackPressed() {
+        // The hold sheet owns the page while it is up; Back closes it rather than leaving the grid.
+        if (CardActionSheet.isOpen()) {
+            CardActionSheet.close()
+            return
+        }
+        super.onBackPressed()
     }
 
     private inner class CardHolder(

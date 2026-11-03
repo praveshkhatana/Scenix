@@ -65,6 +65,37 @@ object CardActions {
     }
 
     /**
+     * The hold opens a choice sheet instead of acting, so a long button press on a remote can never
+     * move a title behind the viewer's back. The rows are only the actions this card actually has,
+     * worded from the current state: a tile already in My List offers to take it out, a Continue
+     * tile also offers to leave the row. [afterList] runs when a My List choice settles, which is
+     * how a row drops the tile it just lost.
+     */
+    fun holdSheet(
+        activity: android.app.Activity,
+        app: AppContext,
+        api: BrowseApi,
+        profileId: String,
+        item: Item,
+        canDismissContinue: Boolean,
+        afterList: (Boolean) -> Unit = {},
+        afterDismiss: () -> Unit = {},
+    ): Boolean {
+        val inList = inList(app, profileId, item)
+        val choices = ArrayList<CardActionSheet.Choice>(2)
+        choices.add(CardActionSheet.Choice(
+            if (inList) "Remove from My List" else "Add to My List",
+        ) { toggleMyList(activity, app, api, profileId, item, afterList) })
+        if (canDismissContinue && item.progress != null) {
+            choices.add(CardActionSheet.Choice("Remove from Continue watching") {
+                dismissContinue(activity, api, profileId, item)
+                afterDismiss()
+            })
+        }
+        return CardActionSheet.open(activity, app, item.title, choices)
+    }
+
+    /**
      * How a card announces itself, naming the gesture the screen has armed on it. Live channels and
      * the genre tiles answer a hold with something else (or nothing), so they are left alone; a
      * Continue tile names its own action, which is leaving the row rather than the list.
@@ -78,8 +109,7 @@ object CardActions {
     ): String = when {
         item.isLive() || item.type == "genre" -> base
         holdHint != null -> "$base · $holdHint"
-        else -> base + (if (inList(app, profileId, item)) " · holding removes it from My List"
-            else " · holding adds it to My List")
+        else -> base + " · holding opens its options"
     }
 
     private fun writeLocal(app: AppContext, profileId: String, identity: String, on: Boolean) {

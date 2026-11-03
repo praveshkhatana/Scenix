@@ -20,6 +20,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.CardActionSheet
 import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
@@ -294,6 +295,13 @@ class SearchActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (CardActionSheet.isOpen()) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+                CardActionSheet.close()
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN) {
             if (query.isNotEmpty()) {
                 query.setLength(0)
@@ -403,14 +411,24 @@ class SearchActivity : Activity() {
                 }
             }
             holder.itemView.setOnClickListener { open(item) }
-            // The same hold the home shelves answer: the result joins or leaves the profile's list
-            // without walking into the detail page first.
+            // The same hold the home shelves answer: it opens the choice sheet, and the viewer's OK
+            // on a row is what joins or leaves the profile's list.
             holder.itemView.isLongClickable = !item.isLive()
             holder.itemView.setOnLongClickListener {
-                CardActions.toggleMyList(this@SearchActivity, app, api, profileId, item)
+                CardActions.holdSheet(this@SearchActivity, app, api, profileId, item,
+                    canDismissContinue = false)
                 true
             }
         }
+    }
+
+    override fun onBackPressed() {
+        // The hold sheet owns the page while it is up; Back closes it rather than leaving the search.
+        if (CardActionSheet.isOpen()) {
+            CardActionSheet.close()
+            return
+        }
+        super.onBackPressed()
     }
 
     private inner class ResultHolder(
