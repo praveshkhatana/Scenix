@@ -2,38 +2,19 @@
 
 The first concrete slice of [`design-contracts/THEME-PLATFORM.md`](../design-contracts/THEME-PLATFORM.md):
 typed component contracts, a portable theme-pack schema, three token fixtures derived from the
-shipping Android packs, six layout examples, and a dependency-free gallery.
+shipping Android packs and six layout examples. The live component catalogue is `design-system/`.
 
 This directory is a **contract + catalog prototype**. It is not `themec` yet: there is no compiler,
-no IR, no generated Android/web/iOS renderers. The gallery is a tokenised CSS approximation that lets
-us review every component × state × pack × viewport before the compiler exists.
+no IR, no generated Android/web/iOS renderers. Review happens against the real components in the
+television Studio (`design-system/`), not against a re-drawing.
 
-## Run the gallery
+## The gallery is retired
 
-```sh
-cd theme-kit
-python3 -m http.server 8000
-```
-
-Open **<http://localhost:8000/gallery/>**.
-
-Do not open `gallery/index.html` directly from disk: browsers block `fetch()` on `file://` pages.
-
-`index.html` loads `gallery.css` and `gallery.js` with a `?v=` stamp. Browsers cache a static
-server's files aggressively, so after editing either file, bump that number — otherwise the
-browser keeps painting the previous gallery.
-
-The gallery accepts shareable query parameters:
-
-```text
-http://localhost:8000/gallery/?theme=scene.glass&device=tv&component=molecule.tile
-```
-
-- `theme`: `scene.apple`, `scene.glass`, `scene.kids`
-- `device`: `tv` (1920×1080), `ipad` (1366×1024), `iphone` (393×852), `desktop` (1440×900)
-- `component`: any declared component id
-- `live=0`, `games=0`: the household removed that add-on, so its door is gone
-- `level`: `all`, `atom`, `molecule`, `organism` or `template`
+The browser gallery that used to live in `gallery/` has been removed. It was a CSS re-creation of
+the app's components and drifted from the television; the live catalogue is now
+`design-system/` — the debug Studio on the TV, its captured goldens, and the parity gates described
+there. This folder keeps the historical token snapshots, component contracts and layout examples
+that seeded the design system; it is no longer the place a component is reviewed.
 
 ## What is here
 

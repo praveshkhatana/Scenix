@@ -111,8 +111,8 @@
       "title": "Title tile",
       "kind": "widget",
       "builder": "card.tile",
-      "states": ["idle", "focused", "held"],
-      "status": "blocked: host-owned builder inside BrowseActivity"
+      "states": ["poster", "focused"],
+      "status": "real"
     }
   ]
 }

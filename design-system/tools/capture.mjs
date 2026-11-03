@@ -25,6 +25,8 @@ const REPO = path.join(ROOT, '..');
 const GOLDENS = path.join(ROOT, 'goldens', 'android');
 const TMP = path.join(ROOT, '.captures');
 const ADB = process.env.ADB || 'adb';
+const SERIAL = process.env.ADB_SERIAL || '';
+const ADB_BASE = SERIAL ? ['-s', SERIAL] : [];
 const PY = process.env.PYTHON || '/usr/bin/python3';
 const STUDIO = 'com.scenix.tv/.StudioActivity';
 const PLAYER = 'com.scenix.tv/.PlayerActivity';
@@ -47,10 +49,14 @@ for (const entry of studio.entries) {
 }
 
 fs.mkdirSync(TMP, { recursive: true });
-try { sh(ADB, ['shell', 'svc', 'power', 'stayon', 'true']); } catch (e) { /* not every TV allows it */ }
+try { adb(['shell', 'svc', 'power', 'stayon', 'true']); } catch (e) { /* not every TV allows it */ }
 
 function sh(file, args) {
   return execFileSync(file, args, { encoding: 'buffer', maxBuffer: 40 * 1024 * 1024 });
+}
+
+function adb(args) {
+  return execFileSync(ADB, ADB_BASE.concat(args), { encoding: 'buffer', maxBuffer: 40 * 1024 * 1024 });
 }
 
 function sleep(ms) {
@@ -68,17 +74,17 @@ function goldenPath(t) {
 function launch(t) {
   // A television sleeps when nobody presses a key. `screencap` on a sleeping panel is a black
   // rectangle, which is how half the first golden set came out empty.
-  try { sh(ADB, ['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']); } catch (e) { /* ignore */ }
-  sh(ADB, ['shell', 'am', 'force-stop', 'com.scenix.tv']);
+  try { adb(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']); } catch (e) { /* ignore */ }
+  adb(['shell', 'am', 'force-stop', 'com.scenix.tv']);
   // `adb shell` re-splits its argument through the device shell. Passing the whole `am start`
   // command as ONE argument keeps a quoted title with spaces intact; passing it as argv entries
   // turned "The Last of Us" into title=The (and the player rightly refused it).
   if (t.entry.kind === 'screen' || t.entry.builder === 'player.preview') {
-    sh(ADB, ['shell',
+    adb(['shell',
       `am start -n ${PLAYER} --ez preview true --es previewState ${t.state} --es theme ${t.theme} ` +
       `--es title 'The Last of Us'`]);
   } else {
-    sh(ADB, ['shell',
+    adb(['shell',
       `am start -n ${STUDIO} --ez capture true --es entry ${t.entry.id} --es state ${t.state} ` +
       `--es theme ${t.theme}`]);
   }
@@ -98,14 +104,14 @@ function capture(t) {
   const base = t.entry.builder === 'sheet.action' || t.entry.kind === 'screen'
     || t.entry.builder === 'player.preview' ? 5600 : 3400;
   sleep(base);
-  let png = sh(ADB, ['exec-out', 'screencap', '-p']);
+  let png = adb(['exec-out', 'screencap', '-p']);
   fs.writeFileSync(shotPath, png);
   // A frame still fading in (window transition, TV wake) is dimmer than the one after it. Wait for
   // two consecutive frames to agree; that is the stable state a golden should record.
   for (let attempt = 0; attempt < 5; attempt++) {
     const next = path.join(TMP, 'stable-' + path.basename(shotPath));
     sleep(800);
-    fs.writeFileSync(next, sh(ADB, ['exec-out', 'screencap', '-p']));
+    fs.writeFileSync(next, adb(['exec-out', 'screencap', '-p']));
     let stable = false;
     try {
       execFileSync(PY, [path.join(HERE, 'shot.py'), 'same', shotPath, next], { stdio: 'ignore' });
@@ -158,7 +164,7 @@ for (const t of targets) {
   }
 }
 
-sh(ADB, ['shell', 'am', 'force-stop', 'com.scenix.tv']);
+adb(['shell', 'am', 'force-stop', 'com.scenix.tv']);
 if (write) {
   console.log(`\nwrote ${written} goldens`);
 } else {
