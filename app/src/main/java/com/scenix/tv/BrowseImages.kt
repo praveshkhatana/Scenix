@@ -51,6 +51,15 @@ object BrowseImages {
     private val metahubBackdrop = Regex("(images\\.metahub\\.space/background/)(small|medium|large)(/)")
     private val metahubLogo = Regex("(images\\.metahub\\.space/logo/)(small|medium|large)(/)")
     private val episodeStill = Regex("(episodes\\.metahub\\.space/[^/]+/\\d+/\\d+/)(w\\d+|medium|large)(\\.jpg)")
+    // The Games catalogue's art is Wikipedia fair-use covers. The `original` upload host serves a
+    // 1.4 MB PNG per tile and 429-throttles the second tile, so the whole shelf looked blank. The
+    // thumb variant is the same picture at the width the tile actually draws.
+    // Wikimedia's path hash is `<c>/<c1c2>/` — one char, then two.
+    private val wikiHash = "(?:[0-9a-f]/[0-9a-f]{2}/)?"
+    private val wikiFull =
+        Regex("(upload\\.wikimedia\\.org/wikipedia/([a-z-]+)/$wikiHash)([^/?#]+)(\\?[^#]*)?$")
+    private val wikiThumb =
+        Regex("(upload\\.wikimedia\\.org/wikipedia/([a-z-]+)/thumb/$wikiHash[^/]+/)(\\d+)px-")
 
     /**
      * Load into a recycled view. `onResult` is called on the main thread with true/false when the URL
@@ -110,8 +119,13 @@ object BrowseImages {
             if (view.tag != requestKey) return@execute
             // A CDN that does not publish the requested width (a small poster on an obscure title)
             // must not leave a blank tile: one retry at the URL the provider actually gave us.
-            val bitmap = decode(sized, targetWidthPx)
-                ?: if (sized != clean) decode(clean, targetWidthPx) else null
+            // Wikimedia answers 400 for widths that file's ladder does not publish, so its own
+            // ladder runs first and the original is the last resort, not the first one.
+            var bitmap: Bitmap? = decode(sized, targetWidthPx)
+            for (alt in alternatesFor(clean, sized)) {
+                if (bitmap != null) break
+                bitmap = decode(alt, targetWidthPx)
+            }
             if (bitmap != null) cache.put(requestKey, bitmap)
             main.post {
                 if (view.tag == requestKey) {
@@ -129,6 +143,24 @@ object BrowseImages {
                 }
             }
         }
+    }
+
+    /**
+     * Retry URLs for a sized request the CDN refused. Wikimedia publishes a per-file width ladder
+     * and answers 400 for anything off it, so walk the ladder down before falling back to the
+     * original — the original is 6-10x the bytes and the reason whole Game shelves went blank.
+     */
+    private fun alternatesFor(clean: String, sized: String): List<String> {
+        val out = ArrayList<String>(8)
+        if (wikiFull.containsMatchIn(clean) || wikiThumb.containsMatchIn(clean)) {
+            val seen = HashSet<String>()
+            for (w in intArrayOf(1280, 1024, 800, 640, 500, 330, 250)) {
+                val candidate = sizedUrl(clean, w)
+                if (candidate != sized && candidate != clean && seen.add(candidate)) out.add(candidate)
+            }
+        }
+        if (clean != sized) out.add(clean)
+        return out
     }
 
     /**
@@ -160,6 +192,39 @@ object BrowseImages {
         }
         if (episodeStill.containsMatchIn(url)) {
             return episodeStill.replace(url, "$1" + (if (t <= 360) "w300" else "w780") + "$3")
+        }
+        // Already a thumb variant? Retarget its width rather than stacking /thumb/ twice.
+        // Wikimedia rejects arbitrary thumb widths ("use thumbnail sizes listed…"), so the request
+        // must come from their ladder. Fair-use art lives under a language path and tops out at
+        // 500px; free files under /commons/ go up to 1280px.
+        val wikiLang = (wikiThumb.find(url) ?: wikiFull.find(url))?.groupValues?.get(2)
+        val wikiWidth = when {
+            wikiLang == "commons" -> when {
+                t <= 360 -> 320
+                t <= 700 -> 640
+                else -> 1280
+            }
+            t <= 300 -> 250
+            else -> 500
+        }
+        wikiThumb.find(url)?.let { m ->
+            val width = wikiWidth
+            val rest = url.substring(m.range.last + 1)   // the filename after `px-`
+            return url.substring(0, m.range.first) + m.groupValues[1] + width + "px-" + rest
+        }
+        wikiFull.find(url)?.let { m ->
+            val file = m.groupValues[3]
+            if (file.isBlank()) return@let
+            val width = wikiWidth
+            val tail = if (file.endsWith(".svg")) ".svg.png" else ""
+            // groupValues[1] is `upload.wikimedia.org/wikipedia/en/` plus any a/b/c hash dir; the
+            // thumb form inserts `thumb/` after the language segment and repeats the filename.
+            val head = m.groupValues[1].removePrefix("upload.wikimedia.org/wikipedia/")
+            val lang = head.substringBefore('/')
+            val rest = head.removePrefix("$lang/")
+            val base = url.substring(0, url.indexOf("upload.wikimedia.org"))
+            return "${base}upload.wikimedia.org/wikipedia/$lang/thumb/$rest$file/${width}px-$file$tail" +
+                m.groupValues[4]
         }
         return url
     }
@@ -201,7 +266,12 @@ object BrowseImages {
                 conn.connectTimeout = 10000
                 conn.readTimeout = 15000
                 conn.instanceFollowRedirects = false
-                conn.setRequestProperty("User-Agent", "Scenix/0.2 (Android TV)")
+                // Wikimedia's robot policy 429s a bare client UA; a declared purpose + contact URL
+                // is what their image hosts accept. Other CDNs ignore it.
+                conn.setRequestProperty(
+                    "User-Agent",
+                    "Scenix/0.2 (self-hosted media hub; https://github.com/praveshkhatana/Scenix)",
+                )
                 val code = conn.responseCode
                 if (code in 300..399) {
                     val loc = conn.headerFields["Location"]?.firstOrNull()
