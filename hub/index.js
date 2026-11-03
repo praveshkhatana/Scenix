@@ -2627,8 +2627,12 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
     // The two label tests. A copy whose own name is another release is the most common way a free
     // source turns out to be the wrong film, so the ladder will not pick one by itself.
-    const otherTitle = labelNamesOtherTitle(labelOf(cand), kept.title);
-    const mislabeled = nameIsntTheTitle(labelOf(cand), kept.title);
+    // A live channel's "label" is a quality ("576p stream"), not a release name. The film title
+    // guard does not apply: it rejected every channel whose label was not its name, which was most
+    // of the wall. Identity is the channel; the variants are its feeds.
+    const liveChannel = kept.type === 'channel' || !!kept.live;
+    const otherTitle = liveChannel ? false : labelNamesOtherTitle(labelOf(cand), kept.title);
+    const mislabeled = liveChannel ? false : nameIsntTheTitle(labelOf(cand), kept.title);
     // A person who named this copy in the Quality menu outranks an odd release name: providers
     // mislabel real copies, and the better-quality one is often exactly the odd-named file. That
     // grace does NOT extend to a copy whose own name (or SxxEyy) is a different programme: an
@@ -2640,7 +2644,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       log('PLAY WRONG TITLE', identity, labelOf(cand), kept.title);
       continue;
     }
-    if (!episodeInLabel(labelOf(cand), ep)) {
+    if (!liveChannel && !episodeInLabel(labelOf(cand), ep)) {
       tried.push(labelOf(cand) + ': its name is another episode');
       log('PLAY WRONG EPISODE', identity, labelOf(cand), ep ? ('S' + ep.season + 'E' + ep.episode) : '?');
       continue;
