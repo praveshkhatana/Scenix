@@ -126,6 +126,8 @@ class PlayerActivity : Activity() {
     private var currentSourceLabel = ""
     /** The copy the viewer explicitly picked; empty means Auto (the hub's ranked pick). */
     private var chosenSourceKey = ""
+    /** The viewer named this copy; a stall must be reported, never silently swapped for another. */
+    private var strictSource = false
     /** Set while a manual switch is in flight, so success can record the choice. */
     private var pendingSourceKey = ""
     private var audioTracks = JSONArray()
@@ -261,6 +263,8 @@ class PlayerActivity : Activity() {
     private var preloadFill: ValueAnimator? = null
     private var preloadDismissing = false
     private var preloadShownAt = 0L
+    private var preloadStatus: TextView? = null
+    private var preloadFallback: Runnable? = null
 
     // ---- chrome ---------------------------------------------------------------------------
     private lateinit var root: FrameLayout
@@ -674,6 +678,7 @@ class PlayerActivity : Activity() {
         epSeason = 0
         currentSourceLabel = ""
         pendingSourceKey = ""
+        strictSource = false
         durationMs = 0L
         timelineOffsetMs = 0L
         startRungPending = false
@@ -1280,6 +1285,15 @@ class PlayerActivity : Activity() {
 
     private fun failoverToNext(preferLower: Boolean = false) {
         val spec = spec ?: return
+        // A copy the viewer picked by hand is never replaced behind their back. The card below is
+        // the honest "it cannot" branch; its Next copy button deliberately clears the strict flag.
+        if (strictSource && !live) {
+            showError(
+                "The copy you picked is not starting. Pick another copy in Quality, or press Next copy to let the hub choose.",
+                "That copy isn't starting",
+            )
+            return
+        }
         val pos = player?.let { filmPosition(it) } ?: 0L
         // A stalled copy never raised an ExoPlayer error, but this screen HAS tried it: record it, or
         // the switch below asks the hub for the same top-ranked copy, stalls again, and the cycle
@@ -1407,10 +1421,12 @@ class PlayerActivity : Activity() {
                 // "Auto" means the hub owns the copy again; no manual checkmark should sit on the
                 // row it happened to choose this time.
                 chosenSourceKey = ""
+                strictSource = false
             } else {
                 // The checkmark belongs to the copy that is actually running. A hub substitution (or a
                 // stale pick that resolved to another copy) must move it, not leave Quality lying.
                 if (pickedKey.isNotBlank()) chosenSourceKey = pickedKey
+                strictSource = wantedKey.isNotBlank() && pickedKey == wantedKey
                 if (wantedKey.isNotBlank() && pickedKey.isNotBlank() && wantedKey != pickedKey) {
                     setStatus("That copy didn't start — playing " + currentSourceLabel.ifBlank { "another copy" }, "warn")
                 } else {
@@ -1533,8 +1549,10 @@ class PlayerActivity : Activity() {
         column.addView(line, LinearLayout.LayoutParams(
             theme.px(360f), theme.px(4f)
         ).apply { topMargin = theme.px(26f) })
-        column.addView(Views.text(app, "meta", 16f, Color.argb(0xA6, 255, 255, 255),
-            "Preparing your copy", maxLines = 1),
+        val status = Views.text(app, "meta", 16f, Color.argb(0xA6, 255, 255, 255),
+            "Preparing your copy", maxLines = 1)
+        preloadStatus = status
+        column.addView(status,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = theme.px(12f) })
@@ -1554,6 +1572,24 @@ class PlayerActivity : Activity() {
             addUpdateListener { line.progress = it.animatedValue as Float }
             start()
         }
+        // A cold 1080p ladder can hold the preloader far past a viewer's patience. In the automatic
+        // path, ask the hub for a lighter copy once; a hand-picked copy is never swapped, so only
+        // the automatic path takes this exit.
+        preloadFallback = Runnable {
+            if (!preloading() || errorShowing || preloadDismissing) return@Runnable
+            if (pendingSourceKey.isNotBlank() || chosenSourceKey.isNotBlank()) return@Runnable
+            preloadStatus?.text = "Still preparing — trying a lighter copy…"
+            failoverToNext(preferLower = true)
+            handler.postDelayed({
+                if (preloading() && !errorShowing) {
+                    finishPreloader()
+                    showError(
+                        "This copy is taking too long to start. Try again or pick another copy.",
+                        "This copy is taking too long",
+                    )
+                }
+            }, 30_000L)
+        }.also { handler.postDelayed(it, 25_000L) }
     }
 
     /** The typed title mark inside the preloader's column, if the logo request failed. */
@@ -1569,6 +1605,8 @@ class PlayerActivity : Activity() {
 
     private fun finishPreloader() {
         val sheet = preloadOverlay ?: return
+        preloadFallback?.let { handler.removeCallbacks(it) }
+        preloadFallback = null
         if (preloadDismissing) return
         // A warm copy answers in a few hundred milliseconds. A preloader that flashes is worse than
         // no preloader, so keep it on screen long enough to read the title mark, then leave.
@@ -1597,6 +1635,7 @@ class PlayerActivity : Activity() {
             if (sheet.parent === root) root.removeView(sheet)
             preloadOverlay = null
             preloadLine = null
+            preloadStatus = null
             preloadDismissing = false
         }.start()
     }
@@ -3607,10 +3646,18 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val retry = chip("Try again") { retryCurrent() }
-        val other = chip("Next copy") { failoverToNext() }
+        val other = chip("Next copy") {
+            strictSource = false
+            failoverToNext()
+        }
+        val quality = chip("Quality") {
+            clearError()
+            if (::qualityButton.isInitialized) openMenu(MenuKind.QUALITY, qualityButton)
+        }
         val back = chip("Back") { finishToDetail() }
         row.addView(retry, wrap())
         row.addView(other, wrap().withStart(theme.px(12f)))
+        row.addView(quality, wrap().withStart(theme.px(12f)))
         row.addView(back, wrap().withStart(theme.px(12f)))
         card.addView(row, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3633,7 +3680,14 @@ class PlayerActivity : Activity() {
         sameCopyRetries = 0
         recoveryScheduled = false
         showCenter("Preparing this copy…", true)
-        resolvePlay(spec, pos, WARM_TRIES, null)
+        val picked = if (strictSource) answer?.optJSONObject("picked") else null
+        val source = picked?.let {
+            JSONObject()
+                .put("id", str(it, "id"))
+                .put("label", str(it, "label"))
+                .put("provider", str(it, "provider"))
+        }
+        resolvePlay(spec, pos, WARM_TRIES, source)
     }
 
     private fun clearError() {
