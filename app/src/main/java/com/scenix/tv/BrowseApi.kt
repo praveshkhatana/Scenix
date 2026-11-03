@@ -27,6 +27,9 @@ data class BrowseRow(
     val total: Int = items.size,
 )
 
+/** Which optional add-ons this household installed: the doors the navigation is allowed to draw. */
+data class FeatureCaps(val live: Boolean, val games: Boolean)
+
 /** One person the native profile gate offers. */
 data class ProfileInfo(
     val id: String,
@@ -63,6 +66,22 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     fun load(profileId: String, done: (rows: List<BrowseRow>?, error: String?) -> Unit) {
         request("/app/v1/home", "profile=" + enc(profileId), "GET", null, 20000) { root, _, error ->
             done(root?.let { parse(it) }, error)
+        }
+    }
+
+    /**
+     * The optional add-ons this hub has installed. The navigation asks this before it draws a Games
+     * or Live TV door: a tab for a mode the household never added is a door to an empty room. A hub
+     * too old to answer returns null, and the caller keeps its previous shape.
+     */
+    fun caps(done: (FeatureCaps?) -> Unit) {
+        request("/app/v1/caps", "", "GET", null, 8000) { root, status, _ ->
+            val body = root
+            done(
+                if (status in 200..299 && body != null && body.has("live") && body.has("games")) {
+                    FeatureCaps(body.optBoolean("live", false), body.optBoolean("games", false))
+                } else null
+            )
         }
     }
 

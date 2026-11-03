@@ -42,10 +42,20 @@ internal class GlassHomeLayout(
         val onSettings: () -> Unit,
         /** A chip jumps to the real shelf it names rather than inventing a filtered route. */
         val onShelf: (String) -> Unit,
+        /** The household's optional modes: a pill segment for a mode nobody installed is a dead end. */
+        val showsLive: Boolean = true,
+        val showsGames: Boolean = true,
     )
 
     private val theme = app.theme
     private var items: List<Item> = emptyList()
+
+    /** The optional modes are doors to installed add-ons, so their segments exist only when they do. */
+    private fun offered(route: String): Boolean = when (route) {
+        "games" -> callbacks.showsGames
+        "live" -> callbacks.showsLive
+        else -> true
+    }
 
     val root: View get() = this
     val primaryControl: View get() = cardA
@@ -128,6 +138,7 @@ internal class GlassHomeLayout(
         val standing = (context as? BrowseActivity)?.intent
             ?.getStringExtra(BrowseActivity.EXTRA_TAB).orEmpty()
         listOf("Home" to "", "Movies" to "movies", "Series" to "series", "Games" to "games", "Live" to "live")
+            .filter { (_, route) -> offered(route) }
             .forEach { (label, route) ->
                 val stop = GlassKit.segment(context, app, label, route == standing) {
                     callbacks.onSection(route)

@@ -47,6 +47,9 @@ internal class Ps5HomeLayout(
         val onProfile: () -> Unit,
         val onSearch: () -> Unit,
         val onSettings: () -> Unit,
+        /** The household's optional modes: a category for a mode nobody installed is a dead end. */
+        val showsLive: Boolean = true,
+        val showsGames: Boolean = true,
     )
 
     private data class Tile(
@@ -61,6 +64,13 @@ internal class Ps5HomeLayout(
     private var items: List<Item> = emptyList()
     private var selectedIndex = 0
     private var renderGeneration = 0L
+
+    /** The optional modes are doors to installed add-ons, so their categories exist only when they do. */
+    private fun offered(route: String): Boolean = when (route) {
+        "games" -> callbacks.showsGames
+        "live" -> callbacks.showsLive
+        else -> true
+    }
 
     /** The outer browse adapter uses these boundaries for deterministic TV focus routing. */
     val root: View get() = this
@@ -155,7 +165,7 @@ internal class Ps5HomeLayout(
             "Series" to "series",
             "Games" to "games",
             "Live" to "live",
-        )
+        ).filter { (_, route) -> offered(route) }
         sections.forEachIndexed { index, (label, route) ->
             val stop = makeCategory(label, route, index == 0)
             categoryStops += stop

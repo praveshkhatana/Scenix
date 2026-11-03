@@ -286,6 +286,19 @@ function hasSubtitleSource() {
 }
 
 /**
+ * The optional modes this household actually installed. Live TV is the live-tv add-on with a playlist
+ * pointing somewhere real, and Games is an enabled add-on that declares the games resource — the tab is
+ * a door to a room the household built, so a hub that never had either must not draw one. Presence here
+ * is a fact about the install, never about which build the client is talking to.
+ */
+async function navCaps() {
+  const list = await addons.list();
+  const games = list.some((a) => a.enabled !== false &&
+    Array.isArray(a.resources) && a.resources.includes('games'));
+  return { live: capabilities().live, games };
+}
+
+/**
  * A profile on the wire. The PIN is deliberately absent: it travels inbound, never outbound, so a code
  * typed on a TV cannot be read off the network by whoever is listening, and a client that wants to know
  * whether to show a keypad asks with `pinSet`.
@@ -3911,6 +3924,13 @@ async function handle(req, res) {
     }
 
     // ---- product API ----
+    // What the navigation may offer, in one small answer: the app asks this at start-up instead of
+    // downloading the manifest to count add-ons. A household without the games add-on, or without a
+    // live playlist, gets no tab for a mode it cannot enter.
+    if (path === '/app/v1/caps') {
+      return send(res, 200, await navCaps());
+    }
+
     if (path === '/app/v1/manifest') {
       return send(res, 200, {
         id: HUB_ID,

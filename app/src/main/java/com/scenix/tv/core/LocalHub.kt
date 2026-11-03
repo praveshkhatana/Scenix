@@ -357,6 +357,17 @@ class LocalHub private constructor(context: Context) {
             .put("players", JSONArray(listOf("http", "hls", "dash")))
     }
 
+    /**
+     * The two optional doors, in the small shape the navigation asks for. Same facts as the
+     * manifest carries: live is a playlist this TV can tune, games is an installed addon that
+     * declares the games resource. A TV answering for itself draws the same bar as a hub.
+     */
+    fun capsJson(): JSONObject {
+        val live = settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true
+        val games = addonManifests().any { it.has("games") }
+        return JSONObject().put("live", live).put("games", games)
+    }
+
     fun profilesJson(): JSONObject {
         ensureProfiles()
         val out = JSONArray()

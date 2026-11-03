@@ -36,6 +36,10 @@ class FixtureServer private constructor(
 
             path == "/app/v1/manifest" -> res.json(200, manifest())
 
+            // A fixture is a preview of the full product, so it offers both optional modes: the
+            // dataset cannot install or remove the add-ons behind them.
+            path == "/app/v1/caps" -> res.json(200, JSONObject().put("live", true).put("games", true))
+
             path == "/app/v1/profiles" -> res.json(200, profiles())
 
             path.startsWith("/app/v1/profiles/") && path.endsWith("/unlock") ->

@@ -63,6 +63,10 @@ internal data class HomeSurfaceCallbacks(
     /** The active section ("" = Home). Section pills paint ONLY the matching segment active, so
      *  Home shows no selection at all (owner, round 7: "when on home screen why is Movies selected?"). */
     val section: String = "",
+    /** Draw the Live TV door only when the household's hub carries the live add-on and a playlist. */
+    val showsLive: Boolean = true,
+    /** Draw the Games door only when the household installed a games add-on. */
+    val showsGames: Boolean = true,
 )
 
 /**
@@ -106,6 +110,8 @@ internal object HomeSurfaceFactory {
                         onProfile = callbacks.onProfile,
                         onSearch = callbacks.onSearch,
                         onSettings = callbacks.onSettings,
+                        showsLive = callbacks.showsLive,
+                        showsGames = callbacks.showsGames,
                     ),
                 ),
             )
@@ -121,6 +127,8 @@ internal object HomeSurfaceFactory {
                         onSearch = callbacks.onSearch,
                         onSettings = callbacks.onSettings,
                         onShelf = callbacks.onShelf,
+                        showsLive = callbacks.showsLive,
+                        showsGames = callbacks.showsGames,
                     ),
                 ),
             )
@@ -136,6 +144,8 @@ internal object HomeSurfaceFactory {
                         onSearch = callbacks.onSearch,
                         onSettings = callbacks.onSettings,
                         onShelf = callbacks.onShelf,
+                        showsLive = callbacks.showsLive,
+                        showsGames = callbacks.showsGames,
                     ),
                 ),
             )
@@ -150,6 +160,8 @@ internal object HomeSurfaceFactory {
                         onSearch = callbacks.onSearch,
                         onSettings = callbacks.onSettings,
                         onShelf = callbacks.onShelf,
+                        showsLive = callbacks.showsLive,
+                        showsGames = callbacks.showsGames,
                     ),
                 ),
             )
@@ -166,6 +178,8 @@ internal object HomeSurfaceFactory {
                         onSettings = callbacks.onSettings,
                         onShelf = callbacks.onShelf,
                         section = callbacks.section,
+                        showsLive = callbacks.showsLive,
+                        showsGames = callbacks.showsGames,
                     ),
                 ),
             )

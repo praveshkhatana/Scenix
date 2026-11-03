@@ -31,6 +31,9 @@ class LocalServer private constructor(
             path == "/app/v1/manifest" ->
                 res.json(200, hub.manifestJson())
 
+            path == "/app/v1/caps" ->
+                res.json(200, hub.capsJson())
+
             path == "/app/v1/profiles" && method == "POST" -> {
                 val o = parse(body)
                 val out = if (o == null) JSONObject().put("error", "body must be JSON") else hub.addProfile(o)

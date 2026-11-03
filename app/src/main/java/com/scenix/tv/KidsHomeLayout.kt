@@ -50,11 +50,21 @@ internal class KidsHomeLayout(
         val onSettings: () -> Unit,
         val onShelf: (String) -> Unit,
         val section: String = "",
+        /** The household's optional modes: a pill segment for a mode nobody installed is a dead end. */
+        val showsLive: Boolean = true,
+        val showsGames: Boolean = true,
     )
 
     private val theme = app.theme
     private var items: List<Item> = emptyList()
     private var activeIndex = 0
+
+    /** The optional modes are doors to installed add-ons, so their segments exist only when they do. */
+    private fun offered(route: String): Boolean = when (route) {
+        "games" -> callbacks.showsGames
+        "live" -> callbacks.showsLive
+        else -> true
+    }
 
     val root: View get() = this
     val primaryControl: View get() = cardA
@@ -127,6 +137,7 @@ internal class KidsHomeLayout(
 
         val pill = KidsKit.tabCapsule(app, theme.space("kidsPillH", 62f))
         val sections = listOf("Movies" to "movies", "Series" to "series", "Games" to "games", "Live" to "live")
+            .filter { (_, route) -> offered(route) }
         sections.forEach { (label, route) ->
             // Only the segment for the section actually on screen reads active; Home (no section)
             // shows no selection (owner, round 7).

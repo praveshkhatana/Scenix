@@ -79,6 +79,23 @@ class Prefs(context: Context) {
     fun setHubToken(token: String) = sp.edit().putString(KEY_TOKEN, token.trim()).apply()
 
     /**
+     * The last answer to "which optional add-ons this household installed". Home paints its bar
+     * before the hub can answer, so the previous shape is drawn first and corrected on the next
+     * load — a tab never appears from a guess, only from a fact. Null until a hub has answered once.
+     */
+    fun addonCaps(): Pair<Boolean, Boolean>? {
+        if (!sp.getBoolean(KEY_CAPS_KNOWN, false)) return null
+        return sp.getBoolean(KEY_CAPS_LIVE, false) to sp.getBoolean(KEY_CAPS_GAMES, false)
+    }
+
+    fun setAddonCaps(live: Boolean, games: Boolean) {
+        sp.edit().putBoolean(KEY_CAPS_KNOWN, true)
+            .putBoolean(KEY_CAPS_LIVE, live)
+            .putBoolean(KEY_CAPS_GAMES, games)
+            .apply()
+    }
+
+    /**
      * A profile the web gate has unlocked in this app session. Native Detail needs it to open the
      * shared player without asking for the same PIN on every Play press. It is a local, expiring
      * trust mark, not a replacement for the hub's PIN check: a browser never sees it.
@@ -200,6 +217,9 @@ class Prefs(context: Context) {
         private const val KEY_AUTO_UPDATE = "auto_update"
         private const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         private const val KEY_TOKEN = "hub_token"
+        private const val KEY_CAPS_KNOWN = "addon_caps_known"
+        private const val KEY_CAPS_LIVE = "addon_caps_live"
+        private const val KEY_CAPS_GAMES = "addon_caps_games"
         private const val KEY_PROFILE_UNLOCKED = "profile_unlocked"
         private const val KEY_PROFILE_UNLOCKED_AT = "profile_unlocked_at"
         private const val PROFILE_SESSION_MS = 6L * 60 * 60 * 1000

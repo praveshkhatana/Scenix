@@ -101,7 +101,14 @@ class BrowseActivity : Activity() {
     private var slides: List<Item> = emptyList()
     private var heroPos = 0
     private var browseAdapter: BrowseAdapter? = null
-    private var liveTab: View? = null
+    // Which optional add-ons the household installed. The bar is painted before the hub can answer,
+    // so `caps` is the last known fact (from Prefs) and `barCaps` is the snapshot this page's bar
+    // was actually drawn from — the load that follows compares the fresh answer against that, not
+    // against the cache, so a first launch still resolves to one shape.
+    private var caps: FeatureCaps? = null
+    private var barCaps: FeatureCaps? = null
+    /** The Live TV doors on screen (pill, classic bar), so an older hub can still earn one from a row. */
+    private val liveNavs = ArrayList<View>()
     // The pill floats over a full-bleed stage, so geometric focus search can't be trusted to walk
     // from a tile up into it. One named anchor on the pill and one on the list make the route
     // explicit: UP from the featured tiles lands on the bar, DOWN from the bar returns to the top.
@@ -586,30 +593,33 @@ class BrowseActivity : Activity() {
         })
         // Profile, then Search, then the library. Search is a destination, not a footnote at the
         // bottom: it sits above Home the way the owner asked, and every row carries an icon.
-        val destinations = listOf<Triple<String, Int, () -> Unit>>(
-            Triple("Switch profile", R.drawable.ic_rail_profile) {
-                startActivity(Intent(this, ProfilesActivity::class.java))
-            },
-            Triple("Search", R.drawable.ic_nav_search) {
-                startActivity(Intent(this, SearchActivity::class.java)
+        // Games and Live TV are doors to optional add-ons, so the rail offers them only when the
+        // household actually installed them — an empty room is not a destination.
+        val nav = barCaps ?: effectiveCaps()
+        val destinations = buildList<Triple<String, Int, () -> Unit>> {
+            add(Triple("Switch profile", R.drawable.ic_rail_profile) {
+                startActivity(Intent(this@BrowseActivity, ProfilesActivity::class.java))
+            })
+            add(Triple("Search", R.drawable.ic_nav_search) {
+                startActivity(Intent(this@BrowseActivity, SearchActivity::class.java)
                     .putExtra(SearchActivity.EXTRA_PROFILE, profileId))
-            },
-            Triple("Home", R.drawable.ic_rail_home) { goTab("") },
-            Triple("Movies", R.drawable.ic_rail_movies) { goTab("movies") },
-            Triple("Series", R.drawable.ic_rail_series) { goTab("series") },
-            Triple("Games", R.drawable.ic_rail_games) {
-                startActivity(Intent(this, GamesActivity::class.java)
+            })
+            add(Triple("Home", R.drawable.ic_rail_home) { goTab("") })
+            add(Triple("Movies", R.drawable.ic_rail_movies) { goTab("movies") })
+            add(Triple("Series", R.drawable.ic_rail_series) { goTab("series") })
+            if (nav.games) add(Triple("Games", R.drawable.ic_rail_games) {
+                startActivity(Intent(this@BrowseActivity, GamesActivity::class.java)
                     .putExtra(GamesActivity.EXTRA_PROFILE, profileId))
-            },
-            Triple("Live TV", R.drawable.ic_rail_live) {
-                startActivity(Intent(this, LiveChannelsActivity::class.java)
+            })
+            if (nav.live) add(Triple("Live TV", R.drawable.ic_rail_live) {
+                startActivity(Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
                     .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
-            },
-            Triple("Settings", R.drawable.ic_nav_settings) {
-                startActivity(Intent(this, SettingsActivity::class.java)
+            })
+            add(Triple("Settings", R.drawable.ic_nav_settings) {
+                startActivity(Intent(this@BrowseActivity, SettingsActivity::class.java)
                     .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
-            },
-        )
+            })
+        }
         for ((label, icon, action) in destinations) {
             panel.addView(railRow(label, icon, action), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, theme.px(66f)
@@ -784,6 +794,10 @@ class BrowseActivity : Activity() {
             finish()
             return
         }
+        // The bar is painted from the last answer about optional add-ons; load() asks the hub again
+        // and rebuilds only if the household changed its add-ons since that answer.
+        caps = app.prefs.addonCaps()?.let { FeatureCaps(it.first, it.second) }
+        barCaps = effectiveCaps()
 
         // An immersive scene uses a shared room behind the page. A PS5-style hub owns its own
         // backdrop and compact utility strip instead, so it deliberately stays out of this host
@@ -1249,13 +1263,16 @@ class BrowseActivity : Activity() {
             pill.addView(moviesTab)
             pill.addView(seriesTab)
             // Games is its own mode, not another catalogue tab: the hub answers a games shelf set
-            // that has nothing in common with movie rows, so the tab opens its own screen.
+            // that has nothing in common with movie rows, so the tab opens its own screen. It is a
+            // door to an add-on, so a household without the games add-on gets no tab.
+            val nav = barCaps ?: effectiveCaps()
             val gamesTab = navTab("Games", active = false) {
                 startActivity(
                     Intent(this@BrowseActivity, GamesActivity::class.java)
                         .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
                 )
             }.apply { id = View.generateViewId() }
+            gamesTab.visibility = if (nav.games) View.VISIBLE else View.GONE
             pill.addView(gamesTab)
             val live = navTab("Live TV") {
                 startActivity(
@@ -1263,11 +1280,10 @@ class BrowseActivity : Activity() {
                         .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
                 )
             }
-            // Live TV earns its place in the pill: it shows once the hub actually carries the live
-            // row, and stays out of the way of households that have not configured it. The answer
-            // outlives a tab switch so the bar never changes shape mid-walk.
-            liveTab = live
-            live.visibility = if (liveSeen) View.VISIBLE else View.GONE
+            // Live TV earns its place in the pill from the add-on and its playlist, not from a
+            // guessed row. The answer outlives a tab switch so the bar never changes shape mid-walk.
+            live.visibility = if (nav.live) View.VISIBLE else View.GONE
+            liveNavs += live
             live.id = View.generateViewId()
             pill.addView(live)
             pill.addView(View(this).apply { setBackgroundColor(theme.line) },
@@ -1344,22 +1360,27 @@ class BrowseActivity : Activity() {
         val movies = navButton("Movies") { goTab("movies") }.apply { id = View.generateViewId() }
         val series = navButton("Series") { goTab("series") }.apply { id = View.generateViewId() }
         // Games is a mode, not a catalogue tab, in this bar too: without it the only way to the
-        // games screens from the Netflix and Classic packs was the settings page.
+        // games screens from the Netflix and Classic packs was the settings page. It is a door to
+        // an add-on, so it exists only when the household installed the games add-on.
+        val nav = barCaps ?: effectiveCaps()
         val games = navButton("Games") {
             startActivity(
                 Intent(this@BrowseActivity, GamesActivity::class.java)
                     .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
             )
         }.apply { id = View.generateViewId() }
-        // Live TV belongs in every pack's bar, not just the Apple pill. The Netflix and Classic bars
-        // were the one place a household with channels could not reach them without the left rail.
+        games.visibility = if (nav.games) View.VISIBLE else View.GONE
+        // Live TV belongs in every pack's bar, not just the Apple pill — when the hub carries the
+        // live add-on and a playlist. The Netflix and Classic bars were the one place a household
+        // with channels could not reach them without the left rail.
         val live = navButton("Live TV") {
             startActivity(
                 Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
                     .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
             )
         }.apply { id = View.generateViewId() }
-        live.visibility = if (liveSeen) View.VISIBLE else View.GONE
+        live.visibility = if (nav.live) View.VISIBLE else View.GONE
+        liveNavs += live
         profile.id = View.generateViewId()
         search.id = View.generateViewId()
         settings.id = View.generateViewId()
@@ -1585,8 +1606,33 @@ class BrowseActivity : Activity() {
         return disc
     }
 
+    /**
+     * What the navigation may offer: the hub's last answer about optional add-ons, or — until a hub
+     * answers once — the legacy signals (a live row means live TV; Games keeps its old behaviour).
+     */
+    private fun effectiveCaps(): FeatureCaps =
+        caps ?: FeatureCaps(live = liveSeen, games = true)
+
     private fun load() {
         showSkeleton(true)
+        // The two optional modes are doors to installed add-ons, so ask what this household has.
+        // This runs beside the rows, not in front of them: a tiny answer must never hold the page,
+        // and an unreachable hub must not wait out this request before showing its own error. The
+        // bar was painted from the last known answer; if the household changed its add-ons since,
+        // one rebuild gives the page the doors that exist now.
+        api.caps { answer ->
+            if (isFinishing || isDestroyed) return@caps
+            if (answer != null) {
+                val rendered = barCaps
+                caps = answer
+                app.prefs.setAddonCaps(answer.live, answer.games)
+                if (rendered != null && rendered != answer) recreate()
+            }
+        }
+        loadHome()
+    }
+
+    private fun loadHome() {
         if (section.isNotBlank()) {
             api.row(profileId, section) { _, items, error ->
                 if (isFinishing || isDestroyed) return@row
@@ -1640,12 +1686,15 @@ class BrowseActivity : Activity() {
                 return@load
             }
             loaded = true
-            // The pill's Live TV tab appears only for households whose hub actually carries it —
-            // and then never withdraws: a hub mid re-warm briefly answers with stale empty rows,
-            // and a tab that keeps changing shape under the thumb is worse than one that arrives late.
+            // A hub that cannot answer /app/v1/caps still earns the Live door from its own live row;
+            // a hub that answered has already decided the bar's shape. Once known, the tab never
+            // withdraws: a hub mid re-warm briefly answers with stale empty rows, and a tab that
+            // keeps changing shape under the thumb is worse than one that arrives late.
             if (rows.any { it.id == "live" || it.card == "channel" }) liveSeen = true
-            liveTab?.visibility = if (liveSeen) View.VISIBLE else View.GONE
-            wirePillFocus()
+            if (caps == null && liveSeen) {
+                liveNavs.forEach { it.visibility = View.VISIBLE }
+                wirePillFocus()
+            }
             // Live has a whole tab and a wall of its own; the Home shelves are for films and shows,
             // so the old live strip is no longer parked on the front page.
             val others = rows.filter {
@@ -2177,6 +2226,8 @@ class BrowseActivity : Activity() {
                             }
                         },
                         section = this@BrowseActivity.section,
+                        showsLive = effectiveCaps().live,
+                        showsGames = effectiveCaps().games,
                     ),
                 )
                 surface.root.layoutParams = RecyclerView.LayoutParams(
@@ -2930,8 +2981,8 @@ class BrowseActivity : Activity() {
     companion object {
         const val EXTRA_PROFILE = "profile"
         const val EXTRA_TAB = "tab"
-        // Whether this hub carries a Live TV row at all. The home load learns it once; a section
-        // page rebuilds the activity, and the pill must not change shape mid-session.
+        // Whether this hub carries a Live TV row. It is the fallback signal for a hub too old to
+        // answer /app/v1/caps; /app/v1/caps is the fact the navigation prefers.
         internal var liveSeen = false
         private const val TYPE_HERO = 1
         private const val TYPE_SHELF = 2
