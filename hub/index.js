@@ -2249,6 +2249,18 @@ function labelNamesARelease(label, title) {
   return true;
 }
 
+const labelOf = (s) => (s && (s.label || s.provider || s.id)) || 'source';
+
+/**
+ * Does this copy's own name disagree with the title the page is about? Two tests: the label is a
+ * release name for something else, or a parenthetical names another show. Auto-play treats a yes as
+ * "do not silently hand this over"; a person choosing the copy by name overrules it (see the play
+ * ladder), because they are the only one who can decide that a provider mislabelled the right film.
+ */
+function nameIsntTheTitle(label, title) {
+  return labelNamesARelease(label, title) || labelNamesOtherTitle(label, title);
+}
+
 /**
  * A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`.
  * Only trust it when the rest of the label also carries title-like words. `S01E01 (Pilot)` is an
@@ -2265,6 +2277,20 @@ function labelNamesOtherTitle(label, title) {
   // an episode, edition or language (`The Office (Pilot)`), not a claim about a different film.
   if (wanted.length && outside.some((w) => wanted.includes(w))) return false;
   return parens.some((part) => looksLikeAnotherTitle(part, title));
+}
+
+/**
+ * The copies the Quality menu offers. A source whose own name is another release stays on the list
+ * with `mislabeled: true` and sorts after the honest ones: hiding it took the better copy out of the
+ * viewer's reach, and the only person who can tell a mislabelled file from a wrong film is the one
+ * watching it.
+ */
+function listAlternatives(candidates, source, title) {
+  const flagged = candidates.filter((s) => s !== source).map((s) => (
+    nameIsntTheTitle(labelOf(s), title) ? Object.assign({}, s, { mislabeled: true }) : s
+  ));
+  flagged.sort((a, b) => (a.mislabeled === true ? 1 : 0) - (b.mislabeled === true ? 1 : 0));
+  return flagged.slice(0, ALT_MAX);
 }
 
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
@@ -2474,7 +2500,6 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // and the answer is either that copy or an honest refusal. Copies past the first seats are only
   // woken by an automatic walk.
   const spare = explicit ? [] : ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
-  const labelOf = (s) => (s && (s.label || s.provider || s.id)) || 'source';
 
   const deadline = Date.now() + PLAY_TOTAL_BUDGET_MS;
   const tried = [];
@@ -2541,6 +2566,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     return value;
   };
 
+  let labelOverride = null; // set when a named pick plays despite its own release name
   for (const cand of queue) {
     const addon = addonOf(cand);
     if (!addon || typeof addon.play !== 'function') continue;
@@ -2549,21 +2575,22 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
     if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
-    // An HLS provider can mint a working stream for a different show and label it with that show's
-    // name. The address is not a filename and the probe only proves bytes; this label is the last
-    // cheap fact before the player draws the wrong programme under the right title.
-    if (!urlLooksLikeTitle(o.url, kept.title) && labelNamesOtherTitle(labelOf(cand), kept.title)) {
-      tried.push(labelOf(cand) + ': names a different title');
-      log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
-      continue;
-    }
-    // The stronger case: the label itself is a release name ("Titan VII - Direct MP4") for a page
-    // that is not that film. A ladder URL can still carry the requested title in its own path, so
-    // the label is the evidence here, not the address.
-    if (labelNamesARelease(labelOf(cand), kept.title)) {
+    // The two label tests. A copy whose own name is another release is the most common way a free
+    // source turns out to be the wrong film, so the ladder will not pick one by itself.
+    const mislabeled = nameIsntTheTitle(labelOf(cand), kept.title);
+    // A person who named this copy in the Quality menu outranks that test: providers mislabel real
+    // copies, and the better-quality one is often exactly the odd-named file. Their choice plays, and
+    // the player prints what the source called it, so nothing is substituted quietly underneath them.
+    const named = wanted && ((wanted.id && String(cand.id) === String(wanted.id))
+      || (wanted.label && labelOf(cand) === wanted.label));
+    if (mislabeled && !named) {
       tried.push(labelOf(cand) + ': its name is not ' + (kept.title || 'this title'));
       log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
       continue;
+    }
+    if (mislabeled && named) {
+      labelOverride = labelOf(cand);
+      log('PLAY LABEL OVERRIDE', identity, labelOf(cand), kept.title);
     }
 
     // Debrid first: a magnet or a hoster link becomes ordinary HTTP and skips the swarm entirely. If it
@@ -3100,8 +3127,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         error: 'no copy of this is ready to stream from the hub yet',
         warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
         magnet: out.url,
-        alternatives: candidates.filter((s) => s !== source
-          && !labelNamesARelease(labelOf(s), kept.title)).slice(0, ALT_MAX),
+        alternatives: listAlternatives(candidates, source, kept.title),
       },
     };
   }
@@ -3141,8 +3167,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
             identity, title: kept.title || null, tried,
             error: 'this copy is still being prepared',
             warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
-            alternatives: candidates.filter((s) => s !== source
-          && !labelNamesARelease(labelOf(s), kept.title)).slice(0, ALT_MAX),
+            alternatives: listAlternatives(candidates, source, kept.title),
           },
         };
       }
@@ -3599,8 +3624,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     checked: next.checked === true,
   } : null;
   if (allExcluded) out.allExcluded = true;
-  out.alternatives = candidates.filter((s) => s !== source
-    && !labelNamesARelease(labelOf(s), kept.title)).slice(0, ALT_MAX);
+  out.alternatives = listAlternatives(candidates, source, kept.title);
+  if (labelOverride) out.labelMismatch = labelOverride;
   out.title = kept.title || null;
   // Which episode the Play button actually resolved, and the one after it, so the player can label its
   // button "Play S1 E4" and "Autoplay next" can step a series instead of replaying the same one.
