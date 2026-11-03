@@ -2225,6 +2225,30 @@ function urlLooksLikeTitle(url, title) {
   return wanted.some((w) => text.includes(w));
 }
 
+// Provider/service words that say who serves a copy, not what film it is.
+const RELEASE_SERVICE_WORDS = new Set([
+  'amazon', 'prime', 'video', 'netflix', 'hotstar', 'disney', 'hulu', 'max', 'apple', 'paramount',
+  'peacock', 'jiocinema', 'zee', 'sony', 'youtube', 'archive', 'internet', 'org', 'direct',
+  'adaptive', 'torrent', 'hls', 'dash', 'stream', 'source', 'file', 'mp4', 'mkv', 'web', 'dl',
+  'opensubtitles', 'subtitle', 'subtitles',
+]);
+
+/**
+ * A label that names a release, not just a quality/size/service. `Titan VII - Direct MP4` on a page
+ * for Schindler's List is a different film (or a lure); `1080p · 3.15 GB`, `Hindi`, `Amazon Prime
+ * Video` and `Archive.org · 415 MB` are copy descriptions and stay eligible. An explicit pick is
+ * still refused here: playing the wrong film is worse than saying that copy is not this title.
+ */
+function labelNamesARelease(label, title) {
+  const words = labelWords(label).filter((w) => !RELEASE_SERVICE_WORDS.has(w));
+  if (!words.length) return false;
+  const wanted = labelWords(title);
+  if (!wanted.length) return false;
+  const clean = String(label || '').toLowerCase();
+  if (wanted.some((w) => clean.includes(w))) return false;
+  return true;
+}
+
 /**
  * A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`.
  * Only trust it when the rest of the label also carries title-like words. `S01E01 (Pilot)` is an
@@ -2300,6 +2324,20 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
 
   // Touch the links before handing any of them over, then let the ranking rule use what came back.
   const skip = exclusions(opts.exclude);
+  // An explicit pick is a decision, not a hint: the copy a person tapped must not be filtered out by
+  // the screen's own "already tried" list. Without this, re-choosing a copy that stalled once silently
+  // fell back to a different one.
+  if (wanted && (wanted.id || wanted.label)) {
+    for (const s of sources) {
+      if ((wanted.id && String(s.id) === String(wanted.id))
+          || (wanted.label && s.label === wanted.label)) {
+        skip.delete(s.id);
+        if (s.label) skip.delete(s.label);
+        if (s.provider && s.label) skip.delete(s.provider + ':' + s.label);
+        if (s._url) skip.delete(s._url);
+      }
+    }
+  }
   const open = sources.filter((s) => !isExcluded(s, skip));
   await probePass(open.length ? open : sources, kept.streamId || identity, { force: opts.reprobe === true });
   // A live channel that comes BACK to the hub (`/switch` with exclusions — the TV's own failover after
@@ -2336,6 +2374,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const candidates = videoPool.length ? videoPool : broad;
   const prefAudio = (prefs.resolve(profile).audioLanguages || []).map((c) => media.langOf(c));
   let source = candidates[0];
+  // `explicit` means the viewer named one copy by id or label. It changes the whole walk below:
+  // an explicit copy is played or refused, never swapped for the automatic pick.
+  let explicit = false;
+  const wantsExact = !!(wanted && (wanted.id || wanted.label));
   if (wanted) {
     // The id is the exact handle the picker sent. Label/provider are only fallbacks: several copies
     // can share a provider, and choosing the first of them is how "try this 1080p copy" became a
@@ -2349,7 +2391,18 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (!match && !wanted.id && !wanted.label && wanted.provider) {
       match = candidates.find((s) => s._addon === wanted.provider || s.provider === wanted.provider);
     }
-    if (match) source = match;
+    if (match) {
+      source = match;
+      explicit = wantsExact;
+    }
+  }
+  // The row is stale (the hub's addon changed its list, or the title moved). Say so; do not answer
+  // with a different copy while the Quality menu still shows the one that was tapped.
+  if (wantsExact && !explicit) {
+    return { status: 404, body: {
+      error: 'that copy is no longer offered for this title; choose another in Quality',
+      identity,
+    } };
   }
   const addonOf = (s) => registry.byId[s && s._addon];
   // Which wrapper the caller can read — settled BEFORE the picker runs, because the speed bar a copy has
@@ -2401,7 +2454,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const seated = candidates.slice().sort((a, b) => rankDown(a) - rankDown(b));
   // The whole ranked walk is kept: an ordinary press only seats PLAY_MAX_TRIES copies, but a minted link
   // refused below may wake one more copy from further down the same ranking (bounded by the retry count).
-  const ranked = wanted && source ? [source, ...seated.filter((s) => s !== source)] : seated.slice();
+  const ranked = explicit ? [source] : seated.slice();
   const queue = ranked.slice(0, PLAY_MAX_TRIES);
   // Then the copies this connection can actually feed. Once the hub has measured the engine's rate, a
   // 6 GB 4K copy stops competing with a 900 MB 720p one: the smaller is tried first because the bigger
@@ -2417,14 +2470,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     return need <= swarmMbps * fitCeiling ? 0 : need;
   };
   queue.sort((a, b) => fitRank(a) - fitRank(b));
-  // An explicit copy stays at the head even when the automatic fit order would move a smaller torrent
-  // ahead of it: "try this copy" is a person's decision, and the walk below still moves on if it fails.
-  if (wanted && source) {
-    const at = queue.indexOf(source);
-    if (at > 0) queue.unshift(queue.splice(at, 1)[0]);
-  }
-  // Copies past the first seats, in the same measured order: woken only when a minted link is refused.
-  const spare = ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
+  // An explicit copy is the only copy this press may start: "try this copy" is a person's decision,
+  // and the answer is either that copy or an honest refusal. Copies past the first seats are only
+  // woken by an automatic walk.
+  const spare = explicit ? [] : ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
   const labelOf = (s) => (s && (s.label || s.provider || s.id)) || 'source';
 
   const deadline = Date.now() + PLAY_TOTAL_BUDGET_MS;
@@ -2508,6 +2557,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
       continue;
     }
+    // The stronger case: the label itself is a release name ("Titan VII - Direct MP4") for a page
+    // that is not that film. A ladder URL can still carry the requested title in its own path, so
+    // the label is the evidence here, not the address.
+    if (labelNamesARelease(labelOf(cand), kept.title)) {
+      tried.push(labelOf(cand) + ': its name is not ' + (kept.title || 'this title'));
+      log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
+      continue;
+    }
 
     // Debrid first: a magnet or a hoster link becomes ordinary HTTP and skips the swarm entirely. If it
     // says no, the torrent branch asks the gateway exactly as it did before this file existed.
@@ -2575,12 +2632,19 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       if (kept.type === 'movie' && Number(kept.durationMs) > 0) {
         const fp = await fingerprint.duration(o.url, o.headers, 2600);
         if (fp && fp.ok && !fingerprint.matches(kept.durationMs, fp.durationMs)) {
-          tried.push(labelOf(cand) + ': runs ' + Math.round(fp.durationMs / 60000)
-            + ' min against a ' + Math.round(Number(kept.durationMs) / 60000) + ' min film');
+          const note = 'runs ' + Math.round(fp.durationMs / 60000)
+            + ' min against a ' + Math.round(Number(kept.durationMs) / 60000) + ' min film';
           log('PLAY DURATION MISMATCH', identity, labelOf(cand),
             'file=' + Math.round(fp.durationMs / 60000) + 'min',
-            'title=' + Math.round(Number(kept.durationMs) / 60000) + 'min');
-          continue;
+            'title=' + Math.round(Number(kept.durationMs) / 60000) + 'min',
+            explicit ? 'kept: the viewer picked this copy' : 'skipped');
+          if (!explicit) {
+            tried.push(labelOf(cand) + ': ' + note);
+            continue;
+          }
+          // A person chose this exact copy. A shorter/longer cut is a fact to report, not a reason
+          // to play a different film under the same Play press.
+          extraWhy.push('you chose this copy; it ' + note);
         }
       }
       // ---- measure the copy the way the screen is going to read it ---------------------------
@@ -2669,8 +2733,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           o.measuredMbps = Number(gotD.toFixed(2));
           o.measuredBytes = md.bytes || 0;
           const headroom = gotD / needDirect;
-          if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
-          continue;
+          if (explicit) {
+            // The viewer chose the sharper copy. Report the measurement, but do not quietly play a
+            // different one; the player's own buffer is allowed to prove the measurement wrong.
+            extraWhy.push('you chose this copy; its first ' + (md.bytes || 0)
+              + ' bytes measured ' + gotD.toFixed(1) + ' Mbps against ~' + needDirect.toFixed(1)
+              + ' Mbps needed, but it is playing because you picked it');
+          } else {
+            if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
+            continue;
+          }
         } else if (realD) {
           o.checked = true;
           o.cushioned = true;
@@ -2828,7 +2900,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // own, so it is kept as the last resort rather than thrown away.
       o.warming = true;
       slowGateway = slowGateway || { o, cand };
-      continue;
+      if (!explicit) continue;
+      extraWhy.push('you chose this copy; the engine has not served a byte of it yet, so it may start cold');
     }
     const got = m && Number.isFinite(m.mbps) ? m.mbps : null;
     const rateIsReal = !!m && !!m.real && got != null;
@@ -2863,7 +2936,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       o.measuredBytes = 0;
       o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
       slowGateway = slowGateway || { o, cand };
-      continue;
+      if (!explicit) continue;
+      extraWhy.push('you chose this copy; it is still cold, so its first frame may take a moment');
     } else if (got != null) {
       // The sample was too short, or was a floor rather than a rate: the number cannot be trusted either
       // way, which is precisely the situation that used to end in `PLAY RATE IGNORED … reason=rateFloor`
@@ -2880,7 +2954,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       o.measuredMbps = Number(got.toFixed(2));
       o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
       slowGateway = slowGateway || { o, cand };
-      continue;
+      if (!explicit) continue;
+      extraWhy.push('you chose this copy; its first sample was too short to rate, so it is playing unmeasured');
     }
     // A copy this hub watched starve a viewer minutes ago is not offered again as though nothing had
     // happened. It stays available — a different evening's swarm may feed it — but it stops being the
@@ -2913,8 +2988,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       o.neededMbps = Number(needs.toFixed(2));
       o.measuredMbps = Number(got.toFixed(2));
       const headroom = got / needs;
-      if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
-      continue;
+      if (explicit) {
+        extraWhy.push('you chose this copy; its first ' + (m.bytes || 0) + ' bytes measured '
+          + got.toFixed(1) + ' Mbps against ~' + needs.toFixed(1)
+          + ' Mbps needed, but it is playing because you picked it');
+      } else {
+        if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
+        continue;
+      }
     }
     if (m) {
       o.checked = true;
@@ -2942,6 +3023,38 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }));
   scored.sort((x, y) => (y.bytes - x.bytes) || (y.seeders - x.seeders) || (x.size - y.size));
   const fallback = (scored[0] && scored[0].f) || lastResort;
+  if (!out && explicit) {
+    // A direct copy whose short validation window was silent is not proof it cannot play: a busy
+    // archive/CDN node often takes longer to first byte than the window. Hand the player the URL it
+    // chose and let its own read timeout decide, exactly as the automatic path does.
+    if (lastResort && lastResort.o && lastResort.o.url) {
+      out = lastResort.o;
+      source = lastResort.cand;
+      tried.push('letting the player read the chosen copy directly');
+    }
+  }
+  if (!out && explicit) {
+    // The chosen copy could not be opened. The Quality menu must not be left claiming it is on.
+    const reason = tried.find((t) => t.startsWith(labelOf(source))) || tried[0]
+      || 'it answered with nothing the player could open';
+    log('PLAY EXPLICIT FAIL', identity, labelOf(source), reason);
+    const silenceOnly = tried.length > 0 && tried.every((t) =>
+      /timeout|no answer|silence|stream read failed|ECONN|socket|closed|measured down|cold copy/i.test(t));
+    if (silenceOnly) {
+      return { status: 503, body: {
+        error: 'warming', warming: true, retryAfterMs: 2500, identity,
+        copy: labelOf(source),
+        detail: 'the copy you picked has not sent a byte yet; keep waiting and it may start',
+        tried,
+      } };
+    }
+    return { status: 404, body: {
+      error: 'that copy could not be opened: ' + reason.replace(labelOf(source) + ': ', ''),
+      identity,
+      copy: labelOf(source),
+      tried,
+    } };
+  }
   if (!out && fallback) {
     out = fallback.o;
     source = fallback.cand;
@@ -2987,7 +3100,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         error: 'no copy of this is ready to stream from the hub yet',
         warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
         magnet: out.url,
-        alternatives: candidates.filter((s) => s !== source).slice(0, ALT_MAX),
+        alternatives: candidates.filter((s) => s !== source
+          && !labelNamesARelease(labelOf(s), kept.title)).slice(0, ALT_MAX),
       },
     };
   }
@@ -3027,7 +3141,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
             identity, title: kept.title || null, tried,
             error: 'this copy is still being prepared',
             warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
-            alternatives: candidates.filter((s) => s !== source).slice(0, ALT_MAX),
+            alternatives: candidates.filter((s) => s !== source
+          && !labelNamesARelease(labelOf(s), kept.title)).slice(0, ALT_MAX),
           },
         };
       }
@@ -3484,7 +3599,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     checked: next.checked === true,
   } : null;
   if (allExcluded) out.allExcluded = true;
-  out.alternatives = candidates.filter((s) => s !== source).slice(0, ALT_MAX);
+  out.alternatives = candidates.filter((s) => s !== source
+    && !labelNamesARelease(labelOf(s), kept.title)).slice(0, ALT_MAX);
   out.title = kept.title || null;
   // Which episode the Play button actually resolved, and the one after it, so the player can label its
   // button "Play S1 E4" and "Autoplay next" can step a series instead of replaying the same one.
