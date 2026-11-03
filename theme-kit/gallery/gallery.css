@@ -156,6 +156,61 @@ code, pre {
   background: var(--panel-2);
 }
 
+/* The add-on knobs are story controls, not a theme surface: they say which optional doors the
+   household's hub can open, and every nav story on every theme follows them. */
+.control-addons .addon-toggles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.addon-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.addon-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.addon-toggle::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.addon-toggle.is-on {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+}
+
+.addon-toggle.is-on::before {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.addon-toggle:focus-within {
+  outline: 2px solid var(--ink-2);
+  outline-offset: 2px;
+}
+
 /* ---------- shell ---------- */
 
 .shell {

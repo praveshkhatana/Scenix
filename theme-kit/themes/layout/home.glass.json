@@ -24,7 +24,9 @@
               "items": "@nav",
               "variant": "pack.nav",
               "profile": "@profile",
-              "search": true
+              "search": true,
+              "showsLive": "@caps.live",
+              "showsGames": "@caps.games"
             }
           },
           {

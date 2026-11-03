@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Scenix Theme Kit · Component gallery</title>
-  <link rel="stylesheet" href="gallery.css">
+  <link rel="stylesheet" href="gallery.css?v=3">
 </head>
 <body>
   <header class="topbar">
@@ -30,7 +30,20 @@
         <span>Level</span>
         <select id="level-select" aria-label="Component level filter"></select>
       </label>
-      <button class="quiet-button" id="reset-view" type="button" title="Reset theme, device, level and scroll">Reset</button>
+      <div class="control control-addons">
+        <span>Household add-ons</span>
+        <div class="addon-toggles" role="group" aria-label="Installed add-ons">
+          <label class="addon-toggle" title="Show the Live TV door only when the live add-on has a playlist">
+            <input type="checkbox" id="caps-live" checked>
+            <span>Live TV</span>
+          </label>
+          <label class="addon-toggle" title="Show the Games door only when a games add-on is installed">
+            <input type="checkbox" id="caps-games" checked>
+            <span>Games</span>
+          </label>
+        </div>
+      </div>
+      <button class="quiet-button" id="reset-view" type="button" title="Reset theme, device, level, add-ons and scroll">Reset</button>
     </div>
   </header>
 
@@ -99,6 +112,6 @@
     <p class="boot-error">This gallery needs JavaScript and fetch(). Serve it with <code>python3 -m http.server</code> from <code>theme-kit/</code>.</p>
   </noscript>
 
-  <script src="gallery.js"></script>
+  <script src="gallery.js?v=3"></script>
 </body>
 </html>

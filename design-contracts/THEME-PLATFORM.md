@@ -371,7 +371,10 @@ hub/                    # serves packs and the gallery; no theme logic
 ## 9. Decisions to lock now
 
 1. **Host owns navigation, playback, data and focus invariants.** Themes own presentation
-   and composition. This is why the left rail and the hero Play stay host behaviour.
+   and composition. This is why the left rail and the hero Play stay host behaviour. A nav
+   stop is a door to an installed add-on: the host decides `showsLive` / `showsGames` from
+   the hub's capabilities, and a pack draws them only when true — never as permanent
+   furniture for a room the household never built.
 2. **The IR is the product.** No renderer reads a pack's raw JSON directly; they read the
    validated IR, so a malformed pack cannot crash a device.
 3. **Layouts are data; interactions are data; code is an approved exception.**

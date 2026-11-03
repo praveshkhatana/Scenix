@@ -23,7 +23,9 @@
               "items": "@nav",
               "variant": "kids",
               "profile": "@profile",
-              "search": true
+              "search": true,
+              "showsLive": "@caps.live",
+              "showsGames": "@caps.games"
             }
           },
           {

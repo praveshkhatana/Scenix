@@ -2,7 +2,7 @@
   "id": "template.home",
   "version": 1,
   "level": "template",
-  "summary": "The Home page tree: pack wall, top navigation, feature hero, shelf chips and repeated rails, with the left overlay available to every family.",
+  "summary": "The Home page tree: pack wall, top navigation, feature hero, shelf chips and repeated rails, with the left overlay available to every family. The nav and its chips carry only the optional doors this household installed.",
   "props": {
     "title": {
       "type": "string",
@@ -18,6 +18,16 @@
     "nav": {
       "type": "array",
       "description": "Destinations bound to organism.nav.top."
+    },
+    "showsLive": {
+      "type": "boolean",
+      "default": true,
+      "description": "Passed to organism.nav.top: Live TV is drawn only when the add-on and a playlist exist."
+    },
+    "showsGames": {
+      "type": "boolean",
+      "default": true,
+      "description": "Passed to organism.nav.top and the chip row: Games is drawn only when the add-on exists."
     },
     "hero": {
       "type": "array",
