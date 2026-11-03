@@ -14,14 +14,12 @@ import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.HubAddress
 import com.scenix.tv.core.HubDiscovery
-import com.scenix.tv.core.HttpHub
-import com.scenix.tv.core.LocalHub
+import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.ScreenHost
-import com.scenix.tv.core.ScreenPlugin
 import com.scenix.tv.core.Views
 
 /**
- * The front door of a TV that has no backend yet (design/deployment-modes.md Rule 4).
+ * The front door of a TV that has no backend yet.
  *
  * Nothing is guessed here. A fresh install names no machine, so the app would otherwise sit on an
  * empty network showing nothing, or worse, showing the bundled sample rows as though they were this
@@ -32,20 +30,18 @@ import com.scenix.tv.core.Views
  *  - standalone, where this app is the backend and pulls its own content from addons.
  *
  * Once a choice is made the watcher is told to look again (`ctx.watch?.rechoose()`), so the new
- * backend is live immediately rather than at the next scheduled probe, and the app moves to the
- * profile picker — the same front door every other path leads to.
+ * backend is live immediately, and the app opens the web shell — the only product after setup.
  */
-object PairingScreen : ScreenPlugin {
-    override val id get() = "pairing"
-    override val title get() = "Set up"
-    override val route get() = "pairing"
-    override val showInNav = false
-    override val order = 600
+object PairingScreen {
+    const val id = "pairing"
 
     /** One line of feedback on the field: what was wrong with the address just typed. */
     private var addressError: String? = null
 
-    override fun render(host: ScreenHost) {
+    /** Clear the field error when the screen is entered again, not when it repaints around it. */
+    fun reset() { addressError = null }
+
+    fun render(host: ScreenHost) {
         val ctx = host.app
         val theme = ctx.theme
         val container = host.container()
@@ -62,22 +58,35 @@ object PairingScreen : ScreenPlugin {
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val col = LinearLayout(ctx.app)
         col.orientation = LinearLayout.VERTICAL
-        col.setPadding(theme.gutter, theme.px(48f), theme.gutter, theme.px(72f))
+        col.setPadding(theme.gutter, theme.px(28f), theme.gutter, theme.px(56f))
         scroll.addView(col)
 
         col.addView(
-            Views.text(ctx, "h2", 52f, theme.ink, "Set up this TV", bold = true),
+            Views.text(ctx, "h2", 44f, theme.ink, "Set up this TV", bold = true),
             lp(0),
         )
         col.addView(
             Views.text(
-                ctx, "sub", 24f, theme.ink2,
+                ctx, "sub", 22f, theme.ink2,
                 "Scenix streams from a hub: a small server on a machine you already own. " +
                     "A TV with no hub can still run on its own, pulling its own content from addons.",
                 maxLines = 3,
             ),
-            lp(theme.px(12f)),
+            lp(theme.px(8f)),
         )
+
+        // A paired TV that reopens setup needs to know what it is currently using before it can
+        // decide whether to replace it.
+        val backend = ctx.prefs.backendChoice()
+        val currentHub = ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url))
+        val currentName = ctx.prefs.discoveredHubs().firstOrNull { it.url == currentHub }?.name.orEmpty()
+        val current = when {
+            backend == Prefs.BACKEND_STANDALONE -> "Currently: this TV is the backend (standalone)."
+            backend == Prefs.BACKEND_HUB && currentName.isNotBlank() -> "Currently connected to $currentName."
+            backend == Prefs.BACKEND_HUB -> "Currently connected to $currentHub."
+            else -> ""
+        }
+        if (current.isNotBlank()) infoRow(ctx, col, current)
 
         // ---- hubs announcing themselves -------------------------------------------------------
         section(ctx, col, "Hubs on this network")
@@ -96,6 +105,21 @@ object PairingScreen : ScreenPlugin {
         section(ctx, col, "Or type an address")
         addressField(ctx, col, host)
 
+        // ---- installing a hub, for someone who has never had one ------------------------------
+        section(ctx, col, "First time? Install a hub")
+        infoRow(
+            ctx, col,
+            "1. Pick a computer that can stay on and install Node.js 18 or newer.\n" +
+                "2. Copy Scenix there and run:  cd hub && node index.js\n" +
+                "3. Open http://<that-computer>:8788 in a browser; add your sources and profiles there.\n" +
+                "4. Come back here, press Search again, or type that address above.",
+        )
+        infoRow(
+            ctx, col,
+            "Both devices must be on the same network. Allow TCP 8788 and UDP 1900 through the " +
+                "computer's firewall; the hub prints its address when it starts.",
+        )
+
         // ---- or no hub at all -----------------------------------------------------------------
         section(ctx, col, "Or no hub")
         actionRow(ctx, col, "Keep this TV on its own", "this app becomes the backend", "Start") {
@@ -103,7 +127,7 @@ object PairingScreen : ScreenPlugin {
         }
         infoRow(
             ctx, col,
-            "On its own this TV plays direct HTTP links \u2014 no torrents, no live TV. What it can show comes from addons you add in Settings.",
+            "On its own this TV plays direct HTTP links \u2014 no P2P copies, no live TV. What it can show comes from addons you add in Settings.",
         )
 
         // A screen that opens onto an empty list is a screen that looks broken, so the first render
@@ -122,29 +146,21 @@ object PairingScreen : ScreenPlugin {
         val ctx = host.app
         ctx.prefs.setHubUrl(url)
         ctx.prefs.setHubName(url, name)
-        ctx.prefs.setBackendChoice("hub")
-        ctx.prefs.setStandalone(false)
+        ctx.prefs.setBackendChoice(Prefs.BACKEND_HUB)
         // Same rule as the launch switch: naming a hub means "show me the real library", so the
         // bundled-sample pin cannot survive it.
         ctx.prefs.setFixture("")
-        ctx.hub = HttpHub(ctx.app, ctx.prefs)
-        ctx.offline = false
-        ctx.capabilities = null
-        ctx.watch?.rechoose { online -> BrowseHelper.runOnUiThread { host.toast(if (online) "Streaming from the hub" else "That hub is not answering yet") } }
-        host.requireProfilePicker("paired")
+        ctx.watch?.rechoose()
+        host.openShell()
     }
 
     /** Standalone: this app hosts the contract itself, so there is no reachability question to ask. */
     private fun goStandalone(host: ScreenHost) {
         val ctx = host.app
-        ctx.prefs.setBackendChoice("standalone")
-        ctx.prefs.setStandalone(true)
+        ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
         ctx.prefs.setFixture("")
-        ctx.hub = LocalHub.get(ctx.app)
-        ctx.offline = false
-        ctx.capabilities = null
         ctx.watch?.rechoose()
-        host.requireProfilePicker("standalone")
+        host.openShell()
     }
 
     private fun scan(host: ScreenHost, silent: Boolean = false) {
@@ -175,15 +191,15 @@ object PairingScreen : ScreenPlugin {
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(theme.px(24f), theme.px(20f), theme.px(24f), theme.px(20f))
+        row.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         row.isFocusable = true
         row.isClickable = true
 
         col2(
             ctx, row,
-            Views.text(ctx, "li", 25f, theme.ink, hub.display(), bold = true, maxLines = 1),
-            Views.text(ctx, "liMeta", 20f, theme.ink2, hub.url, maxLines = 1),
+            Views.text(ctx, "li", 23f, theme.ink, hub.display(), bold = true, maxLines = 1),
+            Views.text(ctx, "liMeta", 19f, theme.ink2, hub.url, maxLines = 1),
         )
         val go = Views.text(ctx, "li", 21f, theme.brand, "Use this hub", bold = true)
         val glp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -192,9 +208,17 @@ object PairingScreen : ScreenPlugin {
 
         row.setOnClickListener { chooseHub(host, hub.url, hub.name) }
         row.setOnFocusChangeListener { v, has ->
-            v.setBackgroundColor(if (has) theme.color("surfHover", "#2F2F2F") else theme.surface)
+            // The focused plate deepens the row's own fill (never a dark slab under dark ink —
+            // owner round 8: content vanished on the black plate), and the ring stays rounded.
+            v.background = if (has) {
+                Views.rounded(theme.colorOr("listFillFocused", theme.color("surfHover", "#2F2F2F")),
+                    theme.radius("listItem", 6f))
+            } else Views.rounded(theme.surface, theme.radius("listItem", 6f))
+            v.foreground = if (has) {
+                Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
+            } else null
         }
-        col.addView(row, lp(theme.px(10f)))
+        col.addView(row, lp(theme.px(8f)))
     }
 
     /** The typed-address case: a hub on another network, or one that has not been told to announce. */
@@ -202,7 +226,7 @@ object PairingScreen : ScreenPlugin {
         val theme = ctx.theme
         val box = LinearLayout(ctx.app)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(theme.px(24f), theme.px(20f), theme.px(24f), theme.px(20f))
+        box.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
         box.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         col.addView(box, lp(theme.px(10f)))
 
@@ -216,7 +240,7 @@ object PairingScreen : ScreenPlugin {
         field.setText(ctx.prefs.hubUrl(ctx.app.getString(R.string.hub_url)))
         field.setTextColor(theme.ink)
         field.setHintTextColor(theme.ink3)
-        field.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 24f))
+        field.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 22f))
         field.background = Views.rounded(theme.surface2, theme.radius("field", 6f), theme.px(1f), theme.line)
         field.setPadding(theme.px(16f), theme.px(12f), theme.px(16f), theme.px(12f))
         val inputType = android.text.InputType.TYPE_CLASS_TEXT or
@@ -234,14 +258,43 @@ object PairingScreen : ScreenPlugin {
             override fun afterTextChanged(s: Editable?) { current = s?.toString() ?: "" }
         })
 
+        // Optional. A hub with HUB_TOKEN set answers Basic auth; the TV supplies the household token
+        // through the WebView's auth handler, so the page never sees it. Blank means the old open-LAN
+        // behaviour, and the field stays out of the way.
+        box.addView(
+            Views.text(ctx, "li", 20f, theme.ink2, "Access token (only if your hub asks)"),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(12f)
+            },
+        )
+        val token = EditText(ctx.app)
+        token.hint = "optional"
+        token.setText(ctx.prefs.hubToken())
+        token.setTextColor(theme.ink)
+        token.setHintTextColor(theme.ink3)
+        token.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 21f))
+        token.background = Views.rounded(theme.surface2, theme.radius("field", 6f), theme.px(1f), theme.line)
+        token.setPadding(theme.px(16f), theme.px(10f), theme.px(16f), theme.px(10f))
+        token.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or
+            android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        token.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) { ctx.prefs.setHubToken(s?.toString() ?: "") }
+        })
+        val tlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        tlp.topMargin = theme.px(8f)
+        box.addView(token, tlp)
+
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
         val slp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         slp.topMargin = theme.px(14f)
 
-        val save = Views.text(ctx, "button", 22f, theme.ink, "Connect", bold = true, gravity = Gravity.CENTER)
-        save.setPadding(theme.px(24f), theme.px(14f), theme.px(24f), theme.px(14f))
+        val save = Views.text(ctx, "button", 21f, theme.onBrand, "Connect", bold = true, gravity = Gravity.CENTER)
+        save.setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
         save.background = Views.rounded(theme.brand, theme.radius("button", 6f))
         save.isFocusable = true
         save.setOnClickListener {
@@ -269,16 +322,16 @@ object PairingScreen : ScreenPlugin {
     // ---- row builders, the same shapes Settings uses ------------------------------------------
 
     private fun section(ctx: AppContext, col: LinearLayout, label: String) {
-        col.addView(Views.text(ctx, "rowTitle", 26f, ctx.theme.ink, label, bold = true), lp(ctx.theme.px(38f)))
+        col.addView(Views.text(ctx, "rowTitle", 24f, ctx.theme.ink, label, bold = true), lp(ctx.theme.px(22f)))
     }
 
     private fun infoRow(ctx: AppContext, col: LinearLayout, value: String) {
         val theme = ctx.theme
         val row = LinearLayout(ctx.app)
-        row.setPadding(theme.px(24f), theme.px(16f), theme.px(24f), theme.px(16f))
+        row.setPadding(theme.px(20f), theme.px(12f), theme.px(20f), theme.px(12f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
-        row.addView(Views.text(ctx, "li", 22f, theme.ink2, value, maxLines = 3))
-        col.addView(row, lp(theme.px(10f)))
+        row.addView(Views.text(ctx, "li", 21f, theme.ink2, value, maxLines = 6))
+        col.addView(row, lp(theme.px(8f)))
     }
 
     private fun actionRow(
@@ -293,13 +346,13 @@ object PairingScreen : ScreenPlugin {
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(theme.px(24f), theme.px(20f), theme.px(24f), theme.px(20f))
+        row.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
         row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
         row.isFocusable = true
         row.isClickable = true
 
         row.addView(
-            Views.text(ctx, "li", 25f, theme.ink, label, bold = true),
+            Views.text(ctx, "li", 23f, theme.ink, label, bold = true),
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
         if (value.isNotBlank()) {
@@ -315,9 +368,17 @@ object PairingScreen : ScreenPlugin {
 
         row.setOnClickListener { onClick() }
         row.setOnFocusChangeListener { v, has ->
-            v.setBackgroundColor(if (has) theme.color("surfHover", "#2F2F2F") else theme.surface)
+            // The focused plate deepens the row's own fill (never a dark slab under dark ink —
+            // owner round 8: content vanished on the black plate), and the ring stays rounded.
+            v.background = if (has) {
+                Views.rounded(theme.colorOr("listFillFocused", theme.color("surfHover", "#2F2F2F")),
+                    theme.radius("listItem", 6f))
+            } else Views.rounded(theme.surface, theme.radius("listItem", 6f))
+            v.foreground = if (has) {
+                Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
+            } else null
         }
-        col.addView(row, lp(theme.px(10f)))
+        col.addView(row, lp(theme.px(8f)))
     }
 
     /** Two lines stacked inside a horizontal row: the name, and the address under it. */

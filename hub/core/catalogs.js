@@ -74,4 +74,27 @@ async function searchShelf(ctx, type, query, opts = {}) {
   return lists.flat().filter(Boolean).slice(0, opts.limit || 60);
 }
 
-module.exports = { catalogsOf, matching, genreShelf, genreTitles, searchShelf };
+/**
+ * The standard browse taxonomy (rows/genres.js) and the genre route share one answer to
+ * "what word do the addons actually filter on for this tile". A tile carries a slug
+ * ("science-fiction"); Cinemeta and friends match "Science Fiction" exactly, so a slug asked raw
+ * comes back empty and the honest-looking answer is a blank page that is really a spelling bug.
+ */
+const STANDARD_GENRES = [
+  'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family',
+  'Fantasy', 'History', 'Horror', 'Music', 'Musical', 'Mystery', 'Romance', 'Science Fiction',
+  'Sports', 'Suspense', 'Thriller', 'War', 'Western',
+];
+
+function resolveGenreName(text) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const want = norm(text);
+  if (!want) return String(text || '');
+  const exact = STANDARD_GENRES.find((g) => norm(g) === want);
+  if (exact) return exact;
+  // Not a standard name: at least hand the addons words, not a slug.
+  return want.split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+module.exports = { catalogsOf, matching, genreShelf, genreTitles, searchShelf,
+  STANDARD_GENRES, resolveGenreName };

@@ -1,0 +1,75 @@
+{
+  "id": "atom.icon",
+  "version": 1,
+  "level": "atom",
+  "summary": "One monochrome glyph from the host icon set; size and tone are tokenised, the path is host-owned.",
+  "props": {
+    "name": {
+      "type": "enum",
+      "required": true,
+      "default": "play",
+      "enum": [
+        "play",
+        "pause",
+        "back",
+        "forward",
+        "rewind",
+        "audio",
+        "subtitles",
+        "speed",
+        "quality",
+        "episodes",
+        "search",
+        "settings",
+        "profile",
+        "chevron",
+        "plus",
+        "check",
+        "close",
+        "home",
+        "films",
+        "series",
+        "kids",
+        "live"
+      ],
+      "description": "Glyph registry key."
+    },
+    "size": {
+      "type": "number",
+      "default": 24,
+      "min": 12,
+      "max": 96,
+      "description": "Rendered box in design pixels."
+    },
+    "tone": {
+      "type": "enum",
+      "default": "ink",
+      "enum": ["ink", "ink2", "ink3", "brand", "focus"]
+    },
+    "stroke": {
+      "type": "number",
+      "default": 2,
+      "min": 1,
+      "max": 4,
+      "description": "Stroke weight in design pixels; play/pause are filled shapes."
+    },
+    "decorative": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true the icon is hidden from assistive tech."
+    }
+  },
+  "states": ["default", "focus", "disabled"],
+  "events": [],
+  "slots": [],
+  "a11y": {
+    "role": "img",
+    "label": "{{name}} icon"
+  },
+  "targets": {
+    "android": { "renderer": "GlyphView", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixIcon", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-icon", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 1, "maxLayers": 1, "maxImageBytes": 0 }
+}

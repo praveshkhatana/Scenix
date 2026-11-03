@@ -181,7 +181,7 @@ ul { list-style: none; }
   Transform and opacity only (spec F).
 */
 .boot-logo {
-  width: calc(430px * var(--s)); height: auto; color: var(--brand);
+  width: calc(290px * var(--s)); height: auto; color: var(--brand);
   animation: markSettle 900ms cubic-bezier(.16, 1, .3, 1) both;
 }
 .boot-logo path { fill: currentColor; }
@@ -212,7 +212,7 @@ ul { list-style: none; }
 
 .screen {
   position: absolute; inset: 0;
-  overflow-y: auto; overflow-x: hidden;
+  overflow-y: auto; overflow-x: hidden; overflow-anchor: none;
   overscroll-behavior: none;
   /* Instant, not eased. Every D-pad step scrolls this container, and an eased scroll animates the repaint of
      everything on the page for a third of a second on top of the card that is already scaling into focus.
@@ -223,6 +223,12 @@ ul { list-style: none; }
   background: var(--bg);
 }
 @keyframes screenIn { from { opacity: 0; } to { opacity: 1; } }
+/* The outgoing half of a route change. Both screens are absolutely placed in #stage, so the one being
+   left simply draws over the one arriving (the new node is later in DOM order and would otherwise win
+   the paint) and fades out under `--screen-ms` — the pair reads as one cross-fade, transform and
+   opacity only. */
+.screen.exiting { z-index: 3; pointer-events: none; animation: screenOut var(--screen-ms) ease-in both; }
+@keyframes screenOut { from { opacity: 1; } to { opacity: 0; } }
 
 /* ==========================================================================
    Top navigation — transparent over the billboard, solid once you scroll
@@ -242,7 +248,7 @@ ul { list-style: none; }
 */
 .brand { background: none; border: 0; padding: 0; color: var(--brand); white-space: nowrap; }
 .brand-mark {
-  display: block; width: calc(130px * var(--s)); height: calc(30px * var(--s)); background: currentColor;
+  display: block; width: calc(85px * var(--s)); height: calc(30px * var(--s)); background: currentColor;
   -webkit-mask: url('/ui/assets/scenix-wordmark.svg') center / contain no-repeat;
           mask: url('/ui/assets/scenix-wordmark.svg') center / contain no-repeat;
 }
@@ -264,6 +270,15 @@ ul { list-style: none; }
   background: linear-gradient(135deg, #8b95a3, #2b3038);
 }
 .avatar-chip.kids { background: linear-gradient(135deg, var(--kids), var(--kids-deep)); }
+/* The chip carries the profile's real face, painted by the same painter the tiles use: `div.a` is the
+   face container everywhere, so it fills the chip and clips the art to the badge radius. */
+.avatar-chip .a {
+  position: relative; width: 100%; height: 100%; overflow: hidden;
+  display: grid; place-content: center; border-radius: inherit;
+}
+.avatar-chip .a .av-art, .avatar-chip .a .av-photo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.avatar-chip .a .av-photo { object-fit: cover; }
+.avatar-chip .a .ini { font-size: calc(15px * var(--s)); font-weight: 800; color: #fff; }
 
 /* ==========================================================================
    Focus — the same thing whether the eye arrives by remote or by mouse
@@ -271,6 +286,15 @@ ul { list-style: none; }
 [data-f] { outline: none; }
 
 .foc { z-index: 30; }
+
+/* A dismissed Continue tile: fade and collapse out of the rail, then it is removed. The row does
+   not reflow in one hard jump — the strip contracts as the card leaves it. */
+.card.gone {
+  opacity: 0;
+  transform: scale(.85);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
 
 .card.foc {
   transform: scale(var(--focus-scale));
@@ -300,11 +324,12 @@ ul { list-style: none; }
    The billboard already owns `.billboard .preview`; a card gets the same treatment inside its art. */
 .card .preview { position: absolute; inset: 0; opacity: 0; transition: opacity 320ms ease; z-index: 2; pointer-events: none; }
 .card .preview.on, .billboard .preview.on { opacity: 1; }
-.preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: transparent; opacity: 0; transition: opacity 220ms ease; }
+.preview.ready video { opacity: 1; }
 .preview .scrim { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
 .billboard .logo { max-width: calc(640px * var(--s)); max-height: calc(192px * var(--s));
   object-fit: contain; object-position: left bottom; margin-bottom: calc(18px * var(--s)); }
-.bb .logo { max-width: calc(640px * var(--s)); max-height: calc(192px * var(--s));
+.bb .logo { max-width: calc(520px * var(--s)); max-height: calc(140px * var(--s));
   object-fit: contain; object-position: left bottom; margin-bottom: calc(18px * var(--s)); }
 .bb .tagline { margin-top: calc(16px * var(--s)); font-size: var(--t-sub); color: var(--ink2); max-width: calc(760px * var(--s)); }
 .bb .why { margin-top: calc(14px * var(--s)); font-size: calc(17px * var(--s)); color: var(--ink3); max-width: calc(760px * var(--s)); }
@@ -353,7 +378,8 @@ ul { list-style: none; }
   font-size: var(--t-h1); font-weight: 800; line-height: .95; letter-spacing: -.022em;
   text-shadow: 0 calc(4px * var(--s)) calc(22px * var(--s)) rgba(0, 0, 0, .7);
 }
-.bb .sub { margin-top: calc(18px * var(--s)); font-size: var(--t-sub); color: var(--ink1); max-width: calc(760px * var(--s)); }
+.bb .sub { margin-top: calc(18px * var(--s)); font-size: var(--t-sub); color: var(--ink1); max-width: calc(760px * var(--s));
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .bb .mat { display: flex; gap: calc(14px * var(--s)); align-items: center; margin: calc(20px * var(--s)) 0 calc(26px * var(--s)); font-size: var(--t-mat); color: var(--ink1); }
 .bb-btns { display: flex; gap: var(--button-gap); align-items: center; }
 
@@ -434,11 +460,17 @@ ul { list-style: none; }
 }
 .row > h3 .explore { margin-left: auto; font-size: var(--t-explore); color: var(--ink2); font-weight: 400; }
 /* A row whose cards have not mounted yet still occupies the height it will have, so the page knows how
-   far down its own content goes before anything is focused in it. */
-.cards:empty { min-height: var(--card-h, 0); }
+   far down its own content goes before anything is focused in it — and so recycling a row's cards does
+   not move the row below it. `min-height` is border-box, so the rail's own vertical padding has to be
+   counted alongside the card: 40 px above + 76 px below. Keep this in step with `.cards` padding. */
+.cards:empty { min-height: calc(var(--card-h, 0px) + 116px * var(--s)); }
 .cards {
   display: flex; gap: var(--gap);
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+  /* Focus navigation moves the scroll position itself. Anchor adjustment would then move the page a
+     second time around an image or a recycled row, which is the layout-shift burst measured on the
+     panel. The engine's scroll is the only anchor here. */
+  overflow-anchor: none;
   /* Vertical padding is the room a focused card needs to scale into without being clipped by the
      scroller — overflow: visible does not exist on an axis next to overflow-x: auto. */
   padding: calc(40px * var(--s)) var(--gutter) calc(76px * var(--s));
@@ -457,8 +489,9 @@ ul { list-style: none; }
 .card {
   position: relative; flex: none; width: var(--card-w);
   /* transform only. A box-shadow transition repaints the whole area around a card on every frame, and a
-     shelf is thirty of them; the ring simply arrives with the card. */
-  transition: transform var(--focus-ms) ease-out;
+     shelf is thirty of them; the ring simply arrives with the card. The opacity entry lets a dwelling
+     tile's neighbours fade rather than blink. */
+  transition: transform var(--focus-ms) ease-out, opacity 160ms ease-out;
   /* Layout and style containment: the card's own relayout is then kept inside the card instead of
      invalidating the shelf. Not paint containment - that would clip the focus ring. */
   contain: layout style;
@@ -501,7 +534,7 @@ ul { list-style: none; }
 .card.rank .art { margin-left: var(--rank-overlap); }
 .card.rank .num {
   position: absolute; left: 0; bottom: calc(-6px * var(--s)); width: var(--rank-w); height: var(--card-h);
-  display: flex; align-items: flex-end; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   font-size: calc(var(--card-h) * .495); font-weight: 900; line-height: .72;
   color: var(--bg); -webkit-text-stroke: calc(var(--cards-rank-stroke, 8px) * 1) var(--numeral-stroke);
   letter-spacing: -.04em;
@@ -544,43 +577,13 @@ ul { list-style: none; }
 .detail-body h1 { font-size: var(--t-h2); font-weight: 800; letter-spacing: -.02em; line-height: 1.02; margin-bottom: calc(16px * var(--s)); max-width: calc(1100px * var(--s)); }
 .detail-body .mat { display: flex; gap: calc(14px * var(--s)); align-items: center; font-size: var(--t-mat); color: var(--ink1); margin-bottom: calc(22px * var(--s)); flex-wrap: wrap; }
 .detail-body .blurb { font-size: calc(23px * var(--s)); color: var(--ink1); max-width: calc(1100px * var(--s)); margin-bottom: calc(26px * var(--s)); }
-.detail-body .facts { font-size: var(--t-meta); color: var(--ink2); margin-bottom: calc(26px * var(--s)); }
-.detail-body .facts b { color: var(--ink2); font-weight: 400; }
 .detail-actions { display: flex; gap: calc(18px * var(--s)); align-items: center; margin-bottom: calc(34px * var(--s)); flex-wrap: wrap; }
+/* The resume position under the hero buttons: Netflix's thin red progress line. */
+.resume-line { width: calc(460px * var(--s)); max-width: 70%; height: calc(5px * var(--s)); margin: calc(-18px * var(--s)) 0 calc(30px * var(--s)); background: rgba(255, 255, 255, .25); border-radius: 99px; overflow: hidden; }
+.resume-line i { display: block; height: 100%; background: var(--brand); border-radius: 99px; }
 
 .sect-title { font-size: var(--t-h3); font-weight: 700; margin: calc(34px * var(--s)) 0 calc(16px * var(--s)); display: flex; align-items: center; gap: calc(14px * var(--s)); }
 .sect-title .note { font-size: var(--t-meta); color: var(--ink2); font-weight: 400; }
-
-.srcs { display: grid; gap: calc(12px * var(--s)); }
-.src {
-  display: flex; align-items: center; gap: calc(18px * var(--s));
-  padding: calc(16px * var(--s)) calc(22px * var(--s)); border-radius: var(--r-button);
-  background: var(--surface); border: 1px solid var(--border);
-}
-.src .ico { color: var(--brand); }
-.src .sl { min-width: 0; }
-.src .sl b { font-size: calc(23px * var(--s)); font-weight: 700; display: block; }
-.src .sl span { font-size: calc(18px * var(--s)); color: var(--ink2); display: block; margin-top: calc(3px * var(--s)); }
-.src .q { margin-left: auto; display: flex; gap: calc(10px * var(--s)); flex: none; align-items: center; }
-.tagq { font-size: calc(17px * var(--s)); padding: calc(6px * var(--s)) calc(12px * var(--s)); border-radius: var(--r-badge); background: rgba(255, 255, 255, .10); border: 1px solid var(--border); white-space: nowrap; }
-.tagq.g { color: var(--match); }
-.tagq.y { color: var(--warn); }
-.tagq.r { color: #ff7a7a; }
-.why { margin-top: calc(8px * var(--s)); display: flex; flex-wrap: wrap; gap: calc(6px * var(--s)) calc(16px * var(--s)); font-size: calc(16px * var(--s)); color: var(--ink3); }
-.why i { font-style: normal; }
-
-.seasons { display: flex; gap: calc(12px * var(--s)); flex-wrap: wrap; margin-bottom: calc(16px * var(--s)); }
-.episodes { display: grid; gap: calc(10px * var(--s)); max-width: calc(1240px * var(--s)); }
-.ep {
-  display: flex; gap: calc(18px * var(--s)); align-items: center;
-  padding: calc(12px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-button);
-  background: rgba(255, 255, 255, .04); border: 1px solid var(--border);
-}
-.ep img { width: calc(168px * var(--s)); height: calc(95px * var(--s)); object-fit: cover; border-radius: var(--r-badge); background: #0f1620; flex: none; }
-.ep .en { font-size: calc(21px * var(--s)); font-weight: 700; }
-.ep .es { font-size: var(--t-meta); color: var(--ink2); }
-.ep .eq { margin-left: auto; font-size: var(--t-meta); color: var(--ink3); flex: none; }
-.ep.cur { background: rgba(229, 9, 20, .16); border-color: rgba(229, 9, 20, .5); }
 
 /* ==========================================================================
    Player
@@ -698,6 +701,25 @@ body.native-live, html.native-live { background: transparent; }
 .nextup .nx { font-size: calc(19px * var(--s)); color: var(--ink2); }
 .nextup .row2 { display: flex; gap: calc(12px * var(--s)); margin-top: calc(16px * var(--s)); align-items: center; }
 .nextup img { width: 100%; height: calc(120px * var(--s)); object-fit: cover; border-radius: var(--r-badge); margin-bottom: calc(12px * var(--s)); }
+/* The autoplay countdown line, between the episode name and its buttons — tabular so the number does not
+   jitter as it ticks down. */
+.nextup .cd { margin-top: calc(12px * var(--s)); font-size: var(--t-meta); color: var(--ink2); }
+.nextup .cd b { color: #fff; font-weight: 800; font-variant-numeric: tabular-nums; }
+/* The scrub preview: a timestamp that answers every arrow-key seek, centred just above the bar. */
+.ply-ghost {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(178px * var(--s)); z-index: 9;
+  padding: calc(6px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-badge);
+  background: rgba(0, 0, 0, .82); border: 1px solid var(--border);
+  font-size: calc(30px * var(--s)); font-weight: 700; color: #fff; font-variant-numeric: tabular-nums;
+}
+/* The undo chip the auto-roll leaves on the next episode's picture, above the bar and clear of it. */
+.ply-undo {
+  position: absolute; left: calc(64px * var(--s)); bottom: calc(170px * var(--s)); z-index: 9;
+  display: flex; align-items: center; gap: calc(16px * var(--s));
+  background: rgba(0, 0, 0, .78); border: 1px solid var(--border); border-radius: var(--r-button);
+  padding: calc(12px * var(--s)) calc(20px * var(--s));
+}
+.ply-undo span { font-size: var(--t-meta); color: var(--ink1); }
 
 .ply-center { position: absolute; inset: 0; display: grid; place-content: center; gap: calc(18px * var(--s)); z-index: 6; text-align: center; }
 .ply-center .big { font-size: var(--t-h3); font-weight: 700; }
@@ -994,6 +1016,16 @@ body.booted .pwrap .avatar .a {
 
 .modal { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, .82); display: grid; place-content: center; justify-items: center; }
 .mbox { width: var(--modal-w); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-button); padding: calc(44px * var(--s)) calc(48px * var(--s)); text-align: center; }
+/* A dialog arrives rather than popping: the scrim darkens while the box lifts into place, the same
+   entrance language the panes and sheets use — opacity and transform only. The PIN box's shake is a
+   reaction, not an entrance; it wins over this on the element that carries it. */
+.modal { animation: scrimIn 160ms ease-out both; }
+@keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+.mbox { animation: mboxIn 220ms cubic-bezier(.2, .9, .3, 1) both; }
+@keyframes mboxIn {
+  from { opacity: 0; transform: translateY(calc(22px * var(--s))) scale(.94); }
+  to { opacity: 1; transform: none; }
+}
 .mbox h2 { font-size: var(--t-h3); font-weight: 700; margin-bottom: calc(10px * var(--s)); }
 .mbox p { color: var(--ink2); font-size: calc(20px * var(--s)); margin-bottom: calc(26px * var(--s)); }
 .dots { display: flex; gap: calc(20px * var(--s)); justify-content: center; margin-bottom: calc(28px * var(--s)); }
@@ -1031,7 +1063,6 @@ body.booted .pwrap .avatar .a {
 .page-head h1 { font-size: var(--t-h2); font-weight: 800; letter-spacing: -.015em; }
 .page-head .sub { color: var(--ink2); font-size: var(--t-sub); margin-top: calc(10px * var(--s)); }
 
-.settings-cols { display: grid; grid-template-columns: calc(760px * var(--s)) minmax(0, 1fr); gap: calc(56px * var(--s)); padding: 0 var(--gutter) calc(90px * var(--s)); align-items: start; }
 .sgroup { margin-bottom: calc(38px * var(--s)); }
 .sgroup > h3 { font-size: var(--t-h3); font-weight: 700; margin-bottom: calc(14px * var(--s)); }
 .li {
@@ -1078,6 +1109,8 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   max-width: 86vw; animation: toastIn 200ms ease-out both;
 }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, calc(10px * var(--s))); } to { opacity: 1; transform: translate(-50%, 0); } }
+.toast.out { animation: toastOut 240ms ease-in both; }
+@keyframes toastOut { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, calc(10px * var(--s))); } }
 
 /* Per-row loading and failure: one shelf that cannot answer must not take the home page down, and it
    must not be mistaken for an empty shelf. The shimmer is the only infinite animation on the page —
@@ -1102,7 +1135,6 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 @media (max-width: 1100px) {
   :root { --gutter: calc(34px * var(--s)); --billboard-h: calc(700px * var(--s)); }
   .detail-cols { grid-template-columns: minmax(0, 1fr); }
-  .settings-cols { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
   :root { --gutter: calc(20px * var(--s)); --card-w: calc(190px * var(--s)); --card-h: calc(285px * var(--s)); --billboard-h: calc(560px * var(--s)); }
@@ -1236,10 +1268,24 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .cards .card.playing { width: calc(460px * var(--s)); }
 .cards .card.playing .art { height: var(--card-h); }
 
-/* The billboard turns by pushing sideways — one title leaves, the next arrives — not by fading in place. */
-.billboard .bb-art { opacity: 0; transform: translateX(7%); transition: transform 800ms cubic-bezier(.23, 1, .32, 1), opacity 420ms ease; }
-.billboard .bb-art.on { opacity: 1; transform: none; }
-.billboard .bb-art.out { opacity: 0; transform: translateX(-7%); }
+/* Netflix's dwell: looking at a tile for `preview.expandMs` expands it before any trailer exists — the
+   expansion belongs to attention, not to playback. Its quick actions become real focus stops inside it
+   (home.js arms them), OK on the expanded tile plays directly, and everything else in the shelf dims so
+   the eye reads one object. Opacity fades are compositor-cheap; the width stays instant per the perf
+   note above. */
+.cards .card.dwell { width: calc(460px * var(--s)); }
+.cards .card.dwell .art { height: var(--card-h); }
+.cards .card.dwell .exp { opacity: 1; }
+.cards:has(.card.dwell) .card:not(.dwell):not(.foc) { opacity: .55; }
+
+/* The billboard turns by cross-fading, not by pushing sideways: the leaving art goes under the arriving
+   one over the theme's `rotateFadeMs`, which is what Netflix's hero does and what a panel can composite
+   cheaply (opacity only — no translate layers above a playing video). The copy column leaves with the
+   art via `.swapping`, and its children still stagger in on arrival. */
+.billboard .bb-art { opacity: 0; transition: opacity var(--rotate-fade-ms, 500ms) ease; }
+.billboard .bb-art.on { opacity: 1; }
+.billboard .bb { transition: opacity calc(var(--rotate-fade-ms, 500ms) / 2) ease; }
+.billboard .bb.swapping { opacity: 0; }
 /* Opacity only: the billboard rebuilds its column on every rotation, so this rule runs again every few
    seconds over six elements at once, and a translate on each of them asks the panel to composite six moving
    layers above a playing video. */
@@ -1302,3 +1348,214 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   padding: calc(8px * var(--s)) calc(16px * var(--s));
   font-size: var(--t-chip); white-space: nowrap;
 }
+
+/* ==========================================================================
+   Search — the pad on the left, the answer on the right
+   ========================================================================== */
+.screen.search { display: flex; overflow: hidden; }
+.search-shell {
+  display: grid; grid-template-columns: calc(560px * var(--s)) minmax(0, 1fr);
+  gap: calc(28px * var(--s)); width: 100%; height: 100%;
+  padding-top: calc(var(--nav-h) + calc(26px * var(--s)));
+}
+.search-rail {
+  min-width: 0; overflow-y: auto; padding: 0 0 calc(40px * var(--s)) var(--gutter);
+  scrollbar-width: none;
+}
+.search-rail::-webkit-scrollbar { display: none; }
+.search-rail .page-head { padding: 0 0 calc(18px * var(--s)); }
+.search-results { min-width: 0; overflow-y: auto; padding: 0 var(--gutter) calc(60px * var(--s)) 0; scrollbar-width: none; }
+.search-results::-webkit-scrollbar { display: none; }
+.search-results .grid { padding: 0; }
+.search-status { min-height: calc(28px * var(--s)); }
+.field.native { padding: calc(14px * var(--s)) calc(20px * var(--s)); }
+.field-input {
+  flex: 1; min-width: 0; background: none; border: 0; outline: none;
+  color: var(--ink); font: inherit; font-size: var(--t-field); padding: 0;
+  -webkit-appearance: none; appearance: none;
+}
+.field-input::placeholder { color: var(--ink3); }
+.field-input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.search .kbd { justify-content: flex-start; margin-top: calc(16px * var(--s)); }
+.search .kbd .kr { grid-auto-columns: calc(40px * var(--s)); gap: calc(6px * var(--s)); }
+.search .kbd .key { height: calc(46px * var(--s)); font-size: calc(20px * var(--s)); }
+.search .kbd .key.wide { font-size: calc(15px * var(--s)); }
+.search-suggest { margin-top: calc(22px * var(--s)); }
+.search-suggest .note { color: var(--ink3); font-size: var(--t-meta); margin-bottom: calc(10px * var(--s)); }
+.search-suggest .sug { display: flex; flex-wrap: wrap; gap: calc(8px * var(--s)); }
+.sugbtn {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--ink1);
+  border-radius: var(--r-chip); padding: calc(8px * var(--s)) calc(14px * var(--s));
+  font-size: var(--t-chip);
+}
+.sugbtn.foc { background: #fff; color: #000; }
+
+@media (max-width: 900px) {
+  .screen.search { overflow-y: auto; display: block; }
+  .search-shell { display: block; height: auto; padding-top: calc(var(--nav-h) + calc(18px * var(--s))); }
+  .search-rail { overflow: visible; padding: 0 var(--gutter) calc(18px * var(--s)); }
+  .search-results { overflow: visible; padding: 0 var(--gutter) calc(60px * var(--s)); }
+}
+
+/* Switches outside a Settings line: the channel manager and any future list share one shape. */
+.sw {
+  width: calc(64px * var(--s)); height: calc(32px * var(--s)); border-radius: 999px;
+  background: rgba(255, 255, 255, .22); position: relative; flex: none; border: 0; padding: 0;
+}
+.sw.on { background: var(--brand); }
+.sw i {
+  position: absolute; top: calc(4px * var(--s)); left: calc(4px * var(--s));
+  width: calc(24px * var(--s)); height: calc(24px * var(--s)); border-radius: 50%;
+  background: #fff; transition: left 160ms ease;
+}
+.sw.on i { left: calc(36px * var(--s)); }
+.chg .sw, .chrow .sw { width: calc(46px * var(--s)); height: calc(24px * var(--s)); }
+.chg .sw i, .chrow .sw i { top: calc(3px * var(--s)); left: calc(3px * var(--s)); width: calc(18px * var(--s)); height: calc(18px * var(--s)); }
+.chg .sw.on i, .chrow .sw.on i { left: calc(25px * var(--s)); }
+
+.search-empty {
+  min-height: calc(360px * var(--s)); display: flex; flex-direction: column; justify-content: center;
+  padding: calc(40px * var(--s)); border: 1px solid var(--border); border-radius: var(--r-panel);
+  background: linear-gradient(140deg, var(--surface), rgba(20, 20, 20, .4));
+}
+.search-empty .big { font-size: var(--t-h3); font-weight: 800; }
+.search-empty p { color: var(--ink2); font-size: var(--t-sub); margin-top: calc(10px * var(--s)); max-width: calc(520px * var(--s)); }
+
+.search-empty[hidden] { display: none; }
+
+/* The last tile of a shelf: the remote's way into the rest of a category. */
+.card.seeall .art {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(10px * var(--s)); text-align: center;
+  background: linear-gradient(150deg, rgba(255,255,255,.10), rgba(255,255,255,.03));
+  border: 1px dashed rgba(255,255,255,.28);
+}
+.card.seeall .seeall-ico {
+  width: calc(54px * var(--s)); height: calc(54px * var(--s)); border-radius: 50%;
+  border: calc(2px * var(--s)) solid #fff; display: grid; place-content: center; color: #fff;
+}
+.card.seeall .seeall-ico .ico { width: calc(26px * var(--s)); height: calc(26px * var(--s)); }
+.card.seeall .seeall-t { font-size: calc(24px * var(--s)); font-weight: 800; color: #fff; }
+.card.seeall .seeall-n { font-size: calc(16px * var(--s)); color: var(--ink2); }
+.card.seeall.foc .art { border-color: #fff; background: rgba(255,255,255,.16); }
+
+/* Trailer tile at the front of an episode strip: artwork with a play mark, never a grey square. */
+.ep.trailer .trailer-art {
+  position: relative; width: calc(168px * var(--s)); height: calc(95px * var(--s));
+  flex: none; overflow: hidden; border-radius: var(--r-badge); background: #0f1620;
+}
+.ep.trailer .trailer-art img { width: 100%; height: 100%; object-fit: cover; }
+.trailer-play {
+  position: absolute; inset: 0; display: grid; place-content: center;
+  background: rgba(0, 0, 0, .32); color: #fff;
+}
+.trailer-play .ico { width: calc(42px * var(--s)); height: calc(42px * var(--s)); }
+
+/* The player's loading surface: the title's own mark, a bar that fills, one honest line. */
+.ply-center { background: radial-gradient(60% 60% at 50% 45%, rgba(0,0,0,.55), rgba(0,0,0,.86)); }
+.ply-loadlogo { min-height: calc(90px * var(--s)); display: grid; place-items: center; }
+.ply-loadlogo img { max-width: calc(520px * var(--s)); max-height: calc(150px * var(--s)); object-fit: contain; }
+.ply-loadtitle { font-size: calc(64px * var(--s)); font-weight: 900; letter-spacing: -.03em; text-align: center; }
+.ply-loadbar {
+  width: calc(360px * var(--s)); height: calc(4px * var(--s)); margin-top: calc(26px * var(--s));
+  border-radius: 999px; background: rgba(255,255,255,.22); overflow: hidden;
+}
+.ply-loadbar i {
+  display: block; height: 100%; width: 8%; border-radius: inherit; background: var(--brand);
+  transition: width 520ms cubic-bezier(.23,1,.32,1);
+}
+.ply-loadtext { margin-top: calc(14px * var(--s)); font-size: calc(18px * var(--s)); color: var(--ink2); text-align: center; }
+
+/* Genre tiles: a shelf of the categories the library actually has. */
+.genre-art {
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start;
+  gap: calc(8px * var(--s)); padding: calc(24px * var(--s));
+  background:
+    radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.55), rgba(229,9,20,0) 55%),
+    linear-gradient(150deg, #2a2a2a, #101010);
+}
+.genre-art .gname { font-size: calc(40px * var(--s)); font-weight: 900; line-height: .95; color: #fff; letter-spacing: -.02em; }
+.genre-art .gcount { font-size: calc(18px * var(--s)); color: var(--ink2); }
+.genre-art .garrow { position: absolute; top: calc(18px * var(--s)); right: calc(18px * var(--s)); color: #fff; opacity: .8; }
+.genre-art .garrow .ico { width: calc(28px * var(--s)); height: calc(28px * var(--s)); }
+.genre-card.foc .genre-art { background:
+  radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.8), rgba(229,9,20,0) 60%),
+  linear-gradient(150deg, #3a3a3a, #121212); }
+
+/* Detail loading: the same promise as the player's preloader, at the page scale. */
+.detail-loading {
+  position: absolute; inset: 0; z-index: 6; display: grid; place-content: center;
+  justify-items: center; gap: calc(18px * var(--s)); background: #141414;
+}
+.detail-loading .dl-mark { font-size: calc(64px * var(--s)); font-weight: 900; letter-spacing: -.03em; color: var(--brand); }
+.detail-loading .dl-bar { width: calc(360px * var(--s)); height: calc(4px * var(--s)); border-radius: 999px; background: rgba(255,255,255,.2); overflow: hidden; }
+.detail-loading .dl-bar i { display: block; width: 30%; height: 100%; background: var(--brand); border-radius: inherit; animation: dlFill 1200ms ease-in-out infinite; }
+@keyframes dlFill { 0% { transform: translateX(-120%); } 100% { transform: translateX(360%); } }
+.detail-loading .dl-text { font-size: calc(18px * var(--s)); color: var(--ink2); }
+
+/* Cast portraits now that the hub can find them. */
+.cast .face img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.cast .role { font-size: calc(15px * var(--s)); color: var(--ink3); line-height: 1.2; max-width: calc(160px * var(--s)); }
+
+/* Facts column on the detail page. */
+.detail-facts { display: grid; gap: calc(14px * var(--s)); }
+.detail-facts .df { display: grid; grid-template-columns: calc(120px * var(--s)) minmax(0, 1fr); gap: calc(16px * var(--s)); align-items: baseline; }
+.detail-facts .dk { color: var(--ink3); font-size: var(--t-meta); }
+.detail-facts .dv { color: var(--ink1); font-size: var(--t-li-meta); }
+.detail-facts .dv.muted { color: var(--ink3); }
+.advisory-line { margin-top: calc(18px * var(--s)); padding: calc(14px * var(--s)) calc(18px * var(--s)); border-left: calc(3px * var(--s)) solid var(--warn); background: rgba(242,195,58,.08); border-radius: var(--r-chip); display: grid; gap: calc(4px * var(--s)); }
+.advisory-line b { color: var(--warn); font-size: var(--t-meta); text-transform: uppercase; letter-spacing: .08em; }
+.advisory-line span { color: var(--ink1); font-size: var(--t-li-meta); }
+
+/* What kind of content this is, under the title in the player's HUD. The certificate is the fact; the
+   content notes are the hub's reading of it, and both are labelled so neither pretends to be a scene guide. */
+.pcontent { display: flex; align-items: center; gap: calc(10px * var(--s)); margin-top: calc(5px * var(--s)); flex-wrap: wrap; }
+.pccert { font-size: calc(15px * var(--s)); font-weight: 700; color: var(--ink1); border: 1px solid var(--border); border-radius: var(--r-badge); padding: calc(2px * var(--s)) calc(7px * var(--s)); }
+.pcadv { font-size: calc(15px * var(--s)); color: var(--warn); }
+/* A channel's name is never just a name: the red pill says the stream is happening now, in the HUD where
+   it stays visible while the transport bar fades. */
+.plive { font-size: calc(13px * var(--s)); font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  color: #fff; background: var(--brand); border-radius: var(--r-badge); padding: calc(3px * var(--s)) calc(8px * var(--s)); }
+
+/* The detail page keeps its two columns on a television (the CSS viewport is ~960 px there even though
+   the panel is 1920). Only a genuine phone stacks it. */
+@media (max-width: 1100px) and (min-width: 761px) {
+  .detail-cols { grid-template-columns: minmax(0, 1fr) calc(460px * var(--s)); }
+}
+/* A portrait profile image inside a circle: clip the box, not only the image's own radius. */
+.cast .face { position: relative; overflow: hidden; }
+.cast .face img { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* Ranked tiles keep the ordinary poster's dimensions. The numeral overlays the left of the art instead
+   of widening the card; the title sits inside the art, so a still with no lettering still names itself. */
+.card.rank { width: var(--card-w); }
+.card.rank .art { margin-left: 0; }
+.card.rank .num {
+  width: 52%; height: 100%; bottom: 0; left: 0;
+  align-items: center; justify-content: flex-start; padding-left: calc(10px * var(--s));
+  background: linear-gradient(90deg, rgba(0,0,0,.88) 0%, rgba(0,0,0,.45) 55%, rgba(0,0,0,0) 100%);
+  z-index: 2; pointer-events: none;
+  font-size: calc(var(--card-h) * .44);
+}
+.card .ctitle {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+  padding: calc(36px * var(--s)) calc(14px * var(--s)) calc(12px * var(--s));
+  font-size: calc(19px * var(--s)); font-weight: 700; line-height: 1.15; color: #fff;
+  background: linear-gradient(0deg, rgba(0,0,0,.92) 0%, rgba(0,0,0,.55) 45%, rgba(0,0,0,0) 100%);
+  opacity: 0; transform: translateY(calc(5px * var(--s)));
+  transition: opacity var(--focus-ms) ease, transform var(--focus-ms) ease;
+  pointer-events: none;
+}
+.card.foc .ctitle, .card.rank .ctitle { opacity: 1; transform: none; }
+/* A title's own lettering, when the hub carries it. It occupies the title's slot, appears with the same
+   focus fade, and is hidden behind the typed title's own fallback rules above. */
+.card .art .clogo {
+  position: absolute; left: calc(12px * var(--s)); right: calc(12px * var(--s)); bottom: calc(14px * var(--s));
+  z-index: 6; max-height: 34%; width: auto; max-width: calc(100% - 24px * var(--s));
+  object-fit: contain; object-position: left bottom; pointer-events: none;
+  opacity: 0; transform: translateY(calc(5px * var(--s)));
+  transition: opacity var(--focus-ms) ease, transform var(--focus-ms) ease;
+  filter: drop-shadow(0 2px 10px rgba(0,0,0,.65));
+}
+.card .art.has-logo + .ctitle { display: none; }
+.card.foc .art .clogo, .card.rank .art .clogo { opacity: 1; transform: none; }

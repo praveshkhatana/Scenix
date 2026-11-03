@@ -27,7 +27,7 @@
  *
  * Cost control, because this sits in a request path:
  *   - results are cached in data/probe-cache.json keyed by a hash of url + the headers we replay;
- *     ok answers are trusted for PROBE_OK_TTL_MS (12 min), failures are re-tried after PROBE_FAIL_TTL_MS
+ *     ok answers are trusted for PROBE_OK_TTL_MS (4 min), failures are re-tried after PROBE_FAIL_TTL_MS
  *     (60 s) — a dead link coming back to life should not cost the household an evening;
  *   - concurrent lookups of the same URL are coalesced into one request;
  *   - a global cap (PROBE_CONCURRENCY, 4) means two people browsing at once never hammer one addon;
@@ -69,8 +69,23 @@ const SAMPLE_BYTES_MAX = PROBE_BYTES * Math.min(8, num(process.env.PROBE_SAMPLE_
 // Slightly under PROBE_BUDGET_MS on purpose: a source that is merely SLOW must still be measured inside
 // the request path, because "this one streams at 0.8 Mbps" is exactly the answer the viewer needs.
 const PROBE_TIMEOUT_MS = num(process.env.PROBE_TIMEOUT_MS, 1200);
-const OK_TTL_MS = num(process.env.PROBE_OK_TTL_MS, 12 * 60 * 1000); // a working link is believed for a while
+// Four minutes, not twelve: direct addon links are often signed and stop answering before an
+// evening ends. A stale "working" row is how a player was handed a URL that now returns 404.
+const OK_TTL_MS = num(process.env.PROBE_OK_TTL_MS, 4 * 60 * 1000);
 const FAIL_TTL_MS = num(process.env.PROBE_FAIL_TTL_MS, 60 * 1000); // a dead link is a rumour for a minute
+// Free Heroku dynos and their friends on Render/Koyeb/Railway are where scraper APIs sleep between
+// viewers. The first request wakes the box and can take 2-6 s; every request after it is fast. A
+// 1.2 s verdict calls that "dead", the play refuses the copy, and the viewer's second tap — which
+// woke the box — works. That gap is the "works on retry" bug. Ask these hosts for their wake-up
+// time once, up front.
+const COLD_HOST = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|\bweb\.app\b/i;
+const COLD_START_WAIT_MS = num(process.env.PROBE_COLD_START_MS, 6000);
+function coldAllowance(url, timeoutMs) {
+  return COLD_HOST.test(String(url || '')) ? Math.max(timeoutMs, COLD_START_WAIT_MS) : timeoutMs;
+}
+function coldAwareTimeout(url, timeoutMs) {
+  return COLD_HOST.test(String(url || '')) ? Math.max(timeoutMs, COLD_START_WAIT_MS) : timeoutMs;
+}
 const CONCURRENCY = Math.min(16, Math.max(1, num(process.env.PROBE_CONCURRENCY, 4)));
 const BUDGET_MS = num(process.env.PROBE_BUDGET_MS, 1500); // a request never waits longer than this
 const CACHE_MAX = num(process.env.PROBE_CACHE_MAX, 600); // entries kept; oldest are pruned on save
@@ -177,6 +192,7 @@ function sourceId(source) {
  * that verdict is the whole reason this module exists.
  */
 function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = PROBE_BYTES } = {}) {
+  timeoutMs = coldAllowance(url, timeoutMs); // a sleeping dyno is waking, not dying
   // hrtime, not Date.now: a transfer over a fast pipe finishes in well under a millisecond, and a
   // clock that cannot see it reports a 0 ms window, which would report the speed as zero.
   const t0 = process.hrtime.bigint();
@@ -187,6 +203,7 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
     let req = null;
     let status = null;
     let contentType = null;
+    let fileName = null;
     let seekable = false;
     let bytes = 0;
     let head = '';
@@ -217,6 +234,7 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
         rateReliable,
         rateFloor,
         contentType,
+        fileName,
         seekable,
         sampleMs: rnd(transferMs), // how long the rate was measured over — honesty about the number
         checkedAt: Date.now(),
@@ -264,6 +282,16 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
         if (status < 200) return finish({ ok: false, error: 'HTTP ' + status });
 
         contentType = String(res.headers['content-type'] || '').toLowerCase() || null;
+        // The file's own name is the only cheap evidence about WHICH film answered. A provider can
+        // return a perfect MP4 for the wrong title; the filename is worth carrying to the picker.
+        const cd = String(res.headers['content-disposition'] || '');
+        const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+        const plain = /filename="?([^";]+)"?/i.exec(cd);
+        const rawName = star ? star[1] : (plain ? plain[1] : '');
+        if (rawName) {
+          try { fileName = decodeURIComponent(rawName).split(/[\\/]/).pop().slice(0, 180); }
+          catch (e) { fileName = rawName.split(/[\\/]/).pop().slice(0, 180); }
+        }
         seekable = status === 206 || /bytes/i.test(String(res.headers['accept-ranges'] || ''));
         res.on('data', (chunk) => {
           if (!firstByte) firstByte = process.hrtime.bigint();
@@ -294,6 +322,132 @@ function probeOne(url, headers = {}, { timeoutMs = PROBE_TIMEOUT_MS, maxBytes = 
       req.on('error', (e) => {
         if (bytes > 0) return finish({ ok: true, error: null, partial: true });
         finish({ ok: false, error: e.code || e.message || 'connect failed' });
+      });
+    };
+
+    walk(url, MAX_REDIRECTS);
+  });
+}
+
+/**
+ * Is this link a stream, or a page wearing a stream's URL?
+ *
+ * A direct/adaptive addon can mint its playable URL at play time, so the hub has never measured that
+ * exact URL: the probe cache has nothing to say about it, and an HTML service page answering 200 reaches
+ * the player and is reported there as a corrupt file. This is the cheapest question that separates the
+ * two — one ranged GET of a few KB, a hard cap of about a second, and no cache write. A real media body
+ * starts with bytes that are not a document, and an HLS/DASH manifest is recognised by its own first
+ * line. A non-2xx answer, an HTML document, or a 2xx with nothing in it is refused.
+ *
+ * The verdict is deliberately lenient about speed: a link that has already started sending bytes when
+ * the cap is spent is accepted, and a slow-but-real stream is never failed here. This check exists to
+ * catch the wrong KIND of answer; the picker's measured ordering already knows how to avoid slow ones.
+ *
+ * Returns { ok, reason, status, contentType, bytes, latencyMs, checkedAt } and never throws.
+ */
+function check(url, headers = {}, { timeoutMs = 1200, maxBytes = 4096 } = {}) {
+  timeoutMs = coldAllowance(url, timeoutMs); // a sleeping dyno is waking, not dying
+  const verdict = (ok, reason, extra) => ({
+    ok,
+    reason: reason || null,
+    status: null,
+    contentType: null,
+    bytes: 0,
+    latencyMs: null,
+    checkedAt: Date.now(),
+    ...(extra || {}),
+  });
+  if (!probeable(url)) return Promise.resolve(verdict(false, 'not an HTTP URL'));
+
+  const t0 = process.hrtime.bigint();
+  const ms = (big) => Number(big) / 1e6;
+  const rnd = (v) => Math.round(v * 10) / 10;
+  // Enough to sniff a document and no more: one chunk of a real stream is usually this size already.
+  const bytesLimit = Math.min(64 * 1024, Math.max(512, maxBytes));
+  return new Promise((resolve) => {
+    let settled = false;
+    let req = null;
+    let status = null;
+    let contentType = null;
+    let bytes = 0;
+    let head = '';
+    let ttfb = null;
+
+    const done = (ok, reason, extra) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hard);
+      if (req) { try { req.destroy(); } catch (e) { /* already gone */ } }
+      resolve(verdict(ok, reason, {
+        status,
+        contentType,
+        bytes,
+        latencyMs: ttfb == null ? null : rnd(ms(ttfb - t0)),
+        ...(extra || {}),
+      }));
+    };
+    // A document is not a stream even when the content-type lies. `#EXTM3U`, an XML declaration and an
+    // MPD root are the only manifests this hub can hand a player, so they are the only non-media openers
+    // allowed. The content-type is deliberately not used here: CDNs label real HLS `text/html` often
+    // enough that the bytes are the better witness, and a media body never starts with markup or JSON.
+    const judge = (extra) => {
+      const manifest = /^\s*(?:#EXTM3U|<\?xml|<MPD[\s>])/i.test(head);
+      if (!manifest && /^\s*[<{\[]/.test(head)) {
+        return done(false, 'answered with a document, not a stream', extra);
+      }
+      if (bytes <= 0) return done(false, 'answered ' + (status == null ? 'nothing' : status) + ' with no bytes', extra);
+      return done(true, null, extra);
+    };
+
+    const hard = setTimeout(() => {
+      // Bytes already moving: a slow start is not a reason to refuse a real stream. A document that has
+      // only half arrived is still a document, and refusing it is the whole point of this check.
+      if (bytes > 0) return judge({ partial: true });
+      done(false, ttfb != null ? 'headers, then no bytes in ' + timeoutMs + 'ms' : 'no answer in ' + timeoutMs + 'ms');
+    }, timeoutMs);
+    if (hard.unref) hard.unref();
+
+    const walk = (target, redirectsLeft) => {
+      let mod;
+      try {
+        mod = new URL(target).protocol === 'https:' ? https : http;
+      } catch (e) {
+        return done(false, 'bad url');
+      }
+      req = mod.get(target, {
+        headers: { 'User-Agent': UA, Accept: '*/*', 'Accept-Encoding': 'identity', Range: 'bytes=0-' + (bytesLimit - 1), ...headers },
+        timeout: timeoutMs,
+      }, (res) => {
+        status = res.statusCode;
+        if (status >= 300 && status < 400 && res.headers.location && redirectsLeft > 0) {
+          res.resume();
+          return walk(new URL(res.headers.location, target).toString(), redirectsLeft - 1);
+        }
+        ttfb = process.hrtime.bigint();
+        if (status < 200 || status >= 300) {
+          res.resume();
+          return done(false, 'HTTP ' + status);
+        }
+        contentType = String(res.headers['content-type'] || '').toLowerCase() || null;
+        res.on('data', (chunk) => {
+          bytes += chunk.length;
+          if (head.length < 1024) head += chunk.slice(0, 1024 - head.length).toString('utf8');
+          // Enough to know what kind of answer this is: stop instead of downloading the sample.
+          if (head.length >= 512 || bytes >= bytesLimit) judge();
+        });
+        res.on('end', () => judge());
+        res.on('error', () => {
+          if (bytes > 0) judge();
+          else done(false, 'stream read failed');
+        });
+      });
+      req.on('timeout', () => {
+        if (bytes > 0) judge({ partial: true });
+        else done(false, 'timeout ' + timeoutMs + 'ms');
+      });
+      req.on('error', (e) => {
+        if (bytes > 0) judge({ partial: true });
+        else done(false, e.code || e.message || 'connect failed');
       });
     };
 
@@ -366,6 +520,7 @@ function publicEntry(entry) {
     // faster than the timing window, so the divisor was clamped up instead of reporting rounding error.
     rateFloor: entry.rateFloor === true,
     contentType: entry.contentType || null,
+    fileName: entry.fileName || null,
     seekable: entry.seekable === true,
     error: entry.error || null,
     checkedAt: Number(entry.checkedAt) || null,
@@ -464,7 +619,11 @@ async function probeAll(targets, { budgetMs = BUDGET_MS, force = false, timeoutM
 /** Synchronous read of what we already measured — for a rule or a row that must not wait at all. */
 function peek(url, headers = {}) {
   if (!ENABLED || !probeable(url)) return null;
-  return publicEntry(state.entries[keyFor(url, headers)] || null);
+  const e = state.entries[keyFor(url, headers)] || null;
+  // Freshness or nothing: entries are only swept after ~80 min, and `mintedRefusal` reads OK verdicts
+  // through here — an hour-old "this signed link was alive" hands an expired link straight to the TV
+  // while the same function age-checks failures. An expired OK is not a fact; it is a guess.
+  return e && freshEnough(e) ? publicEntry(e) : null;
 }
 
 /** Drop a measurement (the app reported "this one buffered": do not trust it until it is re-measured). */
@@ -518,7 +677,7 @@ function status() {
 }
 
 module.exports = {
-  probeAll, probeUrl, probeOne, peek, invalidate, clearCache, keyFor, hash, probeable, sourceId, status,
+  probeAll, probeUrl, probeOne, check, peek, invalidate, clearCache, keyFor, hash, probeable, sourceId, status,
   ENABLED, FILE,
   limits: { PROBE_BYTES, SAMPLE_BYTES_MAX, MIN_SAMPLE_MS, PROBE_TIMEOUT_MS, OK_TTL_MS, FAIL_TTL_MS, CONCURRENCY, BUDGET_MS, CACHE_MAX },
 };

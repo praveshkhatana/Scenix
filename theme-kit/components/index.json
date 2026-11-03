@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "components": [
+    "atom.icon.json",
+    "atom.label.json",
+    "atom.button.json",
+    "atom.chip.json",
+    "atom.focus-ring.json",
+    "atom.surface.json",
+    "atom.avatar.json",
+    "atom.progress.json",
+    "molecule.tile.json",
+    "molecule.nav-item.json",
+    "molecule.settings-row.json",
+    "molecule.seek-bar.json",
+    "organism.hero.glass.json",
+    "organism.nav.top.json",
+    "organism.rail.json",
+    "organism.rail.left.json",
+    "template.home.json",
+    "template.detail.json",
+    "template.settings.json",
+    "template.player.json"
+  ]
+}

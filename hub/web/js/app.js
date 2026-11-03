@@ -20,6 +20,7 @@ import * as state from '/ui/js/state.js';
 import { icon } from '/ui/js/icons.js';
 import { entryField } from '/ui/js/keyboard.js';
 import { initials } from '/ui/js/format.js';
+import { paintAvatar } from '/ui/js/avatars.js';
 
 /* Screens are plugins too: the route table is the only place that knows a screen exists. */
 const SCREENS = {
@@ -27,8 +28,12 @@ const SCREENS = {
   detail:   () => import('/ui/js/screens/detail.js'),
   play:     () => import('/ui/js/screens/player.js'),
   search:   () => import('/ui/js/screens/search.js'),
+  browse:   () => import('/ui/js/screens/browse.js'),
+  list:     () => import('/ui/js/screens/list.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
+  channels: () => import('/ui/js/screens/channels.js'),
+  categories: () => import('/ui/js/screens/categories.js'),
   add:      () => import('/ui/js/screens/add.js'),
   manage:   () => import('/ui/js/screens/manage.js'),
 };
@@ -69,17 +74,53 @@ let modals = [];             // { node, onClose } stacked in #layer
 const ctx = {
   get profile() { return state.session.profile; },
   manifest() { return state.session.manifest; },
+  /** Tell the bar that what the hub can fill has changed (Home just loaded its shelves). */
+  syncNav() { syncSectionTabs(); },
   navigate,
   back,
   route: () => routeStack[routeStack.length - 1] || { name: 'home' },
+  /** Put the ring back where it stood the last time this screen was left. Screens whose content
+   *  arrives after mount call this once the rows exist; returns whether anything was restored. */
+  restoreRing() {
+    const t = findReturn(mounted, ctx.route());
+    if (!t) return false;
+    focus.focusDefault(t);
+    return true;
+  },
   toast,
   px,
   token,
   open(item) { if (item && item.identity) navigate('detail', item.identity); },
   play(item, opts) {
     if (!item || !item.identity) return;
-    state.session.pendingPlay = Object.assign({ identity: item.identity, type: item.type }, opts || {});
+    if (item.type === 'channel' || item.live) state.session.zapping = item.identity;
+    // Carry the name with the identity: the player can draw its top line before the hub has answered,
+    // and a live channel that fails still says which channel it was.
+    state.session.pendingPlay = Object.assign({
+      identity: item.identity, type: item.type, title: item.title,
+      subtitle: (item.live && item.live.now) || item.tagline || '',
+      logo: item.logo || '', poster: item.poster || '', backdrop: item.backdrop || '',
+      maturity: item.maturity || '', minAge: item.minAge || 0,
+      advisories: Array.isArray(item.advisories) ? item.advisories : [],
+    }, opts || {});
     navigate('play', item.identity);
+  },
+  /**
+   * Live TV has no seek bar, so left/right are the channel keys, the way a set-top box behaves. The list
+   * is the hub's live row in the owner's order; wrapping at the ends is deliberate (channel 1 -> last).
+   */
+  zap(delta) {
+    const rows = (state.session.home && state.session.home.rows) || [];
+    const row = rows.find((r) => r.id === 'live') || rows.find((r) => r.card === 'channel');
+    const items = (row && row.items) || [];
+    if (!items.length) { toast('No other channels are loaded'); return; }
+    const current = state.session.zapping || (state.session.pendingPlay && state.session.pendingPlay.identity);
+    let at = items.findIndex((i) => i.identity === current);
+    if (at < 0) at = 0;
+    const next = items[(at + (delta < 0 ? -1 : 1) + items.length) % items.length];
+    state.session.zapping = next.identity;
+    state.session.pendingPlay = { identity: next.identity, type: 'channel', live: true, title: next.title };
+    navigate('play', next.identity);
   },
   list(item) {
     if (!item) return;
@@ -109,10 +150,15 @@ function cssEscape(s) {
 
 function parseHash() {
   const raw = String(location.hash || '').replace(/^#\/?/, '');
-  const bits = raw.split('/');
+  // A native Detail page hands Play an episode window as `#/play/<id>?season=1&episode=4`.
+  // The query belongs to the route, not to the identity, so it is split before the path.
+  const q = raw.indexOf('?');
+  const path = q >= 0 ? raw.slice(0, q) : raw;
+  const query = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : '');
+  const bits = path.split('/');
   const name = bits[0] || 'home';
   const arg = bits.length > 1 ? decodeURIComponent(bits.slice(1).join('/')) : null;
-  return SCREENS[name] ? { name, arg } : { name: 'home', arg: null };
+  return SCREENS[name] ? { name, arg, query } : { name: 'home', arg: null, query };
 }
 
 function hashFor(route) {
@@ -161,6 +207,15 @@ window.addEventListener('hashchange', () => {
 });
 
 async function mount(route, _pushed) {
+  if (route.name === 'play' && route.query) {
+    const season = Number(route.query.get('season')) || 0;
+    const episode = Number(route.query.get('episode')) || 0;
+    if (season > 0 && episode > 0) {
+      state.session.pendingPlay = Object.assign({}, state.session.pendingPlay || {}, {
+        identity: route.arg, type: 'series', season, episode,
+      });
+    }
+  }
   const token = ++renderToken;
   closeModals();
   focus.resetScopes();
@@ -186,13 +241,23 @@ async function mount(route, _pushed) {
   }
   if (token !== renderToken || !node) return;         // a newer route already won
 
+  // Write down where the viewer stood on the outgoing screen before it goes away under us.
+  captureReturn();
+
   const s = stage();
   if (mounted && mounted.__dispose) { try { mounted.__dispose(); } catch (e) { /* teardown is best-effort */ } }
   const prev = mounted;
   // A screen that was told to leave mid-transition stays on stage until its exit finishes, un-focusable and
   // out of the pointer path, so the profile grid can fall away while Home arrives behind it.
   const lingering = prev && prev.classList.contains('leaving');
-  if (prev && !lingering && prev.parentNode === s) s.removeChild(prev);
+  if (prev && !lingering && prev.parentNode === s) {
+    // The route hand-over is one motion, not a cut: the outgoing screen fades over the incoming one
+    // instead of being yanked away. It keeps no focus stops (the data-f marks come off immediately), so
+    // the ring never lands on a page that is already gone.
+    prev.classList.add('exiting');
+    prev.querySelectorAll('[data-f]').forEach((n) => { n.removeAttribute('data-f'); n.removeAttribute('tabindex'); });
+    setTimeout(() => { if (prev.parentNode === s) s.removeChild(prev); }, 220);
+  }
   if (nav.parentNode !== s) s.appendChild(nav);
   s.appendChild(node);
   if (lingering) {
@@ -205,7 +270,8 @@ async function mount(route, _pushed) {
 
   const chromeless = route.name === 'play' || GATE_SCREENS.indexOf(route.name) >= 0;
   nav.style.display = chromeless ? 'none' : 'flex';
-  setNavActive(route.name);
+  setNavActive(route);
+  syncSectionTabs();
   document.body.classList.toggle('watching', route.name === 'play');
 
   // The menu bar lives beside the screen in #stage. Scoping the ring to the screen alone made the
@@ -218,6 +284,7 @@ async function mount(route, _pushed) {
     try { target = node.__defaultFocus(); } catch (e) { /* a screen can be wrong about its own focus */ }
   }
   focus.focusDefault(target);
+  mountedRoute = route;
 }
 
 /* The ring goes back where the viewer left it, not at the top of the page every time. */
@@ -227,33 +294,82 @@ function focusTargetFor(route) {
     const id = state.focusMemoryFor('home');
     if (id) return stage().querySelector(`.card[data-identity="${cssEscape(id)}"]`);
   }
-  return null;
+  // Every other screen gets the same courtesy through return memory: the row or card that held the
+  // ring when we left it. The scroll comes free — the focus engine brings the ring's row into view.
+  return findReturn(mounted, route);
+}
+
+let mountedRoute = null;
+const returnKey = (route) => route.name + (route.arg ? ':' + route.arg : '');
+
+/**
+ * Record where the viewer was standing on the screen they are leaving. A card is remembered by its
+ * identity, a settings-style row by its `ctl` tag, anything else by its place among that screen's
+ * focus stops. A screen may add what only it knows — search remembers the word that was typed — and
+ * a screen whose content arrives late (the channel list) calls ctx.restoreRing() once it exists.
+ */
+function captureReturn() {
+  if (!mounted || !mountedRoute) return;
+  const f = document.activeElement;
+  const rec = {};
+  if (f && f !== document.body && mounted.contains(f)) {
+    const card = f.closest ? f.closest('[data-identity]') : null;
+    if (card) rec.identity = card.getAttribute('data-identity');
+    else if (f.dataset && f.dataset.ctl) rec.ctl = f.dataset.ctl;
+    else {
+      const all = [...mounted.querySelectorAll('[data-f]')];
+      const i = all.indexOf(f);
+      if (i >= 0) rec.nth = i;
+    }
+  }
+  if (typeof mounted.__captureReturn === 'function') {
+    try { Object.assign(rec, mounted.__captureReturn() || {}); } catch (e) { /* a screen can be wrong about itself */ }
+  }
+  if (Object.keys(rec).length) state.rememberReturn(returnKey(mountedRoute), rec);
+}
+
+function findReturn(root, route) {
+  const mem = state.returnMemoryFor(returnKey(route));
+  if (!mem || !root) return null;
+  let t = null;
+  if (mem.identity != null) t = root.querySelector(`[data-identity="${cssEscape(mem.identity)}"]`);
+  if (!t && mem.ctl != null) t = root.querySelector(`[data-ctl="${cssEscape(mem.ctl)}"]`);
+  if (!t && Number.isInteger(mem.nth)) t = root.querySelectorAll('[data-f]')[mem.nth] || null;
+  return t;
 }
 
 /* ----------------------------------------------------------------- chrome */
 
 function buildNav() {
-  const item = (name, label, target, arg) => el('button', {
-    class: 'nav-item', type: 'button', dataset: { route: target },
+  // `tab` is what lights up when a route is on screen: three of these items all route to `search`, and
+  // the bar has to know which of them the viewer is standing on.
+  const item = (tab, label, target, arg) => el('button', {
+    class: 'nav-item', type: 'button', dataset: { tab, route: target, arg: arg == null ? '' : arg },
     onclick: () => navigate(target, arg),
   }, label);
-  nav = el('div', { class: 'nav' },
+  // The profile sits immediately after the wordmark, the way a household expects to reach it: one
+  // Right from the brand, not a walk past every menu item and a geometry jump into the hero. The whole
+  // bar is one horizontal group, so Left/Right never leave it for a card below.
+  // The sections between Home and Search are the three kinds of thing this app plays — films, shows,
+  // the live wall — plus the list the viewer saved. Movies and Series open the browse page, which turns
+  // the hub's section row into shelves; Live TV opens the channel wall itself, not a grid that merely
+  // names it. syncSectionTabs pulls any tab the hub cannot fill.
+  nav = el('div', { class: 'nav', 'data-nav': 'h' },
     el('button', { class: 'brand', type: 'button', 'aria-label': 'Scenix home', onclick: () => navigate('home') },
       el('span', { class: 'brand-mark' })),
     el('div', { class: 'nav-items' },
+      el('button', {
+        class: 'avatar-chip', type: 'button', 'aria-label': 'Switch profile', title: 'Switch profile',
+        onclick: () => navigate('profiles'),
+      }, el('span', { class: 'ini' })),
       item('home', 'Home', 'home'),
+      item('movies', 'Movies', 'browse', 'movies'),
+      item('series', 'Series', 'browse', 'series'),
+      item('live', 'Live TV', 'channels'),
+      item('list', 'My list', 'list'),
       item('search', 'Search', 'search'),
-      item('settings', 'Settings', 'settings')),
-    el('div', { class: 'nav-right' },
-      el('button', {
-        class: 'nav-icon', type: 'button', 'aria-label': 'Profiles',
-        onclick: () => navigate('profiles'),
-      }, icon('user')),
-      el('button', {
-        class: 'avatar-chip', type: 'button', 'aria-label': 'Choose profile',
-        onclick: () => navigate('profiles'),
-      }, el('span', { class: 'ini' }))));
-  for (const n of nav.querySelectorAll('.nav-item, .nav-icon, .brand, .avatar-chip')) focus.focusable(n);
+      item('settings', 'Settings', 'settings')));
+  for (const n of nav.querySelectorAll('.nav-item, .brand, .avatar-chip')) focus.focusable(n);
   nav.addEventListener('scroll', () => { /* the screen scrolls, not the bar */ }, { passive: true });
   stage().addEventListener('scroll', (e) => {
     const top = e.target === stage() ? e.target.scrollTop : 0;
@@ -268,18 +384,62 @@ const brokenScreens = new Set();
 
 function hideNavItem(name) {
   if (!nav || name === 'home' || name === 'profiles') return;
-  const b = nav.querySelector(`.nav-item[data-route="${name}"]`);
+  const b = nav.querySelector(`.nav-item[data-tab="${name}"]`);
   if (b) b.remove();
 }
 
-function setNavActive(name) {
+/**
+ * The section tabs follow what the hub can actually fill. Movies and Series exist because their row
+ * plugins are registered (the manifest is the truth about that); Live TV waits until the hub answers
+ * Home with a live wall that has channels in it — until Home has been loaded we cannot know, so the
+ * tab stays out of the way rather than opening an empty shelf. A tab the hub cannot fill is a dead key
+ * with a label on it, and the remote would spend a press on it every session.
+ */
+function syncSectionTabs() {
   if (!nav) return;
-  for (const n of nav.querySelectorAll('.nav-item')) n.classList.toggle('on', n.dataset.route === name);
+  const rows = (state.session.manifest && state.session.manifest.rows) || [];
+  const hasRow = (id) => rows.some((r) => r.id === id);
+  const home = state.session.home;
+  const liveFilled = home && Array.isArray(home.rows)
+    && home.rows.some((r) => r.id === 'live' && (r.items || []).length);
+  const on = { movies: hasRow('movies'), series: hasRow('series'), live: !!liveFilled };
+  for (const [tab, show] of Object.entries(on)) {
+    const b = nav.querySelector(`.nav-item[data-tab="${tab}"]`);
+    if (b) b.hidden = !show;
+  }
+}
+
+/* The lit tab is the one the viewer came from, not merely a bar item that shares a route: three of
+   them open `search`, and the one under the ring has to stay lit while its shelf is on screen. */
+function navTabFor(route) {
+  const arg = typeof route.arg === 'string' ? route.arg : '';
+  if (route.name === 'search' && arg.startsWith('row:')) {
+    const id = arg.slice(4);
+    if (['movies', 'series', 'live'].includes(id)) return id;
+  }
+  if (route.name === 'browse') return arg || 'browse';
+  if (route.name === 'channels') return 'live';
+  return route.name;
+}
+
+function setNavActive(route) {
+  if (!nav) return;
+  const tab = navTabFor(route);
+  for (const n of nav.querySelectorAll('.nav-item')) n.classList.toggle('on', n.dataset.tab === tab);
   const p = state.session.profile;
   const chip = nav.querySelector('.avatar-chip');
   if (chip && p) {
-    chip.textContent = '';
-    chip.appendChild(el('span', { class: 'ini', text: initials(p.name) }));
+    // The bar carries the actual face, not initials standing in for it: the switch animation lands a
+    // person's tile in this corner, and initials arriving where a face just flew in reads as the face
+    // vanishing. Same container shape as the profile tiles (`div.a` + `.ini` fallback), same painter.
+    if (chip.dataset.for !== String(p.id)) {
+      chip.dataset.for = String(p.id);
+      clear(chip);
+      const idx = (state.session.profiles || []).findIndex((x) => String(x.id) === String(p.id));
+      const face = el('div', { class: 'a' }, el('span', { class: 'ini', text: initials(p.name) }));
+      chip.appendChild(face);
+      paintAvatar(face, p, idx >= 0 ? idx : 0);
+    }
     chip.className = `avatar-chip${state.isKids(p) ? ' kids' : ''}`;
   }
 }
@@ -351,7 +511,9 @@ function askText({ title = '', reason = '', placeholder = '', initial = '', acti
   return new Promise((resolve) => {
     const err = el('div', { class: 'err' });
     let answered = false;
-    const entry = entryField({ glyph: 'globe', placeholder, initial });
+    // A URL is the one thing nobody can type on a remote. On a pointer device this is a real input,
+    // so paste, selection and Ctrl/Cmd+V work; on the TV it stays the D-pad pad.
+    const entry = entryField({ glyph: 'globe', placeholder, initial, native: !window.Scenix });
     let box;
     const answer = (value) => {
       if (answered) return;
@@ -509,9 +671,16 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
 
 function setProfile(p) {
   state.setProfile(p);
+  // Native Detail opens the shared player in a new WebShell. This local trust mark lets that page
+  // skip the same PIN prompt within the session; a browser has no bridge and always asks.
+  try {
+    if (p && window.Scenix && typeof window.Scenix.markProfileUnlocked === 'function') {
+      window.Scenix.markProfileUnlocked(String(p.id));
+    }
+  } catch (e) { /* older shell */ }
   document.body.classList.toggle('kids', state.isKids(p));
   state.loadMyList();
-  setNavActive(ctx.route().name);
+  setNavActive(ctx.route());
 }
 
 /**
@@ -694,6 +863,7 @@ async function boot() {
   try {
     const m = await api.manifest();
     state.session.manifest = m;
+    syncSectionTabs();
     const p = await api.profiles();
     state.setProfiles(p.profiles);
     state.loadMyList();
@@ -714,7 +884,16 @@ async function boot() {
 
   await hideBoot();
 
-  if (wanted && !state.session.profile) await unlock(state.profileById(wanted));
+  if (wanted && !state.session.profile) {
+    const p = state.profileById(wanted);
+    let trusted = false;
+    try {
+      trusted = !!(p && window.Scenix && typeof window.Scenix.profileUnlocked === 'function'
+        && window.Scenix.profileUnlocked(String(p.id)));
+    } catch (e) { /* an older shell asks for the PIN */ }
+    if (trusted) setProfile(p);
+    else await unlock(p);
+  }
   if (!gated && !state.session.profile) {
     // A deep link (a shared detail page, a resume) picks the last profile the household used.
     await unlock(state.profileById(state.lastProfileId()) || state.session.profiles[0]);

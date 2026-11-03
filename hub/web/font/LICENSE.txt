@@ -1,0 +1,19 @@
+ScenixSans-Regular.woff2 · ScenixSans-Medium.woff2 · ScenixSans-Bold.woff2
+
+These three files are local subsets of Netflix Sans — the typeface Netflix commissioned
+from Dalton Maag. Their own name table carries the line:
+
+    Copyright (c) 2018. Netflix, Inc. and its affiliates. All rights reserved.
+    Dalton Maag, and DaMa are registered trademarks of Dalton Maag Ltd.
+    http://www.daltonmaag.com/eula
+
+What was done locally: subsetting (latin glyphs) and the three weights; the outline
+data is Netflix's. Netflix Sans is proprietary and free for personal, non-commercial
+use under its EULA (the URL above ships inside the files); this project is MIT-licensed
+software, and the font is carried here as the interface face under those terms.
+
+Forking or commercialising? Replace the three files — the family name "ScenixSans" is
+declared in one place (the @font-face block in hub/web/app.css), so any OFL family
+(Inter, Manrope, Outfit…) drops straight in.
+
+Everything else in this repository is MIT (see the project README).

@@ -1,0 +1,235 @@
+/*
+ * css/packs.css — what a theme pack may change beyond colour and type.
+ *
+ * tokens say what the interface is made of; a pack says how the pieces are arranged, shaped and lit.
+ * js/theme.js writes the pack onto <html> as data-hero / data-rows / data-card / data-focus / data-motion
+ * / data-detail, so a developer can add a pack by adding a JSON block and, if it needs a shape the
+ * existing three do not, one rule here. Loaded after app.css, screens.css and hero.css: these are the
+ * deliberate overrides, not a second base sheet.
+ */
+
+/* ==========================================================================
+   Hero: full (words over a full-bleed still), split (copy | poster, the classic web shape),
+   centred (words in the middle of the frame — the cinema pack).
+   ========================================================================== */
+
+:root[data-hero="full"] .billboard .bb-arts,
+:root[data-hero="full"] .billboard .preview,
+:root[data-hero="centered"] .billboard .bb-arts,
+:root[data-hero="centered"] .billboard .preview { left: 0; right: 0; }
+
+:root[data-hero="full"] .billboard .scrim {
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.30) 44%, rgba(0,0,0,0) 72%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,.55) 10%, rgba(20,20,20,0) 44%);
+}
+:root[data-hero="full"] .billboard .bb-art::after { display: none; }
+:root[data-hero="full"] .billboard .bb { left: var(--gutter); width: calc(900px * var(--s)); }
+
+:root[data-hero="centered"] .billboard .scrim {
+  background:
+    radial-gradient(ellipse at 50% 52%, rgba(0,0,0,.12) 0%, rgba(0,0,0,.55) 58%, rgba(7,11,18,.92) 100%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(7,11,18,.45) 14%, rgba(7,11,18,0) 52%);
+}
+:root[data-hero="centered"] .billboard .bb {
+  left: 50%; transform: translateX(-50%);
+  width: min(calc(1120px * var(--s)), 82vw);
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+:root[data-hero="centered"] .bb .logo { object-position: center bottom; margin-left: auto; margin-right: auto; }
+:root[data-hero="centered"] .bb .sub,
+:root[data-hero="centered"] .bb .tagline,
+:root[data-hero="centered"] .bb .why { max-width: calc(760px * var(--s)); }
+:root[data-hero="centered"] .bb .bb-rating,
+:root[data-hero="centered"] .bb .mat,
+:root[data-hero="centered"] .bb .chips { justify-content: center; }
+:root[data-hero="centered"] .bb-btns { justify-content: center; }
+:root[data-hero="centered"] .bb-thumbs { justify-content: center; }
+
+/* ==========================================================================
+   Rails: the cinema pack turns poster shelves into wide stills. The rank row keeps its
+   numeral geometry; only ordinary poster rows change shape.
+   ========================================================================== */
+
+:root[data-rows="landscape"] .cards.poster {
+  --card-w: calc(480px * var(--s));
+  --card-h: calc(270px * var(--s));
+  --gap: calc(24px * var(--s));
+}
+:root[data-rows="landscape"] .cards.poster .card .art .clogo { max-height: 46%; }
+
+/* ==========================================================================
+   Card treatments
+   overlay  classic: art, bottom scrim, lettering on focus
+   glass    cinema: rounded plate, inset edge, a floating caption chip
+   frame    editorial: hard square plate, hairline border, always-on caption bar
+   ========================================================================== */
+
+:root[data-card="glass"] .cards .card .art {
+  border-radius: calc(18px * var(--s));
+  box-shadow: inset 0 0 0 calc(1px * var(--s)) var(--border);
+}
+:root[data-card="glass"] .cards .card .ctitle {
+  left: calc(8px * var(--s)); right: calc(8px * var(--s)); bottom: calc(8px * var(--s));
+  border-radius: calc(10px * var(--s));
+  background: rgba(7,11,18,.72);
+  padding: calc(12px * var(--s)) calc(12px * var(--s));
+}
+:root[data-card="glass"] .cards .card .art .clogo {
+  left: calc(20px * var(--s)); right: calc(20px * var(--s)); bottom: calc(18px * var(--s));
+}
+
+:root[data-card="frame"] .cards .card .art {
+  border-radius: 0; background: var(--surface);
+  box-shadow: inset 0 0 0 calc(1px * var(--s)) var(--line);
+}
+:root[data-card="frame"] .cards .card .ctitle {
+  left: 0; right: 0; bottom: 0; opacity: 1; transform: none;
+  background: var(--surface);
+  border-top: calc(1px * var(--s)) solid var(--line);
+  padding: calc(10px * var(--s)) calc(12px * var(--s));
+  font-size: var(--t-badge); letter-spacing: .01em;
+}
+:root[data-card="frame"] .cards .card .art .clogo {
+  left: calc(14px * var(--s)); right: calc(14px * var(--s)); bottom: calc(16px * var(--s));
+}
+:root[data-card="frame"] .cards .card .art.has-logo + .ctitle { display: block; opacity: 0; }
+:root[data-card="frame"] .cards .card.foc .art.has-logo + .ctitle { opacity: 0; }
+:root[data-card="frame"] .cards .card .art.has-logo .clogo { bottom: calc(50px * var(--s)); }
+
+/* ==========================================================================
+   Focus language
+   ring  classic white outline
+   glow  the pack accent, doubled and blurred — cinema
+   lift  no outline at all; the card rises on its shadow — editorial
+   ========================================================================== */
+
+:root[data-focus="glow"] .card.foc {
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color),
+              0 0 calc(34px * var(--s)) var(--focus-color),
+              0 calc(16px * var(--s)) calc(38px * var(--s)) rgba(0,0,0,.65);
+}
+:root[data-focus="glow"] .btn.foc, :root[data-focus="glow"] .chip.foc,
+:root[data-focus="glow"] .nav-item.foc, :root[data-focus="glow"] .li.foc,
+:root[data-focus="glow"] .src.foc, :root[data-focus="glow"] .ep.foc,
+:root[data-focus="glow"] .key.foc, :root[data-focus="glow"] .iconbtn.foc,
+:root[data-focus="glow"] .seg.foc {
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color),
+              0 0 calc(24px * var(--s)) var(--focus-color);
+}
+:root[data-focus="lift"] .card.foc {
+  box-shadow: 0 calc(20px * var(--s)) calc(48px * var(--s)) rgba(0,0,0,.72),
+              0 calc(4px * var(--s)) calc(10px * var(--s)) rgba(0,0,0,.5);
+}
+:root[data-focus="lift"] .btn.foc, :root[data-focus="lift"] .chip.foc,
+:root[data-focus="lift"] .nav-item.foc, :root[data-focus="lift"] .li.foc,
+:root[data-focus="lift"] .src.foc, :root[data-focus="lift"] .ep.foc,
+:root[data-focus="lift"] .key.foc, :root[data-focus="lift"] .iconbtn.foc,
+:root[data-focus="lift"] .seg.foc {
+  box-shadow: 0 calc(8px * var(--s)) calc(24px * var(--s)) rgba(0,0,0,.62);
+}
+
+/* ==========================================================================
+   Detail: editorial packs show the poster beside the words.
+   ========================================================================== */
+
+:root[data-detail="split"] .detail-hero .dh { left: calc(420px * var(--s)); }
+:root[data-detail="split"] .detail-hero .dh-poster {
+  position: absolute; left: var(--gutter); bottom: calc(64px * var(--s));
+  width: calc(310px * var(--s)); height: calc(465px * var(--s)); object-fit: cover;
+  border-radius: var(--r-card); box-shadow: 0 calc(18px * var(--s)) calc(44px * var(--s)) rgba(0,0,0,.6);
+  z-index: 5;
+}
+
+/* ==========================================================================
+   Motion: the cinema pack fades rather than snaps; editorial keeps the short rise.
+   ========================================================================== */
+
+:root[data-motion="fade"] .cards .card {
+  transition: opacity var(--focus-ms) ease-out, transform var(--focus-ms) ease-out;
+}
+
+/* ==========================================================================
+   Apple scene pack — a centred pill over the stage, names under 16:9 cards.
+   The prototype is design/prototypes/atv-home.html; this is the shipped shape.
+   ========================================================================== */
+
+:root[data-nav="pill"] .nav {
+  top: calc(20px * var(--s)); left: 50%; right: auto; transform: translateX(-50%);
+  height: auto; width: auto; padding: calc(6px * var(--s)) calc(8px * var(--s));
+  gap: calc(4px * var(--s));
+  border-radius: 999px;
+  background: rgba(40,44,52,.55);
+  border: calc(1px * var(--s)) solid rgba(255,255,255,.08);
+  -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+}
+:root[data-nav="pill"] .nav.solid { background: rgba(40,44,52,.78); }
+:root[data-nav="pill"] .nav .brand {
+  position: absolute; left: calc(-50vw + var(--gutter)); top: 50%; transform: translateY(-50%);
+}
+:root[data-nav="pill"] .nav-items { gap: calc(4px * var(--s)); }
+:root[data-nav="pill"] .nav-item {
+  padding: calc(9px * var(--s)) calc(20px * var(--s)); border-radius: 999px;
+  font-weight: 500; color: rgba(255,255,255,.72);
+}
+:root[data-nav="pill"] .nav-item.on { background: #f2f3f5; color: #111; font-weight: 600; }
+:root[data-nav="pill"] .avatar-chip { order: 9; border-radius: 999px; }
+:root[data-nav="pill"] .nav-item.foc, :root[data-nav="pill"] .nav-icon.foc {
+  box-shadow: 0 0 0 calc(2px * var(--s)) #fff;
+}
+
+/* Apple cards: art as a scene still, name always underneath. */
+:root[data-card="below"] .cards .card .art {
+  border-radius: var(--r-card);
+  box-shadow: 0 calc(12px * var(--s)) calc(30px * var(--s)) rgba(0,0,0,.5);
+}
+:root[data-card="below"] .cards .card .ctitle {
+  top: calc(100% + 9px * var(--s)); bottom: auto;
+  opacity: 1; transform: none; background: none; padding: 0 calc(2px * var(--s));
+  font-size: var(--t-caption); font-weight: 500; line-height: 1.2;
+}
+:root[data-card="below"] .cards .card .art.has-logo + .ctitle { display: block; opacity: 1; }
+:root[data-card="below"] .cards .card.foc .ctitle { font-weight: 600; }
+:root[data-card="below"] .cards .card .art .clogo { left: calc(16px * var(--s)); right: calc(16px * var(--s)); bottom: calc(14px * var(--s)); }
+
+/* The scene pack's focus is a hairline and a bloom, not a thick outline. */
+:root[data-theme="scenix-apple"][data-focus="glow"] .card.foc {
+  box-shadow: 0 0 0 calc(1.5px * var(--s)) rgba(255,255,255,.78),
+              0 0 calc(34px * var(--s)) calc(4px * var(--s)) rgba(255,255,255,.20),
+              0 0 calc(60px * var(--s)) calc(18px * var(--s)) rgba(255,255,255,.07),
+              0 calc(40px * var(--s)) calc(80px * var(--s)) calc(10px * var(--s)) rgba(0,0,0,.75);
+}
+:root[data-theme="scenix-apple"] .card.rank .num span {
+  color: transparent; -webkit-text-stroke: calc(3px * var(--s)) rgba(255,255,255,.85);
+  text-shadow: 0 calc(8px * var(--s)) calc(24px * var(--s)) rgba(0,0,0,.5);
+}
+
+/* ==========================================================================
+   Apple stage — the browser half of the native scene pack. A fixed backdrop behind the
+   home screen follows the focused tile, dims the other cards and blurs while roaming.
+   ========================================================================== */
+
+.apple-stage {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  background: #000;
+}
+.apple-stage .sg {
+  position: absolute; inset: 0; background-size: cover; background-position: center 18%;
+  opacity: 0; transition: opacity 950ms ease, filter 950ms ease;
+  filter: brightness(.72) saturate(1.15);
+}
+.apple-stage .sg.on { opacity: 1; }
+.apple-stage .veil {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.74) 0%, rgba(0,0,0,.22) 46%, rgba(0,0,0,0) 74%),
+    linear-gradient(180deg, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 54%, rgba(0,0,0,.74) 100%);
+}
+:root[data-stage="focus"] .screen.home { background: transparent; z-index: 1; }
+:root[data-stage="focus"] body.roaming .apple-stage .sg {
+  filter: blur(14px) brightness(.5) saturate(1.35);
+}
+:root[data-stage="focus"] body.roaming .screen.home .card:not(.foc) {
+  filter: brightness(.55) saturate(.8);
+}
+:root[data-stage="focus"] .screen.home .card { transition: filter 280ms ease, transform var(--focus-ms) ease-out; }

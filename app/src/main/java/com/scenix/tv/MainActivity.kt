@@ -1,71 +1,58 @@
 package com.scenix.tv
 
 import android.content.Intent
+import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
-import android.view.KeyEvent
-import com.scenix.tv.core.PinPad
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.scenix.tv.core.AppContext
-import com.scenix.tv.core.FixtureHub
-import com.scenix.tv.core.HttpHub
-import com.scenix.tv.core.Item
-import com.scenix.tv.core.Profile
+import com.scenix.tv.core.Motion
+import com.scenix.tv.core.Focus
+import com.scenix.tv.core.HomeLayoutSpec
+import com.scenix.tv.core.HubWatch
+import com.scenix.tv.core.Prefs
+import com.scenix.tv.core.Screens
 import com.scenix.tv.core.ScreenHost
-import com.scenix.tv.core.ScreenPlugin
-import com.scenix.tv.core.clientFor
+import com.scenix.tv.core.Views
+import com.scenix.tv.plugins.nav.PairingScreen
 
 /**
- * The whole app is one activity: a container and a stack of screens, where a screen is a
- * [ScreenPlugin] that renders views. That is what lets navigation be registry-driven — the nav bar
- * asks the registry for screens, and this file never names one (except the two it must reach by
- * force: the profile picker and the player).
+ * The launcher. The product is the native television surface over the hub's `/app/v1` contract. This
+ * activity does only the work that must happen before a screen exists:
  *
- * Two launch switches, both read here and nowhere else:
- *  - `--es hub_url http://<hub-host>:8788`  → which hub to talk to
- *  - `--es fixture fixtures/home.json` → use the offline asset client instead of the network
+ *  1. apply the launch switches (`--es hub_url …`, `--es fixture …`, `--es token …`, `--ez setup/standalone`);
+ *  2. run [HubWatch] once to find a hub (or notice that this TV is standalone);
+ *  3. if nothing is paired and nothing answers, show the native setup screen
+ *     ([PairingScreen]) so a fresh TV can find or type a hub, or choose standalone;
+ *  4. otherwise open the native profile gate (or the requested web route) and finish.
  *
- * A build names no machine, so the first run of a fresh install has no hub to talk to: the health
- * probe finds nothing, the LAN search finds nothing, and this activity opens the pairing screen
- * ([com.scenix.tv.plugins.nav.PairingScreen]) which offers the hubs announcing themselves on the
- * network, an address to type, or standalone mode. Nothing spins and nothing shows sample rows as
- * though they were the family's library.
- *
- * A `tv://detail/<identity>` deep link lands on Detail once a profile is chosen.
+ * Deep links `tv://detail/<identity>` and `tv://play/<identity>` become the hub's own page route
+ * (`#/detail/<identity>`, `#/play/<identity>`) and are handed to the shell as its `url` extra. A
+ * deep link that arrives before setup keeps the route and opens it once the viewer chooses a hub.
  */
 class MainActivity : AppCompatActivity(), ScreenHost {
 
-    /**
-     * The remote's number keys reach the window but are dropped before they get to the PIN pad's
-     * views, so the pad is fed from here. Everything else follows the normal path.
-     */
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            // Any key is a decision to move, so a trailer still waiting out its dwell is cancelled
-            // here rather than opening under a card the viewer has already left.
-            com.scenix.tv.core.Preview.cancelPending()
-            val pad = PinPad.active
-            if (pad != null && event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-                pad.remoteDigit((event.keyCode - KeyEvent.KEYCODE_0).toString())
-                return true
-            }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
     private lateinit var root: FrameLayout
     private lateinit var ctx: AppContext
+    private lateinit var watch: HubWatch
 
-    private data class Frame(val screen: ScreenPlugin, val arg: String?)
+    private var screen = ""
+    private var rendering = false
+    private var pendingRoute: String? = null
+    /** The branded wait while the first hub probe is open; faded away when a screen takes over. */
+    private var splashView: View? = null
+    private var splashAlive = true
 
-    private val stack = ArrayList<Frame>()
-    private val seeds = HashMap<String, Item>()
-    private var playReq: Pair<Item, com.scenix.tv.core.Source?>? = null
-    private var pendingDeepLink: String? = null
-    private var pendingDeepPlay: String? = null
-    private lateinit var watch: com.scenix.tv.core.HubWatch
+    /** `--ez setup true` or `tv://setup`: show the front door even when a backend is already paired. */
+    private var forceSetup = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,143 +60,143 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
         applyLaunchSwitches()
 
+        // QA direct-play: `am start -n com.scenix.tv/.MainActivity --es qa_url <url> [--es qa_title t]
+        // [--ez qa_coi true] [--ez qa_pad true] [--ez qa_ua true]` opens one game in its own player.
+        // The players aren't exported; this is the door the per-game load sweep walks through.
+        intent.getStringExtra("qa_url")?.let { u ->
+            if (u.isNotBlank()) {
+                val play = if (intent.getBooleanExtra("qa_coi", false))
+                    android.content.Intent(this, CoiGameActivity::class.java)
+                else android.content.Intent(this, GameActivity::class.java)
+                play.putExtra(GameActivity.EXTRA_URL, u)
+                    .putExtra(GameActivity.EXTRA_TITLE, intent.getStringExtra("qa_title") ?: "")
+                    .putExtra(GameActivity.EXTRA_FALLBACK, intent.getStringExtra("qa_fallback") ?: "")
+                    .putExtra(GameActivity.EXTRA_PAD, intent.getBooleanExtra("qa_pad", false))
+                    .putExtra(GameActivity.EXTRA_DESKTOP_UA, intent.getBooleanExtra("qa_ua", false))
+                startActivity(play)
+                finish()
+                return
+            }
+        }
+
         root = FrameLayout(this)
         root.setBackgroundColor(ctx.theme.bg)
-        setContentView(root)
-
-        handleDeepLink(intent)
-
-        // One health probe decides whether the whole app talks to the hub or to the bundled
-        // fixtures, so the first screen never shows a blank page. It keeps retrying after that.
-        watch = com.scenix.tv.core.HubWatch(this, ctx)
-        ctx.watch = watch
-        watch.onChange = { online ->
-            Log.i(TAG, if (online) "hub back, re-rendering" else "hub gone, re-rendering on fixtures")
-            // A different backend can do different things, so ask it again and let the nav follow.
-            readCapabilities()
-            if (stack.isNotEmpty()) render(stack.last().screen)
+        // The splash is not a blank page while a probe runs: the pack's wall rises, the brand mark
+        // fades up on it, and one quiet line says what the box is doing. Every pack ships its wall;
+        // packs without one keep their plain ground. (screen pass 2026-11-03: splash → profile → PIN → home)
+        Screens.wall(ctx)?.let { root.background = it }
+        val splash = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            clipChildren = false
         }
-        watch.start { online -> startup(online) }
+        val glassGround = ctx.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS
+        splash.addView(ImageView(this).apply {
+            setImageResource(R.drawable.scenix_wordmark)
+            setColorFilter(if (glassGround) Color.WHITE else ctx.theme.brand)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Scenix"
+        }, LinearLayout.LayoutParams(ctx.theme.px(220f), ctx.theme.px(50f)))
+        splash.addView(Views.text(ctx, "sub", 22f,
+            if (glassGround) ctx.theme.color("pillInk", "#B7C4D2") else ctx.theme.ink3,
+            "Finding your hub…", gravity = Gravity.CENTER),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = ctx.theme.px(14f) })
+        root.addView(splash, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        splashView = splash
+        setContentView(root)
+        Motion.enter(app.theme, root)
+        if (app.theme.motionEnabled) {
+            splash.alpha = 0f
+            splash.animate().alpha(1f).setStartDelay(120L).setDuration(500L).start()
+            // The status line breathes while the probe is open, so the box reads as working, not hung.
+            breathe(splash.getChildAt(1))
+        }
+
+        pendingRoute = deepRoute(intent)
+        forceSetup = wantsSetup(intent)
+
+        // A forced setup is a repair, not a probe: the viewer asked to see the front door, so do not
+        // race a LAN search that could open the shell underneath it.
+        if (forceSetup) {
+            // A repair pass must not trust yesterday's list: it may contain a router that answered
+            // SSDP once, or a hub that has since moved. The address field still carries the saved one.
+            // The previous activity's watcher is stopped here too, so choosing a backend does not
+            // restart a watcher that belongs to a screen that no longer exists.
+            ctx.watch?.stop()
+            ctx.watch = null
+            ctx.prefs.setDiscoveredHubs(emptyList())
+            showPairing()
+            return
+        }
+
+        // One probe decides whether there is a page to open. The pairing screen handles the "no
+        // hub yet" answer; every other path is the web shell.
+        watch = HubWatch(this, ctx)
+        ctx.watch = watch
+        watch.start { online -> runOnUiThread { startup(online) } }
     }
 
     /**
-     * A `tv://` link that arrives while the app is already up (item 6). With the manifest at
-     * `singleTop` Android hands the new Intent to this same instance instead of starting a second
-     * one, so the link has to be read here — reading it only in onCreate is why `am start -d
-     * tv://detail/…` looked like it did nothing.
+     * A `tv://` link that arrives before the shell exists (the setup screen is up, or the first probe
+     * is still running). After the shell is open this activity is finished, so a later link starts a
+     * fresh instance through onCreate.
      */
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleDeepLink(intent)
-    }
-
-    /** `tv://detail/<identity>` and `tv://play/<identity>`, from onCreate and from onNewIntent. */
-    private fun handleDeepLink(i: Intent?) {
-        val uri = i?.data ?: return
-        if (!uri.scheme.equals("tv", true)) return
-        val identity = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
-        val route = (uri.host ?: "detail").lowercase()
-        if (route != "play") routeDetail(identity) else routePlay(identity)
-    }
-
-    private fun routeDetail(identity: String) {
-        if (ctx.profile == null) { pendingDeepLink = identity; return }
-        openDetail(identity, seeds[identity] ?: Item(identity = identity, title = ""))
-    }
-
-    private fun routePlay(identity: String) {
-        if (ctx.profile == null) { pendingDeepPlay = identity; return }
-        openPlayerFor(identity)
-    }
-
-    /**
-     * A bare `tv://play/<identity>` may arrive with no seed in this process, so the item is fetched
-     * from the hub first; without sources there is nothing for the player to open.
-     */
-    private fun openPlayerFor(identity: String) {
-        val seed = seeds[identity]
-        if (seed != null && seed.sources.isNotEmpty()) {
-            play(seed, null)
-            return
-        }
-        ctx.hub.meta(identity, seed?.type) { item, _ ->
-            runOnUiThread {
-                if (item != null && item.sources.isNotEmpty()) play(item, null)
-                else {
-                    seeds[identity] = item ?: Item(identity = identity, title = "")
-                    show("player", identity)
-                }
-            }
+        val route = deepRoute(intent) ?: return
+        pendingRoute = route
+        if (screen == PairingScreen.id) {
+            // Keep the setup screen up; choosing a hub/standalone opens this route.
+            refresh()
         }
     }
 
-    /** Re-render whatever is on top, in place (MENU-key actions that change what a profile may see). */
-    override fun refresh() {
-        runOnUiThread { stack.lastOrNull()?.let { render(it.screen) } }
-    }
-
-    /** Called once the data client for this session is known. */
+    /** Called once the first hub probe (or the standalone check) has an answer. */
     private fun startup(online: Boolean) {
-        // Nothing paired and no choice made yet: ask the viewer what this TV should be — a hub found
-        // on the network, an address typed in, or this app on its own — instead of sitting on the
-        // bundled samples or spinning on an empty network.
+        leaveSplash()
         if (!online && watch.unpaired) {
-            show("pairing")
+            showPairing()
             return
         }
-        // One contract, two surfaces. The owner decides which front end this TV draws: the web UI it
-        // shares with a browser or phone, over the same native player, or the screens this build draws
-        // itself. Nothing about the backend changes either way — the page asks for its own manifest.
-        // A `tv://` link is the one case left on the built-in path, because that link names a screen of
-        // this activity's stack and the page has no equivalent route for it yet.
-        if (ctx.prefs.shellWanted() && intent?.data == null) {
-            Log.i(TAG, "opening the web interface on this TV")
-            startActivity(Intent(this, WebShellActivity::class.java))
-            finish()
+        openShell(pendingRoute)
+    }
+
+    private fun breathe(v: View) {
+        if (!splashAlive || isFinishing) return
+        v.animate().alpha(0.45f).setDuration(900L).withEndAction {
+            if (splashAlive && !isFinishing)
+                v.animate().alpha(1f).setDuration(900L).withEndAction { breathe(v) }.start()
+        }.start()
+    }
+
+    /** The branded wait fades out as a screen takes over — exits stay shorter than entries. */
+    private fun leaveSplash() {
+        splashAlive = false
+        val s = splashView ?: return
+        splashView = null
+        if (!ctx.theme.motionEnabled) {
+            s.visibility = View.GONE
             return
         }
-        // Ask this backend what it can do before a screen is built from it, so a TV on its own never
-        // shows a row for something it has no way to supply.
-        readCapabilities()
-        val remembered = ctx.prefs.currentProfileId()
-        if (!remembered.isNullOrBlank()) {
-            ctx.hub.profiles { profiles, _ ->
-                runOnUiThread {
-                    val match = profiles?.firstOrNull { it.id == remembered }
-                    if (match != null) enterProfile(match) else requireProfilePicker("startup")
-                }
-            }
-        } else {
-            requireProfilePicker("startup")
-        }
+        s.animate().alpha(0f).setDuration(220L).withEndAction { s.visibility = View.GONE }.start()
     }
 
     /**
-     * Ask the backend what it can do. Nothing on screen waits for the answer: it fills the one switch
-     * the UI branches on (design/deployment-modes.md Rule 2), and a screen whose subject this backend
-     * cannot supply leaves the nav when it arrives. A backend that says nothing leaves the list null,
-     * which hides nothing — an older hub is not punished for not having the field yet.
+     * `--es hub_url …`, `--es fixture …`, `--ez standalone true` and `--ez setup true`: development
+     * and recovery switches, read before the first probe. They write the same preferences the setup
+     * screen writes, so the next launch behaves like any other.
      */
-    private fun readCapabilities() {
-        ctx.hub.manifest { m, _ ->
-            if (m == null) return@manifest
-            val changed = ctx.capabilities != m.capabilities
-            ctx.capabilities = m.capabilities
-            if (!changed) return@manifest
-            Log.i(TAG, "backend capabilities: ${m.capabilities ?: "not stated"}")
-            runOnUiThread { if (stack.isNotEmpty()) render(stack.last().screen) }
-        }
-    }
-
-    /** `--es hub_url …` / `--es fixture …`, also reachable from Settings, and `tv://` links. */
     private fun applyLaunchSwitches() {
         val i = intent ?: return
         i.getStringExtra("hub_url")?.takeIf { it.isNotBlank() }?.let {
             ctx.prefs.setHubUrl(it.trim())
-            // Naming a hub is the whole point of the flag: it means "show me the real library". The
-            // offline fixture is a development pin that survives a relaunch, and leaving it stuck on
-            // is how a TV ends up displaying last month's rows and no artwork while the hub is healthy.
+            ctx.prefs.setBackendChoice(Prefs.BACKEND_HUB)
+            // Naming a hub means "show me the real library"; a pinned offline fixture must not
+            // survive it.
             ctx.prefs.setFixture("")
             Log.i(TAG, "hub_url override: ${it.trim()} (offline preview cleared)")
         }
@@ -217,7 +204,55 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             ctx.prefs.setFixture(it)
             Log.i(TAG, "fixture override: $it")
         }
-        ctx.hub = clientFor(ctx.prefs, this)
+        i.getStringExtra("token")?.let { ctx.prefs.setHubToken(it) }
+        if (i.getBooleanExtra("standalone", false)) {
+            ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
+            ctx.prefs.setFixture("")
+            Log.i(TAG, "standalone override")
+        }
+    }
+
+    /** `tv://setup` and `--ez setup true` both mean "show me the hub/standalone front door". */
+    private fun wantsSetup(i: Intent?): Boolean {
+        if (i == null) return false
+        if (i.getBooleanExtra("setup", false)) return true
+        val uri = i.data ?: return false
+        return uri.scheme.equals("tv", true) &&
+            (uri.host.equals("setup", true) || uri.pathSegments.firstOrNull().equals("setup", true))
+    }
+
+    /** `tv://detail/<identity>` / `tv://play/<identity>` → the page route to load. */
+    private fun deepRoute(i: Intent?): String? {
+        val uri = i?.data ?: return null
+        if (!uri.scheme.equals("tv", true)) return null
+        val first = uri.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        if (uri.host.equals("setup", true) || first.equals("setup", true)) return null
+        val kind = if ((uri.host ?: "detail").equals("play", true)) "play" else "detail"
+        return "#/$kind/${Uri.encode(first)}"
+    }
+
+    private fun showPairing() {
+        PairingScreen.reset()
+        screen = PairingScreen.id
+        rendering = true
+        PairingScreen.render(this)
+        rendering = false
+        root.post { Focus.focusFirst(root) }
+    }
+
+    private fun openShell(route: String?) {
+        Log.i(TAG, if (route != null) "opening the profile gate for $route" else "opening the native profile gate")
+        // A relaunch from the TV home screen lands on top of the task that was left behind (Browse,
+        // Detail, maybe a paused player). Starting the gate in a cleared task means a person switch
+        // cannot walk back into the previous person's player. A deep link keeps its route through the
+        // native gate and opens the native screen once a profile is chosen; no WebView is involved.
+        val next = Intent(this, ProfilesActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        if (route != null && route.startsWith("#/")) next.putExtra(ProfilesActivity.EXTRA_ROUTE, route)
+        startActivity(next)
+        // The gate rises into the splash instead of snapping over it (§4 screen-enter law).
+        overridePendingTransition(R.anim.scenix_enter, R.anim.scenix_exit)
+        finish()
     }
 
     // ---- ScreenHost ------------------------------------------------------------------------
@@ -226,109 +261,41 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
     override fun container(): FrameLayout {
         root.removeAllViews()
-        // The selection frame belongs to the screen, not to a row: every screen gets exactly one,
-        // installed before the screen draws over it.
-        com.scenix.tv.core.FocusGlass.install(root, ctx)
         return root
     }
 
-    override fun currentScreenId(): String = stack.lastOrNull()?.screen?.id ?: ""
+    override fun currentScreenId(): String = screen
 
-    override fun arg(): String? = stack.lastOrNull()?.arg
-
-    override fun show(screenId: String, arg: String?) {
-        val plugin = ctx.registries.screens.get(screenId)
-        if (plugin == null) {
-            Log.w(TAG, "no screen registered for \"$screenId\"")
-            return
-        }
-        leaveCurrent()
-        stack.add(Frame(plugin, arg))
-        render(plugin)
-    }
-
-    private fun render(plugin: ScreenPlugin) {
-        root.removeAllViews()
-        plugin.render(this)
-        root.requestFocus()
-    }
-
-    private fun leaveCurrent() {
-        stack.lastOrNull()?.screen?.onLeave(this)
-    }
-
-    override fun openDetail(identity: String, seed: Item?) {
-        if (seed != null) seeds[identity] = seed
-        show("detail", identity)
-    }
-
-    override fun seedItem(identity: String): Item? = seeds[identity]
-
-    override fun play(item: Item, source: com.scenix.tv.core.Source?) {
-        seeds[item.identity] = item
-        playReq = item to source
-        show("player", item.identity)
-    }
-
-    override fun playRequest(): Pair<Item, com.scenix.tv.core.Source?>? = playReq
-
-    override fun requireProfilePicker(reason: String?) {
-        leaveCurrent()
-        stack.clear()
-        ctx.profile = null
-        playReq = null
-        show("profiles", reason)
-    }
-
-    override fun enterProfile(profile: Profile) {
-        ctx.profile = profile
-        ctx.prefs.setCurrentProfileId(profile.id)
-        stack.clear()
-        val deep = pendingDeepLink
-        val deepPlay = pendingDeepPlay
-        pendingDeepLink = null
-        pendingDeepPlay = null
-        if (!deepPlay.isNullOrBlank()) {
-            seeds[deepPlay] = seeds[deepPlay] ?: Item(identity = deepPlay, title = "")
-            openPlayerFor(deepPlay)
-        } else if (!deep.isNullOrBlank()) {
-            seeds[deep] = seeds[deep] ?: Item(identity = deep, title = "")
-            show("detail", deep)
-        } else {
-            show("home", null)
-        }
+    override fun refresh() {
+        if (rendering) return
+        if (screen == PairingScreen.id) showPairing()
     }
 
     override fun toast(msg: String) {
         runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
     }
 
-    // ---- back ------------------------------------------------------------------------------
+    override fun openShell() = openShell(pendingRoute)
+
+    // ---- lifecycle -------------------------------------------------------------------------
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        val current = stack.lastOrNull() ?: run { super.onBackPressed(); return }
-        if (current.screen.onBack(this)) return
-        if (stack.size == 1) {
-            leaveCurrent()
+        if (screen == PairingScreen.id) {
+            // Setup opened from a working shell is a repair visit: Back cancels it and returns to the
+            // shell already underneath, instead of opening a second one.
+            if (forceSetup && (ctx.prefs.standalone() || ctx.prefs.backendChoice().isNotBlank())) {
+                finish()
+                return
+            }
             finish()
             return
         }
-        leaveCurrent()
-        stack.removeAt(stack.size - 1)
-        playReq = null
-        render(stack.last().screen)
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // 2 GB TV: while the app is backgrounded, the image cache is the first thing to give back.
-        ctx.images.trim()
+        super.onBackPressed()
     }
 
     override fun onDestroy() {
         if (::watch.isInitialized) watch.stop()
-        leaveCurrent()
         super.onDestroy()
     }
 

@@ -1,0 +1,243 @@
+{
+  "id": "scenix-midnight",
+  "brandMark": "M",
+  "_read": "Midnight: deep navy surfaces, a cyan accent and the same geometry as Scenix Dark.",
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "colors": {
+    "bg": "#070B12",
+    "surface": "#0E1522",
+    "surface2": "#172033",
+    "line": "#24324A",
+    "ink": "#F4F8FF",
+    "ink1": "#E2EAF7",
+    "ink2": "#A9B6CC",
+    "ink3": "#6F7F99",
+    "brand": "#38BDF8",
+    "brandDeep": "#0284C7",
+    "match": "#2DD4BF",
+    "kids": "#8B5CF6",
+    "kidsDeep": "#6D28D9",
+    "live": "#FB7185",
+    "warn": "#FBBF24",
+    "focusRing": "#FFFFFF",
+    "scrim": "rgba(7,11,18,0.82)",
+    "scrimInk": "rgba(7,11,18,0.82)",
+    "scrimMid": "rgba(7,11,18,0.55)",
+    "modalScrim": "rgba(4,7,12,0.86)",
+    "btnGrey": "rgba(255,255,255,0.10)",
+    "lineStrong": "rgba(255,255,255,0.46)",
+    "track": "#24324A",
+    "chipBg": "rgba(255,255,255,0.08)",
+    "surfHover": "#1E2A42",
+    "keyBg": "#172033",
+    "key": "#F4F8FF",
+    "navIdle": "rgba(244,248,255,0.72)",
+    "numeralFill": "rgba(7,11,18,0.74)",
+    "numeralStroke": "#38BDF8",
+    "panelScrim": "rgba(10,16,27,0.94)",
+    "panelRow": "rgba(255,255,255,0.06)",
+    "panelValue": "#38BDF8",
+    "surface3": "#1E2A42",
+    "border": "rgba(255,255,255,0.16)",
+    "numeralFillRed": "rgba(7,11,18,0.74)",
+    "numeralStrokeRed": "#FB7185",
+    "matBorder": "rgba(255,255,255,0.24)",
+    "hdInk": "#070B12"
+  },
+  "spacing": {
+    "gutter": 76,
+    "gap": 20,
+    "rowGap": 34,
+    "captionGap": 12,
+    "metaGap": 6,
+    "navHeight": 96,
+    "billboardHeight": 800,
+    "chipTop": 746,
+    "navGap": 40,
+    "chipGap": 14,
+    "buttonGap": 22,
+    "heroBottom": 110,
+    "panelPad": 28,
+    "panelPadV": 24,
+    "panelRowGap": 10,
+    "listItem": 14
+  },
+  "radii": {
+    "card": 6,
+    "badge": 4,
+    "chip": 6,
+    "button": 6,
+    "listItem": 6,
+    "field": 8,
+    "key": 6,
+    "modal": 10,
+    "avatar": 10,
+    "panel": 10,
+    "heroButton": 12
+  },
+  "type": {
+    "brand": 34,
+    "nav": 22,
+    "nmark": 40,
+    "h1": 104,
+    "h2": 56,
+    "h3": 34,
+    "sub": 24,
+    "matLine": 26,
+    "button": 26,
+    "chip": 20,
+    "rowTitle": 32,
+    "explore": 18,
+    "caption": 19,
+    "meta": 17,
+    "badge": 15,
+    "li": 22,
+    "liMeta": 20,
+    "readout": 20,
+    "searchField": 22,
+    "profileName": 32,
+    "avatarText": 64,
+    "key": 48,
+    "pinDot": 20,
+    "modalWidth": 780,
+    "keyWidth": 128,
+    "keyHeight": 128,
+    "avatar": 280,
+    "lockGlyph": 52,
+    "playerKey": 64,
+    "panelTitle": 26,
+    "panelRow": 23,
+    "panelNote": 18
+  },
+  "focus": {
+    "ringWidth": 4,
+    "scale": 1.06,
+    "durationMs": 160,
+    "shadowElevation": 12,
+    "glass": 1,
+    "glassPad": 6,
+    "glowInset": 22,
+    "glowInsetSm": 14
+  },
+  "anim": {
+    "cardFadeInMs": 220,
+    "rowScrollMs": 240,
+    "screenFadeMs": 180,
+    "fadeUpMs": 600,
+    "fadeUpShift": 20,
+    "fadeUpStagger": 30,
+    "navFadeAt": 50,
+    "navFadeMs": 200
+  },
+  "cards": {
+    "poster": {
+      "width": 280,
+      "aspect": 1.5,
+      "caption": false,
+      "fullBleed": false
+    },
+    "channel": {
+      "width": 280,
+      "aspect": 1.5,
+      "caption": false,
+      "fullBleed": false
+    },
+    "continue": {
+      "width": 280,
+      "aspect": 1.5,
+      "caption": false,
+      "fullBleed": false
+    },
+    "hero": {
+      "width": 1920,
+      "aspect": 0.4385,
+      "caption": false,
+      "fullBleed": true
+    },
+    "_top10": "The giant numeral is sized off the art height, so it scales with whatever card size the row uses. Mockup: 210 px text on a 300 px tall art, -26 px overlap, 7 px outline.",
+    "numeralTextRatio": 0.495,
+    "numeralWidthRatio": 0.55,
+    "numeralOverlapRatio": 0.229,
+    "numeralStrokePx": 8,
+    "numeralTextPx": 208,
+    "numeralOverlapPx": 96,
+    "numeralRed": 0
+  },
+  "rows": {
+    "exploreThreshold": 6,
+    "maxRows": 30
+  },
+  "chips": {
+    "max": 8
+  },
+  "kids": {
+    "maxAge": 7,
+    "navHeight": 110,
+    "rowGap": 36
+  },
+  "pin": {
+    "length": 4,
+    "keysPerRow": 3
+  },
+  "player": {
+    "maxVideoWidth": 1920,
+    "maxVideoHeight": 1080,
+    "maxBitrateBps": 10000000,
+    "minVideoWidth": 320,
+    "minVideoHeight": 180,
+    "backBufferMs": 30000,
+    "forwardBufferMs": 120000,
+    "minBufferMs": 15000,
+    "playbackBufferMs": 5000,
+    "progressPostMs": 10000,
+    "seekBackMs": 10000,
+    "seekForwardMs": 30000,
+    "controlsHideMs": 6000,
+    "autoplayCountdownMs": 7000,
+    "torrentMaxBitrate": 4000000,
+    "stallFailoverMs": 6000
+  },
+  "panel": {
+    "width": 560,
+    "pad": 28,
+    "padV": 24,
+    "radius": 10,
+    "rowGap": 10,
+    "rowHeight": 68
+  },
+  "detail": {
+    "maxSources": 6.0,
+    "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
+  },
+  "preview": {
+    "enabled": 1.0,
+    "delayMs": 1500.0,
+    "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
+  },
+  "hero": {
+    "rotateMs": 6000,
+    "rotateFadeMs": 500,
+    "maxItems": 5,
+    "playWidth": 320,
+    "playHeight": 72
+  },
+  "menu": {
+    "width": 560,
+    "radius": 10
+  },
+  "pack": {
+    "name": "Cinema",
+    "hero": "centered",
+    "heroAlign": "center",
+    "heroHeight": 720,
+    "rows": "landscape",
+    "card": "glass",
+    "focus": "glow",
+    "focusColor": "#38BDF8",
+    "motion": "fade",
+    "detail": "backdrop"
+  }
+}

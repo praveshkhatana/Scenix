@@ -1,6 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Stable view ids.
+
+    View.generateViewId() is global and keeps counting: a recreated activity gives the same view a
+    different id, and the saved-state bundle then hands the old view's state to whichever view now
+    owns that number. A RecyclerView receiving a plain View.State throws "Wrong state class" and
+    kills the app on a tab switch (BrowseActivity.recreate()). An id declared here is the same
+    value in every instance, so state always restores into the view that saved it.
+-->
 <resources>
-    <!-- View tags used by ImageLoader (request token) and by the row renderer. -->
-    <item name="scenix_img_req" type="id" />
-    <item name="scenix_card_ctx" type="id" />
-    <item name="scenix_card_obs" type="id" />
+    <item name="shelf_list" type="id" />
 </resources>

@@ -1,63 +1,114 @@
 /**
- * js/screens/search.js — one field, and whatever this hub can find.
+ * js/screens/search.js — one field and whatever this hub can find.
  *
- * There are two ways onto this page and they share everything but the first request:
+ * Two devices, one screen:
  *
- *   · `#/search` — an empty field. Letters arrive from a keyboard, a remote, or the on-screen pad below, and
- *     every pause in typing asks `/app/v1/search` what it knows. The hub decides what counts as a match; this
- *     page only draws the answer.
- *   · `#/search/row:<id>` — the "Explore all" button on a home shelf. A shelf on the home page is capped at
- *     thirty cards, so the rest of it is fetched and laid into the same grid, with the hub's own title as the
- *     heading. Typing in the field narrows into search, because that is what typing means.
+ *   · a television has a D-pad and no keyboard, so the left rail is a compact pad of keys and the
+ *     results are a pane on the right. The pad never covers the answer, and the ring stays on the keys
+ *     while a person is typing;
+ *   · a laptop, phone or tablet already has a keyboard and a clipboard, so the rail is a real <input>
+ *     and there is no second keyboard drawn over the page. Paste is the browser's own paste.
  *
- * Results are drawn by the card plugins, so a result carries the same badges, match, and quick actions it would
- * have had at home. Nothing here knows a genre, a language, or a title.
+ * The hub decides what a search means; this page only draws the answer. `#/search/row:<id>` is the
+ * "Explore all" path: it loads the whole shelf into the same results pane.
  */
 
-import { el } from '/ui/js/dom.js';
+import { el, clear } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
+import { returnMemoryFor } from '/ui/js/state.js';
 import { cardFor } from '/ui/js/plugins.js';
-import { setTypingTarget } from '/ui/js/input.js';
+import { setTypingTarget, pushHandler, popHandler } from '/ui/js/input.js';
 import { entryField } from '/ui/js/keyboard.js';
 
-const DEBOUNCE_MS = 320;
+const DEBOUNCE_MS = 280;
+const RECENT_KEY = 'scenix.search.recent';
+
+function recent() {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((x) => typeof x === 'string' && x.trim()).slice(0, 6) : [];
+  } catch (e) { return []; }
+}
+function remember(q) {
+  const word = String(q || '').trim();
+  if (!word) return;
+  try {
+    const list = [word, ...recent().filter((x) => x.toLowerCase() !== word.toLowerCase())].slice(0, 6);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch (e) { /* private mode */ }
+}
 
 export function screen(ctx, arg) {
+  const tv = !!window.Scenix;
   const root = el('div', { class: 'screen search' });
   const profile = ctx.profile || {};
   const rowId = typeof arg === 'string' && arg.startsWith('row:') ? arg.slice(4) : null;
 
-  const status = el('div', { class: 'sub' });
-  const head = el('div', { class: 'page-head' },
-    el('h1', { text: rowId ? 'Browsing' : 'Search' }), status);
+  const rail = el('div', { class: 'search-rail' });
+  const results = el('div', { class: 'search-results' });
+  const shell = el('div', { class: 'search-shell' }, rail, results);
+  root.appendChild(shell);
 
-  /* The field and its keyboard come from js/keyboard.js, so a title and an addon address are typed on the
-     same keys and a fix to one is a fix to both. `ready` keeps the first draw from scheduling a search
-     before the debounce timer it would clear exists. */
+  const status = el('p', { class: 'sub search-status' });
+  rail.appendChild(el('div', { class: 'page-head' },
+    el('h1', { text: rowId ? 'Browsing' : 'Search' }), status));
+
   let ready = false;
   const entry = entryField({
-    placeholder: rowId ? 'Type to search instead' : 'Type to search this hub',
+    placeholder: rowId ? 'Type to search instead' : 'Search this hub',
+    glyph: 'search',
+    native: !tv,
     onChange: () => { if (ready) schedule(); },
+    onCommit: () => { if (timers) { clearTimeout(timers); timers = null; } runSearch(); },
   });
 
-  root.appendChild(head);
-  root.appendChild(entry.field);
-  let seq = 0;                 // answers may arrive out of order, so only the newest one is drawn
+  rail.appendChild(entry.field);
+  if (tv) rail.appendChild(entry.kbd);
+
+  /* The last few things this person looked for belong in the empty state on both devices — the way
+     Netflix offers them before you type. On a pointer device they sit under the field; on a TV, where
+     the key pad already fills the left rail, they stand in the results pane until a query answers. */
+  const suggestions = el('div', { class: 'search-suggest' });
+
+  const empty = el('div', { class: 'search-empty' },
+    el('div', { class: 'big', text: 'Find something to watch' }),
+    el('p', { text: 'Type a title, an actor, a language or a mood. Search reads this hub only.' }));
+  if (!tv) rail.appendChild(suggestions);
+  else empty.appendChild(suggestions);
+  results.appendChild(empty);
+  const grid = el('div', { class: 'grid' });
+  results.appendChild(grid);
+
+  let seq = 0;
   let items = [];
   let cardStyle = 'poster';
+  let timers = null;
+  let shelfLabel = '';
 
-  /* ------------------------------------------------------------------ keyboard */
-
-  root.appendChild(entry.kbd);
-
-  /* ------------------------------------------------------------------ results */
-
-  const grid = el('div', { class: 'grid' });
-  root.appendChild(grid);
+  function paintSuggestions() {
+    clear(suggestions);
+    const words = recent();
+    if (!words.length) {
+      suggestions.appendChild(el('p', { class: 'note',
+        text: 'Search reads this hub only — nothing leaves your network.' }));
+      return;
+    }
+    suggestions.appendChild(el('p', { class: 'note', text: 'Recent' }));
+    const list = el('div', { class: 'sug' });
+    for (const word of words) {
+      const b = el('button', { class: 'sugbtn', type: 'button', text: word });
+      focus.focusable(b);
+      b.onclick = () => { entry.set(word); runSearch(); };
+      list.appendChild(b);
+    }
+    suggestions.appendChild(list);
+  }
 
   function paint() {
     grid.textContent = '';
+    empty.hidden = items.length > 0;
     const render = cardFor({ card: cardStyle, id: 'search' });
     for (let i = 0; i < items.length; i++) {
       const node = render(items[i], {
@@ -70,21 +121,29 @@ export function screen(ctx, arg) {
       node.style.setProperty('--i', String(i));
       grid.appendChild(node);
     }
-    // Results arrive while the person is still writing. Taking the ring on every keystroke means a
-    // second letter never gets typed - the remote walks onto a poster instead of the next key - so the
-    // ring only moves into the results when it is not already resting on the pad.
-    if (!(document.activeElement && document.activeElement.closest('.kbd'))) {
-      focus.focusDefault(grid.querySelector('.card'));
+    results.scrollTop = 0;
+    // The ring is on the pad while a person is still choosing letters — but when the pause says the word
+    // is finished and the hub answers back, the ring steps into the results on its own: Down from there
+    // continues exactly where typing left off, which is how Netflix search carries you across. On a
+    // pointer device, where there is no pad to stand on, the first result has always been the default.
+    if (items.length && (autoStep || !tv) && root.isConnected) {
+      autoStep = false;
+      const first = grid.querySelector('.card');
+      if (first) focus.focusDefault(first);
     }
   }
 
   async function runSearch() {
     const mine = ++seq;
-    const q = entry.value.trim();
+    const q = String(entry.value || '').trim();
     if (!q) {
-      status.textContent = rowId ? shelfLabel : 'Searching reads this hub only — nothing leaves your network.';
+      items = [];
+      paint();
+      status.textContent = rowId ? shelfLabel : 'Search this hub. Nothing leaves your network.';
       return;
     }
+    remember(q);
+    paintSuggestions();
     status.textContent = `Asking the hub about “${q}”…`;
     try {
       const r = await api.search(q, profile.id || '');
@@ -92,36 +151,51 @@ export function screen(ctx, arg) {
       items = (r && Array.isArray(r.items)) ? r.items : [];
       cardStyle = 'poster';
       status.textContent = items.length
-        ? `${items.length} title${items.length > 1 ? 's' : ''} here match “${q}”.`
+        ? `${items.length} title${items.length > 1 ? 's' : ''} match “${q}”.`
         : `Nothing in this hub matches “${q}”. A shorter word usually finds it.`;
     } catch (e) {
       if (mine !== seq) return;
-      status.textContent = 'The search did not answer. It is still reachable from this page.';
+      items = [];
+      status.textContent = e && e.status === 403
+        ? 'This profile may not search.'
+        : 'The hub did not answer. It is still reachable from this page.';
     }
     paint();
   }
 
-  let timer = null;
   ready = true;
+  // The debounce ending is the signal that a person stopped typing: only such a run gets to move the
+  // ring into the results, so an initial load or an OK-press never yanks the ring out of their hands.
+  let autoStep = false;
   function schedule() {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(runSearch, DEBOUNCE_MS);
+    if (timers) clearTimeout(timers);
+    timers = setTimeout(() => { timers = null; autoStep = true; runSearch(); }, DEBOUNCE_MS);
   }
 
-  /* --------------------------------------------------------- typed characters */
+  /* Typed characters. The native field already receives them; the TV pad needs the shared buffer. */
+  let backLane = null;
+  if (tv) {
+    setTypingTarget({
+      insert: (ch) => entry.insert(ch),
+      backspace: () => entry.back(false),
+      clear: () => entry.back(true),
+      commit: () => { if (timers) { clearTimeout(timers); timers = null; } runSearch(); },
+    });
 
-  // Every edit goes through the shared buffer, which already asks for a search through `onChange`; these are
-  // just the names js/input.js calls when a real keyboard or a remote's numbers reach the page.
-  setTypingTarget({
-    insert: (ch) => entry.insert(ch),
-    backspace: () => entry.back(false),
-    clear: () => entry.back(true),
-    commit: () => { if (timer) clearTimeout(timer); runSearch(); },
-  });
+    /* The first BACK on a TV clears the word instead of leaving the screen — the same verb the pad's
+       Clear key runs, wired in ahead of the router's back-step. A wrong letter or two is erased where
+       you stand and the empty pane with the recent words comes back; it takes a second BACK, with an
+       empty field, to actually go anywhere. */
+    backLane = (e, key) => {
+      if (key !== 'Escape' && key !== 'GoBack' && key !== 'BrowserBack') return false;
+      if (!String(entry.value || '').trim()) return false;
+      entry.back(true);                 // onChange fires, so the debounced search unwinds itself
+      focus.focusDefault(entry.firstKey());
+      return true;
+    };
+    pushHandler(backLane);
+  }
 
-  /* ------------------------------------------------------------ shelf browsing */
-
-  let shelfLabel = '';
   async function loadShelf() {
     status.textContent = 'Opening this shelf…';
     try {
@@ -129,24 +203,41 @@ export function screen(ctx, arg) {
       const row = (r && r.row) || r || {};
       items = Array.isArray(row.items) ? row.items : [];
       cardStyle = row.card || 'poster';
-      shelfLabel = `${row.title || 'This shelf'} — ${items.length} title${items.length === 1 ? '' : 's'}, the whole shelf rather than the first thirty.`;
-      head.replaceChild(el('h1', { text: row.title || 'Browsing' }), head.firstChild);
+      shelfLabel = `${row.title || 'This shelf'} — ${items.length} title${items.length === 1 ? '' : 's'}.`;
+      const h = rail.querySelector('h1');
+      if (h) h.textContent = row.title || 'Browsing';
       status.textContent = shelfLabel;
+      // A shelf that answers with nothing says so in its own words, not with the search screen's hint.
+      if (!items.length) {
+        empty.querySelector('.big').textContent = `No ${String(row.title || 'titles').toLowerCase()} here yet`;
+        empty.querySelector('p').textContent = 'The hub has nothing to put on this shelf right now. '
+          + 'Adding an addon or a playlist in Settings can change that.';
+      }
       paint();
     } catch (e) {
       status.textContent = 'That shelf could not be opened. Try searching instead.';
     }
   }
 
+  paintSuggestions();
+  const mem = returnMemoryFor(rowId ? `search:${arg}` : 'search');
   if (rowId) loadShelf();
+  else if (mem && mem.q) {
+    // Coming back to search means coming back to the word: it is retyped, the hub is asked again, and
+    // when the answers land the ring returns to the card it stood on. Leaving with an empty field (the
+    // two-BACK exit) remembers nothing of the sort, so the next visit starts at the pad.
+    entry.set(mem.q);
+    runSearch().then(() => ctx.restoreRing());
+  }
   else if (typeof arg === 'string' && arg && !arg.startsWith('row:')) { entry.set(arg); runSearch(); }
   else runSearch();
 
-  root.__defaultFocus = () => grid.querySelector('.card') || entry.firstKey();
+  root.__captureReturn = () => ({ q: String(entry.value || '') });
+  root.__defaultFocus = () => (tv ? entry.firstKey() : (entry.input || grid.querySelector('.card') || entry.firstKey()));
   root.__dispose = () => {
-    setTypingTarget(null);
-    if (timer) clearTimeout(timer);
-    seq++;                       // any answer still in flight is now stale and will not paint
+    if (tv) { setTypingTarget(null); if (backLane) popHandler(backLane); }
+    if (timers) clearTimeout(timers);
+    seq++;
   };
   return root;
 }

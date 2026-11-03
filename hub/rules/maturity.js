@@ -41,6 +41,27 @@ const POLICY = {
   3: { label: 'xxx', minAge: 18, switchRequired: true },
 };
 
+/*
+ * What a certificate suggests, not a scene-by-scene guide. The hub has no timecodes for nudity or
+ * violence, and pretending otherwise would be worse than saying nothing: this is the short list a person
+ * reads before putting a film on with children in the room. A title from a board with a known age gets the
+ * list for that band; a horror also says so, because a 15-rated horror and a 15-rated comedy are not the
+ * same evening. The UI always labels this as coming from the rating.
+ */
+const ADVISORY_BY_TIER = {
+  0: [],
+  1: ['violence', 'language'],
+  2: ['violence', 'language', 'sexual content'],
+  3: ['nudity', 'sex', 'violence', 'strong language'],
+};
+function advisoriesFor(tier, genres) {
+  const out = new Set(ADVISORY_BY_TIER[tier] || []);
+  const g = (genres || []).map((x) => String(x).toLowerCase());
+  if (g.some((x) => x.includes('horror'))) out.add('disturbing images');
+  if (tier >= 2 && g.some((x) => x.includes('romance') || x.includes('drama'))) out.add('sexual content');
+  return [...out];
+}
+
 // An adult profile has no age ceiling of its own; it is not a child who needs protecting.
 const ADULT_CEILING = 99;
 
@@ -87,6 +108,7 @@ module.exports = {
     // Additive: the app shows this on the tile, and a parent can see why something was hidden.
     item.maturity = known.maturity || item.maturity || null;
     item.tier = tier;
+    item.advisories = isTitle ? advisoriesFor(tier, item.genres) : [];
     item.minAge = minAge;
     item._ratingSource = known.from; // internal: scrub() drops it, the reason stays in the hub log
     // `defaulted` is the difference between a number a board gave and a number the household chose.

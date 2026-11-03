@@ -48,7 +48,37 @@ export function entryField(opts = {}) {
   const placeholder = String(opts.placeholder || '');
   const onChange = typeof opts.onChange === 'function' ? opts.onChange : () => {};
   const onCommit = typeof opts.onCommit === 'function' ? opts.onCommit : () => {};
+  const native = !!opts.native;
   let text = String(opts.initial || '');
+
+  /* A pointer device already has a keyboard and a clipboard. Drawing a second keyboard over the page is
+     the thing that made search unusable on a laptop and a phone, and a div cannot receive a paste. The
+     native field is the same visual box, with a real <input> inside it; the TV path below is unchanged. */
+  if (native) {
+    const input = el('input', {
+      class: 'field-input', type: 'search', placeholder,
+      value: text, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
+      'aria-label': placeholder || 'Search',
+    });
+    const field = el('div', { class: 'field native' },
+      el('span', { class: 'ico' }, icon(opts.glyph || 'search')), input);
+    const kbd = el('div', { class: 'kbd native' });
+    const api = {
+      field, kbd, input,
+      get value() { return input.value; },
+      set(v) { input.value = String(v == null ? '' : v); text = input.value; onChange(text); },
+      insert(ch) { input.value += String(ch); text = input.value; onChange(text); },
+      back(all) { input.value = all ? '' : input.value.slice(0, -1); text = input.value; onChange(text); },
+      commit() { onCommit(input.value); },
+      firstKey() { return input; },
+    };
+    input.addEventListener('input', () => { text = input.value; onChange(text); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); api.commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); input.blur(); }
+    });
+    return api;
+  }
 
   const shown = el('div', { class: `q${text ? '' : ' empty'}`, text: text || placeholder });
   const field = el('div', { class: 'field' },

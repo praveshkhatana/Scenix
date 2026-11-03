@@ -1,0 +1,157 @@
+{
+  "template": "player",
+  "theme": "scene.apple",
+  "description": "Default player chrome: top title bar, timeline, transport row, one translucent options capsule and the hint line naming the focused control. Live omits the scrubber and speed.",
+  "root": {
+    "type": "overlay",
+    "children": [
+      {
+        "component": "atom.surface",
+        "props": {
+          "tone": "stage",
+          "radius": 0,
+          "border": false
+        }
+      },
+      {
+        "type": "column",
+        "safe": "tv",
+        "children": [
+          {
+            "type": "row",
+            "props": {
+              "padding": "space.gutter"
+            },
+            "children": [
+              {
+                "component": "atom.button",
+                "props": {
+                  "label": "Back",
+                  "kind": "ghost",
+                  "icon": "chevron"
+                }
+              },
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@title",
+                  "type": "h3",
+                  "tone": "ink",
+                  "weight": "bold"
+                }
+              },
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@meta",
+                  "type": "meta",
+                  "tone": "ink2"
+                }
+              },
+              {
+                "component": "atom.chip",
+                "when": "@live",
+                "props": {
+                  "label": "LIVE",
+                  "tone": "solid",
+                  "icon": "live"
+                }
+              }
+            ]
+          },
+          {
+            "type": "row",
+            "props": {
+              "gap": "space.listItem"
+            },
+            "children": [
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@elapsed",
+                  "type": "meta",
+                  "tone": "ink2"
+                }
+              },
+              {
+                "component": "molecule.seek-bar",
+                "props": {
+                  "position": "@progress.position",
+                  "buffered": "@progress.buffered",
+                  "duration": "@progress.duration",
+                  "live": "@live",
+                  "chapters": "@chapters",
+                  "hint": "time"
+                }
+              },
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@remaining",
+                  "type": "meta",
+                  "tone": "ink2",
+                  "align": "end"
+                }
+              }
+            ]
+          },
+          {
+            "type": "row",
+            "slot": "transport",
+            "children": [
+              {
+                "component": "atom.button",
+                "props": {
+                  "label": "Play",
+                  "kind": "primary",
+                  "icon": "play"
+                }
+              },
+              {
+                "component": "atom.button",
+                "props": {
+                  "label": "Back 10",
+                  "kind": "ghost",
+                  "icon": "rewind"
+                }
+              },
+              {
+                "component": "atom.button",
+                "props": {
+                  "label": "Forward 10",
+                  "kind": "ghost",
+                  "icon": "forward"
+                }
+              },
+              {
+                "component": "atom.surface",
+                "props": {
+                  "tone": "glass",
+                  "blur": true,
+                  "radius": "radius.button"
+                }
+              }
+            ]
+          },
+          {
+            "component": "atom.label",
+            "when": "@hint",
+            "props": {
+              "text": "@hint",
+              "type": "meta",
+              "tone": "ink3"
+            }
+          },
+          {
+            "component": "atom.chip",
+            "when": "@skipIntro",
+            "props": {
+              "label": "Skip intro",
+              "tone": "solid"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

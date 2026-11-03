@@ -1465,9 +1465,8 @@
  ],
  "play": {
   "norm:yaar-jatt-de-2024": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-   "kind": "torrent",
-   "mode": "gateway",
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls",
    "why": [
     "the hub fetched the torrent copy",
     "served on as ordinary seekable HTTP"
@@ -1479,60 +1478,60 @@
    "mode": "direct"
   },
   "imdb:tt10958128": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt8465434": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt7174262": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt6107630": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt6025394": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt7325770": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt3911278": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt4791376": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt9516590": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/VolkswagenGTIReview.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt7728804": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "imdb:tt4163654": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:justice-ek-haqeeqat-2020": {
    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
    "kind": "hls"
   },
   "norm:postto-2023": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/WhatWeDidOnOurVacation.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:chal-pindi-lau-de-2023": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-   "kind": "yt"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:chardikla-time-tv-live": {
    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
@@ -1551,84 +1550,84 @@
    "kind": "hls"
   },
   "norm:samaa-tv-live": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:dil-tv-live": {
    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
    "kind": "hls"
   },
   "norm:kids-yt-masha": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-   "kind": "yt"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:kids-yt-chhota-bheem": {
    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
    "kind": "hls"
   },
   "norm:kids-yt-motopat": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4",
-   "kind": "yt"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:kids-yt-giddha": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:kids-school-varnamala": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:kids-school-ganit": {
    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
    "kind": "hls"
   },
   "norm:kids-school-faal": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-   "kind": "yt"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:mastaan-2022": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:bakala-2023": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:chakvi-da-police-2022": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:jeeto-pakistan-special-2021": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:sarpanch-2025": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:verry-ta-verry-2024": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:heer-ranjha-2024": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:payal-ki-jhalar-1996": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:nawab-sharif-1979": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:heer-ranjha-1970": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   },
   "norm:mukhma-1990": {
-   "url": "https://storage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-   "kind": "http"
+   "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+   "kind": "hls"
   }
  },
  "subs": {

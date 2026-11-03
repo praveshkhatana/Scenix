@@ -90,6 +90,8 @@ function headers(port) {
   ];
 }
 
+let protocol = 'http';
+
 function announce(port) {
   if (!socket) return;
   const nets = [];
@@ -112,7 +114,7 @@ function announce(port) {
       'HOST: ' + MCAST + ':' + SSDP_PORT,
       'NTS: ssdp:scenix-hub',
       'NT: ' + ST,
-      'LOCATION: http://' + addr + ':' + port + '/',
+      'LOCATION: ' + protocol + '://' + addr + ':' + port + '/',
     ].concat(headers(port)).join('\r\n') + '\r\n\r\n';
     const buf = Buffer.from(msg);
     try {
@@ -145,7 +147,7 @@ function reply(raw, rinfo, port) {
   const msg = [
     'HTTP/1.1 200 OK',
     'HOST: ' + MCAST + ':' + SSDP_PORT,
-    'LOCATION: http://' + net.address + ':' + port + '/',
+    'LOCATION: ' + protocol + '://' + net.address + ':' + port + '/',
   ].concat(headers(port)).join('\r\n') + '\r\n\r\n';
   const buf = Buffer.from(msg);
   answers++;
@@ -162,14 +164,15 @@ function reply(raw, rinfo, port) {
 }
 
 /**
- * Start the responder. `port` is the port the hub is serving HTTP on, so LOCATION points at something a
- * client can actually open. Binding 1900 can fail on a host where another device already owns it (a TV, a
+ * Start the responder. `port` and `scheme` are how the hub is actually served, so LOCATION points at
+ * something a client can open (https when the hub has its own certificate). Binding 1900 can fail on a host where another device already owns it (a TV, a
  * printer, a container that mapped it); that must not take the hub down, so we fall back to an ephemeral
  * port — replies still work because they are unicast, only our own NOTIFY broadcasts are lost.
  */
-function start(port) {
+function start(port, scheme) {
   if (started || process.env.ANNOUNCE === '0') return { enabled: false };
   started = true;
+  protocol = scheme === 'https' ? 'https' : 'http';
   const open = (p) => {
     const s = dgram.createSocket({ type: 'udp4', reuseAddr: true });
     s.on('error', (e) => {
@@ -195,7 +198,7 @@ function start(port) {
         sayOnce('mcast', 'DISCOVER multicast unavailable:', e.message);
       }
       const mine = addressFor(null);
-      log('DISCOVER announcing', ST, 'on udp/' + s.address().port, 'as http://'
+      log('DISCOVER announcing', ST, 'on udp/' + s.address().port, 'as ' + protocol + '://'
         + (mine ? mine.address : '?') + ':' + port, '(' + settings.get().hubName + ')');
       announce(port);
       timer = setInterval(() => announce(port), NOTIFY_INTERVAL_MS);

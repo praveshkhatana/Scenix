@@ -8,21 +8,49 @@ set -euo pipefail
 HOST="${HUB_HOST:?set HUB_HOST}"
 USER_="${HUB_USER:?set HUB_USER}"
 PORT="${HUB_PORT:-8788}"
-SRC="$(cd "$(dirname "$0")/hub" && pwd)"
+SCHEME="${HUB_SCHEME:-http}"
+GATEWAY="${GATEWAY:-http}"
+TORR_URL="${TORR_URL:-http://127.0.0.1:8090}"
+SRC="$(cd "$(dirname "$0")/../hub" && pwd)"
 DEST="tvhub"
+
+# TLS: pass the two remote paths through only when both are set, so a plain-HTTP install never gets
+# an empty TLS_CERT that the hub would refuse as a half-configuration. HUB_INSECURE=1 adds -k for a
+# self-signed certificate during setup.
+TLS_ENV=""
+if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then
+    TLS_ENV="TLS_CERT=$TLS_CERT TLS_KEY=$TLS_KEY"
+fi
+AUTH_ENV=""
+[ -n "${HUB_TOKEN:-}" ] && AUTH_ENV="HUB_TOKEN=$(printf %q "$HUB_TOKEN")"
+CURL="curl -s"
+[ "${HUB_INSECURE:-0}" = "1" ] && CURL="curl -sk"
 
 echo "== copying $SRC -> $USER_@$HOST:~/$DEST"
 # library.json / progress.json / addons.json survive a deploy: they are the server's memory, not code.
 rsync -a --delete \
   --exclude 'data/' \
   --exclude 'media/' \
+  --exclude 'profiles.json' \
   --exclude 'node_modules/' \
+  --exclude 'bin/' \
   --exclude '*.log' \
   "$SRC/" "$USER_@$HOST:~/$DEST/"
 
 echo "== restarting"
 ssh "$USER_@$HOST" bash -s <<EOF
 cd ~/$DEST
+# The audio-donor remux needs ffmpeg/ffprobe. They are not packaged with the hub and may not be on the
+# login PATH; when the hub's own bin/ has them, pass the absolute paths so a deploy cannot silently turn
+# the feature off again.
+FF_ENV=""
+if [ -x "\$HOME/$DEST/bin/ffmpeg-btb" ]; then
+  # The newer build is the one that can transcode HTTP for the opt-in ladder; the older static build
+  # remains the fallback for remux-only installs.
+  FF_ENV="FFMPEG_BIN=\$HOME/$DEST/bin/ffmpeg-btb FFPROBE_BIN=\$HOME/$DEST/bin/ffprobe-btb"
+elif [ -x "\$HOME/$DEST/bin/ffmpeg" ]; then
+  FF_ENV="FFMPEG_BIN=\$HOME/$DEST/bin/ffmpeg FFPROBE_BIN=\$HOME/$DEST/bin/ffprobe"
+fi
 # Kill only OUR hub: the process whose working directory is ~/$DEST. This box runs other services and a
 # bare 'pkill -f node' would take them down too.
 for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do
@@ -31,14 +59,14 @@ for pid in \$(pgrep -f "node index.js" 2>/dev/null || true); do
   fi
 done
 sleep 1
-setsid nohup env LOG_REQUESTS=1 PORT=$PORT \\
-    YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
+setsid nohup env LOG_REQUESTS=1 PORT=$PORT GATEWAY=$GATEWAY TORR_URL=$TORR_URL \\
+    $TLS_ENV $AUTH_ENV \$FF_ENV YT_BIN=\$HOME/ytv/bin/yt-dlp YT_JS=/usr/bin/node \\
     node index.js > hub.log 2>&1 < /dev/null &
 sleep 4
-curl -s http://127.0.0.1:$PORT/healthz || tail -30 hub.log
+$CURL "$SCHEME://127.0.0.1:$PORT/healthz" || tail -30 hub.log
 EOF
 
 echo
 echo "== from off-box"
-curl -s "http://$HOST:$PORT/healthz" || true
+$CURL "$SCHEME://$HOST:$PORT/healthz" || true
 echo

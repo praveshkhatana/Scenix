@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Scenix brand mark, taken verbatim from the owner's S-Logo.svg (83x83), centred on the
+     100x100 face. This is the mark face — the wordmark file is a different asset. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="100dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <group
+        android:translateX="8.5"
+        android:translateY="8.5">
+        <path
+            android:fillColor="#E50914"
+            android:pathData="M43.0606 20.8633L44.2071 21.5459L44.213 21.5742C38.4847 19.1231 31.7708 23.2786 31.7706 29.8389V45.6523C31.7709 52.7432 39.6154 57.0259 45.5802 53.1914L49.9493 50.3818L55.0362 80.0566L38.377 70.1514L36.2042 55.2617L22.1876 60.5254L5.97763 50.8877L17.2198 46.8994L18.7345 35.1016L31.3292 29.4502L30.9884 27.7734L20.7989 19.0049L22.8663 2.88867L43.0606 20.8633ZM59.9669 32.0557C60.8953 31.8774 61.8674 32.0453 62.7013 32.541L77.0226 41.0566L66.7892 44.4941C66.7848 44.5412 66.7815 44.5886 66.7755 44.6357L65.0177 58.3418L54.4483 48.6396L50.7022 49.8975L57.879 45.2852C62.5487 42.2832 63.2439 36.028 59.9669 32.0557ZM64.5186 12.8291C67.3812 11.3561 70.7398 13.7281 70.3292 16.9326L69.2022 25.7168L59.0265 31.0781C58.675 30.7647 58.2929 30.4722 57.879 30.2061L45.8175 22.4521L64.5186 12.8291Z" />
+    </group>
+</vector>

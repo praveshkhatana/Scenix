@@ -131,7 +131,11 @@ class NativeBackend {
     listen('scenix:position', (d) => { this.merge(d); emit('position', this.state()); });
     listen('scenix:tracks', (d) => emit('tracks', { audio: normAudio(d.audio), text: normText(d.text) }));
     listen('scenix:buffering', (d) => emit('buffering', { buffering: !!d.buffering, seeders: d.seeders }));
-    listen('scenix:error', (d) => emit('error', { code: d.code, message: d.message || 'The player stopped' }));
+    listen('scenix:error', (d) => emit('error', {
+      code: d.code,
+      message: d.message || 'The player stopped',
+      waiting: !!d.waiting,
+    }));
     listen('scenix:ended', (d) => { this.merge(d); emit('ended', d); });
     this.poll = setInterval(() => {
       const st = this.state();
@@ -509,6 +513,7 @@ export function createPlayer() {
     textTracks: [],
     selectedAudio: null,
     selectedSub: null,
+    audioMix: null,
     rate: 1,
     tried: [],
     failed: [],           // copies that stalled on this title, so the quality menu can say so plainly
@@ -560,28 +565,47 @@ export function createPlayer() {
         codecs: typeof backend.codecs === 'function' ? backend.codecs() : [],
         audio: spec.audio || c.selectedAudio || undefined,
         sub: spec.sub !== undefined ? spec.sub : c.selectedSub || undefined,
+        // Keep the donor decision across a source switch or a track re-negotiation. Sending the mix
+        // object is what makes the hub find the same language again rather than starting from scratch.
+        audioMix: spec.audioMix !== undefined ? spec.audioMix : (c.audioMix || undefined),
       };
-      for (const k of ['exclude', 'audio', 'sub', 'type', 'season', 'episode', 'source']) {
+      for (const k of ['exclude', 'audio', 'sub', 'type', 'season', 'episode', 'source', 'audioMix']) {
         if (body[k] === undefined || body[k] === null || body[k] === '') delete body[k];
       }
       swapping = true;
       bus.emit('negotiating', { identity: spec.identity });
-      let target;
-      try {
-        target = await fn(body);
-      } catch (e) {
-        const tried = (e.body && e.body.tried) || [];
-        bus.emit('error', {
-          code: String(e.status || 'net'),
-          // The hub's own words when it has a copy but cannot serve it yet. A title that is still being
-          // fetched from peers is not a broken file, and the screen has to be able to tell those apart.
-          message: (e.body && e.body.error) || e.message || 'The hub could not answer',
-          tried,
-          waiting: e.status === 503 || !!(e.body && e.body.warming),
-        });
-        return null;
+      let target = null;
+      // A cold copy is a copy that has not started, not a copy that failed. The hub now answers 503
+      // `warming` in ~a second and keeps its reader open; asking again is how that copy starts. Three
+      // attempts at the hub's own retryAfterMs turn "nothing plays" into a short, honest wait.
+      const PREPARE_TRIES = 7;
+      for (let attempt = 0; attempt < PREPARE_TRIES; attempt++) {
+        try {
+          target = await fn(body);
+          break;
+        } catch (e) {
+          const waiting = e.status === 503 || !!(e.body && e.body.warming);
+          if (waiting && attempt < PREPARE_TRIES - 1) {
+            const wait = Math.max(900, Math.min(4000, Number((e.body && e.body.retryAfterMs) || 1500) + attempt * 400));
+            bus.emit('preparing', { attempt: attempt + 1, retryAfterMs: wait, reason: e.body && e.body.error });
+            await new Promise((r) => setTimeout(r, wait));
+            continue;
+          }
+          swapping = false;
+          const tried = (e.body && e.body.tried) || [];
+          bus.emit('error', {
+            code: String(e.status || 'net'),
+            // The hub's own words when it has a copy but cannot serve it yet. A title that is still being
+            // fetched from peers is not a broken file, and the screen has to be able to tell those apart.
+            message: (e.body && e.body.error) || e.message || 'The hub could not answer',
+            tried,
+            waiting,
+          });
+          return null;
+        }
       }
       if (!target || !target.url) {
+        swapping = false;
         bus.emit('error', {
           code: 'no-source',
           message: 'Nothing on this hub could be opened for this title',
@@ -601,6 +625,9 @@ export function createPlayer() {
       if (t.length) c.textTracks = t;
       c.selectedAudio = target.selectedAudio || c.selectedAudio;
       c.selectedSub = target.selectedSub !== undefined ? target.selectedSub : c.selectedSub;
+      // A mixed answer has one output audio track (the donor). If this copy has no donor, clear the mix
+      // so a later re-negotiation does not ask for the old language.
+      c.audioMix = target.audioMix || null;
       bus.emit('tracks', { audio: c.audioTracks, text: c.textTracks, from: 'hub' });
 
       const pos = spec.positionMs !== undefined ? spec.positionMs
@@ -785,6 +812,26 @@ export function createPlayer() {
       };
     },
     onStuck: (d) => bus.emit('stuck', d),
+    // A cold copy often spends 10-25 s before its first frame. During that window the player's own
+    // preparing screen is the honest one; the stall rule starts only after the copy has had its chance.
+    startupMs: 30000,
+  });
+
+  // The decoder is the authority on the tracks that actually exist in the file. The hub's answer is the
+  // authority on what it measured; when the hub could not measure (no ffprobe, a cold copy), the native
+  // player's `scenix:tracks` event is the only list the settings sheet can offer. Keep the controller's
+  // list in step with it instead of showing "0 tracks" over a file that has two.
+  bus.on('tracks', (d) => {
+    if (!d || d.from === 'hub' || d.from === 'player') return;
+    const a = d.audio || [];
+    const t = d.text || [];
+    if (a.length) c.audioTracks = a;
+    if (t.length) c.textTracks = t;
+    if (a.length && !c.selectedAudio) {
+      const def = a.find((x) => x.default) || a[0];
+      c.selectedAudio = def && def.id;
+    }
+    bus.emit('tracks', { audio: c.audioTracks, text: c.textTracks, from: 'player' });
   });
 
   // A new copy is a clean slate: no reload has been spent on this one and no question has been asked about it.

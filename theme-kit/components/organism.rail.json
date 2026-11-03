@@ -1,0 +1,74 @@
+{
+  "id": "organism.rail",
+  "version": 1,
+  "level": "organism",
+  "summary": "One Home shelf: a tokenised heading, a horizontal track of tiles and the See all card that opens the shelf's full grid.",
+  "props": {
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 80
+    },
+    "items": {
+      "type": "array",
+      "required": true,
+      "description": "Tiles already bound to one shelf; the rail owns their horizontal focus order."
+    },
+    "total": {
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "max": 9999,
+      "description": "Items the shelf really holds. See all appears when total exceeds the drawn items."
+    },
+    "variant": {
+      "type": "enum",
+      "default": "poster",
+      "enum": ["poster", "landscape", "rank", "continue"],
+      "description": "Tile shape inherited from pack.rows."
+    },
+    "caption": {
+      "type": "enum",
+      "default": "below",
+      "enum": ["below", "overlay", "none"]
+    },
+    "seeAll": {
+      "type": "boolean",
+      "default": false
+    },
+    "maxItems": {
+      "type": "integer",
+      "default": 18,
+      "min": 1,
+      "max": 30,
+      "description": "The host draws at most this many tiles before the user opens the full grid."
+    },
+    "gap": {
+      "type": "token",
+      "default": "space.posterGap",
+      "tokenGroup": "space"
+    },
+    "showCount": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "states": ["default", "focus", "pressed", "loading", "empty", "error"],
+  "events": ["press", "focus", "blur", "scroll", "open"],
+  "slots": [
+    { "name": "heading", "accepts": ["atom.label"], "optional": true },
+    { "name": "tiles", "accepts": ["molecule.tile"], "optional": false, "max": 30 },
+    { "name": "seeAll", "accepts": ["atom.button", "atom.icon"], "optional": true },
+    { "name": "count", "accepts": ["atom.label"], "optional": true }
+  ],
+  "a11y": {
+    "role": "list",
+    "label": "{{title}} shelf"
+  },
+  "targets": {
+    "android": { "renderer": "BrowseActivity rail / BrowseAdapter", "focus": "host-glow" },
+    "ios": { "renderer": "ScenixPosterRail", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-rail", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 200, "maxLayers": 5, "maxImageBytes": 48000 }
+}

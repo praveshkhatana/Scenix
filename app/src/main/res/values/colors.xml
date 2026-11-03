@@ -1,8 +1,8 @@
 <!-- Startup colours only: the running app reads every token from assets/theme.json (core/Theme.kt).
      These exist so the window background is right before the first frame is drawn. -->
 <resources>
-    <color name="bg">#FF141414</color>
-    <color name="surface">#FF181818</color>
-    <color name="brand">#FFE50914</color>
+    <color name="bg">#FF000000</color>
+    <color name="surface">#FF0B0B0F</color>
+    <color name="brand">#FFF2F3F5</color>
     <color name="ink">#FFFFFFFF</color>
 </resources>

@@ -9,12 +9,19 @@
  * Three things this screen insists on:
  *
  *   · Every control is a real control. Audio, Subtitles (including Off), Quality, speed, skip-intro,
- *     next-episode, and a position bar that scrubs. Nothing is drawn as decoration.
+ *     next-episode, and a position bar that scrubs. Nothing is drawn as decoration. The value each menu
+ *     chip stands for is painted on the chip itself and repainted whenever the choice or the track
+ *     reports change, so "what am I watching this in" never needs a button pressed to find out.
  *   · The hub's honesty is shown, not hidden. `describePlayback` turns what the hub said about a copy —
  *     slow, re-muxing, capped, not measured — into one line in the corner, because a viewer who is told
  *     which of "slow" and "broken" they have stops blaming the television.
  *   · The chrome gets out of the way. It appears on any input and leaves after a few seconds of playback,
- *     but it never hides out from under a ring that is standing on one of its buttons.
+ *     but it never hides out from under a ring that is standing on one of its buttons. The entrance and
+ *     exit are slide-and-fade only — each part slides along the edge it lives on, never a layout
+ *     property — and the settings sheet slides up over the bar the same way, so the D-pad always sees
+ *     where it is.
+ *   · A live feed behaves like a set-top box: no scrubber, no speed, left/right zap, and a number badge
+ *     naming the channel that just came up.
  */
 
 import { el } from '/ui/js/dom.js';
@@ -23,15 +30,15 @@ import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { createPlayer, describePlayback } from '/ui/js/player.js';
 import { session, hasNativePlayer, effectivePrefs } from '/ui/js/state.js';
-import { clock, langName, qualityWord, episodeLabel, size as fmtSize } from '/ui/js/format.js';
+import { clock, langName, qualityWord, codecName, episodeLabel, size as fmtSize } from '/ui/js/format.js';
 import { token, px } from '/ui/js/theme.js';
 import { setFeatureVisible, setSurfaceLive } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
 
-const SKIP_FROM = 5000;          // spec B: the intro button lives between 5 s and 90 s
-const SKIP_TO = 90000;
+// An intro window is data from the hub, not a guess from the clock. The old 5 s..90 s window put a
+// Skip intro button over the first minute and a half of every series, whether or not it had an intro.
+const SKIP_DEFAULT_LENGTH = 90000;
 const NEXT_WINDOW = 7000;       // spec B: the next-episode card appears in the last 7 s
-const HIDE_AFTER = 5000;
 
 export function screen(ctx, identity) {
   const spec = Object.assign({ identity }, session.pendingPlay || {});
@@ -43,7 +50,7 @@ export function screen(ctx, identity) {
      again — that is the `live` flag below, and it only ever decides whether the bar can be moved along,
      never which controls exist. */
   const kind = String(spec.type || '').toLowerCase();
-  const isLiveFeed = kind === 'channel' || kind === 'live';
+  let isLiveFeed = kind === 'channel' || kind === 'live';
   const isSeries = kind === 'series';
 
   /* ---------------------------------------------------------------- picture */
@@ -61,11 +68,26 @@ export function screen(ctx, identity) {
 
   const title = el('div', { class: 'pt', text: spec.title || '' });
   const subtitle = el('div', { class: 'ps', text: spec.subtitle || '' });
+  const cert = String(spec.maturity || '');
+  const advisories = Array.isArray(spec.advisories) ? spec.advisories : [];
+  // A channel says so beside its own name too, not only in the transport mark that fades with the bar —
+  // the same habit as the native player's red LIVE badge. If the hub names the feed later (a deep link or
+  // a zap played by identity), the target handler inserts this where a card's certificate sits.
+  const liveBadge = el('span', { class: 'plive', text: 'LIVE' });
+  const content = el('div', { class: 'pcontent' },
+    isLiveFeed ? liveBadge : null,
+    el('span', { class: 'pccert', text: cert || 'Not rated' }),
+    advisories.length ? el('span', { class: 'pcadv', text: advisories.join(' · ') }) : null);
   const status = el('div', { class: 'ply-status' });
   const hud = el('div', { class: 'ply-hud ply-fade' },
-    el('div', {}, title, subtitle),
+    el('div', {}, title, subtitle, content),
     el('div', { class: 'right' }, status));
   const top = el('div', { class: 'ply-top ply-fade' });
+
+  // The theme owns how far a seek jumps; a label that promises ten seconds while the token says thirty
+  // is a lie on every box that retunes it.
+  const SEEK_BACK = Math.max(1000, Number(token('player', 'seekBackMs', 10000)) || 10000);
+  const SEEK_FWD = Math.max(1000, Number(token('player', 'seekForwardMs', 30000)) || 30000);
 
   const buf = el('i', { class: 'buf' });
   const fill = el('i', { class: 'pl' });
@@ -82,23 +104,22 @@ export function screen(ctx, identity) {
     return b;
   };
   const btnBack = pbtn('back', '', 'Back', () => ctx.back());
-  const btnRew = pbtn('rew', '', 'Rewind 10s', () => player.seekBy(-10000), 'rew');
-  const btnPlay = pbtn('play', 'play', 'Play', () => player.toggle());
-  const btnFwd = pbtn('fwd', '', 'Forward 10s', () => player.seekBy(10000), 'fwd');
+  const btnRew = pbtn('rew', '', `Rewind ${Math.round(SEEK_BACK / 1000)}s`, () => player.seekBy(-SEEK_BACK), 'rew');
+  const btnPlay = pbtn('play', 'play', 'Play', () => togglePlayback());
+  const btnFwd = pbtn('fwd', '', `Forward ${Math.round(SEEK_FWD / 1000)}s`, () => player.seekBy(SEEK_FWD), 'fwd');
   // Not in the row with the transport: the next episode waits at the right edge of the picture, where it can
   // be seen coming without covering the one that is playing.
   const btnNext = pbtn('next', 'edge', 'Next episode', () => playNext());
-  const tool = (name, label, fn, val) => {
+  const tool = (name, label, fn) => {
     const b = el('button', { class: 'iconbtn', type: 'button', 'aria-label': label, title: label,
-      onclick: () => fn() }, icon(name), el('span', { text: label }));
-    if (val) b.appendChild(el('b', { class: 'val', text: val }));
+      onclick: () => fn() }, icon(name), el('span', { text: label }), el('b', { class: 'val' }));
     focus.focusable(b);
     return b;
   };
-  const btnSub = tool('cc', 'Subtitles', () => openMenu('sub'), subLabel());
-  const btnAudio = tool('audio', 'Audio', () => openMenu('audio'), audioLabel());
-  const btnSpeed = tool('speed', 'Speed', () => openMenu('speed'), '1x');
-  const btnQuality = tool('globe', 'Quality', () => openMenu('quality'), qualityLabel());
+  const btnSub = tool('cc', 'Subtitles', () => openMenu('sub', btnSub));
+  const btnAudio = tool('audio', 'Audio', () => openMenu('audio', btnAudio));
+  const btnSpeed = tool('speed', 'Speed', () => openMenu('speed', btnSpeed));
+  const btnQuality = tool('globe', 'Quality', () => openMenu('quality', btnQuality));
   const rate = el('span', { class: 'rate' });
 
   /* Two rows and no panel: where the programme is (elapsed, the line, what is left) and what you can do to it
@@ -108,6 +129,23 @@ export function screen(ctx, identity) {
      which is only safe while they are all on the same floor, so every one of them lives inside the chrome that
      fades in and out together. */
   const times = el('div', { class: 'times' }, tLeft, trk, tRight);
+
+  // The scrub preview Netflix answers every Left/Right with: the time you landed on, shown over the
+  // picture just above the bar, fading out by itself. Thumbnails would need a seekable sprite endpoint
+  // the hub does not serve yet, so the honest version is the timestamp.
+  const ghost = el('div', { class: 'ply-ghost' });
+  ghost.hidden = true;
+  root.appendChild(ghost);
+  let ghostTimer = null;
+  function showGhost() {
+    const st = player.state();
+    const dur = Number(st.durationMs) || 0;
+    if (live || isLiveFeed || !dur) return;
+    ghost.textContent = clock(Math.max(0, Math.min(dur, Number(st.positionMs) || 0)));
+    ghost.hidden = false;
+    if (ghostTimer) clearTimeout(ghostTimer);
+    ghostTimer = setTimeout(() => { ghost.hidden = true; }, 1400);
+  }
   // A channel has no position to move along, so the line that shows one is replaced by the only fact that
   // stream supports: it is happening now.
   const liveMark = el('div', { class: 'live-mark' }, el('i', { class: 'dot' }), el('span', { text: 'Live' }));
@@ -137,15 +175,87 @@ export function screen(ctx, identity) {
      enough for anyone to want out of it. So the button starts put away — `gone` is opacity 0, which is also
      how focus.js decides a control is not there — and only a position report that lands inside an intro brings
      it back. */
+  let skipToMs = 0;
   const skip = el('button', { class: 'skip gone', type: 'button', text: 'Skip intro',
-    onclick: () => { player.seek(SKIP_TO); hideSkip(); } });
+    onclick: () => { if (skipToMs > 0) player.seek(skipToMs); hideSkip(); } });
   focus.focusable(skip);
   let skipShown = false;
 
   const nextUp = el('div', { class: 'nextup ply-fade' });
   nextUp.hidden = true;
 
+  /* The set-top-box habit on a live feed: when a zap lands, the channel's number and name flash up in the
+     top-left and fade out on their own, so the viewer knows which feed answered without the chrome in the
+     way. `session.zapping` (js/state.js, set by the router for every channel play) names the feed this
+     screen was built to show, so arriving while it matches is the whole test for "this screen is a tune".
+     The number rides on the hub's channel items and on its play answer; when neither has it, the name is
+     still worth flashing. */
+  const zapBadge = el('div', { class: 'ply-zap' });
+  zapBadge.hidden = true;
+  let zapTimer = null;
+  let zapShownFor = null;   // one badge per (number, name): a quality switch must not re-flash it
+
+  function channelNumber() {
+    if (spec.number != null) return spec.number;
+    const rows = (session.home && session.home.rows) || [];
+    for (const r of rows) {
+      if (r.id !== 'live' && r.card !== 'channel') continue;
+      const it = (r.items || []).find((x) => x.identity === identity);
+      if (it && it.number != null) return it.number;
+    }
+    return null;
+  }
+
+  function showZapBadge(number, name) {
+    zapShownFor = `${number == null ? '' : number}|${name || ''}`;
+    zapBadge.textContent = '';
+    if (number != null && number !== '') zapBadge.appendChild(el('b', { class: 'num', text: String(number) }));
+    zapBadge.appendChild(el('span', { class: 'nm', text: name || '' }));
+    zapBadge.hidden = false;
+    requestAnimationFrame(() => zapBadge.classList.add('in'));
+    if (zapTimer) clearTimeout(zapTimer);
+    zapTimer = setTimeout(() => zapBadge.classList.remove('in'), 2500);
+  }
+
+  /** Called on arrival and again when the hub names the feed: the play answer may be the first thing
+      that knows the channel's number. */
+  function maybeZapBadge(t) {
+    const who = (t && t.identity) || identity;
+    if (!session.zapping || String(session.zapping) !== String(who)) return;
+    const number = (t && t.live && t.live.number) || (t && t.number) || channelNumber();
+    const name = (t && t.title) || spec.title || '';
+    if (`${number == null ? '' : number}|${name}` === zapShownFor) return;
+    showZapBadge(number, name);
+  }
+
   const center = el('div', { class: 'ply-center' });
+
+  /* The loading surface: the title's own artwork in the middle, with a bar that fills as the hub gets
+     the copy ready. A spinner is a generic "wait"; the logo says which film is being fetched, and the bar
+     says the wait is moving. The nodes are kept and refilled so the bar animates instead of restarting. */
+  const loadLogo = el('div', { class: 'ply-loadlogo' });
+  if (spec.logo) {
+    const img = el('img', { src: spec.logo, alt: spec.title || '' });
+    img.addEventListener('error', () => img.replaceWith(el('div', { class: 'ply-loadtitle', text: spec.title || 'Scenix' })));
+    loadLogo.appendChild(img);
+  } else {
+    loadLogo.appendChild(el('div', { class: 'ply-loadtitle', text: spec.title || 'Scenix' }));
+  }
+  const loadFill = el('i');
+  const loadBar = el('div', { class: 'ply-loadbar' }, loadFill);
+  const loadText = el('div', { class: 'ply-loadtext' });
+  function showLoading(text, pct) {
+    if (!center.contains(loadBar)) {
+      center.textContent = '';
+      center.appendChild(loadLogo);
+      center.appendChild(loadBar);
+      center.appendChild(loadText);
+    }
+    loadText.textContent = text || '';
+    loadFill.style.width = `${Math.max(6, Math.min(92, Number(pct) || 12))}%`;
+    center.hidden = false;
+  }
+
   const panel = el('div', { class: 'panel', style: 'bottom: calc(100% + 16px); right: 0;' });
   panel.hidden = true;
   bottom.appendChild(panel);
@@ -153,6 +263,7 @@ export function screen(ctx, identity) {
   root.appendChild(stage);
   root.appendChild(top);
   root.appendChild(hud);
+  root.appendChild(zapBadge);
   root.appendChild(center);
   root.appendChild(skip);
   root.appendChild(nextUp);
@@ -160,11 +271,40 @@ export function screen(ctx, identity) {
   root.appendChild(bottom);
   skip.style.zIndex = '8';
 
+  /* --------------------------------------------------------------------- undo */
+  // The roll into the next episode is reversible for as long as this chip stands: Undo re-enters the
+  // episode that just ended, and the hub puts the playhead back where Continue Watching left it.
+  if (spec.undo && spec.undo.identity) {
+    const u = spec.undo;
+    let gone = false;
+    const kill = () => { if (gone) return; gone = true; undoChip.remove(); };
+    const undoBtn = el('button', { class: 'btn white', type: 'button', text: 'Undo', onclick: () => {
+      kill();
+      ctx.play({ identity: u.identity, type: u.type, title: u.title }, {
+        season: u.season, episode: u.episode,
+        subtitle: episodeLabel(u.season ?? 1, u.episode ?? 1),
+      });
+    } });
+    const undoChip = el('div', { class: 'ply-undo' },
+      el('span', { text: 'Started the next episode automatically' }), undoBtn);
+    root.appendChild(undoChip);
+    focus.focusable(undoBtn);
+    setTimeout(kill, 8000);
+  }
+
   /* ------------------------------------------------------------------- chrome */
 
   let hidden = false;
   let idle = null;
   let openKind = null;
+
+  // Netflix rolls straight into the next episode and gives a window to change your mind. The length of that
+  // roll is the theme's `autoplayCountdownMs`; zero means the card waits for a press like it used to.
+  const AUTO_MS = Math.max(0, Number(token('player', 'autoplayCountdownMs', 7000)) || 0);
+  let stayed = false;      // "Stay" on the card: this viewer finishes the episode on purpose
+  let autoAt = 0;          // media position at which the countdown hits zero
+  let autoPlayed = false;  // so the roll can only fire once per screen
+  let cdEl = null;
 
   function chromeVisible() { return !hidden; }
 
@@ -180,21 +320,25 @@ export function screen(ctx, identity) {
 
   function hide() {
     if (openKind) return;
-    // The ring used to be a reason to hold the chrome up. On a TV it is not one: the bar is the only thing
-    // anyone can focus here, so keeping it up would keep it up forever and the film would be watched through
-    // a control panel — the way out at the top and the next episode at the edge included. Only a control
-    // that is genuinely outside the chrome, the skip button, holds it on, and the first key press brings
-    // everything back, the ring included.
     const a = document.activeElement;
     if (a && skip.parentNode === root && a === skip) { arm(); return; }
     if (player.state().playing === false) { arm(); return; }
+    // Netflix never drops the overlay out from under the ring: a viewer whose focus sits inside the
+    // chrome is working in it, not idling, so the timer re-arms instead of fading the controls away
+    // and leaving an invisible caret. The chrome only leaves once focus has stepped out of it (or the
+    // page holds no focus at all) and playback has settled — the first key press brings everything
+    // back, the ring included.
+    if (a && a !== document.body && a !== root && chrome.some((n) => n.contains(a))) { arm(); return; }
     hidden = true;
     for (const n of chrome) n.classList.add('hide');
   }
 
   function arm() {
     if (idle) clearTimeout(idle);
-    idle = setTimeout(hide, HIDE_AFTER);
+    // The theme owns this number: `player.controlsHideMs` in theme.json, floored so a mis-set token
+    // cannot make the bar flicker out between two key presses.
+    const ms = Math.max(1500, Number(token('player', 'controlsHideMs', 6000)) || 6000);
+    idle = setTimeout(hide, ms);
   }
 
   function setStatus(txt, tone) {
@@ -209,6 +353,11 @@ export function screen(ctx, identity) {
   /** One honest line, refreshed whenever the hub or the backend says something new. */
   function refreshStatus(extra = {}) {
     const d = describePlayback(player, extra);
+    // The buffer line is true and useful once; left up for the whole film it is a debug readout. A viewer
+    // who has been watching for a moment does not need to be told the hub is holding bytes for them.
+    if (d && /^The hub (is holding|started with)/.test(d.text) && playingSince && Date.now() - playingSince > 7000) {
+      return setStatus('', null);
+    }
     if (d) return setStatus(d.text, d.tone === 'info' ? 'wait' : d.tone);
     const st = player.state();
     if (st.buffering) return setStatus('Buffering…', 'wait');
@@ -231,6 +380,15 @@ export function screen(ctx, identity) {
     if (lbl) lbl.textContent = label;
     btnPlay.setAttribute('aria-label', label);
     btnPlay.setAttribute('title', label);
+  }
+
+  // Play and pause from one place, whichever path asked for it. The native player writes the position down
+  // the moment the film stops; the web player waits ten seconds between posts otherwise, so pausing and
+  // walking away loses up to that beat of "continue watching".
+  function togglePlayback() {
+    player.toggle();
+    setPlayIcon();
+    postProgress();
   }
 
   /* ----------------------------------------------------------------- transport */
@@ -288,7 +446,7 @@ export function screen(ctx, identity) {
     edge.hidden = !want;
     if (!hidden) edge.classList.remove('hide');
   }
-  function playNext() {
+  function playNext(fromAuto) {
     const n = nextEpisode();
     if (!n) return;
     ctx.play(Object.assign({ identity: n.identity || spec.identity, title: n.title || spec.title }, n.type ? { type: n.type } : {}), {
@@ -297,6 +455,13 @@ export function screen(ctx, identity) {
       next: n.next || null,
       title: n.title || spec.title,
       subtitle: episodeLabel(n.season !== undefined ? n.season : spec.season + 1, n.episode !== undefined ? n.episode : (spec.episode || 0) + 1),
+      // The next screen carries one window to undo the roll — after an automatic roll or a pressed
+      // "Play next" alike. A viewer who pressed it on the remote can still change their mind mid-episode,
+      // and the native player offers the chip in both cases.
+      ...(AUTO_MS > 0 ? { undo: {
+        identity: spec.identity, type: spec.type, title: spec.title,
+        season: spec.season, episode: spec.episode,
+      } } : {}),
     });
   }
   function drawNext() {
@@ -308,14 +473,30 @@ export function screen(ctx, identity) {
     if (nextUp.hidden) {
       nextUp.hidden = false;
       nextUp.textContent = '';
+      cdEl = null;
+      autoAt = st.positionMs + AUTO_MS;
+      autoPlayed = false;
       if (n.poster || n.backdrop) nextUp.appendChild(el('img', { src: n.backdrop || n.poster, alt: '' }));
       nextUp.appendChild(el('div', { class: 'nt', text: `Up next · ${episodeLabel(n.season ?? spec.season, n.episode ?? spec.episode)}` }));
       nextUp.appendChild(el('div', { class: 'nx', text: n.title || '' }));
+      if (AUTO_MS > 0 && !stayed) cdEl = el('div', { class: 'cd' });
       const go = el('button', { class: 'btn white', type: 'button', text: 'Play', onclick: () => playNext() });
-      const stay = el('button', { class: 'btn ghost', type: 'button', text: 'Stay', onclick: () => { nextUp.hidden = true; } });
-      nextUp.appendChild(el('div', { class: 'row2' }, go, stay));
+      const stay = el('button', { class: 'btn ghost', type: 'button', text: 'Stay',
+        onclick: () => { stayed = true; nextUp.hidden = true; } });
+      const row2 = el('div', { class: 'row2' }, go, stay);
+      if (cdEl) nextUp.appendChild(cdEl);
+      nextUp.appendChild(row2);
       focus.focusable(go);
       focus.focusable(stay);
+    }
+    // The countdown is the number Netflix puts on the card: seconds left before the roll, driven by the
+    // media position so pausing holds it and seeking moves it honestly.
+    if (cdEl) {
+      const left = Math.max(0, Math.ceil((autoAt - st.positionMs) / 1000));
+      cdEl.textContent = '';
+      cdEl.appendChild(el('span', { text: `Starting in ` }));
+      cdEl.appendChild(el('b', { text: `${left}s` }));
+      if (!stayed && !autoPlayed && st.positionMs >= autoAt) { autoPlayed = true; playNext(true); return; }
     }
     nextUp.classList.remove('hide');
   }
@@ -326,7 +507,7 @@ export function screen(ctx, identity) {
     const id = player.selectedAudio;
     const t = (player.audioTracks || []).find((x) => String(x.id) === String(id));
     if (t) return langName(t.language) || t.title || `Track ${t.id}`;
-    return 'Default';
+    return 'Auto';
   }
   function subLabel() {
     const id = player.selectedSub;
@@ -341,51 +522,128 @@ export function screen(ctx, identity) {
     return qualityWord(picked.quality) || picked.label || 'Chosen by hub';
   }
 
-  function row(label, sub, on, fn) {
+  /* One panel, refilled per request. Opening a menu is an input, so the chrome stays up while one is open —
+     the panel is inside the bottom bar, and hiding the bar would hide the thing being chosen from.
+     The sheet opens upward from the bar and closes back into it (transform + opacity only, in
+     css/screens.css), and while it is open the ring belongs to it: Back leaves one level at a time —
+     submenu to sheet, sheet to the bar — because a viewer who cannot tell which level they are on has no
+     way to get out. */
+  const PANEL_MS = 220;                 // the sheet's slide duration; keep in step with screens.css
+  let returnTo = null;                  // the sheet a submenu was opened from, so Back can return to it
+  let panelOpener = null;               // who opened the panel: the ring goes back there on close
+  let panelScoped = false;              // whether focus.pushScope(panel) is still owed its pop
+  let panelTimer = null;                // finishes the hide once the slide-out has played
+
+  /**
+   * A row of a panel. `on` marks the row that answers what is playing now — the fill plus a brand tick,
+   * because a viewer walking a list with a remote decides by what is marked, not by memory. `val` is the
+   * current value right-aligned (the sheet), and `chev` says the row opens something rather than choosing.
+   */
+  function row(label, sub, on, fn, opts = {}) {
     const b = el('button', { class: `prow${on ? ' on' : ''}`, type: 'button', onclick: () => fn() },
-      el('span', { class: 'lbl' }, el('span', { text: label }), sub ? el('span', { class: 'sub', text: sub }) : null),
-      on ? el('span', { class: 'val', text: 'On' }) : null);
+      el('span', { class: 'lbl' }, el('span', { text: label }), sub ? el('span', { class: 'sub', text: sub }) : null));
+    if (opts.val) b.appendChild(el('span', { class: 'val', text: opts.val }));
+    else if (on) b.appendChild(el('span', { class: 'val tick' }, icon('check')));
+    if (opts.chev) b.appendChild(el('span', { class: 'chev' }, icon('chevRight')));
     focus.focusable(b);
     return b;
   }
 
   /**
-   * One panel, refilled per request. Opening a menu is an input, so the chrome stays up while one is open —
-   * the panel is inside the bottom bar, and hiding the bar would hide the thing being chosen from.
+   * Repaints what the four bar chips promise: their current value, and the fill that says the choice is
+   * real rather than default. The value on a chip is a claim about what is playing, so everything that
+   * changes a track, a copy or a speed — a press, a hub answer, a track report — goes through here.
    */
-  function openMenu(kind) {
+  function paintChips() {
+    const q = (b) => b.querySelector('.val');
+    q(btnSub).textContent = subLabel();
+    q(btnAudio).textContent = audioLabel();
+    q(btnQuality).textContent = qualityLabel();
+    const r = Number(player.rate) || 1;
+    if (!isLiveFeed) q(btnSpeed).textContent = `${r}x`;
+    rate.textContent = r === 1 ? '' : `${r}x`;
+    btnSub.classList.toggle('on', !!player.selectedSub);
+    btnAudio.classList.toggle('on', !!player.selectedAudio
+      && (player.audioTracks || []).some((t) => String(t.id) === String(player.selectedAudio)));
+    btnQuality.classList.toggle('on', !!player.pinned);
+    btnSpeed.classList.toggle('on', r !== 1);
+  }
+
+  function openMenu(kind, opener) {
     if (openKind === kind) return closeMenu();
+    if (!openKind) {
+      // The sheet was opened from the bar (a chip, or the first Down): the ring belongs to the sheet now.
+      panelOpener = opener || document.activeElement;
+      focus.pushScope(panel);
+      panelScoped = true;
+    } else if (openKind === 'all') {
+      // The sheet opened this submenu, so Back returns to the sheet rather than to the film.
+      returnTo = 'all';
+    }
+    if (kind === 'all') returnTo = null;
     openKind = kind;
-    panel.hidden = false;
+    if (panelTimer) { clearTimeout(panelTimer); panelTimer = null; }
     panel.textContent = '';
-    if (kind === 'audio') {
+    panel.hidden = false;
+    // The slide is something that happens *to* a laid-out panel: un-hiding it and adding the open class
+    // in the same breath lets the browser skip straight to the end state and show no motion at all.
+    requestAnimationFrame(() => panel.classList.add('open'));
+    if (kind === 'all') {
+      panel.appendChild(el('h4', {}, icon('sliders'), el('span', { text: 'Playback settings' })));
+      const nAudio = (player.audioTracks || []).length;
+      panel.appendChild(row('Audio', nAudio ? `${nAudio} track${nAudio === 1 ? '' : 's'}` : null,
+        false, () => openMenu('audio'), { val: audioLabel(), chev: true }));
+      panel.appendChild(row('Subtitles', null, false, () => openMenu('sub'),
+        { val: subLabel(), chev: true }));
+      panel.appendChild(row('Quality', null, false, () => openMenu('quality'),
+        { val: qualityLabel(), chev: true }));
+      if (!isLiveFeed) panel.appendChild(row('Speed', null, false, () => openMenu('speed'),
+        { val: `${Number(player.rate) || 1}x`, chev: true }));
+      panel.appendChild(el('div', { class: 'note', text: 'Up and down pick a row; OK opens the choice; Back leaves the player.' }));
+    } else if (kind === 'audio') {
       panel.appendChild(el('h4', {}, icon('audio'), el('span', { text: 'Audio' })));
+      // Symmetric with Subtitles' "Off": one row that gives up any manual pick and lets the hub rank
+      // tracks by the profile's languages again.
+      panel.appendChild(row('Auto', 'best match for your languages',
+        !player.selectedAudio,
+        () => { player.setAudio(null).then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
       const list = player.audioTracks || [];
-      if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'This copy carries one audio track, so there is nothing to switch.' }));
+      if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'The hub has not reported the audio tracks for this copy yet. It usually arrives with the first frame.' }));
       for (const t of list) {
         panel.appendChild(row(langName(t.language) || t.title || `Track ${t.id}`,
-          [t.codec, t.default ? 'default' : ''].filter(Boolean).join(' · '),
+          [codecName(t.codec), t.default ? 'default' : ''].filter(Boolean).join(' · '),
           String(t.id) === String(player.selectedAudio),
-          () => { player.setAudio(t.id).then(() => { btnAudio.lastChild.textContent = audioLabel(); closeMenu(); refreshStatus(); }); }));
+          () => { player.setAudio(t.id).then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
+      }
+      if (player.audioMix) {
+        panel.appendChild(el('div', { class: 'note', text:
+          `${player.audioMix.languageName || player.audioMix.language} audio mixed from ${player.audioMix.source || 'another source'} into this picture.` }));
       }
     } else if (kind === 'sub') {
       panel.appendChild(el('h4', {}, icon('cc'), el('span', { text: 'Subtitles' })));
       panel.appendChild(row('Off', '', !player.selectedSub,
-        () => { player.setSub('off').then(() => { btnSub.lastChild.textContent = subLabel(); closeMenu(); }); }));
+        () => { player.setSub('off').then(() => { paintChips(); menuDone(); }); }));
       const list = player.tracks().text || [];
       if (!list.length) panel.appendChild(el('div', { class: 'note', text: 'No subtitles came back for this title. The hub looks for them by your profile’s languages.' }));
       for (const t of list) {
         panel.appendChild(row(langName(t.language) || t.title || t.label || `Subtitle ${t.id}`,
           t.kind === 'addon' ? 'from the subtitle addon' : (t.codec || 'in the file'),
           String(t.id) === String(player.selectedSub),
-          () => { player.setSub(t.id).then(() => { btnSub.lastChild.textContent = subLabel(); closeMenu(); }); }));
+          () => { player.setSub(t.id).then(() => { paintChips(); menuDone(); }); }));
       }
     } else if (kind === 'quality') {
-      panel.appendChild(el('h4', {}, icon('globe'), el('span', { text: 'Quality' })));
+      // The heading names the copy playing right now, so opening the menu answers "what am I watching"
+      // before the viewer has to read down the list looking for the ticked row.
+      panel.appendChild(el('h4', {}, icon('globe'), el('span', { text: `Quality · ${qualityLabel()}` })));
       panel.appendChild(row('Let the hub choose', 'it ranks every copy it can find',
         !(player.target && player.target.picked && player.pinned),
-        () => { player.pinned = false; player.setQuality('auto').then(() => { btnQuality.lastChild.textContent = qualityLabel(); closeMenu(); refreshStatus(); }); }));
-      for (const s of player.sources || []) {
+        () => { player.pinned = false; player.setQuality('auto').then(() => { paintChips(); menuDone(); refreshStatus(); }); }));
+      // `player.sources(list)` is the setter, and it writes the list onto itself - so until a play answer
+      // has named a copy, the property still holds the function rather than an array. Walking it then
+      // threw "function is not iterable" and killed the Quality sheet for exactly the titles that were
+      // still resolving.
+      const copies = Array.isArray(player.sources) ? player.sources : [];
+      for (const s of copies) {
         // Spec D: a copy that already froze on this title stays offered - it may be the biggest file and the
         // viewer may want to gamble - but it is dimmed and labelled, because pretending it is as good as the
         // others is how someone ends up re-choosing the broken link five times in a row.
@@ -394,7 +652,7 @@ export function screen(ctx, identity) {
           s.seeders != null ? `${s.seeders} seeding` : null, bad ? 'stalled here before' : null].filter(Boolean).join(' · ');
         const r = row(s.label || s.quality || 'copy', bits,
           !!(player.target && player.target.picked && String(player.target.picked.id) === String(s.id)),
-          () => { player.pinned = true; player.setQuality(s.id).then(() => { btnQuality.lastChild.textContent = qualityLabel(); closeMenu(); refreshStatus(); },
+          () => { player.pinned = true; player.setQuality(s.id).then(() => { paintChips(); menuDone(); refreshStatus(); },
             () => { panel.appendChild(el('div', { class: 'note', text: 'That copy could not be opened. The hub kept the one that works.' })); }); });
         if (bad) r.classList.add('dim');
         panel.appendChild(r);
@@ -403,9 +661,9 @@ export function screen(ctx, identity) {
     } else if (kind === 'speed') {
       panel.appendChild(el('h4', {}, icon('speed'), el('span', { text: 'Speed' })));
       const segs = el('div', { class: 'segs' });
-      for (const x of [0.5, 0.75, 1, 1.25, 1.5, 2]) {
+      for (const x of [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]) {
         const b = el('button', { class: `seg${player.rate === x ? ' on' : ''}`, type: 'button', text: `${x}x`,
-          onclick: () => { player.setSpeed(x); btnSpeed.lastChild.textContent = `${x}x`; rate.textContent = x === 1 ? '' : `${x}x`; closeMenu(); } });
+          onclick: () => { player.setSpeed(x); paintChips(); menuDone(); } });
         focus.focusable(b);
         segs.appendChild(b);
       }
@@ -415,10 +673,40 @@ export function screen(ctx, identity) {
     focus.focusDefault(panel.querySelector('.prow, .seg'));
   }
 
+  /**
+   * A choice has been made. If the viewer got here from the sheet, go back to the sheet — the value next
+   * to the row just changed, and that is the proof the choice took. Straight from a bar chip, close.
+   */
+  function menuDone() {
+    if (openKind !== 'all' && returnTo === 'all') openMenu('all');
+    else closeMenu();
+  }
+
+  /** Back leaves one level at a time: submenu to sheet, sheet to the bar. */
+  function backOut() {
+    if (openKind !== 'all' && returnTo === 'all') openMenu('all');
+    else closeMenu();
+  }
+
   function closeMenu() {
     openKind = null;
-    panel.hidden = true;
-    panel.textContent = '';
+    returnTo = null;
+    if (panelScoped) { panelScoped = false; focus.popScope(); }
+    panel.classList.remove('open');
+    // The slide-out plays over `hidden`: the panel is only unmounted once it has finished, and only if
+    // nothing re-opened it in the meantime.
+    if (panelTimer) clearTimeout(panelTimer);
+    panelTimer = setTimeout(() => {
+      if (!openKind) { panel.hidden = true; panel.textContent = ''; }
+    }, PANEL_MS);
+    // The ring goes back to whoever opened the panel: a control that was just closed is a dead key, and
+    // the viewer pressing Back expects the bar they came from, not the top of the page.
+    if (chromeVisible()) {
+      const to = panelOpener && panelOpener.isConnected && focus.isFocusable(panelOpener) ? panelOpener : btnPlay;
+      focus.focusDefault(to);
+    }
+    panelOpener = null;
+    arm();
   }
 
   /* ------------------------------------------------------------------- events */
@@ -428,31 +716,72 @@ export function screen(ctx, identity) {
   // away a question the viewer has not answered yet. Only their own choice, or the picture actually
   // starting to move again, closes it.
   let asking = false;
+  let playingSince = 0;
+  let bufferNoteTimer = null;
 
   const offs = [];
   offs.push(player.on('negotiating', () => {
     setStatus('Finding a copy that will play on this TV…', 'wait');
-    center.textContent = '';
-    center.appendChild(el('div', { class: 'big', text: 'Getting the picture' }));
-    center.hidden = false;
+    showLoading('Finding the best copy for this TV…', 14);
   }));
+  offs.push(player.on('preparing', (d) => {
+    // The hub has the copy but has not put a byte on the wire yet. Keep the screen calm and say what
+    // is happening; the controller asks again by itself, so there is nothing for the viewer to press.
+    const attempt = Number(d && d.attempt) || 1;
+    setStatus('Preparing this copy - the first seconds are being fetched', 'wait');
+    showLoading('Preparing this copy…', 24 + attempt * 10);
+  }));
+  function armBufferNote() {
+    if (bufferNoteTimer) clearTimeout(bufferNoteTimer);
+    bufferNoteTimer = setTimeout(() => {
+      if (status && /^The hub is holding/.test(status.textContent)) setStatus('', null);
+    }, 7000);
+  }
   offs.push(player.on('ready', () => {
-    if (!asking) center.hidden = true;
+    if (!playingSince) playingSince = Date.now();
+    loadFill.style.width = '100%';
+    armBufferNote();
+    const st = player.state();
+    if (!asking && (st.positionMs > 400 || st.playing)) center.hidden = true;
     setPlayIcon();
     drawPosition();
     refreshStatus();
     // Native captions are painted by the shell, which does not know our bar is there.
     player.subMargin(Math.round(bottom.getBoundingClientRect().height || px(140)));
   }));
-  offs.push(player.on('position', () => { drawPosition(); drawNext(); tickSkip(); }));
-  offs.push(player.on('buffering', (d) => { refreshStatus(d && d.on === false ? {} : {}); drawPosition(); }));
-  offs.push(player.on('tracks', () => {
-    btnAudio.lastChild.textContent = audioLabel();
-    btnSub.lastChild.textContent = subLabel();
+  offs.push(player.on('position', () => {
+    drawPosition(); drawNext(); tickSkip();
+    // A question about a frozen copy is answered by the picture moving again, not only by a keypress.
+    if (asking) {
+      const st = player.state();
+      if (st.playing && st.positionMs > 0) {
+        asking = false;
+        center.hidden = true;
+        refreshStatus();
+      }
+    }
   }));
+  offs.push(player.on('buffering', (d) => {
+    refreshStatus(d && d.on === false ? {} : {});
+    drawPosition();
+    const st = player.state();
+    if (d && d.buffering && st.positionMs < 800) showLoading('Buffering the first seconds…', 68);
+  }));
+  offs.push(player.on('tracks', () => paintChips()));
+  offs.push(player.on('speed', () => paintChips()));
   offs.push(player.on('target', (t) => {
+    playingSince = 0;
+    // A channel played by identity (a deep link, a zap) has no `type` in the URL. The hub names the kind
+    // in its answer, so the floor becomes a live floor even when the route did not say so.
+    if (t && (t.live === true || String(t.type || '').toLowerCase() === 'channel')) {
+      isLiveFeed = true;
+      if (!liveBadge.isConnected) content.insertBefore(liveBadge, content.firstChild);
+    }
     player.sources(t.alternatives || t.sources || []);
-    btnQuality.lastChild.textContent = qualityLabel();
+    paintChips();
+    // The play answer is often the first thing that knows the channel's stable number, so the badge gets
+    // a second look here — with the number the hub itself named.
+    maybeZapBadge(t);
     if (t.title && !spec.title) title.textContent = t.title;
     if (t.tagline && !spec.subtitle) subtitle.textContent = t.tagline;
     live = !(Number(t.durationMs) > 0);
@@ -461,7 +790,11 @@ export function screen(ctx, identity) {
     paintEdge();
     refreshStatus();
   }));
-  offs.push(player.on('retrying', () => { center.hidden = true; setStatus('Asking for this copy again...', 'wait'); }));
+  offs.push(player.on('retrying', () => {
+    // A retry is still the loading screen, not a black picture: keep the title mark and the bar.
+    setStatus('Asking for this copy again...', 'wait');
+    showLoading('Asking for this copy again…', 58);
+  }));
   // Self-heal, in order: the playhead froze, we asked the hub for this same copy at this same point, and if
   // that brought it back the note disappears on its own. Only a second freeze interrupts anyone.
   offs.push(player.on('healing', (d) => setStatus(
@@ -482,6 +815,21 @@ export function screen(ctx, identity) {
       ? 'The hub asked the peers sharing it and nothing has arrived. Waiting longer often fixes it — '
         + 'another copy is usually ready right away.'
       : (e && e.message) || 'The hub could not open it.' }));
+    // A live channel has no "another copy": it has another channel. The remote's left/right already zap,
+    // and the failure card must offer the same thing instead of sending the viewer to a source picker that
+    // does not exist on a live feed.
+    if (isLiveFeed) {
+      const next = el('button', { class: 'btn white big', type: 'button', text: 'Next channel',
+        onclick: () => ctx.zap(1) });
+      const prev = el('button', { class: 'btn ghost big', type: 'button', text: 'Previous channel',
+        onclick: () => ctx.zap(-1) });
+      const home = el('button', { class: 'btn ghost big', type: 'button', text: 'Back', onclick: () => ctx.back() });
+      center.appendChild(el('div', { class: 'btns' }, next, prev, home));
+      focus.focusable(next); focus.focusable(prev); focus.focusable(home);
+      setStatus('This channel is not answering', 'bad');
+      focus.focusDefault(next);
+      return;
+    }
     const wait2 = el('button', { class: 'btn white big', type: 'button', text: 'Wait and try again',
       onclick: () => player.retry() });
     const again = el('button', { class: waiting ? 'btn ghost big' : 'btn white big', type: 'button',
@@ -499,7 +847,12 @@ export function screen(ctx, identity) {
   }));
   offs.push(player.on('ended', () => {
     setPlayIcon();
-    if (nextEpisode()) { drawNext(); nextUp.classList.remove('hide'); return; }
+    // The countdown usually rolls before this fires; ended is the safety net for a stream that stops
+    // short of the last position event. A viewer who pressed "Stay" finishes here on purpose.
+    if (nextEpisode()) {
+      if (AUTO_MS > 0 && !stayed && !autoPlayed) { autoPlayed = true; playNext(true); return; }
+      drawNext(); nextUp.classList.remove('hide'); return;
+    }
     ctx.back();
   }));
 
@@ -541,11 +894,16 @@ export function screen(ctx, identity) {
   function tickSkip() {
     const st = player.state();
     if (live || player.ended) return hideSkip();
-    // An intro is a thing the hub marks on an episode. On a feature, or on a channel, a button offering to
-    // jump past one would be a guess dressed up as a control.
-    if (isLiveFeed || (!isSeries && !spec.introEndMs)) return hideSkip();
-    const introEnd = Number(spec.introEndMs) || SKIP_TO;
-    if (st.positionMs >= SKIP_FROM && st.positionMs < introEnd) showSkip();
+    // An intro is a thing the hub marks on an episode. No window, no button: a control that guesses is
+    // worse than a control that is absent. A future intro source only has to send `introEndMs`
+    // (and optionally `introStartMs`) in the play answer.
+    if (isLiveFeed) return hideSkip();
+    const introEnd = Number(spec.introEndMs) || 0;
+    if (introEnd <= 0) return hideSkip();
+    const introStart = Number(spec.introStartMs) > 0
+      ? Number(spec.introStartMs)
+      : Math.max(0, introEnd - SKIP_DEFAULT_LENGTH);
+    if (st.positionMs >= introStart && st.positionMs < introEnd) { skipToMs = introEnd; showSkip(); }
     else hideSkip();
   }
 
@@ -555,25 +913,48 @@ export function screen(ctx, identity) {
   const handler = (e, key) => {
     show();
     if (key === 'Escape' || key === 'GoBack' || key === 'BrowserBack' || key === 'Back') {
-      if (openKind) { closeMenu(); return true; }
+      if (openKind) { backOut(); return true; }
       return false;                       // let the router unwind the route
     }
     if (key === 'Backspace') {
-      if (openKind) { closeMenu(); return true; }
+      if (openKind) { backOut(); return true; }
       return false;
     }
-    if (key === 'MediaPlayPause' || key === 'PlayPause') { player.toggle(); setPlayIcon(); return true; }
+    if (key === 'MediaPlayPause' || key === 'PlayPause') { togglePlayback(); return true; }
+    // A TV viewer expects Down to reveal what can be changed. Opening the settings sheet on the first
+    // Down is more discoverable than walking right through transport buttons to the small icons.
+    if (key === 'ArrowDown' && !openKind && !asking && center.hidden) { openMenu('all'); return true; }
     // A live feed has no position for a remote to jump around, so the transport keys are left to the router
     // rather than spending them on a seek that cannot land.
-    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(10000); return true; }
-    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-10000); return true; }
+    // A channel has no position, so left/right are the channel keys. This is the same habit as a
+    // set-top box: the remote's arrows change the channel, and there is no scrubber to land on. A sheet
+    // that is open owns left/right instead — the ring has to be able to walk the panel's rows.
+    if (isLiveFeed && !openKind && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      ctx.zap(key === 'ArrowLeft' ? -1 : 1);
+      return true;
+    }
+    if (isLiveFeed && (key === 'MediaTrackNext' || key === 'MediaTrackPrevious')) {
+      ctx.zap(key === 'MediaTrackNext' ? 1 : -1);
+      return true;
+    }
+    // The remote's own Channel Up/Down keys tune the live row, exactly as the native player answers them.
+    if (isLiveFeed && (key === 'ChannelUp' || key === 'ChannelDown')) {
+      ctx.zap(key === 'ChannelUp' ? 1 : -1);
+      return true;
+    }
+    if (key === 'MediaFastForward' && !isLiveFeed) { player.seekBy(SEEK_FWD); showGhost(); return true; }
+    if (key === 'MediaRewind' && !isLiveFeed) { player.seekBy(-SEEK_BACK); showGhost(); return true; }
     if (key === 'MediaTrackNext' && nextEpisode()) { playNext(); return true; }
+    // On a film or an episode, the remote's Previous-track key goes back to the top of what is playing —
+    // the same habit as skipping to the start of a track. (On a channel the key zaps, handled above.)
+    if (key === 'MediaTrackPrevious' && !isLiveFeed) { player.seek(0); showGhost(); return true; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       const a = document.activeElement;
       // The track is the scrubber; the transport buttons and the menu chips in the same row step along the
       // band instead. Same rule as before the chips moved into the bar — they just have to be named now.
       if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
-        player.seekBy(key === 'ArrowLeft' ? -10000 : 10000);
+        player.seekBy(key === 'ArrowLeft' ? -SEEK_BACK : SEEK_FWD);
+        showGhost();
         return true;
       }
       return false;
@@ -586,6 +967,22 @@ export function screen(ctx, identity) {
     return false;
   };
   pushHandler(handler);
+
+  // Holding Left or Right on the scrubber keeps seeking: the remote auto-repeats the key while it is held,
+  // and input.js swallows repeats on purpose everywhere else. Here a repeat is the whole point, so this
+  // screen listens for them directly at the window — same band rule as a single press, one step per repeat.
+  const holdSeek = (e) => {
+    if (!e.repeat || isLiveFeed || openKind) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const a = document.activeElement;
+    if (a === trk || (a && bar.contains(a) && !a.classList.contains('pbtn') && !a.classList.contains('iconbtn'))) {
+      player.seekBy(e.key === 'ArrowLeft' ? -SEEK_BACK : SEEK_FWD);
+      showGhost();
+      e.preventDefault();
+    }
+  };
+  window.addEventListener('keydown', holdSeek);
+  offs.push(() => window.removeEventListener('keydown', holdSeek));
   // The scrubber is only a control when there is a position to scrub to.
   if (!isLiveFeed) {
     focus.focusable(trk);
@@ -610,9 +1007,14 @@ export function screen(ctx, identity) {
   root.__defaultFocus = () => btnPlay;
 
   setPlayIcon();
+  paintChips();
   drawPosition();
   paintEdge();
   show();
+  // Arriving on a channel *is* a tune, however we got here — from a card, a zap, or the error card's
+  // channel buttons — so the badge is checked at build time with the name we were given, and again when
+  // the hub's answer names the feed and its number.
+  maybeZapBadge(null);
 
   player.start({
     identity: spec.identity,
@@ -635,7 +1037,7 @@ export function screen(ctx, identity) {
   // The hub keeps "continue watching" alive from what we post, so a TV that is turned off mid-film is not a
   // title that was finished.
   const postMs = Number(token('player', 'progressPostMs', 10000));
-  const post = setInterval(() => {
+  function postProgress() {
     const st = player.state();
     if (!st.positionMs) return;
     api.progress({
@@ -643,6 +1045,10 @@ export function screen(ctx, identity) {
       season: spec.season, episode: spec.episode, title: spec.title,
       positionMs: Math.round(st.positionMs), durationMs: Math.round(st.durationMs || 0),
       watchedMs: Math.round(st.watchedMs || st.positionMs),
+      // Name the copy this screen holds, so the hub's starvation report is about THIS film and not
+      // "whichever watched copy was touched last" (two tabs, two screens: one starved buffer used to
+      // downgrade the other's healthy stream).
+      stream: player.srcUrl || undefined,
     }).then((r) => {
       // The hub answers this with what it is doing with the bytes of this film: the rate the swarm is
       // actually delivering against the bitrate the copy needs, and how much picture is sitting in its
@@ -650,17 +1056,26 @@ export function screen(ctx, identity) {
       // copy instead of reloading one the hub can already prove is too slow.
       player.noteStream(r && r.stream);
     }).catch(() => {});
-  }, postMs);
+  }
+  const post = setInterval(postProgress, postMs);
 
   root.addEventListener('pointermove', show);
   root.__dispose = () => {
     clearInterval(idle);
     clearInterval(post);
+    // Leaving mid-film is exactly when the next screen needs to know where the film was. The native player
+    // writes the position down on exit; without this the web player loses up to one post interval.
+    postProgress();
     popHandler(handler);
     closeMenu();
+    // A zap to another channel disposes this screen with the sheet mid-slide and the badge mid-flash:
+    // the timers belong to a page nobody is looking at anymore.
+    if (panelTimer) { clearTimeout(panelTimer); panelTimer = null; }
+    if (zapTimer) { clearTimeout(zapTimer); zapTimer = null; }
     player.stop();
     player.dispose();
     setFeatureVisible(false);
+    if (bufferNoteTimer) clearTimeout(bufferNoteTimer);
     if (native) setSurfaceLive(false);
     for (const off of offs) { try { off(); } catch (e) { /* already gone */ } }
   };

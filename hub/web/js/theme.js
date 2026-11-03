@@ -70,6 +70,32 @@ function cssColor(v) {
 function setLen(name, px) { if (px !== undefined && px !== null) setVar(name, `calc(${px}px * var(--s))`); }
 function setNum(name, n) { if (n !== undefined && n !== null) setVar(name, String(n)); }
 
+/**
+ * The pack is the part of a theme that is not a token: which hero shape, rail shape, card treatment,
+ * focus language, motion and detail layout this theme uses. The DOM carries it as data attributes so
+ * packs.css can write real layout rules instead of pretending every theme is the same grid repainted.
+ */
+function applyPack() {
+  const p = T.pack || {};
+  const attr = (key, fallback) => {
+    const v = String(p[key] === undefined || p[key] === null ? fallback : p[key]).trim();
+    root.setAttribute('data-' + key, v || fallback);
+  };
+  attr('pack', 'classic');
+  attr('hero', 'split');
+  attr('heroAlign', 'left');
+  attr('rows', 'poster');
+  attr('card', 'overlay');
+  attr('focus', 'ring');
+  attr('motion', 'rise');
+  attr('detail', 'backdrop');
+  attr('nav', 'classic');
+  attr('stage', 'off');
+  root.setAttribute('data-theme', String(T.id || 'scenix-dark'));
+  root.style.setProperty('--focus-color',
+    p.focusColor ? cssColor(p.focusColor) : 'var(--focus-ring)');
+}
+
 function applyTokens() {
   const c = T.colors || {};
   for (const [k, v] of Object.entries(COLOR_VARS)) if (c[k]) setVar(v, cssColor(c[k]));
@@ -97,6 +123,11 @@ function applyTokens() {
   if (a.rowScrollMs !== undefined) setNum('--row-scroll-ms', `${a.rowScrollMs}ms`);
   if (a.screenFadeMs !== undefined) setNum('--screen-ms', `${a.screenFadeMs}ms`);
   if (a.fadeUpStagger !== undefined) setNum('--stagger', `${a.fadeUpStagger}ms`);
+
+  // The billboard's rotation window is a token like every other motion: one number in theme.json drives
+  // both the art crossfade and the copy column's fade.
+  const hero = T.hero || {};
+  if (hero.rotateFadeMs !== undefined) setNum('--rotate-fade-ms', `${hero.rotateFadeMs}ms`);
 
   const cards = T.cards || {};
   const poster = cards.poster || {};
@@ -142,17 +173,31 @@ export function token(group, key, fallback) {
 
 export function tokens() { return T; }
 
-export async function load() {
+async function fetchTheme() {
+  // The hub knows the selected theme; a standalone/fixture host may not have the endpoint, so the
+  // bundled token file remains the fallback and app.css remains the last resort.
+  try {
+    const res = await fetch('/app/v1/theme', { cache: 'no-cache' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.tokens && typeof json.tokens === 'object') return json.tokens;
+    }
+  } catch (e) { /* older host: try the static file */ }
   try {
     const res = await fetch(TOKEN_PATH, { cache: 'no-cache' });
     if (res.ok) {
       const json = await res.json();
-      if (json && typeof json === 'object') T = json;
+      if (json && typeof json === 'object') return json;
     }
-  } catch (e) {
-    /* app.css already carries the defaults; the interface is still correct without the JSON. */
-  }
+  } catch (e) { /* app.css already carries the defaults */ }
+  return null;
+}
+
+export async function load() {
+  const json = await fetchTheme();
+  if (json) T = json;
   applyTokens();
+  applyPack();
   computeScale();
   window.addEventListener('resize', () => { computeScale(); });
   return T;

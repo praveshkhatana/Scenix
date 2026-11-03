@@ -1,0 +1,17 @@
+<!-- Feather "inbox": the quiet tray that says "nothing here yet" on an empty shelf or section. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path
+        android:pathData="M22,12 L17,12 L15,15 L9,15 L7,12 L2,12"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M5.63,5.17 L2,12 L2,19 A2,2 0 0,0 4,21 L20,21 A2,2 0 0,0 22,19 L22,12 L18.37,5.17 A2,2 0 0,0 16.74,4 L7.26,4 A2,2 0 0,0 5.63,5.17 z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

@@ -3,28 +3,48 @@ package com.scenix.tv.core
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import java.security.MessageDigest
 
 /**
- * Local persistence: which backend this TV talks to, the hub addresses it has been offered or has
- * worked, profile choice, per-profile PIN, per-profile hidden rows.
+ * Local persistence for the shell: which backend this TV talks to, and the hub addresses it has
+ * been offered or has worked.
  *
- * Profiles themselves and watch progress live on the hub (kids-app-plan §6b), so a reinstall
- * keeps them; this file only holds what the app must know before it can talk to anything — which
- * is exactly why no address is ever baked into the build.
+ * Profiles, PINs, hidden rows and watch progress live on the hub, so a reinstall keeps them. This
+ * file only holds what the app must know before it can talk to anything — which is exactly why no
+ * address is ever baked into the build.
  */
 class Prefs(context: Context) {
 
     private val sp: SharedPreferences =
         context.getSharedPreferences("scenix", Context.MODE_PRIVATE)
 
+    /** The visual theme's id in assets/themes.json; a device preference, mirrored to the hub. */
+    // Apple is the product's reference TV treatment.  Existing households keep their explicit
+    // choice, while a new television opens directly into the polished remote-first theme instead
+    // of inheriting the legacy dark pack.
+    fun theme(): String = sp.getString(KEY_THEME, "scenix-apple") ?: "scenix-apple"
+    fun setTheme(id: String) = sp.edit().putString(KEY_THEME, id.trim()).apply()
+
+    /**
+     * A decoder that says it supports HEVC but fails on the first 10-bit file is a fact about this
+     * panel, learned the hard way. Once set, the player stops advertising HEVC to the hub and asks
+     * for an H.264 copy instead of offering the same black screen again.
+     */
+    fun hevcBlocked(): Boolean = sp.getBoolean(KEY_HEVC_BLOCKED, false)
+    fun setHevcBlocked(blocked: Boolean) = sp.edit().putBoolean(KEY_HEVC_BLOCKED, blocked).apply()
+
+    // ---- auto-update (core/Updates.kt) -----------------------------------------------------
+    // On by default: a TV nobody thinks to update is a TV that quietly falls behind. The prompt
+    // itself is still the person's decision — the check finds a build, the remote presses Install.
+    fun autoUpdate(): Boolean = sp.getBoolean(KEY_AUTO_UPDATE, true)
+    fun setAutoUpdate(on: Boolean) = sp.edit().putBoolean(KEY_AUTO_UPDATE, on).apply()
+
+    /** When the last update check ran, so boot checks cost at most one GitHub call a day. */
+    fun lastUpdateCheck(): Long = sp.getLong(KEY_LAST_UPDATE_CHECK, 0L)
+    fun setLastUpdateCheck(at: Long) = sp.edit().putLong(KEY_LAST_UPDATE_CHECK, at).apply()
+
     // ---- hub -----------------------------------------------------------------------------
     fun hubUrl(fallback: String): String = sp.getString(KEY_HUB, null)?.takeIf { it.isNotBlank() } ?: fallback
     fun setHubUrl(url: String) = sp.edit().putString(KEY_HUB, url.trim()).apply()
-
-    /** True when this TV has an address at all — before any fallback is applied. */
-    fun hasHubUrl(): Boolean =
-        !sp.getString(KEY_HUB, null).isNullOrBlank() || !sp.getString(KEY_HUB_LAST, null).isNullOrBlank()
 
     /**
      * Every hub this TV is allowed to talk to, in the order it should try them.
@@ -54,7 +74,44 @@ class Prefs(context: Context) {
     fun setHubLastWorking(url: String) = sp.edit().putString(KEY_HUB_LAST, url.trim()).apply()
     fun hubLastWorking(): String? = sp.getString(KEY_HUB_LAST, null)?.takeIf { it.isNotBlank() }
 
-    // ---- pairing: how this TV gets a backend ---------------------------------------------
+    /** Optional shared access token for a hub that sets HUB_TOKEN. Blank means "no token configured". */
+    fun hubToken(): String = sp.getString(KEY_TOKEN, "") ?: ""
+    fun setHubToken(token: String) = sp.edit().putString(KEY_TOKEN, token.trim()).apply()
+
+    /**
+     * The last answer to "which optional add-ons this household installed". Home paints its bar
+     * before the hub can answer, so the previous shape is drawn first and corrected on the next
+     * load — a tab never appears from a guess, only from a fact. Null until a hub has answered once.
+     */
+    fun addonCaps(): Pair<Boolean, Boolean>? {
+        if (!sp.getBoolean(KEY_CAPS_KNOWN, false)) return null
+        return sp.getBoolean(KEY_CAPS_LIVE, false) to sp.getBoolean(KEY_CAPS_GAMES, false)
+    }
+
+    fun setAddonCaps(live: Boolean, games: Boolean) {
+        sp.edit().putBoolean(KEY_CAPS_KNOWN, true)
+            .putBoolean(KEY_CAPS_LIVE, live)
+            .putBoolean(KEY_CAPS_GAMES, games)
+            .apply()
+    }
+
+    /**
+     * A profile the web gate has unlocked in this app session. Native Detail needs it to open the
+     * shared player without asking for the same PIN on every Play press. It is a local, expiring
+     * trust mark, not a replacement for the hub's PIN check: a browser never sees it.
+     */
+    fun markProfileUnlocked(id: String) = sp.edit()
+        .putString(KEY_PROFILE_UNLOCKED, id)
+        .putLong(KEY_PROFILE_UNLOCKED_AT, System.currentTimeMillis())
+        .apply()
+
+    fun profileUnlocked(id: String): Boolean {
+        val held = sp.getString(KEY_PROFILE_UNLOCKED, "") ?: ""
+        val at = sp.getLong(KEY_PROFILE_UNLOCKED_AT, 0L)
+        return id.isNotBlank() && held == id && System.currentTimeMillis() - at < PROFILE_SESSION_MS
+    }
+
+    // ---- which backend this TV talks to ------------------------------------------------------
     //
     // A build names no machine, so a stranger's first run has three ways in — a hub announcing
     // itself on the LAN, an address typed by hand, or this app hosting the contract itself. Which
@@ -65,21 +122,6 @@ class Prefs(context: Context) {
     fun backendChoice(): String = sp.getString(KEY_BACKEND, "") ?: ""
     fun setBackendChoice(choice: String) = sp.edit().putString(KEY_BACKEND, choice).apply()
     fun standalone(): Boolean = backendChoice() == BACKEND_STANDALONE
-    fun setStandalone(on: Boolean) = sp.edit()
-        .putString(KEY_BACKEND, if (on) BACKEND_STANDALONE else BACKEND_HUB).apply()
-
-    // ---- which front end this device draws -------------------------------------------------
-    //
-    // One contract, two surfaces: the web front end the browser and phone apps use, or the screens
-    // this build draws itself. Which one a TV should open is the owner's call, not something the code
-    // decides for them, and it stays on the device because it describes the device.
-
-    /** "shell" = the web front end in a WebView over the native player | "native" = built-in screens. */
-    fun interfaceMode(): String = sp.getString(KEY_INTERFACE, SHELL) ?: SHELL
-    fun setInterfaceMode(mode: String) = sp.edit().putString(KEY_INTERFACE, mode).apply()
-
-    /** True when this device should open the web front end rather than draw its own screens. */
-    fun shellWanted(): Boolean = interfaceMode() == SHELL
 
     /** Hubs found by the LAN announcement, kept so the next run can list them by name. */
     fun discoveredHubs(): List<HubAddress> {
@@ -117,107 +159,76 @@ class Prefs(context: Context) {
     fun fixture(): String? = sp.getString(KEY_FIXTURE, null)?.takeIf { it.isNotBlank() }
     fun setFixture(path: String?) = sp.edit().putString(KEY_FIXTURE, path ?: "").apply()
 
-    // ---- profile -------------------------------------------------------------------------
-    fun currentProfileId(): String? = sp.getString(KEY_PROFILE, null)?.takeIf { it.isNotBlank() }
-    fun setCurrentProfileId(id: String) = sp.edit().putString(KEY_PROFILE, id).apply()
-
     /**
-     * PINs are per-profile and app-side (the hub never sees them). Stored as a SHA-256 hash, so a
-     * pulled prefs.xml does not reveal the digits; there is no salt because the space is 10^4.
+     * The viewer's own list. The web UI keeps it in localStorage; the television keeps the same
+     * per-profile set here, so the two stay honest about the same household without needing the
+     * hub to grow a new endpoint.
      */
-    fun pinHash(profileId: String): String? = sp.getString("$KEY_PIN_PREFIX$profileId", null)
-    fun setPin(profileId: String, pin: String?) {
-        if (pin.isNullOrEmpty()) sp.edit().remove("$KEY_PIN_PREFIX$profileId").apply()
-        else sp.edit().putString("$KEY_PIN_PREFIX$profileId", sha256(pin)).apply()
+    fun myList(profileId: String): MutableList<String> {
+        val raw = sp.getString("mylist_$profileId", "") ?: ""
+        if (raw.isBlank()) return ArrayList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            ArrayList((0 until arr.length()).mapNotNull { i -> arr.optString(i, "").takeIf { it.isNotBlank() } })
+        } catch (t: Throwable) {
+            ArrayList()
+        }
     }
 
-    fun hasPin(profileId: String): Boolean = pinHash(profileId) != null
-
-    fun checkPin(profileId: String, pin: String): Boolean {
-        val want = pinHash(profileId) ?: return true
-        return want == sha256(pin)
-    }
-
-    // ---- per-profile hidden rows (hide-rows rule reads this) ------------------------------
-    fun hiddenRows(profileId: String): List<String> {
-        val raw = sp.getString("$KEY_HIDDEN_PREFIX$profileId", "") ?: ""
-        return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    }
-
-    fun setHiddenRows(profileId: String, ids: List<String>) =
-        sp.edit().putString("$KEY_HIDDEN_PREFIX$profileId", ids.joinToString(",")).apply()
-
-    fun toggleHiddenRow(profileId: String, rowId: String): Boolean {
-        val cur = hiddenRows(profileId).toMutableList()
-        val hidden = if (cur.contains(rowId)) { cur.remove(rowId); false } else { cur.add(rowId); true }
-        setHiddenRows(profileId, cur)
-        return hidden
-    }
-
-    // ---- My List ---------------------------------------------------------------------------
-    // Local for P1: the hub's `mylist` row is another agent's file; when it lands, this becomes a
-    // POST and the screen does not change.
-    fun myList(profileId: String): List<String> {
-        val raw = sp.getString("$KEY_LIST_PREFIX$profileId", "") ?: ""
-        return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    }
-
-    fun toggleMyList(profileId: String, identity: String): Boolean {
-        val cur = myList(profileId).toMutableList()
-        val added = if (cur.contains(identity)) { cur.remove(identity); false } else { cur.add(identity); true }
-        sp.edit().putString("$KEY_LIST_PREFIX$profileId", cur.joinToString(",")).apply()
-        return added
+    fun setMyList(profileId: String, ids: List<String>) {
+        val arr = org.json.JSONArray()
+        for (id in ids) arr.put(id)
+        sp.edit().putString("mylist_$profileId", arr.toString()).apply()
     }
 
     /**
-     * "Not interested" — the MENU-key block list, per profile, kept on this TV. The hub has no
-     * notion of a viewer saying no to a title, so the app remembers it locally and the
-     * `not-interested` rule drops those items from every row it can reach.
+     * An accessibility zoom for bad eyes and far couches: one multiplier over the whole theme, so
+     * text, cards, gaps and the hero all grow together instead of the app just shouting in one
+     * place. Applied when the theme is next built — changing it offers an immediate relaunch.
      */
-    fun notInterested(profileId: String): List<String> =
-        (sp.getString("$KEY_NOTINT_PREFIX$profileId", "") ?: "").split(',').filter { it.isNotBlank() }
+    fun uiZoom(): Float = sp.getFloat("ui_zoom", 1f)
+    fun setUiZoom(f: Float) = sp.edit().putFloat("ui_zoom", f).apply()
 
-    /** Returns true when the identity is now blocked, false when the block was lifted. */
-    fun toggleNotInterested(profileId: String, identity: String): Boolean {
-        val cur = notInterested(profileId).toMutableList()
-        val added = if (!cur.remove(identity)) { cur.add(identity); true } else false
-        sp.edit().putString("$KEY_NOTINT_PREFIX$profileId", cur.joinToString(",")).apply()
-        return added
-    }
-
-    private fun sha256(s: String): String = try {
-        val d = MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
-        d.joinToString("") { "%02x".format(it) }
-    } catch (t: Throwable) {
-        Log.w(TAG, "no SHA-256, storing PIN in the clear", t)
-        s
-    }
-
-    /** Autoplay the next title in the row when this one ends. Per profile: a kid's set behaves differently. */
-    fun autoplayNext(profileId: String): Boolean =
-        sp.getBoolean(KEY_AUTOPLAY_PREFIX + profileId, true)
-
-    fun setAutoplayNext(profileId: String, on: Boolean) {
-        sp.edit().putBoolean(KEY_AUTOPLAY_PREFIX + profileId, on).apply()
-    }
+    // ---- subtitles ---------------------------------------------------------------------------
+    // A television is watched from a couch: the default caption size is comfortable at 100% but too
+    // small at 150% zoom, and a viewer with a bright wall may need yellow. These are device
+    // preferences (they describe this panel and this person's eyes), not hub profile data.
+    /** 0 small, 1 medium, 2 large. */
+    fun captionSize(): Int = sp.getInt(KEY_CAPTION_SIZE, 1).coerceIn(0, 2)
+    fun setCaptionSize(v: Int) = sp.edit().putInt(KEY_CAPTION_SIZE, v.coerceIn(0, 2)).apply()
+    /** white | yellow */
+    fun captionColour(): String = sp.getString(KEY_CAPTION_COLOUR, "white") ?: "white"
+    fun setCaptionColour(v: String) = sp.edit().putString(KEY_CAPTION_COLOUR, v).apply()
+    /** none | dim | black */
+    fun captionBackground(): String = sp.getString(KEY_CAPTION_BACKGROUND, "dim") ?: "dim"
+    fun setCaptionBackground(v: String) = sp.edit().putString(KEY_CAPTION_BACKGROUND, v).apply()
+    /** 0 = bottom, 1 = 5%, 2 = 10% up from the bottom edge. */
+    fun captionOffset(): Int = sp.getInt(KEY_CAPTION_OFFSET, 1).coerceIn(0, 2)
+    fun setCaptionOffset(v: Int) = sp.edit().putInt(KEY_CAPTION_OFFSET, v.coerceIn(0, 2)).apply()
 
     companion object {
         private const val TAG = "ScenixPrefs"
-        private const val KEY_AUTOPLAY_PREFIX = "autoplaynext_"
         private const val KEY_HUB = "hub_url"
         private const val KEY_HUB_LAST = "hub_url_last_working"
         private const val KEY_BACKEND = "backend_choice"
-        private const val KEY_INTERFACE = "interface_mode"
-        const val SHELL = "shell"
-        const val NATIVE = "native"
         private const val KEY_DISCOVERED = "discovered_hubs"
+        private const val KEY_THEME = "theme"
+        private const val KEY_HEVC_BLOCKED = "hevc_blocked"
+        private const val KEY_AUTO_UPDATE = "auto_update"
+        private const val KEY_LAST_UPDATE_CHECK = "last_update_check"
+        private const val KEY_TOKEN = "hub_token"
+        private const val KEY_CAPS_KNOWN = "addon_caps_known"
+        private const val KEY_CAPS_LIVE = "addon_caps_live"
+        private const val KEY_CAPS_GAMES = "addon_caps_games"
+        private const val KEY_PROFILE_UNLOCKED = "profile_unlocked"
+        private const val KEY_PROFILE_UNLOCKED_AT = "profile_unlocked_at"
+        private const val PROFILE_SESSION_MS = 6L * 60 * 60 * 1000
         const val BACKEND_HUB = "hub"
         const val BACKEND_STANDALONE = "standalone"
         private const val KEY_FIXTURE = "fixture"
-        private const val KEY_PROFILE = "profile_id"
-        private const val KEY_PIN_PREFIX = "pin_"
-        private const val KEY_HIDDEN_PREFIX = "hidden_"
-        private const val KEY_LIST_PREFIX = "mylist_"
-        private const val KEY_NOTINT_PREFIX = "notint_"
+        private const val KEY_CAPTION_SIZE = "caption_size"
+        private const val KEY_CAPTION_COLOUR = "caption_colour"
+        private const val KEY_CAPTION_BACKGROUND = "caption_background"
+        private const val KEY_CAPTION_OFFSET = "caption_offset"
     }
 }

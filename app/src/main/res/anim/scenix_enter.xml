@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Screen handoff for the packs that stage a wall: the incoming page rises a finger-width and
+     fades in over the outgoing one (design-contracts/glass.md §4 screen-enter law). -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/decelerate_interpolator">
+    <alpha android:fromAlpha="0.0" android:toAlpha="1.0" android:duration="380"/>
+    <translate android:fromYDelta="3%p" android:toYDelta="0" android:duration="380"/>
+</set>

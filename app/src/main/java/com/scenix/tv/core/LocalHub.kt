@@ -1,31 +1,29 @@
 package com.scenix.tv.core
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import com.scenix.tv.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
 import kotlin.math.roundToInt
 
 /**
- * Standalone mode: this app hosts the `/app/v1` contract itself (design/deployment-modes.md
- * Rule 2). `HttpHub` and `LocalHub` are two implementations of one [HubClient], so no screen, card,
- * rule or player in this app knows which one it is talking to. The only thing the UI branches on is
- * what a backend says it can do — the `capabilities` list in its manifest.
+ * Standalone mode: this app hosts the `/app/v1` contract itself (mirroring
+ * Rule 2). It answers the same JSON a hub answers, over loopback, so the page cannot tell which
+ * machine it is talking to. The only thing the UI branches on is what a backend says it can do —
+ * the `capabilities` list in its manifest.
  *
  * Where the content comes from: addons, over plain HTTP, in the community manifest protocol
  * (`manifest`, `catalog`, `meta`, `stream`, `subtitles`). Which addons, and how each is configured,
  * belongs to the owner — it is read from this app's own settings, never from a constant, so a build
  * ships no content source at all and an empty home is a normal first-run state rather than a bug.
  *
- * What this mode honestly cannot do is stated in `capabilities` instead of broken in the UI: there is
- * no torrent engine here and no shared gateway, so a source is playable only if an addon hands back
- * an HTTP/HLS/DASH file this device can read by itself; there is no live tuner, no local files, no
+ * What this mode honestly does: addons, direct HTTP/HLS/DASH, a local torrent engine, an optional
+ * Real-Debrid account, profiles and an M3U live wall. What it does not have is stated in
+ * `capabilities` instead of broken in the UI: there is no local file browser and no server-side
+ * remux/track probing; a source is playable if it is direct or the engine/provider can hand over HTTP.
+ * There is no live tuner, no local files, no
  * trailer search. Anything not listed is not offered.
  *
  * Everything the addons answer is cached under `filesDir`, along with this app's own profiles,
@@ -33,13 +31,10 @@ import kotlin.math.roundToInt
  * costs a shorter shelf rather than a hung TV; only a detail page and a Play press wait for an
  * answer.
  */
-class LocalHub private constructor(context: Context) : HubClient {
+class LocalHub private constructor(context: Context) {
 
     private val appContext = context.applicationContext
-    private val main = Handler(Looper.getMainLooper())
-    private val pool = Executors.newFixedThreadPool(POOL_THREADS, ThreadFactory { r ->
-        Thread(r, "scenix-local").apply { isDaemon = true }
-    })
+    private val assets = appContext.assets
     private val addons = AddonClient(appContext)
 
     /** Everything this app owns for itself: settings, profiles, what it has seen, where people stopped. */
@@ -48,9 +43,8 @@ class LocalHub private constructor(context: Context) : HubClient {
     private val profilesFile = File(data, "profiles.json")
     private val libraryFile = File(data, "library.json")
     private val progressFile = File(data, "progress.json")
+    private val listFile = File(data, "list.json")
     private val prefStore = File(data, "profile-prefs.json")
-
-    override val label: String get() = "this TV (standalone)"
 
     // ---- the owner's settings -----------------------------------------------------------------
 
@@ -67,6 +61,12 @@ class LocalHub private constructor(context: Context) : HubClient {
             .put("subtitleLanguages", o.optJSONArray("subtitleLanguages") ?: JSONArray())
             .put("adult", o.optBoolean("adult", false))
             .put("cacheTtlHours", o.optInt("cacheTtlHours", 6))
+            .put("theme", o.optString("theme", "scenix-apple"))
+            .put("debrid", o.optJSONObject("debrid") ?: defaultDebrid())
+            .put("live", o.optJSONObject("live") ?: JSONObject())
+            // The folder this TV may read, as a SAF tree URI plus the words the owner sees. Empty is
+            // a normal state: there are no local files until someone picks a folder.
+            .put("local", o.optJSONObject("local") ?: JSONObject())
     }
 
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
@@ -77,6 +77,34 @@ class LocalHub private constructor(context: Context) : HubClient {
         }
         if (body.has("adult")) merged.put("adult", body.optBoolean("adult", false))
         if (body.has("cacheTtlHours")) merged.put("cacheTtlHours", body.optInt("cacheTtlHours", 6))
+        if (body.has("theme")) merged.put("theme", body.optString("theme", "scenix-apple"))
+        if (body.has("debrid")) {
+            // A token is write-only: null removes it, a blank string keeps the stored one.
+            val cur = merged.optJSONObject("debrid") ?: defaultDebrid()
+            val next = body.optJSONObject("debrid") ?: JSONObject()
+            val out = JSONObject(cur.toString())
+            if (next.has("enabled")) out.put("enabled", next.optBoolean("enabled", false))
+            if (next.has("provider")) out.put("provider", next.optString("provider", "real-debrid"))
+            if (next.has("token")) {
+                if (next.isNull("token")) out.put("token", "")
+                else next.optString("token").takeIf { it.isNotBlank() }?.let { out.put("token", it) }
+            }
+            merged.put("debrid", out)
+        }
+        if (body.has("live")) merged.put("live", body.optJSONObject("live") ?: JSONObject())
+        if (body.has("local")) {
+            // A tree URI is a capability, not a preference: store it only if this app still holds the
+            // grant, so a restored settings file cannot point at a folder the OS will refuse.
+            val next = body.optJSONObject("local") ?: JSONObject()
+            val uri = next.optString("tree").trim()
+            val name = next.optString("name").trim()
+            val out = JSONObject()
+            if (uri.isNotBlank() && localLibrary.hasAccess(uri)) {
+                out.put("tree", uri).put("name", name.ifBlank { "Local files" })
+                localLibrary.refresh(uri)
+            }
+            merged.put("local", out)
+        }
         writeJson(settingsFile, merged)
         merged
     }
@@ -117,10 +145,105 @@ class LocalHub private constructor(context: Context) : HubClient {
      * needs the defaults beside the settings to tell an owner's choice from a build's silence.
      */
     fun settingsEnvelope(): JSONObject = JSONObject()
-        .put("settings", settings())
+        .put("settings", publicSettings())
         .put("defaults", defaultSettings())
         .put("languageNames", languageNames())
+        .put("themes", themeCatalog())
+        .put("debrid", debridStatus())
+        .put("live", liveEnvelope())
         .put("file", settingsPath())
+
+    private fun defaultDebrid(): JSONObject = JSONObject()
+        .put("enabled", false).put("provider", "real-debrid").put("token", "")
+
+    /** The settings shape a screen may see: the token is write-only and never crosses the contract. */
+    private fun publicSettings(): JSONObject {
+        val out = JSONObject(settings().toString())
+        val d = out.optJSONObject("debrid") ?: defaultDebrid()
+        d.remove("token")
+        d.put("tokenSet", ((settings().optJSONObject("debrid") ?: JSONObject()).optString("token")).isNotBlank())
+        out.put("debrid", d)
+        return out
+    }
+
+    private fun debridToken(): String {
+        val d = settings().optJSONObject("debrid") ?: return ""
+        if (!d.optBoolean("enabled", false)) return ""
+        if (d.optString("provider", "real-debrid") != "real-debrid") return ""
+        return d.optString("token").trim()
+    }
+
+    fun debridStatus(): JSONObject {
+        val d = settings().optJSONObject("debrid") ?: defaultDebrid()
+        val token = d.optString("token").trim()
+        val enabled = d.optBoolean("enabled", false)
+        val ready = enabled && d.optString("provider", "real-debrid") == "real-debrid" && token.isNotBlank()
+        val note = when {
+            !enabled -> "off: P2P copies use this TV's engine"
+            token.isBlank() -> "enabled, but no token is stored"
+            else -> "Real-Debrid is configured; magnets are tried before the local engine"
+        }
+        return JSONObject()
+            .put("enabled", enabled)
+            .put("provider", d.optString("provider", "real-debrid"))
+            .put("providerLabel", "Real-Debrid")
+            .put("tokenSet", token.isNotBlank())
+            .put("ready", ready)
+            .put("providers", JSONArray().put(JSONObject().put("id", "real-debrid").put("label", "Real-Debrid")))
+            .put("note", note)
+    }
+
+    /**
+     * Live settings and the owner's channel list, in the shape the web and native settings expect.
+     *
+     * This is the channel manager's list, not the row: every channel is here, including one the owner
+     * switched off, because a channel that is off still has to be seen to be switched back on. The
+     * fields are the hub's `channelList()` fields — `identity`, `enabled`, `number`, `quality`,
+     * `groups` — and the native manager ignores a tile without an `identity`, which is why this used
+     * to draw an empty wall.
+     */
+    private fun liveEnvelope(): JSONObject {
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val hidden = ids(live.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
+        val channels = channelsJson(waitForFirst = true)
+        val list = JSONArray()
+        for (i in 0 until channels.length()) {
+            val c = channels.optJSONObject(i) ?: continue
+            val identity = c.optString("identity", c.optString("id"))
+            if (identity.isBlank()) continue
+            val groups = jsonStrings(c.optJSONArray("groups"))
+            val enabled = identity !in hidden && groups.none { it in groupsHidden }
+            val number = liveHealth.numberFor(identity)
+            list.put(
+                JSONObject()
+                    .put("identity", identity)
+                    .put("name", c.optString("name"))
+                    .put("group", c.optString("group"))
+                    .put("groups", JSONArray(groups))
+                    .put("logo", c.optString("logo"))
+                    .put("quality", c.optString("quality"))
+                    .put("enabled", enabled)
+                    .put("number", if (number > 0) number else JSONObject.NULL)
+                    .put("health", liveHealth.healthOf(identity))
+                    .put("latencyMs", liveHealth.get(identity)?.optLong("latencyMs", 0L) ?: 0L)
+            )
+        }
+        return JSONObject(live.toString())
+            .put("channels", list)
+            .put("groups", liveGroups(channels))
+            .put("health", liveHealth.status())
+    }
+
+    private fun ids(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val v = arr.optString(i, "").trim()
+            if (v.isNotBlank() && v !in out) out.add(v)
+        }
+        return out
+    }
 
     /** What a settings file that says nothing means: no addon, no language and no channel preselected. */
     private fun defaultSettings(): JSONObject = JSONObject()
@@ -129,12 +252,49 @@ class LocalHub private constructor(context: Context) : HubClient {
         .put("subtitleLanguages", JSONArray())
         .put("adult", false)
         .put("cacheTtlHours", 6)
+        .put("theme", "scenix-apple")
+        .put("debrid", defaultDebrid())
+        .put("live", JSONObject())
+        .put("local", JSONObject())
 
     /**
      * Words for the codes this backend actually holds. There is no table of every language baked in here —
      * which tongues a household listens in is not a fact about this app — so a screen labels exactly the
      * choices in front of it.
      */
+    /** The theme registry shipped in the APK's assets, in the same shape the hub serves. */
+    fun themeCatalog(): JSONArray {
+        return try {
+            val text = assets.open("themes.json").bufferedReader().use { it.readText() }
+            JSONObject(text).optJSONArray("themes") ?: JSONArray()
+        } catch (t: Throwable) {
+            JSONArray().put(JSONObject().put("id", "scenix-apple")
+                .put("name", "Apple").put("asset", "theme-apple.json").put("pack", "Scene"))
+        }
+    }
+
+    /** `GET /app/v1/theme`: the selected tokens, so the bundled web UI follows the TV's theme too. */
+    fun themeJson(): JSONObject {
+        val themes = themeCatalog()
+        val wanted = settings().optString("theme", "scenix-apple")
+        var choice: JSONObject? = null
+        for (i in 0 until themes.length()) {
+            val o = themes.optJSONObject(i) ?: continue
+            if (o.optString("id") == wanted) { choice = o; break }
+        }
+        // A saved theme this build no longer ships is not an error: the first shipped pack answers.
+        if (choice == null && themes.length() > 0) choice = themes.optJSONObject(0)
+        val id = choice?.optString("id") ?: "scenix-apple"
+        val name = choice?.optString("name") ?: "Apple"
+        val asset = choice?.optString("asset")?.takeIf { it.isNotBlank() } ?: "theme-apple.json"
+        val tokens = try {
+            JSONObject(assets.open(asset).bufferedReader().use { it.readText() })
+        } catch (t: Throwable) {
+            JSONObject()
+        }
+        return JSONObject().put("id", id).put("name", name).put("themes", themes).put("tokens", tokens)
+    }
+
     private fun languageNames(): JSONObject {
         val codes = LinkedHashSet<String>()
         val owned = settings()
@@ -150,8 +310,8 @@ class LocalHub private constructor(context: Context) : HubClient {
     }
 
     // ---- the contract in JSON -----------------------------------------------------------------
-    // [LocalServer] answers these paths directly and the [HubClient] methods at the bottom wrap the
-    // same calls, so the native screens and the WebView front end of standalone mode cannot drift.
+    // [LocalServer] answers these paths directly, so the standalone page cannot drift from the
+    // contract a hub serves.
 
     fun manifestJson(): JSONObject {
         val manifests = addonManifests()
@@ -160,9 +320,12 @@ class LocalHub private constructor(context: Context) : HubClient {
         // stated here as false rather than left out: an absent key reads as "unknown", and the whole
         // point is that nothing here is unknown.
         val caps = JSONObject()
-            .put("gateway", false)     // no engine fetches a torrent here: a source is a URL or nothing
-            .put("live", false)        // no channel list to tune
-            .put("localFiles", true)   // the files this backend names are opened by this TV, not relayed
+            .put("gateway", true)      // a local libtorrent engine streams torrents over loopback HTTP
+            // An owner-supplied M3U is a channel list this TV can tune; there is no terrestrial tuner.
+            .put("live", settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true)
+            // True only while the owner's folder is still readable. A revoked grant says so rather
+            // than advertising a shelf of files the OS will not open.
+            .put("localFiles", localLibrary.hasAccess(localTree()))
             .put("remux", false)       // a file plays as it is, or not at all
             .put("tracks", false)      // languages are not read out of containers, only from addons
             .put("announce", false)    // a TV does not announce itself as a backend
@@ -174,6 +337,7 @@ class LocalHub private constructor(context: Context) : HubClient {
             .put("profileEdit", true)  // this backend creates, changes and removes the people
             .put("cacheAdmin", true)   // what was cached from upstream can be thrown away on purpose
             .put("avatarFaces", hasFaces())  // only if this build actually carries the pictures
+        if (debridStatus().optBoolean("ready")) caps.put("debrid", true)
         // No key is left out. A key that is absent reads as "the backend did not say", and the point of
         // this list is that a TV answering for itself says something about every one of them.
         val rows = JSONArray()
@@ -184,13 +348,24 @@ class LocalHub private constructor(context: Context) : HubClient {
             .put("id", "standalone")
             .put("name", appContext.getString(R.string.app_name))
             .put("version", appContext.getString(R.string.app_name) + " standalone")
-            .put("theme", "scenix-dark")
+            .put("theme", settings().optString("theme", "scenix-apple"))
             .put("api", "/app/v1")
             .put("capabilities", caps)
             .put("addons", addonsJson())
             .put("rows", rows)
             .put("cards", JSONArray(listOf("poster", "hero", "continue")))
             .put("players", JSONArray(listOf("http", "hls", "dash")))
+    }
+
+    /**
+     * The two optional doors, in the small shape the navigation asks for. Same facts as the
+     * manifest carries: live is a playlist this TV can tune, games is an installed addon that
+     * declares the games resource. A TV answering for itself draws the same bar as a hub.
+     */
+    fun capsJson(): JSONObject {
+        val live = settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true
+        val games = addonManifests().any { it.has("games") }
+        return JSONObject().put("live", live).put("games", games)
     }
 
     fun profilesJson(): JSONObject {
@@ -236,6 +411,354 @@ class LocalHub private constructor(context: Context) : HubClient {
         return out
     }
 
+    /**
+     * The live wall, cache-first.
+     *
+     * A playlist is a network resource the size of a book, and home must not wait for it. A cached
+     * list is answered immediately and refreshed behind the caller; a cold list answers empty on the
+     * home path and starts one background fetch. Only a screen that has nothing else to show —
+     * the settings channel manager, or a Play press for a channel — asks to wait.
+     */
+    fun channelsJson(waitForFirst: Boolean = false): JSONArray {
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val playlist = live.optString("playlist").trim()
+        if (playlist.isBlank()) return JSONArray()
+        val cached = synchronized(lock) {
+            if (playlist != liveCacheKey) {
+                // A different address is a different wall. Do not show yesterday's channels under it.
+                liveCache = JSONArray()
+                liveVariants.clear()
+                liveNames.clear()
+                liveCacheKey = playlist
+                liveCacheAt = 0L
+            }
+            liveCache
+        }
+        val fresh = System.currentTimeMillis() - liveCacheAt < LIVE_TTL_MS
+        if (fresh) {
+            startLiveProbe()
+            return cached
+        }
+        if (cached.length() == 0 && !waitForFirst) {
+            refreshLiveAsync(playlist)
+            return cached
+        }
+        if (cached.length() == 0) {
+            val text = fetchText(playlist, 9000)
+            if (!text.isNullOrBlank()) applyPlaylist(playlist, text)
+        } else {
+            refreshLiveAsync(playlist)
+        }
+        startLiveProbe()
+        return synchronized(lock) { liveCache }
+    }
+
+    private fun refreshLiveAsync(playlist: String) {
+        if (liveLoading) return
+        liveLoading = true
+        Thread({
+            try {
+                val text = fetchText(playlist, 9000)
+                if (!text.isNullOrBlank()) {
+                    applyPlaylist(playlist, text)
+                    startLiveProbe()
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "live playlist refresh failed", t)
+            } finally {
+                liveLoading = false
+            }
+        }, "scenix-live-refresh").apply { isDaemon = true }.start()
+    }
+
+    private fun applyPlaylist(playlist: String, text: String) {
+        data class Parsed(
+            val identity: String, val name: String, val groups: List<String>,
+            val logo: String, val url: String, val quality: String,
+        )
+
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val parsed = ArrayList<Parsed>()
+        val seen = HashSet<String>()
+        var pending: JSONObject? = null
+        for (raw in text.split("\n")) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            if (line.startsWith("#EXTINF", true)) {
+                pending = JSONObject()
+                    .put("name", line.substringAfter(',', "").trim())
+                    .put("group", attr(line, "group-title"))
+                    .put("logo", attr(line, "tvg-logo"))
+                continue
+            }
+            if (line.startsWith("#") || pending == null) continue
+            var name = pending.optString("name").trim()
+            var quality = ""
+            // A trailing "(1080p)" is the playlist's own quality label, not part of the channel name.
+            Regex("\\((\\d{3,4}p)\\)\\s*$", RegexOption.IGNORE_CASE).find(name)?.let { m ->
+                quality = m.groupValues[1].lowercase()
+                name = name.substring(0, m.range.first).trim()
+            }
+            val logo = pending.optString("logo").trim()
+            val groups = pending.optString("group").split(";")
+                .map { it.trim() }.filter { it.isNotBlank() }
+                .ifEmpty { listOf("Live") }
+            val identity = "norm:" + slugOf(name)
+            val key = name.lowercase() + "|" + quality
+            pending = null
+            if (name.isBlank() || identity == "norm:" || !seen.add(key)) continue
+            parsed.add(Parsed(identity, name, groups, logo, line, quality))
+        }
+        // By name, then lightest variant first: a Wi-Fi dip should land on the 480p feed, not the
+        // 1080p one that stalls. qbits() keeps "1080p" numerically higher than "720p".
+        parsed.sortWith(compareBy({ it.name.lowercase() }, { qbits(it.quality) }))
+
+        val hidden = ids(live.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
+        val out = JSONArray()
+        val variants = HashMap<String, MutableList<LiveVariant>>()
+        val names = HashMap<String, String>()
+        val numbered = ArrayList<String>()
+        for (c in parsed) {
+            val kind = if (c.url.contains(".m3u8", true)) "hls" else "http"
+            variants.getOrPut(c.identity) { ArrayList() }.add(LiveVariant(c.url, c.quality, kind))
+            names[c.identity] = c.name
+            if (out.length() == 0 || lastIdentity(out) != c.identity) {
+                out.put(
+                    JSONObject()
+                        .put("id", c.identity)
+                        .put("identity", c.identity)
+                        .put("name", c.name)
+                        .put("group", c.groups.first())
+                        .put("groups", JSONArray(c.groups))
+                        .put("logo", c.logo)
+                        .put("quality", c.quality)
+                        .put("url", c.url),
+                )
+                if (c.identity !in hidden && c.groups.none { it in groupsHidden }) {
+                    numbered.add(c.identity)
+                }
+            }
+        }
+        synchronized(lock) {
+            liveCache = out
+            liveVariants.clear()
+            liveVariants.putAll(variants)
+            liveNames.clear()
+            liveNames.putAll(names)
+            liveCacheKey = playlist
+            liveCacheAt = System.currentTimeMillis()
+        }
+        liveHealth.assignNumbers(numbered)
+        saveLiveCache()
+    }
+
+    /**
+     * The parsed list survives a restart. Without this, every cold start would show no live row until
+     * a playlist the size of a book had been fetched again — the exact wait this cache exists to avoid.
+     */
+    private fun saveLiveCache() {
+        try {
+            val (playlist, list) = synchronized(lock) { liveCacheKey to liveCache }
+            if (playlist.isBlank() || list.length() == 0) return
+            val root = JSONObject().put("playlist", playlist).put("at", System.currentTimeMillis())
+                .put("channels", list)
+            val tmp = File(data, "live-cache.json.tmp")
+            tmp.writeText(root.toString())
+            if (!tmp.renameTo(liveCacheFile)) {
+                liveCacheFile.writeText(tmp.readText())
+                tmp.delete()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "live cache write failed", t)
+        }
+    }
+
+    private fun loadLiveCache() {
+        try {
+            if (!liveCacheFile.exists()) return
+            val root = JSONObject(liveCacheFile.readText())
+            val playlist = root.optString("playlist")
+            val list = root.optJSONArray("channels") ?: return
+            val current = settings().optJSONObject("live")?.optString("playlist")?.trim().orEmpty()
+            if (playlist.isBlank() || playlist != current) return
+            val variants = HashMap<String, MutableList<LiveVariant>>()
+            val names = HashMap<String, String>()
+            for (i in 0 until list.length()) {
+                val c = list.optJSONObject(i) ?: continue
+                val identity = c.optString("identity")
+                if (identity.isBlank()) continue
+                val url = c.optString("url")
+                if (url.isBlank()) continue
+                val kind = if (url.contains(".m3u8", true)) "hls" else "http"
+                variants.getOrPut(identity) { ArrayList() }.add(LiveVariant(url, c.optString("quality"), kind))
+                names[identity] = c.optString("name")
+            }
+            synchronized(lock) {
+                liveCache = list
+                liveVariants.clear()
+                liveVariants.putAll(variants)
+                liveNames.clear()
+                liveNames.putAll(names)
+                liveCacheKey = playlist
+                // Deliberately old: the first home answers from disk and refreshes in the background.
+                liveCacheAt = 0L
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "live cache unreadable", t)
+        }
+    }
+
+    private fun lastIdentity(arr: JSONArray): String =
+        (arr.optJSONObject(arr.length() - 1) ?: JSONObject()).optString("identity")
+
+    private fun qbits(quality: String): Int =
+        quality.filter { it.isDigit() }.toIntOrNull() ?: 0
+
+    /**
+     * Ask the prober to check the playlist in the background. It is rate-limited and never runs while
+     * a film is playing, so this is safe to call from the home path.
+     */
+    private fun startLiveProbe() {
+        if (liveVariants.isEmpty()) return
+        val live = settings().optJSONObject("live") ?: JSONObject()
+        val hidden = ids(live.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(live.optJSONArray("groupsHidden")).toSet()
+        val visible = HashSet<String>()
+        for (i in 0 until liveCache.length()) {
+            val c = liveCache.optJSONObject(i) ?: continue
+            val identity = c.optString("identity")
+            if (identity.isBlank() || identity in hidden) continue
+            if (jsonStrings(c.optJSONArray("groups")).any { it in groupsHidden }) continue
+            visible.add(identity)
+        }
+        val targets = liveVariants.asSequence()
+            .filter { it.key in visible }
+            // Never checked first, then the oldest evidence: repeated passes walk the whole wall
+            // instead of re-checking the same head of the alphabet.
+            .sortedBy { liveHealth.get(it.key)?.optLong("checkedAt", 0L) ?: 0L }
+            .take(MAX_PROBE_PER_PASS)
+            .map { (identity, list) ->
+                LiveTarget(identity, liveNames[identity].orEmpty(), list.toList())
+            }
+            .toList()
+        liveHealth.maybeProbe(targets)
+    }
+
+    private fun liveGroups(channels: JSONArray): JSONArray {
+        val groups = LinkedHashSet<String>()
+        for (i in 0 until channels.length()) {
+            val c = channels.optJSONObject(i) ?: continue
+            val list = c.optJSONArray("groups")
+            if (list != null) {
+                for (j in 0 until list.length()) {
+                    val g = list.optString(j).trim()
+                    if (g.isNotBlank()) groups.add(g)
+                }
+            } else {
+                val g = c.optString("group").trim()
+                if (g.isNotBlank()) groups.add(g)
+            }
+        }
+        return JSONArray(groups.sorted().toList())
+    }
+
+    private fun attr(line: String, key: String): String {
+        val m = Regex(key + "=\"([^\"]*)\"", RegexOption.IGNORE_CASE).find(line)
+        if (m != null) return m.groupValues[1]
+        val u = Regex(key + "=([^\\s,]+)", RegexOption.IGNORE_CASE).find(line)
+        return u?.groupValues?.getOrNull(1) ?: ""
+    }
+
+    private fun fetchText(url: String, timeoutMs: Int): String? {
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            val opened = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                setRequestProperty("User-Agent", "Scenix/standalone")
+            }
+            conn = opened
+            if (opened.responseCode !in 200..299) null
+            else opened.inputStream.bufferedReader().use { it.readText() }
+        } catch (t: Throwable) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    /**
+     * The live wall as §1 items: one tile per channel name, every variant as a source. The working
+     * variant leads, then the lightest; a channel the prober watched fail sorts behind one that
+     * answered, and one that was never checked sits between them (unknown is not dead).
+     */
+    private fun channelItems(): List<Item> {
+        val out = ArrayList<Item>()
+        val channels = channelsJson()
+        val hidden = ids(settings().optJSONObject("live")?.optJSONArray("hidden")).toSet()
+        val groupsHidden = ids(settings().optJSONObject("live")?.optJSONArray("groupsHidden")).toSet()
+        for (i in 0 until channels.length()) {
+            val c = channels.optJSONObject(i) ?: continue
+            val identity = c.optString("identity", c.optString("id"))
+            if (identity.isBlank() || identity in hidden) continue
+            val groups = jsonStrings(c.optJSONArray("groups")).ifEmpty {
+                listOf(c.optString("group", "Live")).filter { it.isNotBlank() }
+            }
+            if (groups.any { it in groupsHidden }) continue
+            val name = c.optString("name", "Channel")
+            val variants = liveVariants[identity].orEmpty()
+            val working = liveHealth.workingUrl(identity)
+            val ordered = variants.sortedWith(compareBy(
+                { if (working != null && it.url == working) 0 else 1 },
+                { qbits(it.quality) },
+            ))
+            val sources = ordered.mapIndexed { index, v ->
+                Source(
+                    provider = "live",
+                    label = liveLabel(v, index, ordered.size),
+                    kind = v.kind,
+                    quality = v.quality,
+                    mode = "direct",
+                    score = if (working != null && v.url == working) 10.0 else 0.0,
+                    why = listOfNotNull(
+                        "live channel",
+                        v.quality.takeIf { it.isNotBlank() },
+                        liveHealth.healthOf(identity).takeIf { it == "working" }?.let { "this feed answered" },
+                    ),
+                )
+            }
+            val best = ordered.maxByOrNull { qbits(it.quality) }?.quality.orEmpty()
+            val h = liveHealth.get(identity)
+            out.add(Item(
+                identity = identity,
+                type = "channel",
+                title = name,
+                poster = c.optString("logo").takeIf { it.isNotBlank() },
+                genres = groups,
+                live = Live(
+                    now = groups.firstOrNull().orEmpty(),
+                    quality = best,
+                    number = liveHealth.numberFor(identity),
+                    health = liveHealth.healthOf(identity),
+                    checkedAt = h?.optLong("checkedAt", 0L) ?: 0L,
+                    latencyMs = h?.optLong("latencyMs", 0L) ?: 0L,
+                    error = h?.optString("error").orEmpty(),
+                ),
+                sources = sources,
+            ))
+        }
+        out.sortWith(compareBy({ liveHealth.rank(it.identity) }, { it.live?.number ?: Int.MAX_VALUE }, { it.title.lowercase() }))
+        return out
+    }
+
+    /** "1080p · host" when a channel has several feeds, the plain quality when it has one. */
+    private fun liveLabel(v: LiveVariant, index: Int, total: Int): String {
+        val q = v.quality.ifBlank { "stream" }
+        val short = hostOf(v.url).ifBlank { "#" + (index + 1) }
+        return if (total <= 1) q else q + " · " + short
+    }
+
     fun homeJson(profileId: String?): JSONObject =
         JSONObject().put("rows", JSONArray(buildRows(profileId).map { rowJson(it) }))
 
@@ -259,6 +782,7 @@ class LocalHub private constructor(context: Context) : HubClient {
             // Whatever this TV already met is searchable with the network down, and it is the part that
             // answers at once: titles that have been on a shelf or played before.
             found.addAll(libraryItems().filter { it.title.contains(term, true) })
+            found.addAll(localItems().filter { it.title.contains(term, true) })
         }
         val ceiling = kidsCeiling(profileId)
         val items = dedupe(found)
@@ -304,7 +828,80 @@ class LocalHub private constructor(context: Context) : HubClient {
         }
     }
 
+    // ---- local files -----------------------------------------------------------------------------
+    // The owner picks a folder once; LocalLibrary walks it and remembers the files. A local item is
+    // an ordinary §1 item of type "video" whose one source is this TV's own byte route, so the
+    // player receives a URL exactly as it does for a hub, and seeking is Range over loopback.
+
+    private fun localTree(): String = settings().optJSONObject("local")?.optString("tree").orEmpty()
+
+    fun localPermissionName(): String = localLibrary.mediaPermissionName()
+    fun localPermissionNames(): Array<String> = localLibrary.mediaPermissionNames()
+    fun localPermission(): Boolean = localLibrary.mediaPermission()
+
+    fun localStatus(): JSONObject {
+        val local = settings().optJSONObject("local") ?: JSONObject()
+        return localLibrary.status(localTree())
+            .put("name", local.optString("name", ""))
+    }
+
+    fun localEntry(id: String): LocalLibrary.Entry? =
+        if (id.startsWith("local:")) localLibrary.find(localTree(), id) else null
+
+    fun localStream(id: String): LocalLibrary.Stream? {
+        val entry = localEntry(id) ?: return null
+        return localLibrary.open(entry)
+    }
+
+    private fun localItems(): List<Item> {
+        val tree = localTree()
+        if (!localLibrary.hasAccess(tree)) return emptyList()
+        return localLibrary.entries(tree).map { e ->
+            val quality = e.quality
+            Item(
+                identity = e.id,
+                type = "video",
+                title = titleFromFile(e.name),
+                year = 0,
+                genres = listOfNotNull(e.path.substringBeforeLast('/', "").takeIf { it.isNotBlank() }),
+                addedAt = e.modifiedAt,
+                sources = listOf(
+                    Source(
+                        provider = "local",
+                        label = listOfNotNull(
+                            quality.takeIf { it.isNotBlank() },
+                            sizeLabel(e.sizeBytes).takeIf { e.sizeBytes > 0 },
+                        ).joinToString(" · ").ifBlank { "file" },
+                        kind = "file",
+                        quality = quality,
+                        sizeBytes = e.sizeBytes,
+                        mode = "direct",
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun sizeLabel(bytes: Long): String = when {
+        bytes <= 0L -> ""
+        bytes >= 1_000_000_000L -> String.format(java.util.Locale.US, "%.1f GB", bytes / 1e9)
+        bytes >= 1_000_000L -> Math.round(bytes / 1e6).toString() + " MB"
+        else -> Math.round(bytes / 1e3).toString() + " KB"
+    }
+
+    private fun titleFromFile(name: String): String =
+        name.substringBeforeLast('.').replace('.', ' ').replace('_', ' ').replace(Regex("\\s+"), " ").trim()
+            .ifBlank { name }
+
     fun metaJson(identity: String, type: String?): JSONObject? {
+        localEntry(identity)?.let { e ->
+            val item = localItems().firstOrNull { it.identity == e.id } ?: return null
+            rememberItem(item)
+            return itemJson(item)
+        }
+        // A live channel is not a catalogue title: it has no addon meta and no sources lookup. Answer
+        // from the parsed playlist so the native Detail/Play path can open it.
+        channelItems().firstOrNull { it.identity == identity }?.let { return itemJson(it) }
         val t = type?.takeIf { it.isNotBlank() } ?: knownType(identity) ?: "movie"
         val answers = ArrayList<Item>()
         for (am in addonManifests()) {
@@ -330,19 +927,167 @@ class LocalHub private constructor(context: Context) : HubClient {
     fun playJson(body: JSONObject): JSONObject {
         val identity = s(body, "identity", "")
         if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        if (identity.startsWith("local:")) {
+            val e = localEntry(identity)
+                ?: return JSONObject().put("error", "this file is no longer in the chosen folder")
+            return JSONObject()
+                .put("url", "/app/v1/local/" + identity)
+                .put("kind", "http")
+                .put("mode", "direct")
+                .put("headers", JSONObject())
+                .put("sizeBytes", e.sizeBytes)
+                .put("sourceName", e.name)
+                .put("title", titleFromFile(e.name))
+                .put("why", JSONArray(listOf("local file", "served from this TV by Range")))
+                .put("episode", JSONObject.NULL)
+                .put("nextEpisode", JSONObject.NULL)
+        }
         val type = s(body, "type", "").ifBlank { knownType(identity) ?: "movie" }
         val season = body.optInt("season", 0)
         val episode = body.optInt("episode", 0)
         // A series is one tile with many addresses: the addon names an episode `<show>:<season>:<episode>`.
         val address = if (season > 0 && episode > 0) "$identity:$season:$episode" else identity
         val profileId = s(body, "profile", "").ifBlank { null }
+        if (type == "channel" || liveVariants.containsKey(identity) || identity.startsWith("live:")) {
+            channelsJson(waitForFirst = true)
+            val variants = liveVariants[identity].orEmpty()
+            if (variants.isNotEmpty()) {
+                val skip = exclusions(body.optJSONArray("exclude"))
+                val wanted = wantedSource(body)
+                val working = liveHealth.workingUrl(identity)
+                // The feed that answered is the first thing tried; inside equal health the lightest
+                // variant is, so a weak line lands on 480p instead of the 1080p feed that stalls.
+                val ordered = variants.sortedWith(compareBy(
+                    { if (working != null && it.url == working) 0 else 1 },
+                    { qbits(it.quality) },
+                ))
+                val asked = wanted?.let { w ->
+                    val label = s(w, "label", "").trim()
+                    val quality = s(w, "quality", "").trim()
+                    ordered.withIndex().firstOrNull { (index, v) ->
+                        (label.isNotBlank() &&
+                            (liveLabel(v, index, ordered.size).equals(label, true) || v.url == label)) ||
+                            (quality.isNotBlank() && v.quality.equals(quality, true))
+                    }?.value
+                }
+                val pick = asked ?: ordered.withIndex().firstOrNull { (index, v) ->
+                    v.url.lowercase() !in skip && liveLabel(v, index, ordered.size).lowercase() !in skip
+                }?.value
+                if (pick != null) {
+                    // A probe pass must not compete with the channel the viewer is watching.
+                    liveHealth.quietFor(15 * 60_000L)
+                    val alternatives = ordered.filter { it.url != pick.url }.map { v ->
+                        variantJson(identity, v, ordered)
+                    }
+                    return JSONObject()
+                        .put("url", pick.url)
+                        .put("kind", pick.kind)
+                        .put("mode", "direct")
+                        .put("live", true)
+                        .put("headers", liveHeaders(pick.url))
+                        .put("title", s(body, "title", "Live"))
+                        .put("sourceName", liveLabel(pick, 0, ordered.size))
+                        .put("health", liveHealth.healthOf(identity))
+                        .put("alternatives", JSONArray(alternatives))
+                        .put("episode", JSONObject.NULL)
+                        .put("nextEpisode", JSONObject.NULL)
+                }
+                return JSONObject()
+                    .put("error", "every feed for this channel was already tried")
+                    .put("live", true)
+                    .put("sources", JSONArray(ordered.map { variantJson(identity, it, ordered) }))
+                    .put("episode", JSONObject.NULL)
+                    .put("nextEpisode", JSONObject.NULL)
+            }
+        }
         val sources = applyCaps(collectSources(address, type, wait = true), profileId)
         val wanted = s(body, "source", s(body, "provider", ""))
-        val pick = sources.firstOrNull { it.mode == "direct" && (wanted.isBlank() || it.label == wanted || it.provider == wanted) }
+        val named = sources.firstOrNull { wanted.isNotBlank() && (it.label == wanted || it.provider == wanted) }
+        val torrentRoom = TorrentEngine.freeBytes(appContext) - 300L * 1024 * 1024
+        val torrents = sources.filter { it.mode == "torrent" }
+        // Prefer a copy whose size the addon stated and which fits. An unknown-size 2160p entry is not
+        // a reason to fail while a 1080p copy that fits is sitting next to it.
+        val fitting = torrents.filter { it.sizeBytes > 0 && it.sizeBytes <= torrentRoom }
+            .ifEmpty { torrents.filter { it.sizeBytes == 0L } }
+        val pick = named
             ?: sources.firstOrNull { it.mode == "direct" }
+            ?: fitting.firstOrNull()
+            ?: torrents.firstOrNull()
             ?: return JSONObject()
                 .put("error", "nothing here is a file this TV can open on its own")
                 .put("sources", JSONArray(sources.map { sourceJson(it) }))
+
+        if (pick.mode == "torrent") {
+            val magnet = torrentFor(address, pick)
+            val token = debridToken()
+            if (token.isNotBlank() && magnet != null) {
+                val d = Debrid.resolveMagnet(magnet, season, episode, token)
+                if (d.url != null) {
+                    return JSONObject()
+                        .put("url", d.url)
+                        .put("kind", d.kind)
+                        .put("mode", "debrid")
+                        .put("headers", JSONObject())
+                        .put("sizeBytes", if (d.fileSize > 0) d.fileSize else pick.sizeBytes)
+                        .put("sourceName", d.fileName ?: pick.label)
+                        .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
+                        .put("why", JSONArray(listOf("${pick.provider} · served by Real-Debrid")))
+                        .put("episode", if (season > 0 && episode > 0) JSONObject()
+                            .put("season", season).put("episode", episode) else JSONObject.NULL)
+                        .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
+                            .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+                }
+            }
+            if (pick.sizeBytes > 0 && pick.sizeBytes > torrentRoom) {
+                return JSONObject()
+                    .put("error", "this copy is larger than the free space on this TV")
+                    .put("sources", JSONArray(sources.map { sourceJson(it) }))
+            }
+            val uri = magnet
+                ?: return JSONObject().put("error", "this copy has no magnet the local engine can use")
+            val prepared = TorrentEngine.prepare(appContext, uri, season, episode)
+                ?: return JSONObject()
+                    .put("error", "the P2P engine on this TV could not prepare this copy")
+                    .put("warming", true)
+                    .put("retryAfterMs", 5000)
+                    .put("sources", JSONArray(sources.map { sourceJson(it) }))
+            return JSONObject()
+                .put("url", "/app/v1/torrent/${prepared.hash}/${prepared.fileId}")
+                .put("kind", "http")
+                .put("mode", "gateway") // libtorrent streams it; the player sees ordinary HTTP
+                .put("headers", JSONObject())
+                .put("proxied", true)
+                .put("why", JSONArray(pick.why))
+                .put("sizeBytes", prepared.size)
+                .put("sourceName", prepared.name)
+                .put("episode", if (season > 0 && episode > 0) JSONObject()
+                    .put("season", season).put("episode", episode) else JSONObject.NULL)
+                .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
+                    .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+        }
+
+        // A hoster page the addon handed over is not a media file, but a debrid account can turn it
+        // into one. Direct files are left alone: they already play and must not spend a provider call.
+        val token = debridToken()
+        if (token.isNotBlank() && pick.mode != "direct") {
+            val hoster = urlFor(address, pick)
+            if (hoster != null && hoster.startsWith("http")) {
+                val d = Debrid.unrestrict(hoster, token)
+                if (d.url != null) {
+                    return JSONObject()
+                        .put("url", d.url)
+                        .put("kind", d.kind)
+                        .put("mode", "debrid")
+                        .put("headers", JSONObject())
+                        .put("sizeBytes", if (d.fileSize > 0) d.fileSize else pick.sizeBytes)
+                        .put("sourceName", d.fileName ?: pick.label)
+                        .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
+                        .put("why", JSONArray(listOf("${pick.provider} \u00B7 served by Real-Debrid")))
+                        .put("episode", JSONObject.NULL)
+                        .put("nextEpisode", JSONObject.NULL)
+                }
+            }
+        }
         val url = urlFor(address, pick) ?: return JSONObject().put("error", "stream link expired, open the title again")
         return JSONObject()
             .put("url", url)
@@ -356,13 +1101,105 @@ class LocalHub private constructor(context: Context) : HubClient {
                 .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
     }
 
-    fun prefsJson(profileId: String?): JSONObject =
-        JSONObject().put("profile", profileId ?: "default").put("prefs", readProfilePrefs(profileId ?: "default"))
+    /** The `source` a client names: an object (native player) or a plain label string (older screens). */
+    private fun wantedSource(body: JSONObject): JSONObject? {
+        body.optJSONObject("source")?.let { return it }
+        val label = s(body, "source", "").trim().ifBlank { s(body, "provider", "").trim() }
+        return if (label.isBlank()) null else JSONObject().put("label", label)
+    }
+
+    /** Sources this client already tried, lowercased for a forgiving comparison. */
+    private fun exclusions(arr: JSONArray?): Set<String> {
+        if (arr == null) return emptySet()
+        val out = HashSet<String>()
+        for (i in 0 until arr.length()) {
+            val v = arr.optString(i, "").trim().lowercase()
+            if (v.isNotBlank()) out.add(v)
+        }
+        return out
+    }
+
+    private fun variantJson(identity: String, v: LiveVariant, all: List<LiveVariant>): JSONObject {
+        val index = all.indexOf(v)
+        val label = liveLabel(v, index, all.size)
+        return JSONObject()
+            .put("id", "live:" + Integer.toHexString((identity + "|" + v.url).hashCode()))
+            .put("provider", "live")
+            .put("label", label)
+            .put("kind", v.kind)
+            .put("quality", v.quality)
+            .put("mode", "direct")
+            .put("score", if (liveHealth.workingUrl(identity) == v.url) 10.0 else 0.0)
+    }
+
+    /**
+     * What a live host often demands before it answers: a browser-shaped user agent and a referer from
+     * its own origin. The hub sends the same pair; without them a great many feeds return 403 while
+     * the playlist still looks healthy.
+     */
+    private fun liveHeaders(url: String): JSONObject = JSONObject()
+        .put("User-Agent", LiveHealth.UA)
+        .put("Referer", LiveHealth.originOf(url) + "/")
+
+    fun prefsJson(profileId: String?): JSONObject {
+        val who = profileId ?: "default"
+        return JSONObject().put("profile", who).put("prefs", wirePrefs(who))
+    }
 
     fun setPrefsJson(values: JSONObject, profileId: String?): JSONObject = synchronized(lock) {
         val who = profileId ?: "default"
         writeProfilePrefs(who, values)
-        JSONObject().put("profile", who).put("prefs", values)
+        JSONObject().put("profile", who).put("prefs", wirePrefs(who))
+    }
+
+    /**
+     * The shape a hub's `/app/v1/prefs` answers with, not the raw sparse file: quality steps a
+     * settings screen can draw, the size/bitrate ceilings those steps imply, and the adult switch.
+     * A page that gets only what the viewer typed cannot draw a single control, which is exactly what
+     * happened before this existed.
+     */
+    private fun wirePrefs(profileId: String): JSONObject {
+        val profile = profileList().firstOrNull { s(it, "id", "") == profileId }
+        val out = effectivePrefs(profile ?: JSONObject())
+        val kids = profile?.let { s(it, "kind", "").equals("kids", true) } == true
+        val asked = s(out, "qualityCap", "").trim()
+        val cap = when (asked.lowercase()) {
+            "auto", "any", "highest", "off" -> "auto"
+            "4k", "2160p", "uhd" -> "4k"
+            "1080p", "1080", "fullhd", "fhd" -> "1080p"
+            "720p", "720", "hd" -> "720p"
+            "480p", "480", "sd" -> "480p"
+            else -> if (kids) "720p" else "1080p"
+        }
+        val level = when (cap) {
+            "480p" -> 2 to 2
+            "720p" -> 3 to 4
+            "1080p" -> 4 to 8
+            "4k" -> 5 to 25
+            else -> 99 to 25
+        }
+        val size = when {
+            out.has("maxSizeGB") && out.optDouble("maxSizeGB", 0.0) > 0 -> out.optDouble("maxSizeGB")
+            else -> level.second.toDouble()
+        }
+        val bitrate = when {
+            out.has("maxBitrateMbps") && out.optDouble("maxBitrateMbps", 0.0) > 0 -> out.optDouble("maxBitrateMbps")
+            level.first == 2 -> 4.0
+            level.first == 3 -> 8.0
+            else -> 0.0
+        }
+        out.put("qualityCap", cap)
+        out.put("qualityCapAsked", if (asked.isBlank()) JSONObject.NULL else asked)
+        out.put("quality", if (s(out, "quality", "") == "lowest") "lowest" else "highest")
+        out.put("preferAdaptive", out.optBoolean("preferAdaptive", true))
+        out.put("maxSizeGB", size)
+        out.put("maxBitrateMbps", if (bitrate > 0) bitrate else JSONObject.NULL)
+        out.put("maxSizeBytes", Math.round(size * 1e9))
+        out.put("maxFileSizeBytes", Math.round(size * 1e9))
+        out.put("maxBitrate", Math.round(bitrate * 1e6))
+        out.put("xxxEnabled", out.optBoolean("xxxEnabled", false))
+        out.put("qualityLevels", JSONArray(listOf("auto", "4k", "1080p", "720p", "480p")))
+        return out
     }
 
     /**
@@ -542,6 +1379,75 @@ class LocalHub private constructor(context: Context) : HubClient {
         JSONObject().put("ok", true).put("identity", identity)
     }
 
+    /**
+     * "Remove from Continue watching": keep the position, hide the tile. [forWhoPut] rebuilds the
+     * entry on the next progress post, so pressing the title again re-arms the row — the same
+     * contract the remote hub runs (core/store.js).
+     */
+    fun dismissJson(body: JSONObject): JSONObject = synchronized(lock) {
+        val who = s(body, "profile", "default").ifBlank { "default" }
+        val identity = s(body, "identity", "")
+        if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        val root = readJson(progressFile)
+        val forWho = root.optJSONObject(who) ?: return JSONObject().put("ok", true).put("dismissed", false)
+        val entry = forWho.optJSONObject(identity) ?: return JSONObject().put("ok", true).put("dismissed", false)
+        entry.put("dismissedAt", System.currentTimeMillis())
+        root.put(who, forWho)
+        writeJson(progressFile, root)
+        JSONObject().put("ok", true).put("dismissed", true).put("identity", identity)
+    }
+
+    /** "Start over": rewind the record to never-started. Run before seeking, exactly like the hub. */
+    fun resetProgressJson(body: JSONObject): JSONObject = synchronized(lock) {
+        val who = s(body, "profile", "default").ifBlank { "default" }
+        val identity = s(body, "identity", "")
+        if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        val root = readJson(progressFile)
+        val forWho = root.optJSONObject(who) ?: JSONObject()
+        val cur = forWho.optJSONObject(identity)
+        val fresh = JSONObject()
+            .put("positionMs", 0L).put("watchedMs", 0L).put("updatedAt", System.currentTimeMillis())
+            .put("episode", cur?.opt("episode") ?: JSONObject.NULL)
+        forWho.put(identity, fresh)
+        root.put(who, forWho)
+        writeJson(progressFile, root)
+        JSONObject().put("ok", true).put("identity", identity).put("progress", fresh)
+    }
+
+    // ---- My List, on this box (standalone mode speaks the same /app/v1/list contract as the hub) --
+
+    fun listJson(profileId: String?): JSONObject = synchronized(lock) {
+        val who = profileId?.ifBlank { "default" } ?: "default"
+        JSONObject().put("profile", who).put("ids", readJson(listFile).optJSONArray(who) ?: JSONArray())
+    }
+
+    fun listPostJson(body: JSONObject): JSONObject = synchronized(lock) {
+        val who = s(body, "profile", "default").ifBlank { "default" }
+        val identity = s(body, "identity", "")
+        if (identity.isBlank()) return JSONObject().put("error", "identity required")
+        val root = readJson(listFile)
+        val ids = root.optJSONArray(who) ?: JSONArray()
+        val was = indexOfIdentity(ids, identity) >= 0
+        val on = if (body.has("add")) body.optBoolean("add") else !was
+        if (on) {
+            if (!was) ids.put(0, identity)
+        } else if (was) {
+            val next = JSONArray()
+            for (i in 0 until ids.length()) if (i != indexOfIdentity(ids, identity)) next.put(ids.optString(i))
+            root.put(who, next)
+            writeJson(listFile, root)
+            return JSONObject().put("ok", true).put("identity", identity).put("inList", false).put("ids", next)
+        }
+        root.put(who, ids)
+        writeJson(listFile, root)
+        JSONObject().put("ok", true).put("identity", identity).put("inList", on).put("ids", ids)
+    }
+
+    private fun indexOfIdentity(ids: JSONArray, identity: String): Int {
+        for (i in 0 until ids.length()) if (ids.optString(i) == identity) return i
+        return -1
+    }
+
     /** Drop every cached addon answer — what "Clear cached copies" in Settings does. */
     fun clearAddonCache() = addons.clearCache()
 
@@ -550,9 +1456,23 @@ class LocalHub private constructor(context: Context) : HubClient {
      * path is cache-first, so this is what makes a freshly added addon fill the home screen instead of
      * waiting for the next visit to answer.
      */
-    fun refreshAddons(cb: HubCb<Int>) = reply({
-        addonSpecs().count { addons.manifest(it, wait = true, ttlMs = ttlMs()) != null }
-    }, cb)
+    /**
+     * Re-read every installed manifest and warm its catalogs. The home path is cache-only, so
+     * installing an addon and immediately opening Home must not show an empty screen until the next
+     * background pass: the first catalog fetch is kicked off here, and the next Home reload has it.
+     */
+    fun refreshAddons(): Int {
+        var ok = 0
+        for (spec in addonSpecs()) {
+            val am = addons.manifest(spec, wait = true, ttlMs = ttlMs()) ?: continue
+            ok++
+            for (c in am.catalogs.take(MAX_CATALOGS_PER_ADDON)) {
+                val type = communityType(s(c, "type", "movie")) ?: continue
+                addons.catalog(am, type, s(c, "id", ""), "default", wait = false, ttlMs = ttlMs())
+            }
+        }
+        return ok
+    }
 
     // ---- rows ---------------------------------------------------------------------------------
 
@@ -566,6 +1486,17 @@ class LocalHub private constructor(context: Context) : HubClient {
         val out = ArrayList<LocalRow>()
         out.add(LocalRow("continue", "Continue watching", "continue", 5, "all", emptyList()))
         out.add(LocalRow("justadded", "Recently added", "poster", 10, "all", emptyList()))
+        if (settings().optJSONObject("live")?.optString("playlist")?.isNotBlank() == true) {
+            out.add(LocalRow("live", "Live TV", "channel", 15, "all", emptyList()))
+        }
+        if (localLibrary.hasAccess(localTree())) {
+            out.add(LocalRow("local", "Local files", "poster", 16, "all", emptyList()))
+        }
+        // The two section tabs are rows like any other, even when empty: the native Movies/Series grid
+        // asks /app/v1/row/movies or /series, and a fresh install should answer "nothing yet" rather
+        // than 404.
+        out.add(LocalRow("movies", "Movies", "poster", 60, "all", emptyList()))
+        out.add(LocalRow("series", "Series", "poster", 61, "all", emptyList()))
         var order = 20
         for (am in manifests) {
             for (c in am.catalogs.take(MAX_CATALOGS_PER_ADDON)) {
@@ -596,7 +1527,8 @@ class LocalHub private constructor(context: Context) : HubClient {
     private fun buildRows(profileId: String?): List<LocalRow> {
         val out = ArrayList<LocalRow>()
 
-        // Continue watching: what this profile stopped, most recently stopped first.
+        // Continue watching: what this profile stopped, most recently stopped first. A tile the
+        // viewer dismissed (dismissedAt) stays out until the next progress post rebuilds the entry.
         val who = profileId ?: "default"
         val progress = readJson(progressFile).optJSONObject(who)
         if (progress != null && progress.length() > 0) {
@@ -605,15 +1537,65 @@ class LocalHub private constructor(context: Context) : HubClient {
             for (k in progress.keys()) names.add(k)
             names.sortByDescending { progress.optJSONObject(it)?.optLong("updatedAt") ?: 0L }
             for (identity in names.take(ROW_MAX)) {
+                if ((progress.optJSONObject(identity)?.optLong("dismissedAt", 0L) ?: 0L) > 0L) continue
                 val seed = seedFromLibrary(identity) ?: continue
                 Progress.from(progress.optJSONObject(identity))?.let { items.add(seed.copy(progress = it)) }
             }
             if (items.isNotEmpty()) out.add(LocalRow("continue", "Continue watching", "continue", 5, "all", items))
         }
 
+        // My List: the shelf this person stocked themselves, newest first, same order the hub's
+        // rows/mylist.js sends.
+        val listIds = readJson(listFile).optJSONArray(who)
+        if (listIds != null && listIds.length() > 0) {
+            val items = ArrayList<Item>()
+            for (i in 0 until minOf(listIds.length(), ROW_MAX)) {
+                val seed = seedFromLibrary(listIds.optString(i)) ?: continue
+                items.add(seed)
+            }
+            if (items.isNotEmpty()) out.add(LocalRow("mylist", "My List", "poster", 12, "all", items))
+        }
+
         // Recently added: this app's own memory of what it has put on a shelf, newest first.
         val library = libraryItems().filter { it.addedAt > 0 }.sortedByDescending { it.addedAt }.take(ROW_MAX)
         if (library.isNotEmpty()) out.add(LocalRow("justadded", "Recently added", "poster", 10, "all", library))
+
+        // Live TV: the household's hidden channels and groups were already removed by channelItems();
+        // now the profile's own lineup and order, then health and the stable zap number. This is the
+        // same order the hub's rows/live.js applies, so the remote walks the same wall on either host.
+        val profileLive = readProfilePrefs(who).optJSONObject("live")
+        var liveChannels = channelItems().filter {
+            it.identity !in ids(profileLive?.optJSONArray("hidden")).toSet()
+        }
+        val only = ids(profileLive?.optJSONArray("only"))
+        if (only.isNotEmpty()) {
+            val allowed = only.toSet()
+            liveChannels = liveChannels.filter { it.identity in allowed }
+        }
+        val localOrder = ids(profileLive?.optJSONArray("order"))
+        val wanted = when {
+            localOrder.isNotEmpty() -> localOrder
+            only.isNotEmpty() -> only
+            else -> ids(settings().optJSONObject("live")?.optJSONArray("order"))
+        }
+        val liveRank = wanted.withIndex().associate { it.value to it.index }
+        liveChannels = liveChannels.sortedWith(compareBy(
+            { liveRank[it.identity] ?: Int.MAX_VALUE },
+            { liveHealth.rank(it.identity) },
+            { it.live?.number ?: Int.MAX_VALUE },
+            { it.title.lowercase() },
+        ))
+        if (liveChannels.isNotEmpty()) out.add(LocalRow("live", "Live TV", "channel", 15, "all", liveChannels))
+        val local = localItems()
+        if (local.isNotEmpty()) out.add(LocalRow("local", "Local files", "poster", 16, "all", local))
+
+        val allLibrary = libraryItems()
+        val movies = allLibrary.filter { it.type == "movie" }
+            .sortedByDescending { it.releasedAt }
+        if (movies.isNotEmpty()) out.add(LocalRow("movies", "Movies", "poster", 60, "all", movies.take(300)))
+        val series = allLibrary.filter { it.type == "series" }
+            .sortedByDescending { it.releasedAt }
+        if (series.isNotEmpty()) out.add(LocalRow("series", "Series", "poster", 61, "all", series.take(300)))
 
         for (am in addonManifests()) {
             if (!am.has("catalog")) continue
@@ -743,6 +1725,19 @@ class LocalHub private constructor(context: Context) : HubClient {
                 .put("episode", p.episode?.let { JSONObject().put("season", it.season).put("episode", it.episode).put("title", it.title) } ?: JSONObject.NULL)
         } ?: JSONObject.NULL)
         .put("episodes", JSONArray(i.episodes.map { JSONObject().put("season", it.season).put("episode", it.episode).put("title", it.title) }))
+        // A channel's health and zap number live on `live`, not on the item: the player reads
+        // `item.live.number` for its station badge, and without this block every standalone channel
+        // showed a zero in place of its number.
+        .put("live", i.live?.let { l ->
+            JSONObject()
+                .put("now", l.now.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                .put("quality", l.quality.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                .put("number", if (l.number > 0) l.number else JSONObject.NULL)
+                .put("health", l.health.takeIf { it.isNotBlank() } ?: "unknown")
+                .put("checkedAt", if (l.checkedAt > 0) l.checkedAt else JSONObject.NULL)
+                .put("latencyMs", if (l.latencyMs > 0) l.latencyMs else JSONObject.NULL)
+                .put("error", l.error.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+        } ?: JSONObject.NULL)
         .put("sources", JSONArray(i.sources.map { sourceJson(it) }))
 
     private fun sourceJson(src: Source): JSONObject = JSONObject()
@@ -762,6 +1757,7 @@ class LocalHub private constructor(context: Context) : HubClient {
         val t = communityType(type) ?: return emptyList()
         val found = ArrayList<Source>()
         val urls = HashMap<String, String>()
+        val torrents = HashMap<String, String>()
         for (am in addonManifests()) {
             if (!am.has("stream") || !addressableBy(address, am.spec.id)) continue
             val streams = addons.streams(am, t, remoteIdFor(address, am.spec.id), wait, ttlMs = ttlMs()) ?: continue
@@ -770,9 +1766,13 @@ class LocalHub private constructor(context: Context) : HubClient {
                 val src = parseStream(e, am.spec.name) ?: continue
                 found.add(src)
                 urlOf(src)?.let { urls[srcKey(src)] = it }
+                if (src.kind == "torrent") torrentUri(e)?.let { torrents[srcKey(src)] = it }
             }
         }
-        if (found.isNotEmpty()) sourceUrls[address] = urls
+        if (found.isNotEmpty()) {
+            sourceUrls[address] = urls
+            sourceTorrents[address] = torrents
+        }
         return rankSources(found)
     }
 
@@ -780,10 +1780,49 @@ class LocalHub private constructor(context: Context) : HubClient {
 
     private fun urlFor(address: String, src: Source): String? = sourceUrls[address]?.get(srcKey(src))
 
+    private fun torrentFor(address: String, src: Source): String? = sourceTorrents[address]?.get(srcKey(src))
+
+    /** A magnet in whichever field the addon chose, or a magnet built from a bare info hash. */
+    private fun torrentUri(e: JSONObject): String? {
+        val magnet = listOf(s(e, "externalUrl", ""), s(e, "url", ""), s(e, "magnet", ""))
+            .firstOrNull { it.startsWith("magnet:", true) }
+        if (!magnet.isNullOrBlank()) return magnet
+        val hash = s(e, "infoHash", s(e, "hash", ""))
+        return if (Regex("^[a-fA-F0-9]{40}$").matches(hash)) "magnet:?xt=urn:btih:$hash" else null
+    }
+
     /** Sources carry no URL, so the one an addon gave is remembered beside it under its shown fields. */
     private fun srcKey(src: Source): String = "${src.provider}|${src.kind}|${src.quality}|${src.sizeBytes}|${src.label}"
 
     private val sourceUrls = HashMap<String, HashMap<String, String>>()
+    private val sourceTorrents = HashMap<String, HashMap<String, String>>()
+
+    // ---- live TV ----------------------------------------------------------------------------
+    // The owner pastes an M3U URL; this parses it into the same channel objects the hub's live row
+    // carries. The URL stays in the app's settings, and the parsed list is cached so home does not
+    // refetch a playlist on every shelf.
+    // identity -> every quality variant of that channel name, in playlist order. A channel is ONE
+    // tile with several sources, exactly as a film is; this is what lets a dead feed fail over to the
+    // next variant of the same channel instead of to another channel.
+    private val liveVariants = HashMap<String, MutableList<LiveVariant>>()
+    private val liveNames = HashMap<String, String>()
+    private var liveCacheAt = 0L
+    private var liveCacheKey = ""
+    private var liveCache: JSONArray = JSONArray()
+    private val liveCacheFile = File(data, "live-cache.json")
+
+    @Volatile
+    private var liveLoading = false
+
+    init {
+        // A settings read is cheap and does not touch the network; this is what makes the live row
+        // exist on the first frame after a restart.
+        loadLiveCache()
+    }
+    private val liveHealth = LiveHealth(File(data, "live-health.json"))
+    private val localLibrary = LocalLibrary(appContext, File(data, "local-index.json"))
+
+    private val MAX_PROBE_PER_PASS = 80
 
     private val MEDIA_EXT = Regex("\\.(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(\\?|#|$)", RegexOption.IGNORE_CASE)
 
@@ -814,12 +1853,12 @@ class LocalHub private constructor(context: Context) : HubClient {
         }
         val label = when {
             playable -> listOf(quality.ifBlank { "stream" }, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
-            isTorrent -> listOf("torrent", quality, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
+            isTorrent -> listOf("P2P", quality, Format.size(size ?: 0L)).filter { it.isNotBlank() }.joinToString(" \u00B7 ")
             else -> "link \u00B7 " + hostOf(direct)
         }
         val why = when {
             playable -> listOf(URL_TAG + direct, "$addonName \u00B7 a file this TV reads on its own")
-            isTorrent -> listOf("torrent \u00B7 no engine in standalone mode")
+            isTorrent -> listOf("$addonName \u00B7 streamed peer-to-peer on this TV")
             else -> listOf("not a file this player can open")
         }
         return Source(
@@ -829,8 +1868,16 @@ class LocalHub private constructor(context: Context) : HubClient {
             quality = quality,
             sizeBytes = size ?: 0L,
             risk = if (!playable && !isTorrent) "not a file" else "",
-            mode = if (playable) "direct" else "none",
-            score = if (playable) 1.0 + qualityRank(quality) * 0.1 else 0.0,
+            mode = when {
+                playable -> "direct"
+                isTorrent -> "torrent"
+                else -> "none"
+            },
+            score = when {
+                playable -> 1.0 + qualityRank(quality) * 0.1
+                isTorrent -> 0.5 + qualityRank(quality) * 0.1
+                else -> 0.0
+            },
             why = why,
         )
     }
@@ -1306,108 +2353,10 @@ class LocalHub private constructor(context: Context) : HubClient {
         )
     }
 
-    // ---- the HubClient surface: the same shapes, delivered on the main thread ----------------------
-
-    private fun <T> reply(work: () -> T, cb: HubCb<T>) {
-        try {
-            pool.execute {
-                var v: T? = null
-                var err: String? = null
-                try {
-                    v = work()
-                } catch (t: Throwable) {
-                    err = t.message ?: t.javaClass.simpleName
-                    Log.w(TAG, "local hub call failed", t)
-                }
-                val value = v
-                main.post { cb.onResult(value, err) }
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "local hub queue rejected", t)
-            main.post { cb.onResult(null, "busy") }
-        }
-    }
-
-    override fun manifest(cb: HubCb<Manifest>) = reply({ Manifest.from(manifestJson()) }, cb)
-
-    override fun profiles(cb: HubCb<List<Profile>>) =
-        reply({ Profile.list(profilesJson().optJSONArray("profiles")) }, cb)
-
-    override fun home(profileId: String?, cb: HubCb<List<Row>>) =
-        reply({ Row.list(homeJson(profileId).optJSONArray("rows")) }, cb)
-
-    override fun row(rowId: String, profileId: String?, cb: HubCb<Row?>) =
-        reply({ rowJson(rowId, profileId)?.let { Row.from(it) } }, cb)
-
-    override fun search(q: String, profileId: String?, cb: HubCb<List<Row>>) =
-        reply({ Row.list(searchJson(q, profileId).optJSONArray("rows")) }, cb)
-
-    override fun meta(identity: String, type: String?, cb: HubCb<Item?>) =
-        reply({ metaJson(identity, type)?.let { Item.from(it) } }, cb)
-
-    override fun play(
-        identity: String, provider: String?, profileId: String?, type: String?, season: Int, episode: Int, cb: HubCb<PlayTarget?>,
-    ) = reply(
-        {
-            PlayTarget.from(
-                playJson(
-                    JSONObject()
-                        .put("identity", identity)
-                        .put("type", type ?: JSONObject.NULL)
-                        .put("profile", profileId ?: JSONObject.NULL)
-                        .put("source", provider ?: JSONObject.NULL)
-                        .put("season", season)
-                        .put("episode", episode),
-                ),
-            )
-        },
-        cb,
-    )
-
-    override fun progress(identity: String, positionMs: Long, profileId: String?, episode: Episode?) {
-        val body = JSONObject()
-            .put("identity", identity)
-            .put("positionMs", positionMs)
-            .put("profile", profileId ?: "default")
-        if (episode != null) {
-            body.put("episode", JSONObject()
-                .put("season", episode.season).put("episode", episode.episode).put("title", episode.title))
-        }
-        try {
-            pool.execute {
-                try {
-                    progressJson(body)
-                } catch (t: Throwable) {
-                    Log.w(TAG, "local progress write failed", t)
-                }
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "local progress queue rejected", t)
-        }
-    }
-
-    /** This backend is always there: standalone has no network peer to lose. */
-    override fun health(cb: HubCb<Boolean>) { cb.onResult(true, null) }
-
-    override fun addons(cb: HubCb<List<Addon>>) = reply({ Addon.list(addonsJson()) }, cb)
-
-    override fun subs(identity: String, langs: List<String>, profileId: String?, cb: HubCb<List<Sub>>) =
-        reply({ Sub.list(subsJson(identity, langs, knownType(identity))) }, cb)
-
-    override fun prefs(profileId: String?, cb: HubCb<HubPrefs?>) =
-        reply({ HubPrefs.from(prefsJson(profileId).optJSONObject("prefs") ?: JSONObject()) }, cb)
-
-    override fun setPrefs(values: HubPrefs, profileId: String?, cb: HubCb<HubPrefs?>) =
-        reply({ HubPrefs.from(setPrefsJson(values.toJson(profileId ?: ""), profileId).optJSONObject("prefs") ?: JSONObject()) }, cb)
-
-    /** No trailer search here — and the manifest does not advertise one, so the UI never asks. */
-    override fun trailer(identity: String, cb: HubCb<String?>) { cb.onResult(null, null) }
-
     private fun manifestsHaveSubs(): Boolean = addonManifests().any { it.has("subtitles") }
 
     companion object {
         private const val TAG = "ScenixLocal"
-        private const val POOL_THREADS = 3
         private const val ROW_MAX = 30
         private const val MAX_CATALOGS_PER_ADDON = 6
         private const val LIBRARY_MAX = 800
@@ -1419,6 +2368,7 @@ class LocalHub private constructor(context: Context) : HubClient {
         // by this backend runs no rules of its own, so this is the one that protects a kids shelf.
         private const val KIDS_MAX_AGE = 7
         private const val URL_TAG = "url="
+        private const val LIVE_TTL_MS = 5 * 60_000L
 
         private val QUALITY_P = Regex("(\\d{3,4})p", RegexOption.IGNORE_CASE)
         private val FOUR_K = Regex("\\b4k\\b|\\buhd\\b|\\b2160\\b", RegexOption.IGNORE_CASE)
@@ -1426,9 +2376,8 @@ class LocalHub private constructor(context: Context) : HubClient {
         private val SIZE = Regex("([\\d.]+)\\s*(GB|MB|KB)", RegexOption.IGNORE_CASE)
 
         /**
-         * One instance per process. The native screens and [LocalServer] must answer out of the same
-         * cache, profiles and settings, or the two front ends of standalone mode would drift apart on
-         * the same TV.
+         * One instance per process. [LocalServer] and the HTTP client must answer out of the same
+         * cache, profiles and settings, or standalone mode would drift from the contract it serves.
          */
         @Volatile private var instance: LocalHub? = null
 

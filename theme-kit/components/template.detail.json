@@ -1,0 +1,81 @@
+{
+  "id": "template.detail",
+  "version": 1,
+  "level": "template",
+  "summary": "The title page: a Glass backdrop or the Kids wall split, with Play/Resume, My List, trailer and reactions, then cast, episodes and related shelves.",
+  "props": {
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 120
+    },
+    "variant": {
+      "type": "enum",
+      "default": "backdrop",
+      "enum": ["backdrop", "split", "stage"],
+      "description": "Glass paints a backdrop; Kids splits the yellow wall with a tall art panel."
+    },
+    "art": {
+      "type": "image",
+      "required": true,
+      "sizes": ["w500", "w780", "w1280"]
+    },
+    "logo": {
+      "type": "image",
+      "sizes": ["w300", "w560"]
+    },
+    "overview": {
+      "type": "string",
+      "maxLength": 1200
+    },
+    "meta": {
+      "type": "string",
+      "maxLength": 240,
+      "description": "Match, year, maturity, runtime and genres joined by the host."
+    },
+    "actions": {
+      "type": "array",
+      "description": "Play/Resume, Start over and My List, in the order the pack allows."
+    },
+    "reactions": {
+      "type": "array",
+      "description": "Trailer, seen, like, love and dislike. Kids hides this band."
+    },
+    "episodes": {
+      "type": "array"
+    },
+    "related": {
+      "type": "array"
+    },
+    "progress": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 1
+    },
+    "showReactions": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "states": ["default", "focus", "loading", "empty", "error"],
+  "events": ["press", "open", "play", "select", "focus", "close"],
+  "slots": [
+    { "name": "header", "accepts": ["atom.label", "atom.button"], "optional": true, "max": 4 },
+    { "name": "backdrop", "accepts": ["atom.surface"], "optional": true },
+    { "name": "actions", "accepts": ["atom.button"], "optional": false, "max": 4 },
+    { "name": "reactions", "accepts": ["atom.chip", "atom.icon"], "optional": true, "max": 6 },
+    { "name": "episodes", "accepts": ["molecule.tile"], "optional": true, "max": 24 },
+    { "name": "related", "accepts": ["organism.rail"], "optional": true, "max": 4 }
+  ],
+  "a11y": {
+    "role": "group",
+    "label": "{{title}} details"
+  },
+  "targets": {
+    "android": { "renderer": "DetailActivity", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixDetailTemplate", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-detail", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 200, "maxLayers": 8, "maxImageBytes": 240000 }
+}

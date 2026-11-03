@@ -97,12 +97,26 @@ export const api = {
   meta: (identity, profile) => request(`/app/v1/meta/${encodeURIComponent(identity)}${profile ? `?profile=${encodeURIComponent(profile)}` : ''}`, { timeout: 8000 }),
   trailer: (identity, profile) => request(`/app/v1/trailer/${encodeURIComponent(identity)}?profile=${encodeURIComponent(profile)}`, { timeout: 8000 }),
   subs: (identity, profile, langs) => request(`/app/v1/subs/${encodeURIComponent(identity)}?profile=${encodeURIComponent(profile)}&langs=${encodeURIComponent(langs || '')}`, { timeout: 8000 }),
-  // The hub spends up to ~11s measuring copies before it answers, and says the client should allow 12.
-  play: (body) => request('/app/v1/play', { method: 'POST', body, timeout: 14000 }),
-  switchSource: (body) => request('/app/v1/switch', { method: 'POST', body, timeout: 14000 }),
+  // The hub now answers a Play press inside ~8 s, but a cold copy can still take a few more seconds to
+  // produce its first byte. The old 14 s was below the hub's own worst case, so a working request was
+  // aborted by the client and shown as "the hub did not answer".
+  play: (body) => request('/app/v1/play', { method: 'POST', body, timeout: 30000 }),
+  switchSource: (body) => request('/app/v1/switch', { method: 'POST', body, timeout: 30000 }),
   progress: (body) => request('/app/v1/progress', { method: 'POST', body, timeout: 6000 }),
+  // Continue watching management: dismiss hides the tile (the position survives, and pressing the
+  // title again brings it back); reset rewinds a title to never-started.
+  dismiss: (body) => request('/app/v1/progress/dismiss', { method: 'POST', body, timeout: 6000 }),
+  resetProgress: (body) => request('/app/v1/progress/reset', { method: 'POST', body, timeout: 6000 }),
+  // My List lives on the hub, so the living room and the browser read the same shelf.
+  myList: (profile) => request(`/app/v1/list?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
+  setMyList: (profile, identity, add) => request('/app/v1/list',
+    { method: 'POST', body: { profile, identity, add }, timeout: 6000 }),
   prefs: (profile) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { timeout: 6000 }),
-  savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`, { method: 'POST', body: prefs, timeout: 6000 }),
+  // The hub's POST reads the profile from the body (the native client has always sent it there); the
+  // query is for a reader. Sending only the query made every write from this page answer `400 profile
+  // required`, so a switch flipped on screen and the value never changed.
+  savePrefs: (profile, prefs) => request(`/app/v1/prefs?profile=${encodeURIComponent(profile)}`,
+    { method: 'POST', body: Object.assign({}, prefs, { profile }), timeout: 6000 }),
   health: () => request('/healthz', { timeout: 8000 }),
 
   // Add-on management. The hub keeps the registry, so this is only a view of it: what is installed,
@@ -118,6 +132,9 @@ export const api = {
   /* Settings and administration — the hub owns all of it, and the manifest says which of it exists. */
   settings: () => request('/app/v1/settings', { timeout: 8000 }),
   saveSettings: (body) => request('/app/v1/settings', { method: 'PUT', body, timeout: 8000 }),
+  // The household's admin PIN is checked by the hub, never compared on this page: `settings.lock.enabled`
+  // says a PIN is wanted, and this route is the only one that can say whether the number is right.
+  unlockSettings: (pin) => request('/app/v1/settings/unlock', { method: 'POST', body: { pin }, timeout: 6000 }),
   unlockProfile: (id, pin) => request(`/app/v1/profiles/${encodeURIComponent(id)}/unlock`, { method: 'POST', body: { pin }, timeout: 6000 }),
   createProfile: (body) => request('/app/v1/profiles', { method: 'POST', body, timeout: 6000 }),
   updateProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body, timeout: 6000 }),

@@ -6,12 +6,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Format
-import com.scenix.tv.core.PlayTarget
-import com.scenix.tv.core.Source
 
 /**
- * The ceilings every plugin shares, in one place, because this whole app is written for one known
- * TV: Sony BRAVIA, Android 11, armeabi-v7a, 2 GB RAM.
+ * The ceilings the TV shell shares, in one place, because this app is written for one known TV:
+ * Sony BRAVIA, Android 11, armeabi-v7a, 2 GB RAM.
  *
  * The mockup's player readout says "720p · 6.0 Mbps", and that is a hard cap, not a hint — it is
  * what keeps a 4 K source from decoding itself to death on this panel. The numbers live in
@@ -44,24 +42,22 @@ object Ceilings {
     /** 30 s behind (rewind without re-requesting) and 120 s ahead, from config/theme. */
     fun loadControl(app: AppContext): DefaultLoadControl {
         val theme = app.theme
+        // Start after a short cushion, not a full five seconds: on a cold copy the first frame is the
+        // thing the viewer is waiting for. Keep a much larger forward buffer so a slower patch does
+        // not immediately drain it, and give a rebuffer a little more room than the first start.
+        val playback = theme.playerPlaybackBufferMs.coerceIn(1_500, 3_000)
+        val min = theme.playerMinBufferMs.coerceAtLeast(12_000)
+        val forward = theme.playerForwardBufferMs.coerceAtLeast(60_000)
         return DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                theme.playerMinBufferMs,
-                theme.playerForwardBufferMs,
-                theme.playerPlaybackBufferMs,
-                theme.playerPlaybackBufferMs * 2,
+                min,
+                forward,
+                playback,
+                (playback * 2).coerceAtLeast(3_000),
             )
             .setBackBuffer(theme.playerBackBufferMs, true)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
     }
 
-    /** The ceiling text the overlay prints, and the detail screen quotes. */
-    fun ceilingLine(app: AppContext): String =
-        "${app.theme.playerMaxWidth}x${app.theme.playerMaxHeight} \u00B7 " +
-            Format.bitrate(app.theme.playerMaxBitrate) + " cap"
-
-    /** The track selector the player was built with, kept for the overlay's honest readout. */
-    fun isDefaultSelector(selector: androidx.media3.exoplayer.trackselection.TrackSelector): Boolean =
-        selector is DefaultTrackSelector
 }

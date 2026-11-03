@@ -31,20 +31,60 @@ export function isFocusable(node) { return node && node.hasAttribute && node.has
 
 export function getFocus() { return current; }
 
+/*
+ * One layout read per focus move.
+ *
+ * A D-pad step used to call getBoundingClientRect() and getComputedStyle() once per focusable, several
+ * times over (group members, geometric fallback, band walk). On this panel that is four or five forced
+ * style/layout passes per key. The cache below is alive only for the length of one move: rectangles are
+ * read once, reused by every strategy, and thrown away before anything can change.
+ */
+let moveCache = null;
+
+function beginMove() { moveCache = { pool: null, rects: new Map(), styles: new Map(), bands: new Map() }; }
+function endMove() { moveCache = null; }
+
+function rectOf(node) {
+  if (moveCache) {
+    const held = moveCache.rects.get(node);
+    if (held) return held;
+    const r = node.getBoundingClientRect();
+    moveCache.rects.set(node, r);
+    return r;
+  }
+  return node.getBoundingClientRect();
+}
+
+function styleOf(node) {
+  if (moveCache) {
+    const held = moveCache.styles.get(node);
+    if (held) return held;
+    const st = window.getComputedStyle(node);
+    moveCache.styles.set(node, st);
+    return st;
+  }
+  return window.getComputedStyle(node);
+}
+
 function visible(node) {
   if (!node || !node.isConnected) return false;
   if (node.getAttribute('aria-hidden') === 'true') return false;
-  const r = node.getBoundingClientRect();
+  const r = rectOf(node);
   if (r.width < 2 || r.height < 2) return false;
-  const st = window.getComputedStyle(node);
-  if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+  const st = styleOf(node);
+  // Opacity is deliberately not a visibility test. The player's chrome fades in on the same keypress that
+  // asks the ring to enter it; rejecting an element mid-transition made the controls unreachable.
+  if (st.visibility === 'hidden' || st.display === 'none') return false;
   return true;
 }
 
 function root() { return scopes.length ? scopes[scopes.length - 1] : document.body; }
 
 export function candidates() {
-  return Array.from(root().querySelectorAll(`[${ATTR}]`)).filter(visible);
+  if (moveCache && moveCache.pool) return moveCache.pool;
+  const pool = Array.from(root().querySelectorAll(`[${ATTR}]`)).filter(visible);
+  if (moveCache) moveCache.pool = pool;
+  return pool;
 }
 
 export function onFocus(cb) { listeners.push(cb); return () => { const i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); }; }
@@ -55,7 +95,7 @@ export function setFocus(node, { scroll = true, source = 'key' } = {}) {
   current = node;
   node.classList.add('foc');
   try { node.focus({ preventScroll: true }); } catch (e) { /* older engines: class + ring still work */ }
-  if (scroll) scrollTo(node);
+  if (scroll) scrollFor(node);
   for (const cb of listeners) { try { cb(node, source); } catch (e) { console.error('[scenix] focus listener', e); } }
   return true;
 }
@@ -65,26 +105,60 @@ export function blurFocus() {
   current = null;
 }
 
+/**
+ * Where the page should sit when the ring lands on `node`.
+ *
+ * A hero is not a card: scrolling just enough to show its Play button leaves the title above the top
+ * edge, which is exactly the "I can see the banner but not the film" state on a detail page. Entering a
+ * billboard or a detail hero goes to the top of the screen, so the name and the button are one picture.
+ */
+function scrollFor(node) {
+  if (node.closest && node.closest('.nav')) return;
+  if (node.closest && node.closest('.billboard, .detail-hero')) {
+    const screen = node.closest('.screen');
+    if (screen) { screen.scrollTop = 0; return; }
+  }
+  scrollTo(node);
+}
+
 function scrollTo(node) {
-  /* Instant. A smooth scroll animates the container, which repaints everything visible for a third of a
-     second after every key, on top of the focus zoom and on top of whatever the shelf is already doing.
-     Remote navigation wants the next card under the ring immediately. */
-  const behavior = 'auto';
-  try { node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior }); }
-  catch (e) { try { node.scrollIntoView(); } catch (e2) { /* ignore */ } }
+  /* Instant, and only the two scrollers that actually need to move. `scrollIntoView({block,inline})`
+     walks every scrollable ancestor and lets the engine choose a scroll anchoring point; on this panel
+     that produced a layout/anchor pass after every key. The shelf scrolls horizontally, the screen
+     vertically, and a card already inside both is left alone. */
+  const row = node.closest ? node.closest('.cards') : null;
+  if (row && row.scrollWidth > row.clientWidth + 1) {
+    // Netflix centers the walking position: a shelf moves so the focused tile sits in the middle of
+    // what is visible, not merely "revealed" at an edge. One direct assignment, still instant — the
+    // panel's perf work keeps every D-pad step free of an animated scroll pass.
+    const view = row.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    const max = row.scrollWidth - row.clientWidth;
+    const target = row.scrollLeft + (card.left + card.width / 2 - (view.left + view.width / 2));
+    row.scrollLeft = Math.min(max, Math.max(0, target));
+  }
+  const screen = node.closest ? node.closest('.screen') : null;
+  if (screen && screen.scrollHeight > screen.clientHeight + 1) {
+    const view = screen.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    const top = view.top + 96;       // keep the ring out from under the fixed nav
+    const bottom = view.bottom - 24;
+    if (card.top < top) screen.scrollTop -= (top - card.top);
+    else if (card.bottom > bottom) screen.scrollTop += (card.bottom - bottom);
+  }
 }
 
 /* ---- group navigation: walking a row or a grid by index ---- */
 
 function groupOf(node) { return node.closest('[data-nav]'); }
-function groupMembers(group, node) {
-  const kids = Array.from(group.querySelectorAll(`[${ATTR}]`)).filter(visible);
+function groupMembers(group, node, pool) {
+  // Read the move's one candidate snapshot rather than running a second subtree query. The order is the
+  // page's own document order either way, and `visible` has already paid for every rect/style read.
+  const kids = (pool || candidates()).filter((n) => group.contains(n));
   return kids.includes(node) ? kids : null;
 }
 
 /* ---- geometric navigation: what is really above or below on this screen ---- */
-
-function rectOf(node) { return node.getBoundingClientRect(); }
 
 function geometric(from, dir, pool) {
   const a = rectOf(from);
@@ -115,21 +189,24 @@ function geometric(from, dir, pool) {
    its own centre and swallows the centres of the shelves above and below it, and the ring stops moving.
    So vertical steps walk bands in layout order and land in the same column the viewer was in. */
 
-const BAND_SEL = '.nav, .bb-btns, .billboard, .mbox, .sheet, .firstrun, .keys';
+const BAND_SEL = '.nav, .bb-btns, .billboard, .detail-hero, .mbox, .sheet, .firstrun, .keys';
 
 function bandOf(node) {
+  if (moveCache && moveCache.bands.has(node)) return moveCache.bands.get(node);
   let n = node;
+  let found = null;
   while (n && n.tagName && n.tagName !== 'BODY') {
-    if (n.hasAttribute && n.hasAttribute('data-nav')) return n;
-    if (n.matches && n.matches(BAND_SEL)) return n;
+    if (n.hasAttribute && n.hasAttribute('data-nav')) { found = n; break; }
+    if (n.matches && n.matches(BAND_SEL)) { found = n; break; }
     n = n.parentElement;
   }
-  return null;
+  if (moveCache) moveCache.bands.set(node, found);
+  return found;
 }
 
-function bands() {
+function bands(pool) {
   const map = new Map();
-  for (const c of candidates()) {
+  for (const c of (pool || candidates())) {
     const b = bandOf(c);
     if (!b) continue;
     let e = map.get(b);
@@ -143,10 +220,10 @@ function bands() {
   return out;
 }
 
-function bandStep(from, dir) {
+function bandStep(from, dir, pool) {
   const mine = bandOf(from);
   if (!mine) return null;
-  const list = bands();
+  const list = bands(pool);
   let idx = -1;
   for (let i = 0; i < list.length; i++) if (list[i].el === mine) { idx = i; break; }
   if (idx < 0) return null;
@@ -155,6 +232,17 @@ function bandStep(from, dir) {
   const rest = dir === 'down' ? list.slice(idx + 1) : list.slice(0, idx).reverse();
   for (const b of rest) {
     if (!b.items.length) continue;
+    // Coming up from a shelf into the billboard, the right answer is the Play button, not whichever
+    // thumbnail happens to be under the same column. The queue is still reachable with one more step.
+    if (b.el.classList && b.el.classList.contains('billboard')) {
+      const play = b.el.querySelector('.bb-btns .btn, .bb-btns .round');
+      if (play) return play;
+    }
+    // Same for a detail page: entering the hero from a shelf should land on Play/Resume.
+    if (b.el.classList && b.el.classList.contains('detail-hero')) {
+      const play = b.el.querySelector('.detail-actions .btn');
+      if (play) return play;
+    }
     let best = b.items[0];
     let bestD = Infinity;
     for (const c of b.items) {
@@ -168,17 +256,30 @@ function bandStep(from, dir) {
 }
 
 export function move(dir) {
+  beginMove();
+  try {
+    return moveWithin(dir);
+  } finally {
+    endMove();
+  }
+}
+
+function moveWithin(dir) {
   if (!current || !visible(current)) {
     const first = candidates()[0];
     if (first) setFocus(first);
     return !!first;
   }
+  // One candidate snapshot for the whole move. Group walking, band walking and the geometric fallback
+  // all read this same array: the DOM is not queried a second time, and two strategies cannot disagree
+  // about which cards are on the screen.
+  const pool = candidates();
   const group = groupOf(current);
   let next = null;
 
   if (group) {
     const kind = group.getAttribute('data-nav');
-    const members = groupMembers(group, current);
+    const members = groupMembers(group, current, pool);
     if (members && members.length > 1) {
       const i = members.indexOf(current);
       if (kind === 'h' && dir === 'right' && i < members.length - 1) next = members[i + 1];
@@ -193,7 +294,7 @@ export function move(dir) {
   }
   if (!next) {
     if (dir === 'up' || dir === 'down') {
-      next = bandStep(current, dir);
+      next = bandStep(current, dir, pool);
       // A band's neighbour is the only honest answer for leaving it: pure geometry would happily walk
       // back into a card that is merely scrolled behind the fixed menu bar. But a band is often taller
       // than the screen - an avatar picker with three rails in it - and then the way on is still down,
@@ -202,9 +303,9 @@ export function move(dir) {
       // and a grid still reaches its own next row and the rails beneath it.
       if (!next) {
         const band = bandOf(current);
-        next = geometric(current, dir, band ? candidates().filter((n) => band.contains(n)) : null);
+        next = geometric(current, dir, band ? pool.filter((n) => band.contains(n)) : pool);
       }
-    } else next = geometric(current, dir);
+    } else next = geometric(current, dir, pool);
   }
   if (!next) return false;
   setFocus(next);
@@ -246,7 +347,10 @@ document.addEventListener('mouseover', (e) => {
   const node = e.target.closest && e.target.closest(`[${ATTR}]`);
   if (!node) return;
   if (current === node) return;
-  setFocus(node, { source: 'pointer' });
+  // Hovering focuses, but it never scrolls. A mouse sits where the viewer put it; yanking a row sideways
+  // (or the page up and down) under a still cursor is the "row jumps as I move over it" complaint. Only a
+  // D-pad step — which has no cursor to keep steady — may bring the ring into view.
+  setFocus(node, { source: 'pointer', scroll: false });
 }, true);
 
 // Moving the mouse out of everything should not leave a stale ring on a card that is no longer under it.

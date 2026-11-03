@@ -223,8 +223,41 @@ function saveNow() {
 
 const keyOf = (hash, fileId) => String(hash) + ':' + String(fileId);
 const inFlight = new Map(); // key -> Promise
+// A non-torrent copy — a file on the hub's own disk, a direct MP4 an addon minted — has no hash to
+// cache under, but the play path still needs its languages and picture size. Keyed by URL, short TTL.
+const urlProbeCache = new Map();
+const urlFlights = new Map();
+const URL_PROBE_TTL_MS = 10 * 60 * 1000;
 let running = 0;
 const queue = [];
+
+/**
+ * Describe an HTTP copy by URL, for callers that have no torrent hash (a local file served through
+ * `/app/v1/proxy`, or a direct stream an addon returned). This is a deliberate play-time cost only
+ * when the adaptive ladder asks for it: the answer's audio list and true picture height decide whether
+ * the ladder can carry every language and whether it would have to upscale. Cached briefly by URL.
+ */
+async function probeUrl(url, opts = {}) {
+  if (!/^https?:\/\//i.test(String(url || ''))) return null;
+  const key = String(url);
+  const hit = urlProbeCache.get(key);
+  if (hit && Date.now() - hit.at < URL_PROBE_TTL_MS) return hit.value;
+  if (urlFlights.has(key)) return urlFlights.get(key);
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : PROBE_TIMEOUT_MS;
+  const p = (async () => {
+    const r = await runProbe('url', key, key, timeoutMs);
+    if (!r || !r.ok) return null;
+    const value = normalize(r.json, key);
+    urlProbeCache.set(key, { at: Date.now(), value });
+    if (urlProbeCache.size > 64) {
+      const oldest = [...urlProbeCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) urlProbeCache.delete(oldest[0]);
+    }
+    return value;
+  })().finally(() => urlFlights.delete(key));
+  urlFlights.set(key, p);
+  return p;
+}
 
 // What a probe learns about a copy. A later failure must not throw these away: they are the facts the
 // language ranking and the "can this screen draw it" test ask about, and an unreadable file right now says
@@ -513,7 +546,7 @@ function status() {
 checkBin(); // one spawnSync at boot so /healthz can say whether the binary is there
 
 module.exports = {
-  peek, peekByHash, probe, tracksFor, prewarm, status, checkBin, clearCache,
+  peek, peekByHash, probe, probeUrl, tracksFor, prewarm, status, checkBin, clearCache,
   langOf, normalize,
   keyOf,
   FILE,

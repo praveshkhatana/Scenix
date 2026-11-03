@@ -1,0 +1,75 @@
+{
+  "id": "organism.hero.glass",
+  "version": 1,
+  "level": "organism",
+  "summary": "Glass home hero: words on the left, two unequal feature plates with a focus halo, and the shelf chips directly beneath.",
+  "props": {
+    "items": {
+      "type": "array",
+      "required": true,
+      "description": "Feature records: title, secondary line, artwork and optional logo."
+    },
+    "max": {
+      "type": "integer",
+      "default": 2,
+      "min": 1,
+      "max": 4,
+      "description": "Plates drawn from items. Glass shows two; Kids also shows two."
+    },
+    "ratio": {
+      "type": "enum",
+      "default": "7:10",
+      "enum": ["7:10", "40:60", "equal"],
+      "description": "Plate weights. Glass measures 741:1067, Kids 40:60."
+    },
+    "variant": {
+      "type": "enum",
+      "default": "glass-cards",
+      "enum": ["glass-cards", "kids-stage", "dual-cards"],
+      "description": "Material family: frosted Glass plates, a Kids stage, or the calm dual-card composition."
+    },
+    "height": {
+      "type": "token",
+      "default": "space.heroHeight",
+      "tokenGroup": "space"
+    },
+    "halo": {
+      "type": "boolean",
+      "default": true,
+      "description": "Glow pack focus halo on the focused plate, never a hard inner keyline."
+    },
+    "chips": {
+      "type": "array",
+      "description": "Shelf shortcuts the chips jump to; labels truncate before the row scrolls."
+    },
+    "maxChips": {
+      "type": "integer",
+      "default": 8,
+      "min": 0,
+      "max": 12
+    },
+    "titleAlign": {
+      "type": "enum",
+      "default": "start",
+      "enum": ["start", "center"]
+    }
+  },
+  "states": ["default", "focus", "pressed", "loading", "empty"],
+  "events": ["press", "focus", "blur", "open"],
+  "slots": [
+    { "name": "plates", "accepts": ["molecule.tile"], "optional": false, "max": 4 },
+    { "name": "chips", "accepts": ["atom.chip"], "optional": true, "max": 12 },
+    { "name": "actions", "accepts": ["atom.button"], "optional": true, "max": 3 },
+    { "name": "words", "accepts": ["atom.label"], "optional": true, "max": 4 }
+  ],
+  "a11y": {
+    "role": "group",
+    "label": "Featured titles"
+  },
+  "targets": {
+    "android": { "renderer": "GlassHomeLayout / KidsHomeLayout hero", "focus": "host-glow" },
+    "ios": { "renderer": "ScenixFeatureHero", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-hero-glass", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 64, "maxLayers": 6, "maxImageBytes": 96000 }
+}

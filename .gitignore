@@ -11,5 +11,15 @@ hub/data/
 # family profile names live in hub/profiles.json (gitignored); profiles.example.json is the template
 hub/profiles.json
 
+# working material and research trail — local only, not part of the public tree
+shots/
+refs/
+qa/
+design-contracts/
+design/
+
+# this folder is the household's own media library in local-files mode; the repo ships no media
+hub/media/
+
 .idea/
 .DS_Store

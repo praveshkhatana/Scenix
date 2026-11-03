@@ -18,6 +18,7 @@ const https = require('https');
 const { URL } = require('url');
 
 const liveHealth = require('../core/live-health');
+const guide = require('../core/guide');
 const settings = require('../core/settings');
 
 const PROVIDER_ID = 'live-tv';
@@ -57,7 +58,8 @@ const REFRESH_MS = 6 * 60 * 60 * 1000; // playlist re-fetch every 6 h
 const HEALTH_REFRESH_MS = Number(process.env.LIVE_HEALTH_REFRESH_MS || 30 * 60 * 1000);
 const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
-let channels = []; // {id, name, group, groups, logo, url, quality, langs, langCodes}
+let allChannels = []; // everything the playlist published, including what the owner switched off
+let channels = []; // the selected list the rest of the hub sees: {id, name, group, groups, logo, url, quality, langs, langCodes}
 let loading = null;
 let lastFetch = 0;
 let lastPlaylistUrl = ''; // what the last successful fetch actually pulled, so changing it takes effect
@@ -124,6 +126,7 @@ function parseM3U(text) {
     out.push({
       id: ID_PREFIX + (slug(attr('tvg-id')) || slug(name) + '_' + out.length),
       name,
+      tvgId: attr('tvg-id') || '', // what an XMLTV guide keys this channel by, when the playlist says
       group: groups[0],
       groups,
       logo: attr('tvg-logo'),
@@ -214,7 +217,8 @@ async function refresh(force = false) {
             }
           }
         }
-        channels = parsed;
+        allChannels = parsed;
+        channels = selected(parsed);
         lastFetch = Date.now();
         lastPlaylistUrl = url;
         lastError = null;
@@ -302,6 +306,62 @@ function identityForName(name) {
   return 'norm:' + slug(name);
 }
 
+/**
+ * The owner's selection over the playlist. This is deliberately applied to the published list rather than
+ * to the row: a hidden channel must not be probed, numbered, searched or played, and a hidden group must
+ * leave the catalogue as one decision. `allChannels` keeps the published list so the channel manager can
+ * offer a hidden channel back.
+ */
+function selected(list) {
+  const live = (settings.get().live || {});
+  const hidden = new Set(live.hidden || []);
+  const groups = new Set(live.groupsHidden || []);
+  return list.filter((c) => {
+    if (hidden.has(identityForName(c.name))) return false;
+    if ((c.groups || []).some((g) => groups.has(g))) return false;
+    return true;
+  });
+}
+
+/** The published channels, with the owner's selection state, for the Settings screen. */
+function channelList() {
+  const live = (settings.get().live || {});
+  const hidden = new Set(live.hidden || []);
+  const groups = new Set(live.groupsHidden || []);
+  const out = allChannels.map((c) => ({
+    identity: identityForName(c.name),
+    name: c.name,
+    group: c.group,
+    groups: c.groups,
+    logo: c.logo || null,
+    quality: c.quality || null,
+    enabled: !hidden.has(identityForName(c.name)) && !(c.groups || []).some((g) => groups.has(g)),
+    number: liveHealth.numberFor(identityForName(c.name)) || null,
+  }));
+  // The wall used to publish these blind and in raw playlist order: a channel the hub had watched
+  // fail looked identical to a working one, and the tile order had nothing to do with the numbers it
+  // prints. Same verdicts and same working-first, number-then-name order as the live row.
+  for (const c of out) {
+    const h = liveHealth.get(c.identity);
+    c.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
+    // What's on right now, tile by tile — only when the owner configured a guide, so a hub without
+    // one publishes exactly what it published before.
+    const epg = guide.nowNext({ name: c.name, tvgId: c.tvgId || '' });
+    if (epg.now || epg.next) { c.now = epg.now; c.next = epg.next; }
+  }
+  out.sort((a, b) => liveHealth.compare(
+    { identity: a.identity, title: a.name },
+    { identity: b.identity, title: b.name },
+  ));
+  return out;
+}
+
+function channelGroups() {
+  const set = new Set();
+  for (const c of allChannels) for (const g of c.groups || []) set.add(g);
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
 /** Group the parsed channel variants into §1 items (identity = norm:<slug(name)>). */
 function hubItems(list) {
   const byName = new Map();
@@ -345,13 +405,14 @@ function hubItems(list) {
     if (langs.length) item.languages = [...new Set([...(item.languages || []), ...langs])];
     item.genres = [...new Set([...(item.genres || []), ...c.groups])];
     if (qbits(c.quality) > qbits(item.live.quality)) item.live.quality = c.quality;
-    // iptv-org gives no EPG here: `live.now` stays null, the app shows the channel name instead.
   }
 
-  // Additive on the §1 `live` object: what the prober saw, and the stable zap number.
+  // Additive on the §1 `live` object: what the prober saw, the stable zap number, and — when the
+  // owner pointed settings.live.xmltv at a guide — what is on this channel right now and what follows.
   //   live.health   "working" | "dead" | "unknown"  (unknown = never checked, or the evidence is old)
   //   live.checkedAt / live.latencyMs / live.error   the probe record behind that verdict
   //   live.number   1, 2, 3 … assigned once and kept across restarts (core/live-health.js)
+  //   live.now / live.next  { title, start, stop, minsLeft, progress } from core/guide.js, or null
   for (const item of byName.values()) {
     const h = liveHealth.get(item.identity);
     item.live.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
@@ -359,6 +420,10 @@ function hubItems(list) {
     item.live.latencyMs = h ? h.latencyMs : null;
     item.live.error = h && !h.ok ? h.error : null;
     item.live.number = liveHealth.numberFor(item.identity);
+    const tvgId = (channels.find((c) => identityForName(c.name) === item.identity && c.tvgId) || {}).tvgId || '';
+    const epg = guide.nowNext({ name: item.title, tvgId });
+    item.live.now = epg.now;
+    item.live.next = epg.next;
     if (h && h.ok && h.url) {
       const at = item.sources.findIndex((s) => s._url === h.url);
       if (at > 0) item.sources.unshift(item.sources.splice(at, 1)[0]);
@@ -448,11 +513,16 @@ module.exports = {
   // Hub-side warmup: /app/v1 never waits on the network, it reads whatever this holds.
   start() {
     // Playlist first, then the health pass behind it — both in the background, never awaited, so a
-    // slow playlist or a wall of dead feeds cannot delay the hub coming up.
+    // slow playlist or a wall of dead feeds cannot delay the hub coming up. The guide (if the owner
+    // configured one) rides along: now/next is header polish and must never gate playback.
     refresh(true).then(() => probePass('startup'));
+    guide.refresh(true);
     const t = setInterval(() => refresh(true).then(() => probePass('playlist refresh')), REFRESH_MS);
     if (t.unref) t.unref();
     const h = setInterval(() => {
+      // A configured guide is re-fetched on the same beat the feeds are re-probed: 30 min is what
+      // keeps "now/next" honest without hammering the guide host.
+      guide.refresh();
       if (channels.length) probePass('health refresh');
     }, HEALTH_REFRESH_MS);
     if (h.unref) h.unref();
@@ -468,8 +538,11 @@ module.exports = {
     // country's TV this is comes from the owner's playlist, and a row labelled "India Live TV" above a
     // Brazilian playlist is the hub contradicting its own settings.
     return [
-      { id: CATALOG_ID, name: 'Live TV', extra: ['search', 'genre', 'language'] },
-      { id: KIDS_CATALOG_ID, name: 'Kids Live TV', extra: ['search'] },
+      // `type` and `genreOptions` are what the owner's Categories screen reads: a catalog can state the
+      // genres it actually publishes, so no screen has to guess one. Both are the live groups this box
+      // fetched, in this box's language, not a list baked into the build.
+      { id: CATALOG_ID, name: 'Live TV', type: 'tv', extra: ['search', 'genre', 'language'], genreOptions: genres() },
+      { id: KIDS_CATALOG_ID, name: 'Kids Live TV', type: 'tv', extra: ['search'], genreOptions: [] },
     ];
   },
 
@@ -483,6 +556,15 @@ module.exports = {
     loading = null;
     return refresh(true).catch((e) => console.log(new Date().toISOString(), 'live reload failed:', e.message));
   },
+
+  /** The playlist did not change, only which channels the owner wants. No network, no re-probe. */
+  reselect() {
+    channels = selected(allChannels);
+    return channels;
+  },
+
+  channelList,
+  channelGroups,
 
   /** Cache-only: returns [] until the first playlist fetch lands, never blocks the caller. */
   async catalog(catalogId, extra = {}) {
@@ -545,6 +627,7 @@ module.exports = {
       lastFetch: lastFetch ? new Date(lastFetch).toISOString() : null,
       lastError,
       health: liveHealth.status(), // {checked, working, dead, unknown, numbered, updatedAt}
+      guide: guide.status(), // {configured, channels, programmes, updatedAt, error} — core/guide.js
     };
   },
 

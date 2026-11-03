@@ -4,13 +4,25 @@ The content side of Scenix: one Node process, Node built-ins only, that merges s
 sources into one item model and serves it to the TV app **and** to the web app from the same
 port, at the same time.
 
+## Quick start
+
+1. Install Node.js 18+ — there is no `npm install`; the hub uses Node built-ins only.
+2. From the repository root, run `./scripts/install-hub.sh` once to create `hub/profiles.json` from
+   the example (it never overwrites an existing one).
+3. Start it with `cd hub && node index.js`, then open `http://<this-machine>:8788` in a browser on
+   the same network. Give the hub a name and add your sources there.
+4. Allow TCP 8788 and UDP 1900 through the machine's firewall. 1900 is the LAN announcement the TV
+   uses to find this hub. On the TV, open setup (**Settings → Hub connection**) and choose the hub,
+   or type `http://<this-machine>:8788`.
+
 ```
 node index.js                    # 0.0.0.0:8788
 PORT=8789 LOG_REQUESTS=1 node index.js
 ```
 
-Contract: `../../sony-bravia-vu1/design/plugin-architecture.md` §1 (item model) and §2 (hub host).
-Predecessor, kept route-for-route compatible: `../iptv-india-addon.js`.
+Contract: the item model is `app/…/core/Models.kt` field for field, and the host contract for
+add-ons, rows and rules is restated in [`ADDONS.md`](ADDONS.md) and enforced in `core/registry.js`.
+The hub also serves the one web interface (`web/`) that the TV shell, a browser and a phone all load.
 
 ## Adding a feature is adding one file
 
@@ -62,6 +74,24 @@ around from the settings screen, and that override is stored in `data/settings.j
 `rows.order` — both shipped empty, so a fresh hub draws exactly the shelves its own `rows/` files ask
 for, in their own order, and nothing about the defaults depends on which of those files happen to exist.
 
+### Fresh-install defaults
+
+`addons.example.json` is the add-on seed. The hub reads it only while `data/addons.json` does not exist,
+and copies it into that file on the first boot. It contains the legal external defaults — Cinemeta,
+OpenSubtitles v3, WatchHub and Scenix Games — and the native providers a new hub should have on: Local
+Files, Public Domain Movies, Live TV and Kids YouTube. Every other native provider is written with
+`enabled:false`, so a first boot does not quietly switch on an aggregator or a source pack nobody chose.
+An existing `data/addons.json` is never replaced from this file, and `SEED_ADDON_URLS` still replaces the
+external list for an installer that has its own sources.
+
+`providers/public-domain.js` and `rows/publicdomain.js` are the bundled legal shelf: a curated set of
+films that are public domain in the United States, each streamed as a direct MP4 from the Internet
+Archive. The provider is marked `freshInstallOnly`, so it is not appended to an existing hub's add-on
+list. An owner who wants it on an older hub can add
+`{"id":"public-domain","name":"Public Domain Movies","native":true,"enabled":true}` to `data/addons.json`;
+nothing rewrites their file behind their back. Disable it in Settings and the row empties and is dropped
+like any other row.
+
 ### Rule — `rules/x.js`
 ```js
 module.exports = { id: 'x', order: 30, async apply(item, ctx) { return item; /* or null to drop */ } };
@@ -73,7 +103,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | | |
 |---|---|
 | `GET /healthz`, `GET /` | per-provider and per-row counts, loaded and **failed** plugins |
-| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`), which is the only thing a client UI may branch on |
+| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`, `search`, `subtitles`, `debrid` when a token is set), which is the only thing a client UI may branch on |
 | `GET /app/v1/profiles` | profiles and the rows each one sees, with **both** preference views: `prefs` (what the owner typed, untouched, the thing a settings screen writes back) and `effectivePrefs` (what it resolves to once household defaults fill the gaps — the language order a player needs) |
 | `GET /app/v1/home?profile=<id>` | `{ rows: [{ id, title, card, items: […] }] }` |
 | `GET /app/v1/row/<id>?profile=<id>` | one row, for the app's "see all" |
@@ -81,14 +111,14 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | `GET /app/v1/meta/<identity>?profile=<id>` | one merged tile (403 if a rule drops it for that profile) |
 | `GET /app/v1/subs/<identity>?profile=<id>&lang=hin,en` | merged subtitles (403 if the title is hidden) |
 | `GET /app/v1/trailer/<identity>?profile=<id>` | `{url, headers, kind, videoId, expiresAt}` or 404 `{error:"no trailer"}`, from `data/trailers.json`: the clip id is already there for most titles, so only the perishable signed URL is minted (`yt-dlp`) when it has expired. A malformed percent-escape in any `/app/v1` path is a 400, never a crashed hub |
-| `POST /app/v1/play` `{identity, profile, source?, provider?, type?, exclude?, reprobe?, container?, audio?, sub?}` | `{url, headers, kind, expiresAt, mode, proxiedUrl, picked, why, checked, probe, status, tagline, nextSource, alternatives}` plus the tracks this copy really carries (`audioTracks`, `subtitleTracks`, `selectedAudio`, `selectedSub`) and what container it is being handed in (`container`, `remuxed`) — see [Which link actually plays](#which-link-actually-plays). `container:"any"` (the default) is the native player's copy untouched; `"mp4"`/`"hls"` ask for a browser-safe re-wrap |
+| `POST /app/v1/play` `{identity, profile, source?, provider?, type?, exclude?, reprobe?, container?, audio?, sub?}` | `{url, headers, kind, expiresAt, mode, proxiedUrl, picked, why, checked, probe, status, tagline, nextSource, alternatives}` plus the tracks this copy really carries (`audioTracks`, `subtitleTracks`, `selectedAudio`, `selectedSub`) and what container it is being handed in (`container`, `remuxed`) — see [Which link actually plays](#which-link-actually-plays). `container:"any"` (the default) is the player's copy untouched; `"mp4"`/`"hls"` ask for a browser-safe re-wrap |
 | `POST /app/v1/switch` `{identity, profile, exclude?, source?, type?, container?, audio?, sub?}` | same body as play, but the measurement cache is ignored: "this link is buffering, give me another" |
 | `GET /app/v1/remux?u=&v=&a=&s=&start=&dur=` | the engine's own stream URL re-wrapped on the fly into fragmented MP4: video is always copied, audio copied when the container can hold it and re-encoded when a browser cannot play it. `a`/`s` are the stream indexes from the track lists (`a:1` → `a=1`), `start` seeks, `dur` stops, and a `Range` header is honoured so a probe cannot download the whole film. `GET /app/v1/hls/<hash>/<fileId>` is the same idea as a playlist |
 | `GET /app/v1/subtitle?u=&i=` | one embedded text subtitle, converted to WebVTT and served with CORS, so a browser can use a track that lives inside a Matroska file. A copy the swarm has not delivered yet answers `503 {error:'warming'}` with `Retry-After: 5`, and one that was cut off mid-track says so with `X-Subtitles-Partial: timeout` — asking again reaches further, because the engine keeps what it has already pulled |
 | `GET`/`PUT /app/v1/settings` | the owner's settings (`data/settings.json`): the hub's name, its content languages, its live-TV playlist, how the addon host behaves, and which home rows are switched off or reordered. The GET also reports every row this hub can put on a home screen, so a settings screen offers the choice over what actually exists rather than a guessed-at list. PUT accepts the settings flat or wrapped in `{settings: …}`, merges it, and re-applies what other parts derived from the old values |
 | `GET /app/v1/addons`, `POST /app/v1/addons`, `POST /app/v1/addons/<id>/enable\|disable`, `DELETE /app/v1/addons/<id>` | the addon-protocol addons this hub answers with, installed or shipped, and which are on |
 | `POST /app/v1/progress` `{profile, identity, positionMs, watchedMs}` | remembered in `data/progress.json`; **refused (403) for a tier-3 title while the adult switch is off** |
-| `GET`/`POST /app/v1/prefs?profile=<id>` | per-profile `qualityCap` and `xxxEnabled`, with the defaults the app should show |
+| `GET`/`POST /app/v1/prefs?profile=<id>` | per-profile playback prefs (`qualityCap`, quality, audio/subtitle languages, adaptive preference, size/bitrate ceilings) and `xxxEnabled`, with the defaults the interface should show. A POST reads the profile from the body; the query is accepted as a fallback |
 | `POST /app/v1/cache/clear` | forgets every response, probed file and judged link this process remembers, answering with the three counts it acted on (`{cleared, tracks, links}`); deleting the files by hand changes nothing until a restart, because the running hub holds them open |
 | `GET /manifest.json`, `/catalog/`, `/meta/`, `/stream/` | any addon-protocol client — same ids (`inlive___`, `ytv___`), byte-identical bodies |
 
@@ -160,12 +190,13 @@ tens of seconds; `dead` (the engine read the torrent and found no video inside i
 shared timeout for all three is what turns a cold copy into a title that refuses to load until someone
 restarts the hub.
 
-What the client does with it lives in one file, `web/js/stall.js`, shared by the browser player and the
-TV's native player, and checked by `scripts/check-stall.mjs`:
+What the client does with it lives in one file, `web/js/stall.js`, shared by the browser and the TV
+shell (they run the same page), and checked by `scripts/check-stall.mjs`:
 
 | situation | response |
 | --- | --- |
-| no movement for 6 s while something should be playing | one silent reload at the current position |
+| a cold copy's first 30 s | not a stall: the player's preparing screen is the honest state |
+| no movement for 6 s, after the copy has actually moved | one silent reload at the current position |
 | an `ended` arriving more than 20 s short of `durationMs` | the same reload, taken immediately — no waiting for the clock |
 | the copy comes back | nothing is said; the viewer never learns it happened |
 | still frozen after the reload | ask: *Choose another stream* / *Keep watching this one* |
@@ -188,7 +219,7 @@ The first row of `/app/v1/home` is a `card:"hero"` row: up to `HERO_MAX` (5) til
 instead of in a strip. The row is built from what this box already holds — `data/library.json`'s `addedAt`,
 the certificates in `data/ratings.json`, the trailer ids in `data/trailers.json`, the sources an addon
 already handed over — so a billboard costs no network and cannot make home slow. It is ranked like a
-The billboard: something in cinemas, something added in the last few days, something the profile tends
+billboard: something in cinemas, something added in the last few days, something the profile tends
 to watch, with a few points of deterministic daily jitter so the screen is not identical every morning, and
 a cap per genre so five tiles are not five animations.
 
@@ -255,21 +286,40 @@ streams of a title some other addon published, not the shelf itself. Until a wor
 `media/` folder above is the Late Night content path, and `GET /healthz` → `ratings.byTier` says how much
 there is.
 
+## Categories — the owner's own shelves
+
+`settings.categories` is a list the owner edits from the settings screen: a name, which catalogue it
+draws from, an optional genre, and whether it is on. `rows/genres.js` turns the enabled ones into a
+**Browse by category** shelf and the Categories screen; switching one off removes it from both without
+touching a row file. A category that names a provider this hub no longer has contributes nothing rather
+than an empty tile.
+
+## Debrid — optional, off by default
+
+`core/debrid/` holds provider adapters; Real-Debrid is the only one shipped. With no token the resolver
+is absent and the capability `debrid` is not advertised — the interface has no dead switch to show. With
+a token, a magnet or hoster link is exchanged for an ordinary HTTP URL before the gateway is asked, and
+the answer says which provider served it. The token is write-only: settings returns `tokenSet`, never
+the secret, and the log never contains it. If the provider is down, slow or refuses the link, playback
+falls back to the gateway unchanged. The provider contract lives in `core/debrid/` and `core/debrid.js`.
+
 ## Environment
 
 | Var | Default | What it does |
 |---|---|---|
 | `PORT` | 8788 | listen port |
+| `TLS_CERT` / `TLS_KEY` | unset | paths to a certificate and key; setting both serves HTTPS directly. A reverse proxy that terminates TLS needs neither: `X-Forwarded-Proto` and `X-Forwarded-Host` are honoured for the URLs the hub returns |
+| `HUB_TOKEN` | unset | optional shared access token. When set, every route except the identity-only `/healthz` needs HTTP Basic (any username, token as password) or `Bearer <token>`. The TV stores it in setup and supplies it through the native player's HTTP data source |
 | `LOG_REQUESTS` | off | `REQ <method> <url> -> <code>` per request |
 | `LANGS` | unset | **seeds** `settings.languages` on a hub that has none (the allow-list rule and the live playlists both read the setting, not this). An empty setting means the language rule is off |
 | `HUB_NAME` | `Scenix Hub` | **seeds** `settings.hubName`: the name a client shows when it lists the hubs it found |
 | `PLAYLIST_URL` | unset | **seeds** `settings.live.playlist`; with no playlist there is no live TV row |
-| `ANNOUNCE` | on | `0` stops the LAN responder, so pairing is by typed address only |
+| `ANNOUNCE` | on | `0` stops the LAN responder, so pairing is by typed address only. With TLS the announcement carries `https://` |
 | `ANNOUNCE_PORT` / `ANNOUNCE_INTERVAL_MS` | 1900 / 30000 | the UDP port the responder listens on and how often it says "I am here" |
 | `SETTINGS_FILE` | `data/settings.json` | where the owner's settings live |
 | `KIDS_BLOCK` | `Animax,MediBizTV,…` | kid-grouped channels that are still not for kids |
 | `YT_BIN` | `yt-dlp` | yt-dlp path; `YT_JS` (its `--js-runtimes`), `YT_CLIENT` (`android`), `YT_MAX`, `YT_CHANNELS` |
-| `SEED_ADDON_URLS` | unset | comma-separated addon-protocol upstreams that replace the shipped seed list (the shipped list is built from `settings.languages` and `settings.addons.sizeFilter`, since an addon carries its configuration in its URL) |
+| `SEED_ADDON_URLS` | unset | comma-separated addon-protocol upstreams that replace the shipped **external** seed list (`addons.example.json`); the native defaults still come from that file, and an existing `data/addons.json` is not replaced |
 | `SIZE_CAP_GB` | 4 | hard per-source cap in `rules/size_cap.js` (the per-profile cap in `prefs` is what usually binds) |
 | `QUALITY_CAP`, `KIDS_QUALITY_CAP` | `1080p` / `720p` | default `qualityCap` for adult and kids profiles (`auto` disables the ceiling) |
 | `RATINGS_DAILY_CAP` | 800 | upstream certificate lookups per day, counted in `data/ratings.json`; browsing spends it, the backfill stops at it |

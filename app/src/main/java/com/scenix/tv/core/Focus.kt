@@ -6,20 +6,17 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewParent
 import android.view.animation.AccelerateDecelerateInterpolator
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.scenix.tv.R
+import android.graphics.Color
+import android.graphics.drawable.LayerDrawable
 
 /**
- * The focus language of the whole app: white 4 px ring + 5 % lift + shadow, ~200 ms, scale-only
- * (cheap on 2 GB RAM), exactly the mockup's `--focus` token (kids-app-plan §8).
+ * The focus language of the remaining native UI (the setup screen): white ring, a small lift and a
+ * shadow, scale-only so it stays cheap on a 2 GB TV.
  *
- * The focusable view and the view that receives the ring can differ — a card's root takes focus,
- * its artwork draws the ring — which is why [attach] takes both.
- *
- * A card gets exactly one focus listener and one key listener, ever. Everything else that has to
- * know "this card is now under the eye" — the trailer dwell, the camera, the MENU-key menu — hangs
- * off those through [setCardHooks], because a second listener would simply replace the ring.
+ * The focusable view and the view that receives the ring can differ — a row takes focus and its
+ * background draws the ring — which is why [attach] takes both. OK always acts: a focused view that
+ * is not itself clickable routes the press to the nearest view that can act, so the viewer never has
+ * to press twice.
  */
 object Focus {
 
@@ -29,159 +26,267 @@ object Focus {
         ctx: AppContext,
         ringRadiusPx: Int = 0,
         scale: Boolean = true,
+        animateScale: Boolean = true,
+        elevate: Boolean = true,
+        glowInset: Int = 0,
+        control: Boolean = false,
+        scaleTo: Float = 0f,
         onClick: (() -> Unit)? = null,
+        onFocus: ((Boolean) -> Unit)? = null,
+        arrow: ((Int) -> Boolean)? = null,
     ) {
         val theme = ctx.theme
-        val ring = Views.ring(theme.focusRingColor, ringRadiusPx, theme.focusRingPx)
+        // The pack chooses the focus language. `ring` is the classic white outline; `glow` thickens it
+        // in the pack's accent and lifts the card; `lift` removes the outline entirely and lets scale
+        // and shadow be the focus. One place, so every screen in the pack behaves the same.
+        val style = theme.focusStyle
+        val ringColor = if (style == "glow") theme.focusGlowColor else theme.focusRingColor
+        val ringWidth = if (style == "glow") theme.focusRingPx * 2 else theme.focusRingPx
+        // A lifted poster has enough visual mass for scale and shadow to read as focus.  A settings
+        // row, back button or text action does not: on a dark TV screen it appeared unfocused even
+        // though Android had moved the D-pad target.  Keep lift for artwork, use a slim keyline for
+        // controls that deliberately opt out of scaling.
+        val liftControl = style == "lift" && !scale
+        val ring: android.graphics.drawable.Drawable = when {
+            style == "lift" && !liftControl -> Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
+            liftControl -> Views.ring(theme.focusRingColor, ringRadiusPx, maxOf(1, theme.focusRingPx))
+            style == "glow" && glowInset > 0 && control -> {
+                // A compact control — a chip, a pill, a settings row — carries its own fill and label,
+                // so the filled plates would paint straight over its text (owner, round 5: "content
+                // not visible/readable on focus"). The control takes only the halo's edges: a soft
+                // glow ring and the warm keyline hugging its border, leaving the contents fully
+                // readable in every state. When the ring rides an oversized canvas behind the
+                // control (a haloRow) the rings are inset INTO the canvas to land at the control's
+                // edge; when it rides the control itself (a chip) they hang just outside it.
+                val c = theme.focusGlowColor
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
+                val wg = maxOf(theme.px(10f), theme.focusRingPx)
+                val wk = theme.focusKeylinePx
+                val halo = LayerDrawable(arrayOf(
+                    Views.ring(Color.argb(theme.focusGlowAlphas[2],
+                        Color.red(c), Color.green(c), Color.blue(c)),
+                        ringRadiusPx + theme.px(12f), wg),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + theme.px(7f), wk),
+                ))
+                if (ringOn === focusable) {
+                    halo.setLayerInset(0, -theme.px(2f), -theme.px(2f), -theme.px(2f), -theme.px(2f))
+                    halo.setLayerInset(1, -theme.px(3f), -theme.px(3f), -theme.px(3f), -theme.px(3f))
+                } else {
+                    val i0 = (glowInset - theme.px(12f)).coerceAtLeast(0)
+                    val i1 = (glowInset - theme.px(7f)).coerceAtLeast(0)
+                    halo.setLayerInset(0, i0, i0, i0, i0)
+                    halo.setLayerInset(1, i1, i1, i1, i1)
+                }
+                halo
+            }
+            style == "glow" && glowInset > 0 -> {
+                // The glow target is deliberately larger than the artwork and is inserted *behind*
+                // it.  Never build this from several thick strokes: every stroke has a hard inner
+                // edge and Android stacks those edges into the grey bands visible below a poster.
+                // These are instead translucent filled plates. The art covers their centres, so
+                // only the low-cost, soft falloff outside the tile remains. One small keyline sits
+                // just outside the art so the D-pad target stays unmistakable at a glance.
+                val c = theme.focusGlowColor
+                val r = android.graphics.Color.red(c)
+                val g = android.graphics.Color.green(c)
+                val b = android.graphics.Color.blue(c)
+                val outer = glowInset
+                val middle = (glowInset * 0.62f).toInt().coerceAtLeast(theme.px(8f))
+                val near = (glowInset * 0.30f).toInt().coerceAtLeast(theme.px(4f))
+                val keyOutset = theme.px(3f).coerceAtMost(glowInset)
+                fun inset(outset: Int) = (glowInset - outset).coerceAtLeast(0)
+                val alphas = theme.focusGlowAlphas
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
+                val halo = LayerDrawable(arrayOf(
+                    Views.rounded(Color.argb(alphas[0], r, g, b), ringRadiusPx + outer),
+                    Views.rounded(Color.argb(alphas[1], r, g, b), ringRadiusPx + middle),
+                    Views.rounded(Color.argb(alphas[2], r, g, b), ringRadiusPx + near),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + keyOutset, theme.focusKeylinePx),
+                ))
+                halo.setLayerInset(0, inset(outer), inset(outer), inset(outer), inset(outer))
+                halo.setLayerInset(1, inset(middle), inset(middle), inset(middle), inset(middle))
+                halo.setLayerInset(2, inset(near), inset(near), inset(near), inset(near))
+                halo.setLayerInset(3, inset(keyOutset), inset(keyOutset), inset(keyOutset), inset(keyOutset))
+                halo
+            }
+            // A compact control in a glow pack takes one crisp keyline in the glow colour — the same
+            // liquid rim as the artwork's halo, just without the halo, which would smear a text
+            // button into its neighbours. A thin warm-dark keyline rides just outside it so the
+            // state still reads on a light pack, where the glow colour is a hair off the page.
+            style == "glow" -> {
+                val k = theme.focusKeylineColor
+                val ka = if (theme.focusKeylineExplicit) 255 else 224
+                val outset = theme.px(5f)
+                LayerDrawable(arrayOf(
+                    Views.ring(theme.focusGlowColor, ringRadiusPx, maxOf(2, theme.focusRingPx)),
+                    Views.ring(Color.argb(ka, Color.red(k), Color.green(k), Color.blue(k)),
+                        ringRadiusPx + outset, maxOf(1, theme.focusKeylinePx)),
+                )).apply { setLayerInset(1, -outset, -outset, -outset, -outset) }
+            }
+            else -> Views.ring(ringColor, ringRadiusPx, ringWidth)
+        }
         val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
+        val base = ringOn?.background
+        // Foreground is the right layer for a container whose children reach its edges (a poster
+        // card): it paints over them. It is the wrong layer for a TextView on this Android 11 panel,
+        // whose foreground never reached the screen, so those views get a background LayerDrawable
+        // instead. Both are the same white ring to the viewer.
+        val onForeground = ringOn is ViewGroup
+        if (onForeground) ringOn?.foreground = plain
 
         focusable.isFocusable = true
         focusable.isFocusableInTouchMode = false
-        ringOn?.foreground = plain
+
+        fun paintRing(focused: Boolean) {
+            val target = ringOn ?: return
+            if (onForeground) {
+                target.foreground = if (focused) ring else plain
+                return
+            }
+            target.background = when {
+                !focused -> base
+                base == null -> ring
+                else -> LayerDrawable(
+                    arrayOf(base.constantState?.newDrawable()?.mutate() ?: base, ring)
+                )
+            }
+        }
+        paintRing(false)
 
         if (onClick != null) {
             focusable.isClickable = true
             focusable.setOnClickListener { onClick() }
         }
 
-        // OK always acts. A focused view that is not itself clickable used to swallow DPAD_CENTER,
-        // so the press looked ignored and the next press moved focus — the "I have to press twice"
-        // and "Play takes forever to press" complaints. Route OK to the nearest view that can act:
-        // this view, else an ancestor that has a click handler, else a clickable child.
+        // Press-and-hold, the reference app's gesture: a card that answers a hold (`isLongClickable`)
+        // decides on release, so a quick OK still opens the title and holding it past the platform's
+        // long-press timeout runs the hold action instead — add to My List, leave Continue watching.
+        // Key repeat intervals differ wildly across TV remotes, so the decision is made on a clock,
+        // not by counting repeat events: every device delivers a DOWN and eventually an UP.
+        @Suppress("DEPRECATION")
+        val holdMs = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        var holdTimer: Runnable? = null
+        var holdFired = false
+        // The clock lives on the main looper, not on the card: a shelf recycles its views, and a view
+        // that is detached mid-press would take the pending hold with it.
+        val holdHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        fun cancelHold() {
+            holdTimer?.let { holdHandler.removeCallbacks(it) }
+            holdTimer = null
+        }
         focusable.setOnKeyListener { _, code, ev ->
-            if (ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            when (code) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
-                KeyEvent.KEYCODE_SPACE, -> {
-                    val act = actionable(focusable) ?: return@setOnKeyListener false
-                    act.performClick()
-                    true
+            // Activation is deliberately performed on DOWN for responsive TV feedback. Consume the
+            // matching UP too: if a click starts another Activity on DOWN, letting UP fall through
+            // can be delivered to the freshly created screen and invoke its newly focused Play
+            // control. That was the source of an occasional profile-selection → immediate-detail
+            // jump on fast devices.
+            if (ev.action == KeyEvent.ACTION_UP && code in setOf(
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE,
+                )) {
+                if (code in setOf(
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                        KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE,
+                    ) && holdTimer != null
+                ) {
+                    // Released before the hold clock ran out: an ordinary press, decided now.
+                    cancelHold()
+                    actionable(focusable)?.performClick()
                 }
-                // MENU on a card is its context menu (mark as watched, not interested).
-                KeyEvent.KEYCODE_MENU -> {
-                    val menu = hooks(focusable)?.onMenu
-                    if (menu != null) { menu(focusable); true } else false
+                holdFired = false
+                true
+            } else if (ev.action != KeyEvent.ACTION_DOWN) {
+                false
+            } else {
+                // A row may want an arrow for itself — the hero's Featured rail wraps at its ends to
+                // keep the loop illusion — before the arrow falls through to the system's focus search.
+                arrow?.let { if (it(code)) return@setOnKeyListener true }
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE, -> {
+                        val act = actionable(focusable) ?: return@setOnKeyListener false
+                        if (holdFired) return@setOnKeyListener true   // the hold already answered this press
+                        if (act.isLongClickable && holdTimer == null && ev.repeatCount == 0 && !ev.isLongPress) {
+                            holdTimer = Runnable {
+                                holdTimer = null
+                                holdFired = true
+                                act.performLongClick()
+                            }.also { holdHandler.postDelayed(it, holdMs) }
+                        } else if (act.isLongClickable && (ev.repeatCount > 0 || ev.isLongPress)) {
+                            // Some remotes and input stacks report the hold themselves (a repeat, or the
+                            // long-press flag) rather than leaving the press open for us to time. Either
+                            // one arrives only after the platform's own long-press delay, so it is the
+                            // same decision the clock makes — reached by a different road.
+                            cancelHold()
+                            holdFired = true
+                            act.performLongClick()
+                        } else if (holdTimer == null) {
+                            act.performClick()
+                        }
+                        true
+                    }
+                    else -> false
                 }
-                // Up and down between shelves: same column, next row. Android's focus finder is free
-                // to land on whatever rectangle is nearest, which in a nested list is usually the
-                // first card of the next shelf — so the viewer loses their place every row.
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN ->
-                    if (isCard(focusable)) {
-                        moveShelf(focusable, code == KeyEvent.KEYCODE_DPAD_DOWN)
-                    } else false
-                else -> false
             }
         }
 
         // A pointer on a TV (mouse, air-mouse, touch screen) points at the thing it means, so hover
-        // has to produce the identical effect as the D-pad rather than a third look. One line, because
-        // the effect itself is the focus listener.
+        // has to produce the identical effect as the D-pad rather than a third look.
         focusable.setOnHoverListener { v, ev ->
             if (ev.actionMasked == MotionEvent.ACTION_HOVER_ENTER) v.requestFocus()
-            // Never consume the event: a mouse click on a hovered view is an ordinary click, and the
-            // view already handles those.
             false
         }
 
         val ms = theme.focusDurationMs.toLong()
         focusable.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
-            ringOn?.foreground = if (has) ring else plain
-            val target = if (has) theme.focusScale else 1f
+            // A hold that lost the focus mid-press belongs to a card the viewer walked away from:
+            // drop it rather than fire an action on a tile they are no longer pointing at.
+            if (!has) cancelHold()
+            paintRing(has)
+            onFocus?.invoke(has)
+            val target = if (has) {
+                val cap = if (scaleTo > 1f) scaleTo else theme.focusScale
+                if (style == "lift") Math.max(cap, 1.045f) else cap
+            } else 1f
             val elev = if (has) theme.focusElevationPx.toFloat() else 0f
-            if (scale) {
-                v.animate().scaleX(target).scaleY(target).setDuration(ms)
+            // Artwork uses the Apple-style lift.  Compact or full-width controls use the keyline
+            // above instead, so they do not grow and shove surrounding chrome around.
+            if (scale || (style == "lift" && !liftControl)) {
+                // Shelves can change focus several times a second.  Respect the platform's
+                // reduced-motion setting and settle synchronously when a card asked for the
+                // low-cost focus path; cancelling first prevents a late animation from snapping a
+                // recycled card back under the active one.
+                if (animateScale && theme.motionEnabled) {
+                    // A 200 ms lift re-composites the whole 1080p surface for a dozen frames. On the
+                    // Mali-G31 panel that is where the missed deadlines came from, so card shelves
+                    // ask for the instant lift below and only small chrome animates.
+                    v.animate().scaleX(target).scaleY(target).setDuration(minOf(ms, 100L))
+                        .setInterpolator(AccelerateDecelerateInterpolator()).start()
+                } else {
+                    v.animate().cancel()
+                    v.scaleX = target
+                    v.scaleY = target
+                }
+            }
+            // A translated Z animates a shadow pass every frame. On the 2 GB panel the cards get the
+            // ring and scale, not an elevation animation; setup keeps it because it has one button.
+            if (elevate && theme.motionEnabled) {
+                v.animate().translationZ(elev).setDuration(ms)
                     .setInterpolator(AccelerateDecelerateInterpolator()).start()
+            } else if (elevate) {
+                v.translationZ = elev
             }
-            v.animate().translationZ(elev).setDuration(ms)
-                .setInterpolator(AccelerateDecelerateInterpolator()).start()
-            if (isCard(v)) {
-                // The travelling frame, not a ring per card: whoever owns focus owns the frame.
-                if (has) FocusGlass.follow(v, ctx) else v.post { FocusGlass.sync(null, ctx) }
-            }
-            hooks(v)?.onFocus?.invoke(v, has)
         }
     }
-
-    // ---- moving between shelves -------------------------------------------------------------
-
-    /** A card, as opposed to a button or a chip: CardKit tags every card root with its holder. */
-    private fun isCard(v: View): Boolean = v.getTag(R.id.scenix_card_ctx) != null
-
-    /**
-     * Up and down from a card means the same column of the next shelf.
-     *
-     * A mouse user points; a remote user holds the key. Neither of them expects the highlight to jump
-     * to the start of the next row because that is where the focus finder found a rectangle first.
-     * The launcher's grid is one list, so the column is arithmetic; here the rows are shelves inside
-     * a page, so the same arithmetic has to cross both lists — next row, same index.
-     *
-     * When the next shelf is not on screen yet, or the row above is a heading rather than a shelf,
-     * this says nothing and the normal focus search answers instead.
-     */
-    private fun moveShelf(card: View, down: Boolean): Boolean {
-        val shelf = shelfOf(card) ?: return false
-        val page = pageOf(shelf) ?: return false
-        val rowItem = shelf.parent as? View ?: return false
-        val rowPos = page.getChildAdapterPosition(rowItem)
-        val column = shelf.getChildAdapterPosition(card)
-        if (rowPos < 0 || column < 0) return false
-
-        val next = page.findViewHolderForAdapterPosition(rowPos + if (down) 1 else -1) ?: return false
-        val nextShelf = shelfOf(next.itemView) ?: return false
-        val target = childAt(nextShelf, column)
-        if (target == null) {
-            // That column is off the edge of the shelf: bring it in, then stand on it.
-            nextShelf.scrollToPosition(column)
-            nextShelf.post { childAt(nextShelf, column)?.requestFocus() }
-            return true
-        }
-        return target.requestFocus()
-    }
-
-    /** The card a shelf is currently holding at this adapter position, if it has laid one out. */
-    private fun childAt(rv: RecyclerView, adapterPosition: Int): View? =
-        rv.findViewHolderForAdapterPosition(adapterPosition)?.itemView
-
-    private fun shelfOf(view: View): RecyclerView? {
-        var p: ViewParent? = view.parent
-        while (p != null) {
-            if (p is RecyclerView && (p.layoutManager as? LinearLayoutManager)?.canScrollHorizontally() == true) return p
-            p = (p as? View)?.parent
-        }
-        return null
-    }
-
-    private fun pageOf(shelf: RecyclerView): RecyclerView? {
-        var p: ViewParent? = shelf.parent
-        while (p != null) {
-            if (p is RecyclerView && (p.layoutManager as? LinearLayoutManager)?.canScrollVertically() == true) return p
-            p = (p as? View)?.parent
-        }
-        return null
-    }
-
-    /**
-     * Per-card hooks, stored on the view so a recycled card replaces them instead of stacking them.
-     * `onFocus` is the preview dwell and the camera; `onMenu` is the MENU-key menu.
-     */
-    fun setCardHooks(view: View, onFocus: ((View, Boolean) -> Unit)?, onMenu: ((View) -> Unit)?) {
-        view.setTag(
-            R.id.scenix_card_obs,
-            if (onFocus == null && onMenu == null) null else CardHooks(onFocus, onMenu),
-        )
-    }
-
-    /** Any focusable view that needs to know it took focus (the hero's Play button restyles itself). */
-    fun setFocusHooks(view: View, onFocus: ((View, Boolean) -> Unit)?) = setCardHooks(view, onFocus, null)
-
-    private class CardHooks(val onFocus: ((View, Boolean) -> Unit)?, val onMenu: ((View) -> Unit)?)
-
-    private fun hooks(v: View): CardHooks? = v.getTag(R.id.scenix_card_obs) as? CardHooks
 
     /**
      * The view that should actually respond to OK when the focused view cannot: the view itself,
-     * then the nearest ancestor wired to a click (a card whose root is clickable), then the first
-     * clickable thing below it. Null means nothing can act, and OK falls back to normal key handling.
+     * then the nearest ancestor wired to a click, then the first clickable thing below it. Null means
+     * nothing can act, and OK falls back to normal key handling.
      */
     private fun actionable(v: View): View? {
         if (canClick(v)) return v
@@ -210,78 +315,10 @@ object Focus {
         return null
     }
 
-    /**
-     * Put focus where the viewer expects it the moment a screen appears. Calling requestFocus()
-     * while building the view does nothing — the view is not in the window yet — which is why every
-     * screen opened with nothing focused and the first remote press was always wasted.
-     */
-    fun focusOnAttach(root: View, pick: (View) -> View? = { firstActionableIn(it) }) {
-        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: View) {
-                v.post {
-                    if (v.isAttachedToWindow) {
-                        val t = pick(v)
-                        if (t == null || !t.requestFocus()) focusFirst(v)
-                    }
-                }
-            }
-            override fun onViewDetachedFromWindow(v: View) = Unit
-        })
-    }
-
-    /** First view a viewer could actually act on, in reading order; RecyclerViews are searched by row. */
-    private fun firstActionableIn(view: View): View? {
-        // The nav strip is never the answer: landing there when a screen opens is the "I pressed
-        // Down twice" complaint. The viewer expects to be standing on content.
-        if (view.tag == "nav") return null
-        if (view is RecyclerView) {
-            for (i in 0 until view.childCount) {
-                val child = view.getChildAt(i)
-                (if (canClick(child)) child else firstActionableIn(child))?.let { return it }
-            }
-            return null
-        }
-        if (canClick(view) && view.isFocusable && shown(view)) return view
-        if (view is ViewGroup) {
-            for (i in 0 until view.childCount) {
-                firstActionableIn(view.getChildAt(i))?.let { return it }
-            }
-        }
-        return null
-    }
-
-    /**
-     * The first card of the first shelf — where Scenix has focus when a browse screen opens, so one
-     * press of OK opens something and Up reaches the billboard.
-     */
-    fun firstShelfCard(rv: RecyclerView): View? {
-        for (i in 0 until rv.childCount) {
-            val row = rv.getChildAt(i) ?: continue
-            if (row.tag == "nav") continue
-            val cards = firstRecyclerViewIn(row) ?: continue
-            cards.getChildAt(0)?.let { return it }
-        }
-        return null
-    }
-
-    private fun firstRecyclerViewIn(v: View): RecyclerView? {
-        if (v is RecyclerView) return v
-        if (v is ViewGroup) {
-            for (i in 0 until v.childCount) {
-                firstRecyclerViewIn(v.getChildAt(i))?.let { return it }
-            }
-        }
-        return null
-    }
-
-    /** Ask a container to hand focus to its first focusable child (used when a screen opens). */
+    /** Ask a container to hand focus to its first focusable child. */
     fun focusFirst(container: View): Boolean = container.requestFocus() || focusFirstIn(container)
 
     private fun focusFirstIn(view: View): Boolean {
-        if (view is RecyclerView) {
-            val child = view.getChildAt(0) ?: view.findFocus()
-            if (child != null && child.requestFocus()) return true
-        }
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
                 val c = view.getChildAt(i)
@@ -290,47 +327,5 @@ object Focus {
             }
         }
         return false
-    }
-
-    /**
-     * D-pad correction: RecyclerViews happily walk focus sideways past the edge of a row and drop
-     * it. We keep the standard search (which already goes down to the next row and up to the nav)
-     * and only make sure the row itself is never a focus stop.
-     *
-     * `clipChildren = false` is the other half of the focus ring: a focused card is 10 % bigger than
-     * its slot, and a clipped parent cuts the ring off on one side, which is what makes a row look
-     * "crooked" on a real TV.
-     */
-    fun tuneRecyclerView(rv: RecyclerView) {
-        rv.isFocusable = false
-        rv.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
-        rv.itemAnimator = null
-        rv.clipToPadding = false
-        rv.clipChildren = false
-        drawFocusedOnTop(rv)
-    }
-
-    /**
-     * Paint the focused child last, so a lifted card is drawn OVER its neighbours rather than cut by
-     * them. `clipChildren=false` alone only stops the parents clipping; the neighbour that happens to
-     * be laid out after the focused card still paints on top of it. The launcher keeps its edges
-     * clean the same way.
-     */
-    fun drawFocusedOnTop(rv: RecyclerView) {
-        rv.setChildDrawingOrderCallback { count, i -> drawingOrder(rv, count, i) }
-    }
-
-    private fun drawingOrder(rv: RecyclerView, count: Int, i: Int): Int {
-        val focused = rv.findFocus() ?: return i
-        var top: View = focused
-        while (top.parent !== rv && top.parent is View) top = top.parent as View
-        if (top.parent !== rv) return i
-        val idx = rv.indexOfChild(top)
-        if (idx < 0 || idx == count - 1) return i
-        return when (i) {
-            count - 1 -> idx
-            idx -> count - 1
-            else -> i
-        }
     }
 }

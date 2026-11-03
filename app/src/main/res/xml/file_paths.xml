@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The single share this app makes: the update APK it downloaded into its own cache
+     (core/Updates.kt), handed to the package installer with a one-time content:// grant. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="updates" path="updates/" />
+</paths>

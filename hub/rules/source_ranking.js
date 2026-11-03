@@ -201,6 +201,7 @@ function transportName(source, item) {
   const live = item && item.type === 'channel';
   if (kind === 'torrent') return 'Torrent';
   if (kind === 'link' || source.link) return 'Opens ' + (source.label || 'a service');
+  if (kind === 'audio' || source.audioOnly) return 'Audio-only';
   if (kind === 'hls' || /\.m3u8([?#]|$)/.test(url)) return live ? 'Live HLS' : 'Adaptive HLS';
   if (kind === 'dash' || kind === 'mpd' || /\.mpd([?#]|$)/.test(url)) return live ? 'Live DASH' : 'MPEG-DASH';
   const ext = /\.(mp4|mkv|mov|webm|avi|ts|m2ts)([?#]|$)/.exec(url);

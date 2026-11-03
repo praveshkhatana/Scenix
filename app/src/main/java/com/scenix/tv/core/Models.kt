@@ -16,26 +16,80 @@ internal fun sa(a: JSONArray, i: Int, def: String = ""): String =
     if (a.isNull(i)) def else a.optString(i, def)
 
 /**
- * The only shared data shape — `design/plugin-architecture.md` §1, field for field.
+ * The only shared data shape — every surface and every addon answer maps into it, field for field.
  *
- * The app never invents content and never re-shapes this: the hub sends it, we parse it, the
- * card plugins render it. Missing fields get neutral defaults so a hub that adds or drops a
- * field cannot crash the app (forward compatibility).
+ * The app never invents content and never re-shapes this: the backend sends it, the standalone
+ * host parses it, and the page reads the same JSON. Missing fields get neutral defaults so a
+ * backend that adds or drops a field cannot crash the app (forward compatibility).
  */
 
-/** `{ "now": "Match", "quality": "720p", "number": 12 }` */
+/**
+ * `{ "now": "Match", "quality": "720p", "number": 12, "health": "working" }`
+ *
+ * `health` is the same vocabulary a hub publishes: `working`, `dead`, or `unknown` when a feed has
+ * never been checked or the evidence is more than a day old. The player and the live wall read it to
+ * lead with a feed that answered, but an unknown feed is never hidden — it is the normal state of a
+ * channel nobody has tuned yet.
+ */
+/** One programme from the hub's optional XMLTV guide (core/guide.js): what is on, or what comes next. */
+data class Programme(
+    val title: String = "",
+    val startMs: Long = 0,
+    val stopMs: Long = 0,
+    val minsLeft: Int = 0,
+    /** 0..1000, the hub's own read of how far into the programme the wall clock sits. */
+    val progress: Int = 0,
+    val category: String = "",
+) {
+    companion object {
+        fun from(o: JSONObject?): Programme? {
+            if (o == null) return null
+            val t = s(o, "title", "")
+            if (t.isEmpty()) return null
+            return Programme(
+                title = t,
+                startMs = o.optLong("start", 0L),
+                stopMs = o.optLong("stop", 0L),
+                minsLeft = o.optInt("minsLeft", 0),
+                progress = o.optInt("progress", 0),
+                category = s(o, "category", ""),
+            )
+        }
+    }
+}
+
 data class Live(
     val now: String = "",
     val quality: String = "",
     // The channel's place in the operator's numbering ("12 · &TV"). The hub assigns it; 0 means the
     // hub did not number this one and the app falls back to its position in the row.
     val number: Int = 0,
+    val health: String = "",
+    val checkedAt: Long = 0,
+    val latencyMs: Long = 0,
+    val error: String = "",
+    // The optional XMLTV guide the owner pointed settings.live.xmltv at. Empty title = this hub
+    // knows nothing about what is on; the player header then shows only the channel name, as before.
+    val nowProgramme: Programme? = null,
+    val nextProgramme: Programme? = null,
 ) {
     companion object {
         fun from(o: JSONObject?): Live? {
             if (o == null) return null
-            val l = Live(s(o, "now", ""), s(o, "quality", ""), o.optInt("number", 0))
-            return if (l.now.isEmpty() && l.quality.isEmpty() && l.number <= 0) null else l
+            val l = Live(
+                now = s(o, "now", ""),
+                quality = s(o, "quality", ""),
+                number = o.optInt("number", 0),
+                health = s(o, "health", ""),
+                checkedAt = o.optLong("checkedAt", 0L),
+                latencyMs = o.optLong("latencyMs", 0L),
+                error = s(o, "error", ""),
+                nowProgramme = Programme.from(o.optJSONObject("now")),
+                nextProgramme = Programme.from(o.optJSONObject("next")),
+            )
+            return if (l.now.isEmpty() && l.quality.isEmpty() && l.number <= 0 &&
+                l.health.isEmpty() && l.checkedAt <= 0L && l.nowProgramme == null && l.nextProgramme == null
+            ) null else l
         }
     }
 }
@@ -90,6 +144,17 @@ data class Source(
             why = strList(o.optJSONArray("why")),
         )
 
+        /** `rating` may be a number or the hub's { value, source } record; both read the same. */
+        private fun ratingValue(v: Any?): Double = when (v) {
+            is Number -> v.toDouble()
+            is JSONObject -> v.optDouble("value", 0.0)
+            is String -> v.toDoubleOrNull() ?: 0.0
+            else -> 0.0
+        }
+
+        private fun ratingSource(v: Any?): String =
+            if (v is JSONObject) s(v, "source", "") else ""
+
         private fun strList(a: JSONArray?): List<String> {
             if (a == null) return emptyList()
             val out = ArrayList<String>(a.length())
@@ -127,7 +192,13 @@ data class Item(
     val poster: String? = null,
     val backdrop: String? = null,
     val logo: String? = null,
+    /** This viewer's own percentage, learned from watch history by the hub; 0 = not known yet. */
     val match: Int = 0,
+    /** A recent release or a recent library addition, as the hub defines "New" for every surface. */
+    val isNew: Boolean = false,
+    /** The addon's editorial rating (IMDb when available); separate from `match`. */
+    val rating: Double = 0.0,
+    val ratingSource: String = "",
     val maturity: String = "",
     val durationMs: Long = 0,
     val languages: List<String> = emptyList(),
@@ -147,6 +218,11 @@ data class Item(
     val episodes: List<Episode> = emptyList(),
     /** Optional hub annotation: subtitle languages it can serve. Drives the CC chip; absent = no chip. */
     val subtitleLanguages: List<String> = emptyList(),
+    /**
+     * Is this title already in the profile's own list? The hub stamps the answer on every item it
+     * delivers, so a card can show its state and a hold can take it out again without asking first.
+     */
+    val inList: Boolean = false,
 ) {
     /** Artwork to draw for a card of this item, given the card's aspect. */
     fun artFor(wide: Boolean): String? =
@@ -170,6 +246,9 @@ data class Item(
             backdrop = s(o, "backdrop", "").takeIf { it.isNotBlank() },
             logo = s(o, "logo", "").takeIf { it.isNotBlank() },
             match = o.optInt("match", 0),
+            isNew = o.optBoolean("isNew", false),
+            rating = ratingValue(o.opt("rating")),
+            ratingSource = ratingSource(o.opt("rating")),
             maturity = s(o, "maturity", ""),
             durationMs = o.optLong("durationMs", 0L),
             languages = strList(o.optJSONArray("languages")),
@@ -183,6 +262,7 @@ data class Item(
             sources = srcList(o.optJSONArray("sources")),
             episodes = epList(o.optJSONArray("episodes")),
             subtitleLanguages = strList(o.optJSONArray("subtitleLanguages") ?: o.optJSONArray("subs")),
+            inList = o.optBoolean("inList", false),
         )
 
         fun list(a: JSONArray?): List<Item> {
@@ -194,6 +274,17 @@ data class Item(
             }
             return out
         }
+
+        /** `rating` may be a number or the hub's { value, source } record; both read the same. */
+        private fun ratingValue(v: Any?): Double = when (v) {
+            is Number -> v.toDouble()
+            is JSONObject -> v.optDouble("value", 0.0)
+            is String -> v.toDoubleOrNull() ?: 0.0
+            else -> 0.0
+        }
+
+        private fun ratingSource(v: Any?): String =
+            if (v is JSONObject) s(v, "source", "") else ""
 
         private fun strList(a: JSONArray?): List<String> {
             if (a == null) return emptyList()
@@ -226,369 +317,6 @@ data class Item(
     }
 }
 
-/**
- * A home row as the hub sends it: `{ id, title, card, items[] }` plus the `scope`/`order` a row
- * plugin declares (see the row plugins). The app holds no content knowledge: it renders whatever arrives.
- */
-data class Row(
-    val id: String = "",
-    val title: String = "",
-    val card: String = "poster",     // the card visual to use; unknown ids fall back to poster
-    val scope: String = "all",       // all | adult | kids
-    val order: Int = 0,
-    val max: Int = 0,                // hub-side cap (top10 sends 10); 0 = no cap
-    val items: List<Item> = emptyList(),
-) {
-    companion object {
-        fun from(o: JSONObject): Row = Row(
-            id = s(o, "id", ""),
-            title = s(o, "title", ""),
-            card = s(o, "card", "poster"),
-            scope = s(o, "scope", "all"),
-            order = o.optInt("order", 0),
-            max = o.optInt("max", 0),
-            items = Item.list(o.optJSONArray("items")),
-        )
-
-        fun list(a: JSONArray?): List<Row> {
-            if (a == null) return emptyList()
-            val out = ArrayList<Row>(a.length())
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i) ?: continue
-                out.add(from(o))
-            }
-            return out.sortedBy { it.order }
-        }
-    }
-}
-
-/** Profile from `GET /app/v1/profiles` (profiles + per-profile rules). */
-data class Profile(
-    val id: String = "",
-    val name: String = "",
-    val isKids: Boolean = false,
-    val hasPin: Boolean = false,     // hub-side flag; the PIN itself lives on the app (Prefs)
-    val hiddenRows: List<String> = emptyList(),
-    val languages: List<String> = emptyList(),
-    // Track order the player prefers. Absent on an older hub, where `languages` is used instead.
-    val audioLanguages: List<String> = emptyList(),
-    val subtitleLanguages: List<String> = emptyList(),
-) {
-    companion object {
-        private fun arr(o: JSONObject?, vararg names: String): List<String> {
-            for (n in names) {
-                val a = o?.optJSONArray(n) ?: continue
-                return (0 until a.length()).map { sa(a, it, "") }.filter { it.isNotBlank() }
-            }
-            return emptyList()
-        }
-
-        fun from(o: JSONObject): Profile {
-            // The hub keeps playback taste under `prefs`; a hand-written profile may put it on the row.
-            val prefs = o.optJSONObject("prefs")
-            val kind = s(o, "kind", "")
-            return Profile(
-                id = s(o, "id", s(o, "name", "")),
-                name = s(o, "name", ""),
-                isKids = kind.equals("kids", ignoreCase = true) ||
-                    o.optBoolean("isKids", o.optBoolean("kids", false)),
-                // A hub says whether a code is set with `pinSet`; it never sends the code itself.
-                hasPin = o.optBoolean("pinSet", o.optBoolean("pinRequired", o.optBoolean("hasPin", false))),
-                hiddenRows = arr(o, "hiddenRows", "hidden"),
-                languages = arr(o, "languages").ifEmpty { arr(prefs, "languages") },
-                audioLanguages = arr(o, "audioLanguages", "audio")
-                    .ifEmpty { arr(prefs, "audioLanguages", "audio") },
-                subtitleLanguages = arr(o, "subtitleLanguages", "subtitles")
-                    .ifEmpty { arr(prefs, "subtitleLanguages", "subtitles") },
-            )
-        }
-
-        fun list(a: JSONArray?): List<Profile> {
-            if (a == null) return emptyList()
-            val out = ArrayList<Profile>(a.length())
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i) ?: continue
-                out.add(from(o))
-            }
-            return out
-        }
-    }
-}
-
-/**
- * One addon the hub reports — built into it, or installed by the owner. Read-only on the TV: the
- * Settings screen shows the list so the owner can see what the hub is pulling from, and nothing else.
- *
- * Every field is optional. A hub that reports no counts, or no errors, still renders.
- */
-data class Addon(
-    val id: String = "",
-    val name: String = "",
-    val origin: String = "",        // "native" | "user" (anything else prints as-is)
-    val kinds: List<String> = emptyList(),
-    val count: Int = 0,             // items it contributed to the catalogue
-    val lastError: String = "",     // last fetch failure, if any
-    val enabled: Boolean = true,
-) {
-    companion object {
-        fun from(o: JSONObject): Addon = Addon(
-            id = s(o, "id", ""),
-            name = s(o, "name", s(o, "id", "")),
-            // A backend reports an addon the same way whether it is a hub's or this TV's: `native` says who
-            // installed it, `resources` says what it can answer for, `items` counts what it contributed.
-            origin = s(o, "origin", if (o.optBoolean("native", false)) "native" else "user"),
-            kinds = strList(o.optJSONArray("resources") ?: o.optJSONArray("kinds") ?: o.optJSONArray("types")),
-            count = o.optInt("items", o.optInt("count", 0)),
-            lastError = s(o, "error", s(o, "lastError", "")),
-            enabled = o.optBoolean("enabled", true),
-        )
-
-        fun list(a: JSONArray?): List<Addon> {
-            if (a == null) return emptyList()
-            val out = ArrayList<Addon>(a.length())
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i) ?: continue
-                out.add(from(o))
-            }
-            return out
-        }
-
-        private fun strList(a: JSONArray?): List<String> {
-            if (a == null) return emptyList()
-            val out = ArrayList<String>(a.length())
-            for (i in 0 until a.length()) out.add(sa(a, i, ""))
-            return out.filter { it.isNotBlank() }
-        }
-    }
-}
-
-/**
- * `GET /app/v1/manifest` — rows, cards, rules, providers, theme id. The Settings screen renders
- * this read-only; the app never depends on its contents to draw anything.
- *
- * `capabilities` is the one exception, and the only place the app is allowed to ask what its backend
- * can do: a hub that streams from an engine can do things this app hosting itself cannot (`live`, a
- * torrent gateway), and a screen that would only fail gets hidden rather than shown broken. A backend
- * states it as an object of booleans, one key per ability; `null` means the backend predates the field,
- * which means "everything" — an older hub loses nothing.
- */
-data class Manifest(
-    val version: String = "",
-    val theme: String = "",
-    val name: String = "",
-    val rows: List<String> = emptyList(),
-    val cards: List<String> = emptyList(),
-    val rules: List<String> = emptyList(),
-    val providers: List<String> = emptyList(),
-    val addons: List<Addon> = emptyList(),   // optional section; absent on older hubs
-    val capabilities: List<String>? = null,  // null = not stated, so nothing is hidden
-    val raw: JSONObject = JSONObject(),
-) {
-    companion object {
-        fun from(o: JSONObject): Manifest = Manifest(
-            version = s(o, "version", ""),
-            theme = s(o, "theme", ""),
-            name = s(o, "name", ""),
-            rows = ids(o.optJSONArray("rows")),
-            cards = ids(o.optJSONArray("cards")),
-            rules = ids(o.optJSONArray("rules")),
-            providers = ids(o.optJSONArray("players") ?: o.optJSONArray("providers")),
-            addons = Addon.list(o.optJSONArray("addons")),
-            capabilities = capabilitiesOf(o),
-            raw = o,
-        )
-
-        /**
-         * What the backend says it can do, in one shape whatever arrived. A hub states it as an object of
-         * booleans, one key per ability, so the answer is the list of keys switched on; a bare list of
-         * names is read too. `null` only when the field is absent — which hides nothing.
-         */
-        private fun capabilitiesOf(o: JSONObject): List<String>? {
-            o.optJSONArray("capabilities")?.let { return jsonStrings(it) }
-            val obj = o.optJSONObject("capabilities") ?: return null
-            val on = ArrayList<String>()
-            for (k in obj.keys()) if (obj.optBoolean(k, false)) on.add(k)
-            return on
-        }
-
-        private fun ids(a: JSONArray?): List<String> {
-            if (a == null) return emptyList()
-            val out = ArrayList<String>(a.length())
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i)
-                when {
-                    o != null -> out.add(s(o, "id", s(o, "name", "")))
-                    else -> out.add(sa(a, i, ""))
-                }
-            }
-            return out.filter { it.isNotBlank() }
-        }
-    }
-}
-
-/**
- * `POST /app/v1/play` -> `{ url, headers, kind, mode, why }`.
- *
- * `mode` says how the hub is serving it: `direct` (the origin), `proxy` (the hub streaming it
- * through) or `gateway` (the hub resolved something awkward — a torrent, a signed link — into an
- * ordinary seekable HTTP stream). `gateway` and `proxy` are played exactly the same way; only
- * `magnet:` URLs are not Media3's business.
- */
-data class PlayTarget(
-    val url: String = "",
-    val headers: Map<String, String> = emptyMap(),
-    val kind: String = "http",
-    val expiresAt: Long = 0,
-    val mode: String = "",
-    val why: List<String> = emptyList(),
-    // The richer /app/v1/play answer. Every one of these is optional: a hub that answers only
-    // url+kind still plays, it just explains less when a link does not answer.
-    val status: String = "",
-    val tagline: String = "",
-    val warming: Boolean = false,
-    val tried: List<String> = emptyList(),
-    val seeders: Int = -1,
-    /**
-     * Which episode of a series this answer is. A series tile is one merge key with many addresses, so
-     * the hub picks the episode (the one named in the request, the one this profile stopped on, or the
-     * first) and names it back here — plus the one after it, which is what lets "Autoplay next" step a
-     * series forward instead of replaying the same episode for free.
-     */
-    val episode: Episode? = null,
-    val nextEpisode: Episode? = null,
-) {
-    /** One honest sentence for the overlay when the hub resolved a link that did not work here. */
-    fun whyNot(): String = when {
-        seeders == 0 -> "This copy has nobody sharing it"
-        warming -> "The link resolved but had not produced bytes yet"
-        tagline.isNotBlank() -> tagline
-        tried.lastOrNull()?.isNotBlank() == true -> "Rejected: " + tried.last()
-        else -> ""
-    }
-
-    /** True when Media3 can open this at all. */
-    fun playable(): Boolean = url.startsWith("http")
-
-    companion object {
-        fun from(o: JSONObject): PlayTarget {
-            val headers = LinkedHashMap<String, String>()
-            o.optJSONObject("headers")?.let { h ->
-                for (k in h.keys()) headers[k] = s(h, k, "")
-            }
-            return PlayTarget(
-                url = s(o, "url", s(o, "uri", "")),
-                headers = headers,
-                kind = s(o, "kind", "http").lowercase(),
-                expiresAt = o.optLong("expiresAt", 0L),
-                mode = s(o, "mode", ""),
-                why = jsonStrings(o.optJSONArray("why")),
-                status = s(o, "status", ""),
-                tagline = s(o, "tagline", ""),
-                warming = o.optBoolean("warming", false),
-                tried = jsonStrings(o.optJSONArray("tried")),
-                seeders = o.optJSONObject("torrent")?.optInt("seeders", -1) ?: -1,
-                episode = epFrom(o.optJSONObject("episode")),
-                nextEpisode = epFrom(o.optJSONObject("nextEpisode")),
-            )
-        }
-
-        private fun epFrom(j: JSONObject?): Episode? {
-            if (j == null) return null
-            val s = j.optInt("season", 0)
-            val e = j.optInt("episode", 0)
-            return if (s > 0 && e > 0) Episode(s, e, s(j, "title", "")) else null
-        }
-    }
-}
-
-/**
- * `GET /app/v1/subs/<identity>?lang=…` -> `[{ id, addon, lang, url }]`.
- *
- * A subtitle the hub found for this title. `addon` names where it came from, which the app shows as
- * a source word ("Subtitles · Hindi"), never a third-party product name.
- */
-data class Sub(
-    val id: String = "",
-    val addon: String = "",
-    val lang: String = "",
-    val url: String = "",
-    val label: String = "",
-) {
-    /** Mime type Media3 needs to pick a decoder, guessed from the URL (same values as MimeTypes). */
-    val mimeType: String
-        get() {
-            val u = url.lowercase()
-            return when {
-                u.contains(".vtt") -> "text/vtt"
-                u.contains(".ssa") || u.contains(".ass") -> "text/x-ssa"
-                u.contains(".ttml") || u.contains(".dfxp") -> "application/ttml+xml"
-                else -> "application/x-subrip"
-            }
-        }
-
-    companion object {
-        fun from(o: JSONObject): Sub = Sub(
-            id = s(o, "id", s(o, "url", "")),
-            addon = s(o, "addon", s(o, "provider", "")),
-            lang = s(o, "lang", s(o, "language", "")),
-            url = s(o, "url", s(o, "uri", "")),
-            label = s(o, "label", ""),
-        )
-
-        fun list(a: JSONArray?): List<Sub> {
-            if (a == null) return emptyList()
-            val out = ArrayList<Sub>(a.length())
-            for (i in 0 until a.length()) {
-                val o = a.optJSONObject(i) ?: continue
-                if (s(o, "url", "").isNotBlank()) out.add(from(o))
-            }
-            return out
-        }
-    }
-}
-
-/**
- * `GET`/`POST /app/v1/prefs` — how this profile wants the hub to rank sources.
- *
- * The TV only edits and displays it; the ranking itself happens on the hub, which is why the app
- * shows back the `why[]` the hub produced for a sample title.
- */
-data class HubPrefs(
-    val audioLanguages: List<String> = emptyList(),
-    val subtitleLanguages: List<String> = emptyList(),
-    val quality: String = "",           // "" = auto, else 2160 / 1080 / 720 / 480
-    val maxFileSizeBytes: Long = 0,     // 0 = no cap
-    val maxBitrateBps: Int = 0,         // 0 = no cap
-    // The dark-red tier. Off means the hub does not just hide it, it stops recording that it exists
-    // for this profile: no row, no search hit, no history entry. So the default is false, here and
-    // on the hub, and the only place it is ever mentioned is one line in Settings.
-    val lateNight: Boolean = false,
-    val raw: JSONObject = JSONObject(),
-) {
-    fun toJson(profileId: String): JSONObject {
-        val o = JSONObject(raw.toString())  // copy, so unknown hub fields survive the round trip
-        o.put("profile", profileId)
-        o.put("audioLanguages", JSONArray(audioLanguages))
-        o.put("subtitleLanguages", JSONArray(subtitleLanguages))
-        o.put("quality", quality)
-        o.put("maxFileSizeBytes", maxFileSizeBytes)
-        o.put("maxBitrate", maxBitrateBps)
-        o.put("xxxEnabled", lateNight)
-        return o
-    }
-
-    companion object {
-        fun from(o: JSONObject): HubPrefs = HubPrefs(
-            audioLanguages = jsonStrings(o.optJSONArray("audioLanguages") ?: o.optJSONArray("audio")),
-            subtitleLanguages = jsonStrings(o.optJSONArray("subtitleLanguages") ?: o.optJSONArray("subtitles")),
-            quality = s(o, "quality", o.optInt("maxHeight", 0).let { if (it > 0) it.toString() else "" }),
-            maxFileSizeBytes = o.optLong("maxFileSizeBytes", o.optLong("maxSizeBytes", 0L)),
-            maxBitrateBps = o.optInt("maxBitrate", o.optInt("maxBitrateBps", 0)),
-            lateNight = o.optBoolean("xxxEnabled", o.optBoolean("lateNightMode", false)),
-            raw = o,
-        )
-    }
-}
 
 /** Shared tolerant parse: a JSON array of strings, or an empty list. Never throws. */
 internal fun jsonStrings(a: JSONArray?): List<String> {

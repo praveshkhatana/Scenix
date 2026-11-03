@@ -1,15 +1,14 @@
-// Scenix — Android TV app (P1 skeleton). Kotlin + Views/RecyclerView, no Compose, no Glide/Coil,
+// Scenix — Android TV app (P1 skeleton). Kotlin + Views, no Compose, no Glide/Coil,
 // no Hilt/Retrofit/kotlinx-serialization: Sony BRAVIA, Android 11, armeabi-v7a, 2 GB RAM.
 plugins {
     id 'com.android.application' version '8.5.2'
     id 'org.jetbrains.kotlin.android' version '1.9.24'
 }
 
-// ---- one web UI, held in one place ---------------------------------------------------------------
-// The interface is the hub's (`hub/web/`), not a copy that can drift. A build step carries it into a
-// generated assets dir, so git holds a single copy and an APK ships whatever the UI changed minutes ago.
-// The bundle keeps its own layout because LocalServer mounts it at `/ui/*`, which is how a hub serves it:
-// the page's absolute paths (`/ui/js/app.js`) need no rewriting against either backend.
+// ---- the character faces, not a web UI ---------------------------------------------------------
+// The television is native now: its Home, sections, Detail, Search, Settings and Player never load a
+// WebView. The only hub-owned assets the APK still needs are the character list and cached faces the
+// native profile screen offers. A build step carries those in from the hub tree so there is one copy.
 //
 // The hub sits next to this app in the repository, and further up in a working copy checked out beside it,
 // so it is found by walking up until a directory holds `hub/web/index.html`. `-Pscenix.hub=<dir>` says so
@@ -48,6 +47,7 @@ android {
         targetSdk 34
         versionCode 1
         versionName '0.1-p1'
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }  // GeckoView's x86_64 is dead weight on TVs
     }
 
     buildTypes {
@@ -88,17 +88,11 @@ android {
 // repository never holds the same files twice.
 def copyHubUi = tasks.register('copyHubUi', Copy) {
     group = 'scenix'
-    description = 'Carry the hub\'s web UI, its character list and its cached faces into the assets.'
+    description = 'Carry the character list and cached faces into the native profile assets.'
     onlyIf { hubRoot != null && new File(hubRoot, 'web/index.html').isFile() }
     into hubUiDir
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     if (hubRoot != null) {
-        from(new File(hubRoot, 'web')) {
-            // `web/ui` is a link to `web` itself — it is how a hub answers /ui/<path> straight off disk —
-            // and copying it would copy the tree into itself.
-            exclude 'ui', 'ui/**'
-            into 'web'
-        }
         from(new File(hubRoot, 'characters.json')) { into 'characters' }
         from(new File(hubRoot, 'data/avatar-faces')) {
             include '**'
@@ -108,7 +102,7 @@ def copyHubUi = tasks.register('copyHubUi', Copy) {
 }
 tasks.named('preBuild') { dependsOn copyHubUi }
 if (hubRoot == null) {
-    logger.warn("scenix: no hub/web found near ${projectDir}, so this APK carries no web UI. " +
+    logger.warn("scenix: no hub found near ${projectDir}, so this APK carries no character faces. " +
         'Pass -Pscenix.hub=<dir> to point at one.')
 }
 
@@ -123,4 +117,15 @@ dependencies {
     // classpath. Every IPTV tile in the hub is HLS, so this is what live playback runs on.
     implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
     implementation 'androidx.media3:media3-exoplayer-dash:1.4.1'
+    // Firefox's embeddable engine: the multithreaded WASM ports (catalog coi flag) need
+    // SharedArrayBuffer, which Android WebView never grants. GeckoView carries it, in-app.
+    // Pinned to the 128 ESR: its transitive deps (core 1.13.1, kotlin 1.9.24) are exactly this
+    // project's toolchain — newer GV builds demand compileSdk 35+ and break AGP 8.5.2.
+    implementation 'org.mozilla.geckoview:geckoview:128.0.20240725162350'
+
+    // Standalone torrent engine: libtorrent compiled for this TV's 32-bit ARM ABI.
+    implementation 'org.libtorrent4j:libtorrent4j:2.1.0-35'
+    implementation 'org.libtorrent4j:libtorrent4j-android-arm:2.1.0-35'
+    // The same engine for 64-bit ARM, so the APK also installs on an arm64 TV emulator.
+    implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-35'
 }

@@ -32,13 +32,24 @@ function ensurePreview() {
   previewVideo = document.createElement('video');
   // Muted + loop + playsinline is the whole contract for a background preview: it must never make a TV
   // shout, and it must survive a firmware that refuses an unrequested play.
-  previewVideo.muted = true;
-  previewVideo.defaultMuted = true;
+  // A preview is a trailer, not wallpaper: it carries its own sound. The shell allows autoplay with
+  // audio; a desktop browser that blocks it falls back to muted playback in startPreview() and still
+  // shows the picture rather than nothing.
+  previewVideo.muted = false;
+  previewVideo.defaultMuted = false;
+  previewVideo.volume = 1;
   previewVideo.loop = true;
   previewVideo.playsInline = true;
   previewVideo.setAttribute('playsinline', '');
   previewVideo.preload = 'none';
   previewVideo.setAttribute('aria-hidden', 'true');
+  // A browser paints a flat grey rectangle with a play glyph in it before a video has a frame. That is
+  // the "grey play thumbnail" a viewer sees for half a second before every trailer. The still artwork is
+  // the poster until the first frame is actually decoded; only then does the picture fade in.
+  previewVideo.style.background = 'transparent';
+  const ready = () => { if (previewWrap) previewWrap.classList.add('ready'); };
+  previewVideo.addEventListener('loadeddata', ready);
+  previewVideo.addEventListener('canplay', ready);
   previewVideo.addEventListener('error', () => stopPreview());
   previewWrap.appendChild(previewVideo);
   return previewVideo;
@@ -68,27 +79,40 @@ export function attachPreview(slot) {
  */
 export function previewSrc(target) {
   if (!target) return '';
-  if (target.proxiedUrl) return apiUrl(target.proxiedUrl);
+  // Prefer the addon's own address. On the BRAVIA WebView a 4 KB proxied URL is rejected by the media
+  // element as a format error while the 1.5 KB googlevideo URL plays with sound; the proxy stays as the
+  // fallback for a target that only has one.
   const p = String(target.url || '');
-  if (!p) return '';
-  return /^https?:/i.test(p) ? p : apiUrl(p);
+  if (/^https?:/i.test(p)) return p;
+  if (target.proxiedUrl) return apiUrl(target.proxiedUrl);
+  return p ? apiUrl(p) : '';
 }
 
 /** Start the muted preview in `slot`. Resolves false when there is nothing to play. */
-export async function startPreview(slot, target) {
+export async function startPreview(slot, target, poster) {
   const src = previewSrc(target);
   if (!src) return false;
   const v = attachPreview(slot);
+  if (poster) v.poster = String(poster);
+  if (previewWrap) previewWrap.classList.remove('ready');
   if (v.src !== src) {
     v.src = src;
     v.load();
   }
   try {
+    v.muted = false;
     await v.play();
     return true;
   } catch (e) {
-    // A firmware that refuses the play leaves the still poster exactly where it was.
-    return false;
+    // A browser with an autoplay-with-sound policy: keep the picture, mute the sound, and let the next
+    // real keypress be the gesture that turns it back on.
+    try {
+      v.muted = true;
+      await v.play();
+      return true;
+    } catch (e2) {
+      return false;
+    }
   }
 }
 
@@ -101,7 +125,7 @@ export function stopPreview() {
   }
   if (previewWrap && previewWrap.parentNode) previewWrap.parentNode.removeChild(previewWrap);
   document.querySelectorAll('.preview.on').forEach((n) => n.classList.remove('on'));
-  if (previewWrap) previewWrap.classList.remove('on');
+  if (previewWrap) { previewWrap.classList.remove('on'); previewWrap.classList.remove('ready'); }
 }
 
 /** Hide the preview without destroying it — used when a screen is torn down. */
@@ -147,6 +171,11 @@ export function setFeatureVisible(on) {
  */
 export function setSurfaceLive(on) {
   live = !!on;
+  // The shell owns the picture surface. Tell it when the surface is wanted: a full-screen TextureView
+  // behind a browse screen is a composited layer paid for nothing.
+  try {
+    if (window.Scenix && typeof window.Scenix.surface === 'function') window.Scenix.surface(!!on);
+  } catch (e) { /* an older shell simply keeps its surface */ }
   const root = document.documentElement;
   if (live) {
     root.classList.add('native-live');

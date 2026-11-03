@@ -1,0 +1,129 @@
+{
+  "template": "settings",
+  "theme": "scene.glass",
+  "description": "Glass settings: the Home wall behind a back/title/status strip, grouped Screens rows, and the modal picker a row opens on the same panel radius.",
+  "root": {
+    "type": "stack",
+    "children": [
+      {
+        "component": "organism.wall",
+        "props": {
+          "tone": "color.bg",
+          "texture": "pack.wallBlobs",
+          "grain": "pack.wallGrain"
+        }
+      },
+      {
+        "type": "column",
+        "safe": "tv",
+        "gap": "space.listGap",
+        "children": [
+          {
+            "type": "row",
+            "props": {
+              "height": "space.navHeight"
+            },
+            "children": [
+              {
+                "component": "atom.button",
+                "props": {
+                  "label": "Back",
+                  "kind": "ghost",
+                  "icon": "chevron"
+                }
+              },
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@title",
+                  "type": "h2",
+                  "tone": "ink",
+                  "weight": "bold"
+                }
+              },
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@status",
+                  "type": "meta",
+                  "tone": "ink2",
+                  "align": "end"
+                }
+              }
+            ]
+          },
+          {
+            "type": "column",
+            "repeat": "@sections",
+            "gap": "space.listGap",
+            "children": [
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@section.title",
+                  "type": "rowTitle",
+                  "tone": "ink3",
+                  "weight": "bold",
+                  "uppercase": true
+                }
+              },
+              {
+                "component": "molecule.settings-row",
+                "repeat": "@section.rows",
+                "props": {
+                  "label": "@row.label",
+                  "note": "@row.note",
+                  "value": "@row.value",
+                  "control": "@row.control",
+                  "icon": "@row.icon",
+                  "toggleOn": "@row.toggleOn",
+                  "chevron": "@row.chevron"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "overlay",
+        "when": "@picker.open",
+        "children": [
+          {
+            "component": "atom.surface",
+            "props": {
+              "tone": "panel",
+              "radius": "radius.modal",
+              "border": true
+            }
+          },
+          {
+            "type": "column",
+            "slot": "content",
+            "gap": "space.listItem",
+            "children": [
+              {
+                "component": "atom.label",
+                "props": {
+                  "text": "@picker.title",
+                  "type": "rowTitle",
+                  "tone": "ink",
+                  "weight": "bold"
+                }
+              },
+              {
+                "component": "molecule.settings-row",
+                "repeat": "@picker.options",
+                "props": {
+                  "label": "@option.label",
+                  "value": "@option.value",
+                  "control": "chevron",
+                  "chevron": false
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

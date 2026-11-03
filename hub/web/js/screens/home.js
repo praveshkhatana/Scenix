@@ -15,17 +15,87 @@ import { startPreview, stopPreview } from '/ui/js/video.js';
 import { session, rememberFocus } from '/ui/js/state.js';
 
 export function screen(ctx) {
+  // On the television this page is the profile gate and the rest of the flow; Home itself is native.
+  // A browser has no Scenix bridge and keeps the web shelves. The profile is what the native reader
+  // needs, and it is the only thing that crosses the boundary.
+  try {
+    if (session.profile && window.Scenix && typeof window.Scenix.openNativeBrowse === 'function') {
+      window.Scenix.openNativeBrowse(session.profile.id);
+    }
+  } catch (e) { /* an older shell keeps the web home */ }
+
   const root = el('div', { class: 'screen home' });
   const shelves = el('div', { class: 'rows pulled' });
   root.appendChild(shelves);
 
+  /* ---- the Apple stage -------------------------------------------------- */
+  // One backdrop behind the shelves, crossfading to the tile under the ring and blurring while the
+  // viewer walks. Only the Apple pack opts in; every other pack keeps the opaque page.
+  const stagePack = token('pack', 'stage', 'off') === 'focus';
+  let homeStage = null;
+  let stageFront = null;
+  let stageBack = null;
+  let stageUrl = '';
+  if (stagePack) {
+    const host = document.getElementById('stage');
+    if (host) {
+      homeStage = el('div', { class: 'apple-stage', 'aria-hidden': 'true' });
+      stageFront = el('div', { class: 'sg a' });
+      stageBack = el('div', { class: 'sg b' });
+      homeStage.appendChild(stageFront);
+      homeStage.appendChild(stageBack);
+      homeStage.appendChild(el('div', { class: 'veil' }));
+      host.insertBefore(homeStage, host.firstChild);
+    }
+  }
+
+  function stageShow(url) {
+    if (!homeStage || !url || url === stageUrl) return;
+    stageUrl = url;
+    const incoming = stageFront && stageFront.classList.contains('on') ? stageBack : stageFront;
+    if (!incoming) return;
+    const paint = () => {
+      if (stageUrl !== url) return;
+      incoming.style.backgroundImage = `url("${url}")`;
+      incoming.classList.add('on');
+      if (incoming === stageFront) stageBack && stageBack.classList.remove('on');
+      else { stageFront && stageFront.classList.remove('on'); stageFront = incoming; }
+    };
+    const img = new Image();
+    img.onload = paint;
+    img.onerror = () => { if (stageUrl === url) stageUrl = ''; };
+    img.src = url;
+  }
+
+  function stageRoam(on) {
+    if (!homeStage) return;
+    document.body.classList.toggle('roaming', !!on);
+  }
+
+  function stageHero() {
+    const item = bb && bb.__items && bb.__index ? bb.__items[bb.__index()] : null;
+    return item ? (item.backdrop || item.poster) : '';
+  }
+
   let rotate = null;
   let bb = null;
   let dwell = null;
+  let expand = null;
   let previewFor = null;
   let dead = false;
 
   /* ---- billboard -------------------------------------------------------- */
+
+  /**
+   * A billboard is the one tile a viewer presses Play on without opening its page first. The hub can only
+   * start a cold copy while it is being looked at, so opening the title in the background is what makes
+   * that first press fast: the metadata call resolves the file and fills the first slice of the buffer.
+   * Failures are silent — a title with no ready copy is the player's problem to explain, not the shelf's.
+   */
+  function prewarm(item) {
+    if (!item || !item.identity) return;
+    api.meta(item.identity, session.profile && session.profile.id).catch(() => {});
+  }
 
   function startRotation(row) {
     if (rotate) clearInterval(rotate);
@@ -35,8 +105,17 @@ export function screen(ctx) {
       if (dead || document.hidden) return;
       // A preview that is running is the viewer paying attention: rotation waits for it.
       if (previewFor) return;
+      // And a viewer walking the shelves is not looking at the billboard. Rebuilding its text and
+      // thumbnails every six seconds while they browse is pure work for a picture they have left.
+      const a = document.activeElement;
+      if (a && !a.closest('.billboard') && !a.closest('.nav')) return;
       const next = (row.__index() + 1) % row.__items.length;
-      row.__setItem(next);
+      // The timed turn fades (art cross-fade + copy column leave/arrive); a press-driven turn does not.
+      row.__setItem(next, true);
+      if (focus.getFocus() && focus.getFocus().closest && focus.getFocus().closest('.billboard')) {
+        stageShow(row.__items[next] && (row.__items[next].backdrop || row.__items[next].poster));
+      }
+      prewarm(row.__items[next]);
       for (const b of row.querySelectorAll('.bb-btns .btn, .bb-btns .round')) focus.focusable(b);
     }, ms);
   }
@@ -46,7 +125,12 @@ export function screen(ctx) {
     if (!item || dead) return;
     const trailer = await getTrailer(item.identity, session.profile && session.profile.id);
     if (dead || slot.__items[slot.__index()] !== item) return;
-    if (trailer && startPreview(slot.__previewSlot, trailer)) previewFor = slot;
+    if (trailer) {
+      // `startPreview` is async: a bare truthiness check on its Promise marked the card as playing even
+      // when the target had no URL or the decoder refused it.
+      const ok = await startPreview(slot.__previewSlot, trailer, item.poster || item.backdrop);
+      if (!dead && ok) previewFor = slot;
+    }
   }
 
   /* ---- shelves ---------------------------------------------------------- */
@@ -62,12 +146,13 @@ export function screen(ctx) {
       open: (item) => { rememberFocus('home', item.identity); ctx.open(item); },
       list: (item) => ctx.list(item),
       explore: (r) => ctx.navigate('search', `row:${r.id}`),
+      search: (q) => ctx.navigate('search', q),
     });
     const node = rowFor(row)(row, ctxFor());
     node.style.setProperty('--i', String(index));
     shelves.appendChild(node);
 
-    if ((node.__items || []).length) { lazyMount(node, { root }); return node; }
+    if ((node.__items || []).length) { lazyMount(node, { root, preload: '700px' }); return node; }
 
     // The hub answers `/home` fast with some shelves still empty; those fill themselves in when reached.
     const size = row.card === 'poster' ? 'poster' : 'landscape';
@@ -88,13 +173,21 @@ export function screen(ctx) {
           const list = el('div', { class: `cards ${size}`, 'data-nav': 'h' });
           const render = cardFor(row);
           its.slice(0, 30).forEach((item, i) => list.appendChild(render(item, Object.assign({}, ctxFor(), { index: i, row }))));
-          sk.replaceWith(list);
+          // Replace whichever rail is standing in the shell: the skeleton on the first fill, or the empty
+          // `.cards` box the recycler left behind when the row was last unmounted.
+          const old = node.querySelector('.cards');
+          if (old) old.replaceWith(list); else node.appendChild(list);
+          node.__list = list;
           node.__mounted = true;
           return list;
         };
-        lazyMount(node, { root });
+        // From here the row is an ordinary card-bearing row: the recycler mounts it from __items and must
+        // not call the (already spent) filler again.
+        node.__ensure = null;
+        lazyMount(node, { root, preload: '700px' });
       } catch (e) {
         filled = false;
+        node.__ensure = null;
         sk.classList.remove('skeleton');
         for (const kid of Array.from(sk.children)) sk.removeChild(kid);
         sk.appendChild(el('div', { class: 'row-err' },
@@ -109,7 +202,7 @@ export function screen(ctx) {
     // A shelf the hub left empty still has to be reachable: it joins the same mount queue and fills
     // itself when the viewer walks near it.
     node.__ensure = fill;
-    lazyMount(node, { root });
+    lazyMount(node, { root, preload: '700px' });
     return node;
   }
 
@@ -129,7 +222,7 @@ export function screen(ctx) {
       el('h1', { text: 'Nothing on the shelves yet' }),
       el('p', {
         text: canFix
-          ? 'The hub is answering and your profile is set. What is missing is content: this hub has no add-ons installed, so there is nothing to put on a row.'
+          ? 'The hub is answering and your profile is set. What is missing is a source that is on: a fresh Scenix ships with a legal public-domain film shelf and Local Files, and you can install an add-on for more.'
           : 'The hub is answering and your profile is set, but it has nothing to show yet. Whoever runs this hub adds the content.',
       }),
       el('div', { class: 'fr-steps' },
@@ -145,6 +238,23 @@ export function screen(ctx) {
   }
 
   const disposers = [];
+
+  if (stagePack) {
+    const offStageFocus = focus.onFocus((node) => {
+      if (!node || !homeStage) return;
+      const card = node.closest && node.closest('.card');
+      if (card) {
+        stageShow(card.dataset.bd || card.dataset.p || '');
+        stageRoam(true);
+        return;
+      }
+      if (node.closest && (node.closest('.billboard') || node.closest('.nav'))) {
+        stageShow(stageHero());
+        stageRoam(false);
+      }
+    });
+    disposers.push(offStageFocus);
+  }
 
   /** Stop whatever is moving and give the card back the size it had before. */
   function endPreview() {
@@ -169,6 +279,9 @@ export function screen(ctx) {
       home = await api.home(profile);
       home.__profile = profile;
       session.home = home;
+      // The bar's section tabs follow the shelves: the Live TV tab waits until this hub answers with a
+      // live wall that has channels in it.
+      ctx.syncNav();
     }
     if (dead) return;
 
@@ -184,6 +297,10 @@ export function screen(ctx) {
 
     const hero = ordered.find((r) => r.card === 'hero');
     const rest = ordered.filter((r) => r !== hero);
+    const firstStage = (hero && (hero.items || [])[0])
+      || (rest[0] && (rest[0].items || [])[0]);
+    if (firstStage) stageShow(firstStage.backdrop || firstStage.poster);
+    stageRoam(false);
 
     if (hero && (hero.items || []).length) {
       bb = billboard(hero, {
@@ -192,21 +309,61 @@ export function screen(ctx) {
         list: (item) => ctx.list(item),
       });
       root.insertBefore(bb, shelves);
+      prewarm(hero.items[0]);
       startRotation(bb);
     }
     for (let i = 0; i < rest.length; i++) buildRow(rest[i], i);
   }
 
-  /* ---- dwell: 250 ms expands the card, 1500 ms starts its trailer ------- */
+  /* ---- dwell: 250 ms expands the card, 1000 ms starts its trailer ------- */
 
-  const onDwell = focus.onFocus((node) => {
+  // The expansion is the Netflix signature moment and it belongs to attention, not to the trailer: a
+  // tile that has been looked at for `preview.expandMs` widens, its Play / My-List actions become real
+  // stops inside it, OK on the expanded tile plays directly, and the shelf dims everything else. The
+  // trailer then arrives at `preview.delayMs` if there is one. Both timers are per-focus; leaving the
+  // tile collapses it and strips its extra focus stops again.
+  let expandedCard = null;
+  function collapseExpanded() {
+    if (!expandedCard) return;
+    const c = expandedCard;
+    expandedCard = null;
+    c.classList.remove('dwell');
+    for (const b of c.querySelectorAll('.exp button')) { b.removeAttribute('data-f'); b.removeAttribute('tabindex'); }
+  }
+
+  const onDwell = focus.onFocus((node, source) => {
     if (dwell) { clearTimeout(dwell); dwell = null; }
+    if (expand) { clearTimeout(expand); expand = null; }
+    const hostCard = node && node.closest ? node.closest('.card') : null;
+    if (expandedCard && expandedCard !== hostCard) collapseExpanded();
     if (previewFor && previewFor !== node) endPreview();
     if (!node || node === document.body) return;
-    const card = node.closest ? node.closest('.card') : null;
+    // The expansion is the remote's signature moment: walking the ring and dwelling on a tile. A mouse
+    // does not dwell — it sweeps. Growing one card to 460 px while thirty neighbours reflow around it is
+    // exactly what reads as "the items are different widths" and "hovering scrolled the row". Pointer
+    // focus keeps the light state: scale-up and ring only.
+    if (source === 'pointer') return;
+    const card = hostCard;
     const inBillboard = node.closest && node.closest('.billboard');
-    const delay = token('preview', 'delayMs', 1500);
+    const delay = token('preview', 'delayMs', 1000);
+    const expandMs = token('preview', 'expandMs', 250);
     if (card) {
+      expand = setTimeout(() => {
+        if (dead || focus.getFocus() !== node) return;
+        expandedCard = card;
+        card.classList.add('dwell');
+        for (const b of card.querySelectorAll('.exp button')) focus.focusable(b);
+        // The tile grew to the right: make sure the shelf moved far enough that all of it is seen.
+        const row = card.closest('.cards');
+        if (row && row.scrollWidth > row.clientWidth + 1) {
+          const v = row.getBoundingClientRect();
+          const c = card.getBoundingClientRect();
+          if (c.right > v.right - 8) {
+            const max = row.scrollWidth - row.clientWidth;
+            row.scrollLeft = Math.min(max, row.scrollLeft + (c.right - v.right + 8));
+          }
+        }
+      }, expandMs);
       dwell = setTimeout(async () => {
         if (dead) return;
         const identity = card.dataset.identity;
@@ -214,7 +371,13 @@ export function screen(ctx) {
         if (dead || focus.getFocus() !== node) return;
         const art = card.querySelector('.art');
         // A card that is actually moving picture is given room to be one: wider, and at the trailer's ratio.
-        if (trailer && art && startPreview(art, trailer)) { previewFor = node; card.classList.add('playing'); }
+        if (trailer && art) {
+          // The card's own still is the poster to fade out of: this handler was referencing an `item`
+          // from an enclosing scope that never existed, so the fallback path threw instead of previewing.
+          const img = card.querySelector('img');
+          const ok = await startPreview(art, trailer, img ? img.src : null);
+          if (!dead && focus.getFocus() === node && ok) { previewFor = node; card.classList.add('playing'); }
+        }
       }, delay);
     } else if (inBillboard && bb) {
       dwell = setTimeout(() => { if (!dead) previewBillboard(bb); }, delay);
@@ -227,8 +390,12 @@ export function screen(ctx) {
     dead = true;
     if (rotate) clearInterval(rotate);
     if (dwell) clearTimeout(dwell);
+    if (expand) clearTimeout(expand);
+    collapseExpanded();
     stopPreview();
-    dropMountedRows();
+    dropMountedRows(root);
+    stageRoam(false);
+    if (homeStage) { homeStage.remove(); homeStage = null; }
     for (const d of disposers) { try { d(); } catch (e) { /* ignore */ } }
   };
 

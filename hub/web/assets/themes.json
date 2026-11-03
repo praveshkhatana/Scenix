@@ -1,0 +1,16 @@
+{
+ "themes": [
+  {
+   "id": "scenix-apple",
+   "name": "Clean",
+   "asset": "theme-apple.json",
+   "pack": "Scene"
+  },
+  {
+   "id": "scenix-netflix",
+   "name": "Netflix",
+   "asset": "theme-netflix.json",
+   "pack": "Classic"
+  }
+ ]
+}

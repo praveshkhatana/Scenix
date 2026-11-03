@@ -1,0 +1,62 @@
+{
+  "id": "atom.focus-ring",
+  "version": 1,
+  "level": "atom",
+  "summary": "Declarative focus treatment around a target: a crisp ring, a pack-accent glow, or a lift with a hairline.",
+  "props": {
+    "style": {
+      "type": "enum",
+      "default": "ring",
+      "enum": ["ring", "glow", "lift"]
+    },
+    "width": {
+      "type": "number",
+      "default": 2,
+      "min": 1,
+      "max": 8,
+      "description": "Ring stroke in design pixels. Glow doubles it, as Focus.kt does."
+    },
+    "radius": {
+      "type": "number",
+      "default": 14,
+      "min": 0,
+      "max": 999,
+      "description": "Must match the target's own corner radius."
+    },
+    "color": {
+      "type": "color",
+      "default": "#FFFFFF",
+      "description": "Usually color.focusRing; glow packs pass color.focusColor."
+    },
+    "inset": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 48,
+      "description": "Glow band outside the target."
+    },
+    "visible": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "states": ["default", "focus", "disabled"],
+  "events": [],
+  "slots": [
+    {
+      "name": "target",
+      "accepts": ["atom.surface", "atom.button", "atom.avatar", "molecule.tile", "molecule.nav-item"],
+      "optional": false
+    }
+  ],
+  "a11y": {
+    "role": "presentation",
+    "label": "Decorative focus treatment; the target carries the accessible role."
+  },
+  "targets": {
+    "android": { "renderer": "Focus.attach drawable", "focus": "host-glow" },
+    "ios": { "renderer": "ScenixFocusRing", "focus": "focus-engine" },
+    "web": { "renderer": "scenix-focus-ring", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 2, "maxLayers": 3, "maxImageBytes": 0 }
+}

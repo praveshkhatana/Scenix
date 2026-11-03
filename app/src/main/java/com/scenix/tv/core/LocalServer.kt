@@ -2,112 +2,24 @@ package com.scenix.tv.core
 
 import android.content.Context
 import android.content.res.AssetManager
-import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
-import java.io.OutputStream
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.Socket
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
 
 /**
- * The HTTP half of standalone mode. The WebView front end speaks the `/app/v1` contract over HTTP
- * exactly as it does against a hub on another machine, so in this mode the app is its own hub: the
- * same routes on loopback, answered by the same [LocalHub] the native screens call, and the page
- * itself out of `assets/web`.
+ * The HTTP half of standalone mode. The native client speaks the `/app/v1` contract over HTTP exactly
+ * as it does against a hub on another machine, so in this mode the app is its own hub: the same
+ * routes on loopback, answered by the same [LocalHub] the native screens call.
  *
  * One consequence worth stating: there is no second backend implementation to keep in step. The JSON
- * a hub answers and the JSON this answers come from the same functions, so a screen cannot behave one
- * way natively and another way in the WebView.
- *
- * Loopback only, ephemeral port, no authentication — nothing outside this TV can reach it, so a guest
- * on the network cannot browse a household they were not invited into.
+ * a hub answers and the JSON this answers come from the same functions, so the page cannot tell
+ * which machine it is talking to.
  */
 class LocalServer private constructor(
     private val hub: LocalHub,
-    private val assets: AssetManager,
-) {
-    private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
-    private val pool = Executors.newFixedThreadPool(POOL_THREADS, ThreadFactory { r ->
-        Thread(r, "scenix-server").apply { isDaemon = true }
-    })
-    @Volatile private var running = true
+    assets: AssetManager,
+) : LoopbackServer(assets) {
 
-    /** The port the page and every `/app/v1` call hang off. */
-    val port: Int get() = server.localPort
-
-    fun start() {
-        Thread(
-            {
-                while (running) {
-                    try {
-                        val socket = server.accept()
-                        pool.execute { handle(socket) }
-                    } catch (t: Throwable) {
-                        if (running) Log.w(TAG, "accept failed", t)
-                    }
-                }
-            },
-            "scenix-accept",
-        ).apply { isDaemon = true }.start()
-    }
-
-    fun stop() {
-        running = false
-        try { server.close() } catch (t: Throwable) { Log.w(TAG, "close failed", t) }
-    }
-
-    // ---- one request, one response, then the connection closes ---------------------------------
-    // HTTP/1.1 with `Connection: close`: the page makes a handful of fetches at a time, and a TV with
-    // 2 GB of RAM has no business holding sockets open for it.
-
-    private fun handle(socket: Socket) {
-        try {
-            socket.use { s ->
-                val input = s.getInputStream()
-                val reader = BufferedReader(input.reader(Charsets.UTF_8))
-                val request = reader.readLine() ?: return
-                val parts = request.split(" ")
-                if (parts.size < 2) return
-                val method = parts[0].uppercase()
-                val target = parts[1]
-                var length = 0
-                while (true) {
-                    val h = reader.readLine() ?: break
-                    if (h.isBlank()) break
-                    if (h.length >= 15 && h.substring(0, 15).equals("Content-Length:", ignoreCase = true)) {
-                        length = h.substring(15).trim().toIntOrNull() ?: 0
-                    }
-                }
-                val body = if (length > 0) String(readBody(input, length), Charsets.UTF_8) else ""
-                route(method, target, body, Res(s.getOutputStream()))
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "request failed: ${t.message}")
-        }
-    }
-
-    private fun readBody(input: InputStream, n: Int): ByteArray {
-        val buf = ByteArray(n.coerceAtMost(MAX_BODY))
-        var got = 0
-        while (got < buf.size) {
-            val r = input.read(buf, got, buf.size - got)
-            if (r < 0) break
-            got += r
-        }
-        return buf.copyOf(got)
-    }
-
-    // ---- routing --------------------------------------------------------------------------------
-    // The contract, route for route, answered by LocalHub. Anything that is not a contract path is
-    // the bundled page.
-
-    private fun route(method: String, target: String, body: String, res: Res) {
+    override fun route(method: String, target: String, body: String, res: Res) {
         // substringBefore's second argument is the value returned when the delimiter is ABSENT, so asking
         // for "/" there silently renamed every path without a query string to the site root.
         val path = target.substringBefore('?')
@@ -118,6 +30,9 @@ class LocalServer private constructor(
 
             path == "/app/v1/manifest" ->
                 res.json(200, hub.manifestJson())
+
+            path == "/app/v1/caps" ->
+                res.json(200, hub.capsJson())
 
             path == "/app/v1/profiles" && method == "POST" -> {
                 val o = parse(body)
@@ -200,7 +115,19 @@ class LocalServer private constructor(
                 if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
                 else {
                     val answered = hub.playJson(o)
-                    res.json(if (answered.has("error")) 409 else 200, answered)
+                    if (!answered.has("identity")) answered.put("identity", o.optString("identity", ""))
+                    // A local torrent answer is a path this server owns. Make it absolute for the page
+                    // and the native player, which do not share this server's base URL otherwise.
+                    val u = answered.optString("url", "")
+                    if (u.startsWith("/app/v1/torrent/") || u.startsWith("/app/v1/local/")) {
+                        answered.put("url", "http://127.0.0.1:$port$u")
+                    }
+                    val code = when {
+                        !answered.has("error") -> 200
+                        answered.optBoolean("warming") -> 503
+                        else -> 409
+                    }
+                    res.json(code, answered)
                 }
             }
 
@@ -208,6 +135,26 @@ class LocalServer private constructor(
                 val o = parse(body)
                 if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
                 else res.json(200, hub.progressJson(o))
+            }
+
+            path == "/app/v1/progress/dismiss" -> {
+                val o = parse(body)
+                if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
+                else res.json(200, hub.dismissJson(o))
+            }
+
+            path == "/app/v1/progress/reset" -> {
+                val o = parse(body)
+                if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
+                else res.json(200, hub.resetProgressJson(o))
+            }
+
+            path == "/app/v1/list" -> {
+                if (method == "POST") {
+                    val o = parse(body)
+                    if (o == null) res.json(400, JSONObject().put("error", "body must be JSON"))
+                    else res.json(200, hub.listPostJson(o))
+                } else res.json(200, hub.listJson(query["profile"] ?: query["profileId"]))
             }
 
             path == "/app/v1/prefs" -> {
@@ -222,6 +169,8 @@ class LocalServer private constructor(
                 }
             }
 
+            path == "/app/v1/theme" -> res.json(200, hub.themeJson())
+
             path == "/app/v1/settings" -> {
                 val o = parse(body)
                 when {
@@ -230,10 +179,18 @@ class LocalServer private constructor(
                     (method == "PUT" || method == "POST") && o != null -> {
                         // `addonsResynced` is the one effect a TV can cause: new addon URLs mean the shelves
                         // are fetched again. There is no live tuner here to reload.
-                        val touchedAddons = o.has("addons")
+                        // A caller may send the patch itself or wrap it in `{settings: {...}}`, the shape
+                        // a hub's PUT accepts and every native settings screen sends. Unwrapping here is
+                        // what made a standalone save look successful while writing nothing.
+                        val patch = o.optJSONObject("settings") ?: o
+                        val touchedAddons = patch.has("addons")
+                        hub.setSettings(patch)
+                        // The token is write-only: answer with the redacted settings envelope, never the
+                        // object that was just stored.
                         res.json(
                             200,
-                            JSONObject().put("ok", true).put("settings", hub.setSettings(o))
+                            JSONObject().put("ok", true)
+                                .put("settings", hub.settingsEnvelope().optJSONObject("settings"))
                                 .put("effects", JSONObject().put("addonsResynced", touchedAddons)),
                         )
                     }
@@ -249,7 +206,7 @@ class LocalServer private constructor(
                     else hub.addAddon(o.optString("url", o.optString("manifest", "")), o.optString("name", ""))
                 if (out.has("error")) res.json(addonErrorCode(s(out, "error", "")), out)
                 else {
-                    hub.refreshAddons { _, _ -> }
+                    hub.refreshAddons()
                     res.json(
                         200,
                         JSONObject().put("ok", true).put("addon", out.opt("addon"))
@@ -333,150 +290,145 @@ class LocalServer private constructor(
             path == "/app/v1/avatars/warm" && method == "POST" ->
                 res.json(200, JSONObject().put("ok", true).put("faces", 0))
 
+            path.startsWith("/app/v1/local/") -> localFile(res, method, path)
+
+            path.startsWith("/app/v1/torrent/") -> torrent(res, method, path)
+
             else -> static(res, path)
         }
     }
 
-    // ---- the bundled page ------------------------------------------------------------------------
-
-    private fun static(res: Res, requested: String) {
-        // The page is mounted at /ui/ by a hub, and its own asset paths are written that way, so a
-        // standalone server answers /ui/app.css and /app.css as one file. That is what lets the same
-        // untouched bundle run against either backend.
-        val rel = when {
-            requested == "/" || requested.isBlank() || requested == "/ui" || requested == "/ui/" -> "index.html"
-            requested.startsWith("/ui/") -> requested.removePrefix("/ui/")
-            else -> requested.removePrefix("/")
-        }
-        if (rel.contains("..")) {
-            res.json(400, JSONObject().put("error", "bad path"))
-            return
-        }
-        val bytes = readAsset(rel)
-        when {
-            bytes == null -> res.json(404, JSONObject().put("error", "not found"))
-            bytes.size > MAX_STATIC -> res.json(413, JSONObject().put("error", "file too large"))
-            else -> res.send(200, contentType(rel), bytes)
+    /**
+     * One indexed local file with HTTP Range support. The player sees ordinary HTTP, so it seeks and
+     * retries through the same path it uses for every other copy; the opaque id is resolved through the
+     * index and never treated as a filesystem path.
+     */
+    private fun localFile(res: Res, method: String, path: String) {
+        val id = decode(path.removePrefix("/app/v1/local/"))
+        val opened = hub.localStream(id)
+            ?: return res.json(404, JSONObject().put("error", "no such local file").put("id", id))
+        opened.use { stream ->
+            val entry = stream.entry
+            val size = stream.size
+            if (size <= 0) return res.json(404, JSONObject().put("error", "this file is empty"))
+            var start = 0L
+            var end = size - 1
+            var partial = false
+            val range = res.headers["range"]?.trim().orEmpty()
+            if (range.startsWith("bytes=", ignoreCase = true)) {
+                val spec = range.substringAfter('=').substringBefore(',').trim()
+                val a = spec.substringBefore('-').trim()
+                val b = spec.substringAfter('-', "").trim()
+                start = when {
+                    a.isEmpty() && b.isNotEmpty() -> (size - (b.toLongOrNull() ?: 0L)).coerceAtLeast(0L)
+                    else -> a.toLongOrNull() ?: 0L
+                }
+                end = if (b.isEmpty()) size - 1 else b.toLongOrNull()?.coerceAtMost(size - 1) ?: (size - 1)
+                partial = true
+            }
+            if (start < 0 || start >= size || end < start) {
+                return res.json(416, JSONObject().put("error", "range not satisfiable"))
+            }
+            val length = end - start + 1
+            val type = TorrentEngine.mimeOf(entry.name)
+            val extra = LinkedHashMap<String, String>()
+            extra["Accept-Ranges"] = "bytes"
+            if (partial) extra["Content-Range"] = "bytes $start-$end/$size"
+            if (method == "HEAD") {
+                res.begin(if (partial) 206 else 200, type, length, extra)
+                return res.end()
+            }
+            try {
+                stream.input.channel.position(start)
+            } catch (t: Throwable) {
+                return res.json(416, JSONObject().put("error", "this provider cannot seek"))
+            }
+            res.begin(if (partial) 206 else 200, type, length, extra)
+            val buf = ByteArray(LOCAL_CHUNK)
+            var left = length
+            while (left > 0) {
+                val want = minOf(buf.size.toLong(), left).toInt()
+                val n = try { stream.input.read(buf, 0, want) } catch (t: Throwable) { -1 }
+                if (n <= 0) break
+                if (!res.write(buf, 0, n)) break
+                left -= n
+            }
+            res.end()
         }
     }
 
     /**
-     * One asset, read with a ceiling. A file in this APK that outgrew the page it belongs to is refused
-     * rather than streamed, because a TV with 2 GB of RAM has no room for a mistake like that.
+     * A prepared torrent file with HTTP Range support. The first chunk is awaited before the head is
+     * written so a cold swarm answers 503 (warming) rather than a truncated 200; after that every read
+     * waits only for the pieces covering that byte range.
      */
-    private fun readAsset(rel: String): ByteArray? = try {
-        assets.open("web/$rel").use { input ->
-            val out = ByteArrayOutputStream()
-            val buf = ByteArray(8 * 1024)
-            var total = 0
-            while (true) {
-                val n = input.read(buf)
-                if (n < 0) break
-                out.write(buf, 0, n)
-                total += n
-                if (total > MAX_STATIC) break
-            }
-            out.toByteArray()
+    private fun torrent(res: Res, method: String, path: String) {
+        val rest = path.removePrefix("/app/v1/torrent/")
+        val hash = decode(rest.substringBefore('/'))
+        val fileId = rest.substringAfter('/', "").toIntOrNull()
+        if (hash.isBlank() || fileId == null) {
+            return res.json(400, JSONObject().put("error", "torrent and file are required"))
         }
-    } catch (t: Throwable) {
-        null
+        val opened = TorrentEngine.find(hash, fileId)
+            ?: return res.json(404, JSONObject().put("error", "torrent not prepared").put("hash", hash))
+        val size = opened.prepared.size
+        var start = 0L
+        var end = size - 1
+        var partial = false
+        val range = res.headers["range"]?.trim().orEmpty()
+        if (range.startsWith("bytes=", ignoreCase = true)) {
+            val spec = range.substringAfter('=').substringBefore(',').trim()
+            val a = spec.substringBefore('-').trim()
+            val b = spec.substringAfter('-', "").trim()
+            start = when {
+                a.isEmpty() && b.isNotEmpty() -> (size - b.toLongOrNull().orZero()).coerceAtLeast(0L)
+                else -> a.toLongOrNull() ?: 0L
+            }
+            end = if (b.isEmpty()) size - 1 else b.toLongOrNull()?.coerceAtMost(size - 1) ?: (size - 1)
+            partial = true
+        }
+        if (start < 0 || start >= size || end < start) {
+            return res.json(416, JSONObject().put("error", "range not satisfiable"))
+        }
+        val length = end - start + 1
+        val type = TorrentEngine.mimeOf(opened.prepared.name)
+        val extra = LinkedHashMap<String, String>()
+        extra["Accept-Ranges"] = "bytes"
+        if (partial) extra["Content-Range"] = "bytes $start-$end/$size"
+        if (method == "HEAD") {
+            res.begin(if (partial) 206 else 200, type, length, extra)
+            return res.end()
+        }
+
+        // Wait for the first chunk before committing the status line. A cold copy then answers 503,
+        // which the player already knows how to retry; a 200 followed by silence is not honest.
+        val first = TorrentEngine.read(opened, start, TORRENT_CHUNK)
+            ?: return res.json(503, JSONObject().put("error", "torrent warming").put("warming", true).put("retryAfterMs", 5000))
+        res.begin(if (partial) 206 else 200, type, length, extra)
+        if (!res.write(first)) return
+        var at = start + first.size
+        while (at <= end) {
+            val want = minOf(TORRENT_CHUNK.toLong(), end - at + 1).toInt()
+            val chunk = TorrentEngine.read(opened, at, want) ?: break
+            if (chunk.isEmpty()) break
+            if (!res.write(chunk)) break
+            at += chunk.size
+        }
+        res.end()
     }
 
-    private fun contentType(path: String): String = when (path.substringAfterLast('.', "")) {
-        "html" -> "text/html; charset=utf-8"
-        "js", "mjs" -> "text/javascript; charset=utf-8"
-        "css" -> "text/css; charset=utf-8"
-        "json" -> "application/json; charset=utf-8"
-        "svg" -> "image/svg+xml"
-        "png" -> "image/png"
-        "jpg", "jpeg" -> "image/jpeg"
-        "webp" -> "image/webp"
-        "ico" -> "image/x-icon"
-        "woff2" -> "font/woff2"
-        "woff" -> "font/woff"
-        "txt" -> "text/plain; charset=utf-8"
-        else -> "application/octet-stream"
-    }
+    private fun Long?.orZero(): Long = this ?: 0L
 
-    // ---- helpers ----------------------------------------------------------------------------------
-
-    private fun parse(text: String): JSONObject? = try {
-        if (text.isBlank()) null else JSONObject(text)
-    } catch (t: Throwable) {
-        null
-    }
-
-    private fun queryOf(target: String): Map<String, String> {
-        if (!target.contains('?')) return emptyMap()
-        return target.substringAfter('?').split("&").mapNotNull { pair ->
-            val k = decode(pair.substringBefore('='))
-            if (k.isBlank()) null else k to decode(pair.substringAfter('=', ""))
-        }.toMap()
-    }
-
-    private fun decode(text: String): String = try {
-        java.net.URLDecoder.decode(text, "UTF-8")
-    } catch (t: Throwable) {
-        text
-    }
-
-    /** A hub's words for a refused addon, answered with the status a hub would use for them. */
     private fun addonErrorCode(error: String): Int = when (error) {
         "already installed" -> 409
         "manifest not reachable" -> 502
         else -> 400
     }
 
-    /** One request's worth of answers, written to one socket: every route answers exactly once. */
-    private inner class Res(private val stream: OutputStream) {
-        fun json(code: Int, o: JSONObject) =
-            send(code, "application/json; charset=utf-8", o.toString().toByteArray(Charsets.UTF_8))
-
-        fun send(code: Int, type: String, bytes: ByteArray) {
-            val status = when (code) {
-                200 -> "OK"
-                400 -> "Bad Request"
-                403 -> "Forbidden"
-                404 -> "Not Found"
-                409 -> "Conflict"
-                413 -> "Payload Too Large"
-                502 -> "Bad Gateway"
-                503 -> "Service Unavailable"
-                else -> "Error"
-            }
-            // The same rule a hub's static server uses: text is re-checked every time, so a page that changed
-            // in a rebuild is never hidden behind a cache, and a picture that cannot change on this TV is kept.
-            val cache = if (type.startsWith("text/") || type.startsWith("application/json")) {
-                "no-cache"
-            } else {
-                "public, max-age=86400"
-            }
-            val head = buildString {
-                append("HTTP/1.1 ").append(code).append(' ').append(status).append("\r\n")
-                append("Content-Type: ").append(type).append("\r\n")
-                append("Content-Length: ").append(bytes.size).append("\r\n")
-                append("Cache-Control: ").append(cache).append("\r\n")
-                append("Connection: close\r\n\r\n")
-            }
-            try {
-                stream.write(head.toByteArray(Charsets.UTF_8))
-                stream.write(bytes)
-                stream.flush()
-            } catch (t: Throwable) {
-                Log.w(TAG, "response write failed: ${t.message}")
-            }
-        }
-    }
 
     companion object {
-        const val TAG = "ScenixServer"
-        const val POOL_THREADS = 3
-        const val MAX_BODY = 256 * 1024
-
-        // The ceiling a hub's own static server holds a page file to. The whole bundle is well under it; the
-        // number is there so one wrong file cannot fill a TV's memory.
-        private const val MAX_STATIC = 4 * 1024 * 1024
-
+        private const val TORRENT_CHUNK = 256 * 1024
+        private const val LOCAL_CHUNK = 128 * 1024
         @Volatile private var instance: LocalServer? = null
 
         /**

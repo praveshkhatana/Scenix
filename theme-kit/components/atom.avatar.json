@@ -1,0 +1,51 @@
+{
+  "id": "atom.avatar",
+  "version": 1,
+  "level": "atom",
+  "summary": "Household profile face: artwork when present, otherwise a tokenised initial in a circular plate.",
+  "props": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "maxLength": 40
+    },
+    "initials": {
+      "type": "string",
+      "maxLength": 2,
+      "description": "Fallback mark; defaults to the first grapheme of name."
+    },
+    "image": {
+      "type": "image",
+      "sizes": ["w96", "w160", "w280"]
+    },
+    "size": {
+      "type": "number",
+      "default": 64,
+      "min": 32,
+      "max": 280
+    },
+    "ring": {
+      "type": "boolean",
+      "default": false,
+      "description": "Adds the pack's focus keyline while the avatar has focus."
+    },
+    "badge": {
+      "type": "enum",
+      "default": "none",
+      "enum": ["none", "kid", "admin", "live"]
+    }
+  },
+  "states": ["default", "focus", "loading", "error", "empty"],
+  "events": ["press", "focus"],
+  "slots": [],
+  "a11y": {
+    "role": "img",
+    "label": "{{name}} profile"
+  },
+  "targets": {
+    "android": { "renderer": "ProfileAvatar", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixAvatar", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-avatar", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 3, "maxLayers": 2, "maxImageBytes": 96000 }
+}

@@ -47,6 +47,8 @@
  */
 
 const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const settings = require('./settings');
@@ -69,8 +71,11 @@ function cfg() {
   const p = settings.playback();
   return {
     on: p.readAhead !== false,
+    direct: p.bufferDirect !== false,
     maxBytes: clampNum(p.readAheadMB, 96, 8, 4096) * MB,
     maxSec: clampNum(p.readAheadSec, 90, 5, 1800),
+    conns: Math.round(clampNum(p.readAheadConns, 4, 1, 8)),
+    chunkBytes: clampNum(p.readAheadChunkMB, 4, 1, 32) * MB,
     copies: Math.round(clampNum(p.readAheadCopies, 2, 1, 12)),
     idleMs: clampNum(p.readAheadIdleMs, 45000, 3000, 600000),
     // The pre-roll: how much picture exists before the first frame is promised to a screen.
@@ -128,6 +133,7 @@ class Copy {
     this.sliding = false;    // measurement mode: drop behind the reader instead of pausing it
     this.readers = new Set(); // live consumers, each {off}
     this.lastUsed = Date.now();
+    this.lastReadAt = 0;      // when a screen was last reading this, as opposed to the hub measuring it
     this.openedAt = Date.now();
     this.ttfbMs = null;
     this.needMbps = null;
@@ -137,10 +143,35 @@ class Copy {
     this.starved = false;
     this.starvedAt = 0;
     this.seeks = 0;
+    this.primeTarget = 0;    // a title-page pre-roll stops here, so browsing one title does not pull 96 MB
     this.listeners = new Set();
+    // Parallel-range mode, for a plain internet copy rather than the engine's torrent. A free file host
+    // rations each connection — measured on one tonight: 5 Mbps for the first 10 MB, down to 2 Mbps by
+    // 25 MB, then a stall — so one sequential reader is the ceiling on the picture, not the film. The
+    // same window is then filled by `readAheadConns` ranged reads at a time.
+    this.ranges = false;
+    this.originHeaders = {};   // what the host wants replayed (iKey, Referer) — the screen never sees them
+    this.inflight = new Map(); // start byte -> {start, end, got, req, res, dead}
+    this.queue = [];           // pieces that landed out of order, waiting for the hole before them
+    this.chunkFails = 0;
+    this.nextRetryAt = 0;
+    // Where the last off-book (probe / gap) read ended, so a chain of them is recognised as playback.
+    this.sideEnd = null;
+    this.sideAt = 0;
+    // A host that cuts one of our ranged reads has not refused the film: the read is re-issued after a
+    // short backoff, and a screen watching a healthy body must not be told otherwise. `givenUp` is the
+    // state that means "this copy will not answer", and only that state may cut a delivery short.
+    this.givenUp = false;
   }
 
-  tag() { return 'hash=' + String(this.hash).slice(0, 12) + ' file=' + this.fileId; }
+  tag() {
+    if (this.ranges) {
+      let where = '?';
+      try { const u = new URL(this.url); where = u.hostname + u.pathname.slice(0, 28); } catch (e) { /* ? */ }
+      return 'src=' + where;
+    }
+    return 'hash=' + String(this.hash).slice(0, 12) + ' file=' + this.fileId;
+  }
   held() { return Math.max(0, this.pos - this.base); }
 
   /** The cushion this copy is allowed to occupy: bytes, or seconds of ITS OWN bitrate, whichever is less. */
@@ -165,18 +196,43 @@ class Copy {
   /** Throw the window away and start the sequential read again at `at`. */
   seekTo(at) {
     this.seeks++;
+    // The window this seek cuts short says nothing about the host: half of it belongs to the offset we are
+    // leaving. Scoring it as a rate is how a copy gets exiled for the hub's own bookkeeping.
+    if (this.win) this.win.capped = true;
+    // Said out loud, because a player probing a container's index does this to a cushion repeatedly, and
+    // every one of these throws away bytes this box already paid the host for. When playback jumps
+    // backwards and re-buffers, this line is the reason and it used to be invisible.
+    log('READAHEAD SEEK', this.tag(), 'to=' + at, 'from=' + this.base + '-' + this.pos,
+      'dropMB=' + Math.round(this.held() / MB), 'readers=' + this.readers.size);
     this.closeReader();
     this.chunks = [];
+    this.queue = [];
     this.base = Math.max(0, at);
     this.pos = this.base;
     this.cursor = this.base;
+    // The anchor is what `trim` keeps bytes ahead of while nobody is reading. Left at the offset the
+    // previous fill was anchored to, it sits hundreds of megabytes in front of this new window and the
+    // very next trim discards every chunk this seek just started — measured tonight, a resume to byte 0
+    // lost its first 4 MB to a stale anchor left by a measurement 431 MB away, and the screen's head read
+    // fell off the back of the window.
+    this.anchor = this.base;
     this.eof = false;
     this.error = null;
-    this.openReader(this.base);
+    this.givenUp = false;
+    if (this.ranges) this.planFetch(cfg());
+    else this.openReader(this.base);
   }
 
   /** Start a sequential read at `at` if there is not one running and the file is not finished. */
   ensureReader(at) {
+    if (this.ranges) {
+      if (this.eof) return;
+      const want = Math.max(0, at);
+      if (Number.isFinite(this.fileSize) && this.fileSize > 0 && want >= this.fileSize) { this.eof = true; return; }
+      if (want < this.base || want > this.pos) { this.seekTo(want); return; }
+      this.planFetch(cfg());
+      return;
+    }
     if (this.req || this.eof) return;
     const want = Math.max(0, at);
     if (Number.isFinite(this.fileSize) && this.fileSize > 0 && want >= this.fileSize) { this.eof = true; return; }
@@ -191,7 +247,11 @@ class Copy {
     if (!this.readers.size) this.anchor = this.sliding ? at : at;
     let u;
     try { u = new URL(this.url); } catch (e) { this.error = 'bad engine url'; return; }
-    const req = http.get(u, { headers: { Range: 'bytes=' + at + '-' }, agent: false, timeout: 120000 }, (got) => {
+    // A live HLS playlist can hand us an https origin to keep pulling from, and this same copy then
+    // reopens readers against it all evening. http.get on an https URL doesn't fail politely — it
+    // throws and takes the whole hub with it, so the library is chosen from the URL, not the habit.
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.get(u, { headers: { Range: 'bytes=' + at + '-' }, agent: false, timeout: 120000 }, (got) => {
       const cr = got.headers && got.headers['content-range'];
       if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) this.fileSize = Number(m[1]); }
       if (got.statusCode === 416 || got.statusCode >= 400) {
@@ -230,7 +290,173 @@ class Copy {
     if (up) { try { up.destroy(); } catch (e) { /* already gone */ } }
     const rq = this.req; this.req = null;
     if (rq) { try { rq.destroy(); } catch (e) { /* already gone */ } }
+    this.dropInflight();
     this.paused = false;
+  }
+
+  /** Is anything pulling bytes right now — one stream, or some number of ranged reads? */
+  isActive() { return !!this.req || this.inflight.size > 0; }
+
+  /* ------------------------------------------------ filling the window with ranged reads */
+
+  /**
+   * Keep `conns` ranged reads in flight just past the end of what we hold. This is the whole reason a
+   * copy that a single socket delivers at 2 Mbps plays: four sockets pull three to four times that, and
+   * the screen reads the cushion at LAN speed instead of waiting on one rationed connection.
+   */
+  planFetch(c) {
+    if (!this.ranges || this.eof) return;
+    if (this.held() >= this.capFor(c)) {
+      // The cushion is full: stopping ourselves says nothing about the host's rate.
+      if (this.win) this.win.capped = true;
+      return;
+    }
+    if (Date.now() < this.nextRetryAt) return;
+    if (this.chunkFails > 24) { this.error = 'host kept dropping our reads'; return; }
+    // What is already coming counts as room used up. Four sockets each carrying 4 MB against a ceiling of
+    // 11 MB is an over-fill the cushion then throws away, and on a host that rations each read, paying for
+    // the same bytes twice is how a copy ends up slower than the one it replaced.
+    if (this.capFor(c) - this.held() <= this.inflight.size * c.chunkBytes) return;
+    let start = this.pos;
+    let guard = 0;
+    while (this.inflight.size < c.conns && guard++ < 16) {
+      if (Number.isFinite(this.fileSize) && this.fileSize > 0 && start >= this.fileSize) { this.eof = true; break; }
+      const end = Number.isFinite(this.fileSize) && this.fileSize > 0
+        ? Math.min(start + c.chunkBytes - 1, this.fileSize - 1)
+        : start + c.chunkBytes - 1;
+      this.startChunk(start, end);
+      start = end + 1;
+    }
+  }
+
+  startChunk(start, end) {
+    let u;
+    try { u = new URL(this.url); } catch (e) { this.error = 'bad url'; return; }
+    const mod = u.protocol === 'https:' ? https : http;
+    const ent = { start, end, got: 0, req: null, res: null, dead: false };
+    this.inflight.set(start, ent);
+    const req = mod.get(u, {
+      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...this.originHeaders, Range: 'bytes=' + start + '-' + end },
+      agent: false,
+      timeout: 60000,
+    }, (res) => {
+      if (ent.dead) { res.resume(); return; }
+      ent.res = res;
+      const cr = res.headers && res.headers['content-range'];
+      if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) this.fileSize = Number(m[1]); }
+      else if (res.statusCode === 200 && res.headers && res.headers['content-length'] && start === 0) {
+        this.fileSize = Number(res.headers['content-length']);
+      }
+      if (res.statusCode === 416) {
+        // Past the end of the file: everything is read.
+        this.eof = true;
+        res.resume();
+        this.inflight.delete(start);
+        this.wake();
+        return;
+      }
+      if (res.statusCode >= 400) { res.resume(); this.failChunk(ent, 'HTTP ' + res.statusCode); return; }
+      if (res.statusCode === 200 && start > 0) {
+        // It answered a range with the whole body: this host has no Range support, so several sockets
+        // would each download the same film. Fall back to one sequential read from the top.
+        log('READAHEAD NO-RANGE', this.tag(), 'range=' + start + '-' + end, 'note=sequential fallback');
+        this.ranges = false;
+        this.dropInflight();
+        this.chunks = [];
+        this.queue = [];
+        this.base = 0; this.pos = 0; this.cursor = 0;
+        this.openReader(0);
+        return;
+      }
+      if (this.ttfbMs === null) {
+        this.ttfbMs = Date.now() - this.openedAt;
+        log('READAHEAD TTFB', this.tag(), 'ms=' + this.ttfbMs, 'range=' + start + '-' + end,
+          'status=' + res.statusCode, 'note=ranges', 'conns=' + this.inflight.size);
+      }
+      if (!this.resHeaders) this.resHeaders = { status: res.statusCode || 200, headers: res.headers };
+      if (!this.win) this.newWindow();
+      let at = start;
+      res.on('data', (b) => {
+        if (ent.dead) return;
+        ent.got += b.length;
+        this.absorb(at, b);
+        at += b.length;
+      });
+      res.on('end', () => {
+        if (ent.dead) return;
+        this.inflight.delete(start);
+        this.chunkFails = 0;
+        // Bytes arrived: whatever the host did a moment ago is no longer the truth about this copy.
+        this.error = null;
+        this.givenUp = false;
+        if (Number.isFinite(this.fileSize) && this.fileSize > 0 && this.pos >= this.fileSize) this.eof = true;
+        this.planFetch(cfg());
+        this.wake();
+      });
+      res.on('error', () => this.failChunk(ent, 'read failed'));
+      res.on('aborted', () => this.failChunk(ent, 'host cut the read'));
+    });
+    req.on('timeout', () => { if (!ent.dead) { try { req.destroy(); } catch (e) {} this.failChunk(ent, 'no answer in 60s'); } });
+    req.on('error', (e) => this.failChunk(ent, e.code || e.message || 'connect failed'));
+    ent.req = req;
+  }
+
+  /** Land one piece of the file: bytes from a socket that finished before the one before it. */
+  absorb(at, buf) {
+    if (!buf || !buf.length) return;
+    this.everBytes = true;
+    if (this.ttfbMs === null) this.ttfbMs = Date.now() - this.openedAt;
+    this.queue.push({ start: at, buf });
+    if (!this.win) this.newWindow();
+    this.win.bytes += buf.length;
+    this.lastUsed = Date.now();
+    // Only bytes that join the end of what we hold extend the window; the rest wait in the queue for the
+    // hole in front of them, so `chunks` stays ascending and contiguous and `find()` stays honest.
+    let moved = true;
+    while (moved) {
+      moved = false;
+      for (let i = 0; i < this.queue.length; i++) {
+        const q = this.queue[i];
+        if (q.start === this.pos) {
+          this.chunks.push(q);
+          this.pos = q.start + q.buf.length;
+          this.cursor = this.pos;
+          this.queue.splice(i, 1);
+          moved = true;
+          break;
+        }
+      }
+    }
+    this.trim(cfg());
+    this.wake();
+  }
+
+  failChunk(ent, why) {
+    if (ent.dead) return;
+    ent.dead = true;
+    try { if (ent.req) ent.req.destroy(); } catch (e) { /* already gone */ }
+    try { if (ent.res) ent.res.destroy(); } catch (e) { /* already gone */ }
+    if (this.inflight.get(ent.start) === ent) this.inflight.delete(ent.start);
+    this.chunkFails++;
+    // A host that fails every read is a dead copy, and the picker should hear about it in the same words
+    // it hears about an engine that will not answer.
+    if (!this.everBytes) this.error = why;
+    this.givenUp = this.chunkFails > 8;
+    this.nextRetryAt = Date.now() + Math.min(8000, 300 * this.chunkFails);
+    if (this.chunkFails <= 6 || this.chunkFails % 20 === 0) {
+      log('READAHEAD CHUNK FAIL', this.tag(), 'range=' + ent.start + '-' + ent.end, 'why=' + why,
+        'fails=' + this.chunkFails, 'heldMB=' + Math.round(this.held() / MB));
+    }
+    this.wake();
+  }
+
+  dropInflight() {
+    for (const ent of this.inflight.values()) {
+      ent.dead = true;
+      try { if (ent.req) ent.req.destroy(); } catch (e) { /* already gone */ }
+      try { if (ent.res) ent.res.destroy(); } catch (e) { /* already gone */ }
+    }
+    this.inflight.clear();
   }
 
   append(buf) {
@@ -297,6 +523,13 @@ class Copy {
     // A deep cushion and a slow window is a blip the buffer is there to absorb. The copy only counts as
     // starving once the cushion is thin enough that the picture is about to stop.
     if (sec !== null && sec > c.graceSec) return;
+    // This map is a memory of *watched* failures. A copy that scored two quiet windows while the picker
+    // was only measuring it never had a viewer to starve, and exiling it for fifteen minutes on a
+    // transient hiccup — measured tonight: three presses in a row refused the only copy that plays,
+    // because a two-second stall during measurement had been recorded as a starving viewer — is worse
+    // than the problem the memory was built to solve. The picker's own per-press verdicts already handle
+    // a slow copy; only a screen that was actually reading gets a vote here.
+    if (!this.readers.size && Date.now() - this.lastReadAt > 10000) return;
     this.starved = true;
     this.starvedAt = Date.now();
     slow.set(String(this.hash), {
@@ -346,6 +579,12 @@ class Copy {
     return null;
   }
 
+  /** The ceiling right now: the whole cushion for a viewer, a fixed slice of it for a title-page pre-roll. */
+  capFor(c) {
+    const b = this.bound(c);
+    return this.primeTarget ? Math.min(b, this.primeTarget) : b;
+  }
+
   /** Enforce the window: drop what nobody needs, and stop asking when the buffer is full. */
   trim(c) {
     // Behind the slowest reader is dead weight. While nobody is reading, the anchor is where the read
@@ -354,15 +593,32 @@ class Copy {
     // cushion is full scores a capped window, which is the honest report of a copy already sitting in
     // RAM, and is never mistaken for 0 Mbps.
     const low = this.readers.size ? this.front() : this.anchor;
+    // Never above the window itself: an anchor from a fill that has since been replaced must not be able
+    // to eat the whole cushion.
+    if (low > this.base) this.anchor = this.base;
     while (this.chunks.length && this.chunks[0].start + this.chunks[0].buf.length <= low) {
       this.base = this.chunks[0].start + this.chunks[0].buf.length;
       this.chunks.shift();
     }
-    // Over the bound: drop from the front (the far side of a seek or the head of a measurement).
+    // Over the ceiling: what goes is the far end of a fill nobody has reached, never the part a screen is
+    // about to read. This used to drop from the front, and the front of a pre-roll is exactly the head of
+    // the film: measured tonight, the picker filled 16.8 MB, the cap ate bytes 0-5.6 MB, and the player's
+    // very first request — offset 0, the byte the hub had just promised — found nothing, waited out its
+    // header budget with the host silent behind a cancelled read, and the screen failed over. Trimming the
+    // back instead costs one re-fetch at most and keeps every paid-for byte the viewer is about to want.
+    const cap = this.capFor(c);
     let guard = 0;
-    while (this.held() > this.bound(c) && this.chunks.length && guard++ < 256) {
+    while (this.held() > cap && this.chunks.length && guard++ < 256) {
+      if (this.chunks[0].start >= low) {
+        const last = this.chunks.pop();
+        this.pos = this.cursor = Math.min(this.pos, last.start);
+        // Out-of-order pieces past the new end are dead weight; the hole in front of them is where the
+        // window is, so they would never be reachable from it.
+        this.queue = this.queue.filter((q) => q.start < this.pos);
+        continue;
+      }
       const ch = this.chunks[0];
-      const excess = this.held() - this.bound(c);
+      const excess = this.held() - cap;
       if (ch.buf.length > excess) {
         this.base = ch.start + excess;
         this.chunks[0] = { start: this.base, buf: ch.buf.subarray(excess) };
@@ -371,13 +627,19 @@ class Copy {
       this.base = ch.start + ch.buf.length;
       this.chunks.shift();
     }
-    const full = this.held() >= this.bound(c);
+    const full = this.held() >= cap;
+    if (this.ranges) {
+      // Nothing to pause: filling is a queue of ranged reads, so planFetch simply stops issuing new ones
+      // while the cushion is full, and the window it stopped on scores as capped rather than 0 Mbps.
+      if (full && this.win) this.win.capped = true;
+      return;
+    }
     if (full && this.up && !this.paused) {
       this.up.pause();
       this.paused = true;
       // A read we stopped ourselves cannot score a rate for the swarm.
       if (this.win) this.win.capped = true;
-    } else if (!full && this.up && this.paused && this.held() < this.bound(c) * 0.7) {
+    } else if (!full && this.up && this.paused && this.held() < cap * 0.7) {
       this.up.resume();
       this.paused = false;
     }
@@ -420,7 +682,9 @@ class Copy {
       slowRun: this.slowRun,
       starved: this.starved,
       readers: this.readers.size,
-      reading: !!this.req,
+      reading: this.isActive(),
+      mode: this.ranges ? 'ranges' : 'stream',
+      inflight: this.inflight.size,
       seeks: this.seeks,
       ttfbMs: this.ttfbMs,
       windows: this.windows.slice(-4).map((x) => ({ ms: x.ms, mbps: Math.round(x.mbps * 10) / 10, valid: x.valid })),
@@ -446,40 +710,114 @@ function isSlow(hash) {
 }
 function clearSlow(hash) { slow.delete(String(hash || '')); }
 
+/** The same bookkeeping for a copy named by url rather than by hash. */
+function slowFor(who) { const k = keyOf(who); return k ? isSlow(k) : null; }
+function clearSlowFor(who) { const k = keyOf(who); if (k) clearSlow(k); }
+
 /** The engine's own address for a copy — the only thing this hub reads a torrent through. */
 function engineUrlOf(who) {
   const eng = String(process.env.TORR_URL || 'http://127.0.0.1:8090').replace(/\/+$/, '');
   return eng + '/play/' + who.hash + '/' + who.fileId;
 }
 
+/**
+ * The registry key for a copy: the engine's own address for a torrent, the URL for anything else. A
+ * direct addon link is signed and unique per press, so the key is that URL — a re-resolve is a different
+ * copy of the same film, and it gets its own cushion rather than reading someone else's stale bytes.
+ */
+function keyOf(who) {
+  if (!who) return null;
+  if (who.hash && who.fileId != null) return String(who.hash) + ':' + String(who.fileId);
+  if (who.url) return 'u:' + crypto.createHash('sha1').update(String(who.url)).digest('hex').slice(0, 20);
+  return null;
+}
+
 function get(who) {
-  if (!who || !who.hash || who.fileId == null) return null;
-  return copies.get(String(who.hash) + ':' + String(who.fileId)) || null;
+  const key = keyOf(who);
+  return key ? (copies.get(key) || null) : null;
 }
 
 /** The buffer for this copy, creating it if needed. null when read-ahead is switched off. */
 function acquire(who) {
   const c = cfg();
-  if (!c.on || !who || !who.hash || who.fileId == null) return null;
-  const key = String(who.hash) + ':' + String(who.fileId);
+  if (!c.on || !who) return null;
+  const gateway = Boolean(who.hash && who.fileId != null);
+  if (!gateway && !who.url) return null;
+  // A plain internet copy is cushioned only while the household wants the hub between the screen and the
+  // host. Turning it off puts every direct link back on one connection to wherever it came from.
+  if (!gateway && !c.direct) return null;
+  const key = keyOf(who);
   let copy = copies.get(key);
   if (!copy) {
-    copy = new Copy(key, engineUrlOf(who), String(who.hash), Number(who.fileId));
+    copy = gateway
+      ? new Copy(key, engineUrlOf(who), String(who.hash), Number(who.fileId))
+      : new Copy(key, String(who.url), key, 0);
+    if (!gateway) {
+      copy.ranges = true;
+      copy.originHeaders = (who.headers && typeof who.headers === 'object') ? who.headers : {};
+    }
     copies.set(key, copy);
-    log('READAHEAD OPEN', copy.tag(), 'boundMB=' + Math.round(copy.bound(c) / MB), 'maxSec=' + c.maxSec);
+    log('READAHEAD OPEN', copy.tag(), 'boundMB=' + Math.round(copy.bound(c) / MB), 'maxSec=' + c.maxSec,
+      gateway ? 'mode=engine' : 'mode=ranges conns=' + c.conns + ' chunkMB=' + Math.round(c.chunkBytes / MB));
     if (copies.size > c.copies) evictOver(c);
+  } else if (!gateway && who.headers) {
+    // Same URL, fresher headers: a signed link can be re-presented with new request headers.
+    copy.originHeaders = (who.headers && typeof who.headers === 'object') ? who.headers : copy.originHeaders;
   }
   copy.lastUsed = Date.now();
   return copy;
 }
 
+/**
+ * Is a screen on this copy now, or was it here a moment ago? A player spends most of its life *between* two
+ * range requests with no reader attached, and a copy the hub just measured is the film that screen is about
+ * to watch, so `lastUsed` — not only the reader set — is the honest hotness signal for decisions that put
+ * bytes at risk. (`declareStarved` deliberately uses `lastReadAt` instead: only a screen that really read
+ * gets a vote in exile.)
+ */
+function isWatched(copy) {
+  return copy.readers.size > 0 || Date.now() - (copy.lastUsed || 0) < 60000;
+}
+
 function evictOver(c) {
   const list = Array.from(copies.values()).sort((a, b) =>
-    (a.readers.size ? 1 : 0) - (b.readers.size ? 1 : 0) || a.lastUsed - b.lastUsed);
+    (isWatched(a) ? 1 : 0) - (isWatched(b) ? 1 : 0) || a.lastUsed - b.lastUsed);
   while (copies.size > c.copies && list.length) {
     const old = list.shift();
-    if (old.readers.size) break; // everyone is watching something; let it be brief
+    // A copy the picker measured a moment ago is the film someone is about to watch, and the player
+    // spends most of its life between two range requests with no reader attached. Dropping it for a
+    // measurement cushion three candidates back is how a watched copy loses its 90 seconds of RAM and the
+    // screen re-buffers from the top of the internet.
+    if (isWatched(old)) break;
     drop(old, 'over the copy limit');
+  }
+  evictBytes(c);
+}
+
+/**
+ * The copy COUNT cap says how many cushions this box may hold; it says nothing about how many
+ * MEGABYTES. Browsing eight titles inside the 60 s watched window parks eight prime targets in RAM
+ * while the count pass sits idle — prod logs showed total hold climbing past the configured ceiling
+ * (86 MB held against a 96 MB cap, each copy inside its own window bound). The byte cap is the
+ * number the box actually has: drop the least-recent unwatched copies first, and past 1.5x the cap,
+ * drop recently-read copies nobody is reading THIS second, oldest first.
+ */
+function evictBytes(c) {
+  let held = 0;
+  for (const cp of copies.values()) held += cp.held();
+  if (held <= c.maxBytes) return;
+  const list = Array.from(copies.values()).sort((a, b) => a.lastUsed - b.lastUsed);
+  for (const hard of [false, true]) {
+    for (const old of list) {
+      if (!copies.has(old)) continue;
+      if (!hard && held <= c.maxBytes) return;
+      if (hard && held <= c.maxBytes * 1.5) return;
+      if (hard ? old.readers.size > 0 : isWatched(old)) continue;
+      const h = old.held();
+      drop(old, 'over the byte cap');
+      held -= h;
+    }
+    if (held <= c.maxBytes) return;
   }
 }
 
@@ -517,30 +855,43 @@ async function sustain(copy, opts = {}) {
   const need = Number(opts.needMbps);
   if (Number.isFinite(need) && need > 0) copy.needMbps = need;
   const at = Number.isFinite(Number(opts.at)) ? Math.max(0, Number(opts.at)) : copy.base;
+  // A copy someone is READING right now (a /switch walks the queue without excluding the copy that is
+  // playing) must not be reset and yanked: its starve history is what protects the viewer, and a seek
+  // mid-read throws away the fill behind the player and measures across the seek. Sample only what
+  // arrives from here on, from where the reader already sits.
+  const serving = copy.readers.size > 0;
+  copy.primeTarget = 0;   // a real viewer is reading now: the full bound applies
   const t0 = Date.now();
   copy.openedAt = t0;
-  copy.windows = [];
-  copy.slowRun = 0;
+  if (!serving) { copy.windows = []; copy.slowRun = 0; }
+  const wBase = copy.windows.length;
   copy.sliding = true;   // keep the reader running: pausing it mid-sample hides the swarm's real rate
-  copy.anchor = at;
+  if (!serving) copy.anchor = at;
   const alreadyHeld = copy.held();
   // Bytes we already hold stay held: they were paid for a moment ago and the player is about to want them.
   // What this sample measures is what arrives from here on.
-  if (copy.base <= at && (copy.pos === copy.base || at < copy.pos)) copy.ensureReader(copy.pos);
+  if (serving || (copy.base <= at && (copy.pos === copy.base || at < copy.pos))) copy.ensureReader(copy.pos);
   else copy.seekTo(at);
   const startPos = copy.pos;
   const deadline = t0 + budgetMs;
-  await copy.waitFor(() => Date.now() - t0 >= deadline || (!copy.req && !copy.up && copy.windows.length > 0),
+  await copy.waitFor(() => Date.now() - t0 >= deadline || (!copy.isActive() && copy.windows.length > wBase),
     budgetMs + 80);
-  // Close whatever window is still open so a sample taken over 4 s always reports both of its 2 s halves.
-  if (copy.win && copy.win.bytes >= 0 && Date.now() - copy.win.at >= c.windowMs) copy.closeWindow(c);
+  // Close whatever window is still open so a sample taken over 4 s always reports both of its halves.
+  // A short final window counts: a Play press that spent a second on the host's time-to-first-byte has
+  // less than a full window left to judge, and answering "no rate to judge" for a copy that is visibly
+  // moving is how a hub ends up refusing everything. The verdict is the WORST window in the sample, so a
+  // brief window can only ever make a copy look slower than it is, never faster.
+  if (copy.win && Date.now() - copy.win.at >= Math.min(c.windowMs, 400)) {
+    copy.closeWindow({ ...c, windowMs: Math.min(c.windowMs, 400) });
+  }
   const ms = Math.max(1, Date.now() - t0);
   const bytes = Math.max(0, copy.pos - startPos);
   copy.sliding = false;
   copy.lastUsed = Date.now();
   let worst = null;
   let validWindows = 0;
-  for (const w of copy.windows) if (w.valid) { validWindows++; if (worst === null || w.mbps < worst) worst = w.mbps; }
+  const sample = copy.windows.slice(wBase); // only windows opened during THIS sample belong to the verdict
+  for (const w of sample) if (w.valid) { validWindows++; if (worst === null || w.mbps < worst) worst = w.mbps; }
   const avg = (bytes * 8) / 1e6 / (ms / 1000);
   // One window is not a rate. The engine hands over its cached head at tens of MB/s and then goes quiet,
   // and a sample that only ever saw the head called a torrent with a dead swarm 14 Mbps — the picture
@@ -561,10 +912,30 @@ async function sustain(copy, opts = {}) {
     bytes,
     ms,
     bufferedMB: Math.round((copy.held() / MB) * 10) / 10,
-    windows: copy.windows.slice(-4).map((w) => ({
+    windows: sample.slice(-4).map((w) => ({
       ms: w.ms, mbps: Math.round(w.mbps * 10) / 10, valid: w.valid,
     })),
   };
+}
+
+/**
+ * Start filling a copy before anyone presses Play.
+ *
+ * A title page is where the swarm has time the Play button does not. This opens the same buffer the
+ * player will read and fills a fixed slice of it (24 MB by default), then pauses. On Play, the measurement
+ * finds those bytes already in RAM (`cached: true`), so the press is a LAN read instead of a cold wait.
+ * It is deliberately small: browsing ten titles must not pin a gigabyte of film.
+ */
+function prime(who, opts = {}) {
+  const c = acquire(who);
+  if (!c) return false;
+  const need = Number(opts.needMbps);
+  if (Number.isFinite(need) && need > 0) c.needMbps = need;
+  const bytes = Number(opts.bytes);
+  c.primeTarget = Math.max(2 * MB, Math.min(c.bound(cfg()), Number.isFinite(bytes) ? bytes : 24 * MB));
+  c.anchor = Math.max(0, Number(opts.at) || 0);
+  c.ensureReader(c.anchor);
+  return true;
 }
 
 /**
@@ -574,6 +945,7 @@ async function sustain(copy, opts = {}) {
  */
 async function preBuffer(copy, opts = {}) {
   const c = cfg();
+  copy.primeTarget = 0;
   const wantSec = clampNum(opts.sec != null ? opts.sec : c.preSec, c.preSec, 0, 600);
   const wantBytes = clampNum(opts.bytes != null ? opts.bytes : c.preMB, c.preMB, MB, 4096 * MB);
   const budgetMs = clampNum(opts.budgetMs != null ? opts.budgetMs : c.preMs, c.preMs, 0, 30000);
@@ -585,7 +957,7 @@ async function preBuffer(copy, opts = {}) {
   const t0 = Date.now();
   copy.sliding = false;
   copy.ensureReader(copy.pos);
-  const done = () => copy.held() >= target || copy.eof || (!copy.req && !copy.up);
+  const done = () => copy.held() >= target || copy.eof || !copy.isActive();
   if (Number.isFinite(target) && !done()) await copy.waitFor(done, budgetMs);
   const sec = copy.bufferedSec();
   return {
@@ -613,6 +985,9 @@ function rangeOf(req) {
   if (m[1]) begin = Number(m[1]);
   if (m[2]) end = Number(m[2]);
   if (!m[1] && m[2]) return { begin: null, end: null, suffix: Number(m[2]), ranged: true };
+  // `bytes=500-0` is not a range: answering it would emit `Content-Range: bytes 500-0/…` and a
+  // negative Content-Length — an HTTP parse error at the player where a clean 416 is the cure.
+  if (end != null && end < begin) return { begin: 0, end: null, ranged: false, invalid: true };
   return { begin, end, ranged: true };
 }
 
@@ -632,6 +1007,102 @@ const BODY_WAIT_MS = 5 * 60e3;
  * `opts.onReader` is called while a consumer is attached, so the gateway's keep-warm can tell that this
  * torrent is being watched and stop opening a competing reader at offset 0.
  */
+/**
+ * Is this request a peek at the index rather than a move? Bounded ranges, and anything sitting on the last
+ * few megabytes of a file whose length we know, are what a container reader does to find its seek head.
+ */
+function isProbe(copy, want, c) {
+  const span = want.end != null ? want.end - want.begin : null;
+  // A container reader asks for a mouthful of index at a time — tens of kilobytes to a few hundred. A
+  // bounded read of a megabyte or more is a screen asking for picture, and answering that off to one
+  // socket instead of moving the cushion was measured at 0.28 Mbps on this host against a 0.43 Mbps
+  // file: the film starved in plain sight while the window sat parked at the head, still "buffered".
+  if (span != null && span >= 0 && span <= Math.max(1 * MB, c.chunkBytes / 4)) return true;
+  const size = Number(copy.fileSize);
+  if (Number.isFinite(size) && size > 0 && want.begin >= size - Math.max(16 * MB, c.chunkBytes * 4)) {
+    // Sitting on the end of a known-length file is the seek head. But a long tail read there is the last
+    // minutes of a film, and that belongs in the cushion like any other picture.
+    return span == null || span <= Math.max(4 * MB, c.chunkBytes);
+  }
+  return false;
+}
+
+/**
+ * One throwaway ranged read, straight from the host to the screen, outside the cushion's window.
+ *
+ * The window stays where the viewer is; this request gets its own socket for its few kilobytes and then
+ * goes away. Nothing here feeds the rate windows on purpose — a 27 KB tail read says nothing about whether
+ * the host can carry the picture, and scoring it would let a probe mask a stall.
+ */
+function sideRead(res, copy, want, t0) {
+  return new Promise((resolve) => {
+    const from = want.begin;
+    const to = want.end != null ? want.end
+      : (Number.isFinite(copy.fileSize) && copy.fileSize > 0 ? copy.fileSize - 1 : null);
+    let u;
+    try { u = new URL(copy.url); } catch (e) { resolve(false); return; }
+    const mod = u.protocol === 'https:' ? https : http;
+    const range = 'bytes=' + from + '-' + (to == null ? '' : to);
+    const req = mod.get(u, {
+      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...copy.originHeaders, Range: range },
+      agent: false,
+      timeout: 30000,
+    }, (up) => {
+      const cr = up.headers && up.headers['content-range'];
+      if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) copy.fileSize = Number(m[1]); }
+      const headers = {};
+      for (const k of ['content-type', 'accept-ranges']) {
+        if (up.headers[k]) headers[k] = up.headers[k];
+      }
+      if (!headers['accept-ranges']) headers['accept-ranges'] = 'bytes';
+      if (cr) headers['content-range'] = cr;
+      headers['x-hub-probe'] = '1';
+      delete headers['connection'];
+      res.writeHead(up.statusCode || 200, headers);
+      res.flushHeaders();
+      log('PROXY TTFB', copy.tag(), 'ms=' + (Date.now() - t0), 'status=' + up.statusCode,
+        'range=' + range, 'note=probe', 'windowMB=' + Math.round(copy.held() / MB));
+      let bytes = 0;
+      let done = false;
+      const finish = (cause) => {
+        if (done) return;
+        done = true;
+        up.destroy();
+        // Remember the far end of what we just delivered off-book: the next request that starts here is
+        // a continuation, not a probe. Only when the host actually honoured the range — a host that
+        // answered with a plain 200 full body delivered bytes from 0, and recording `from + bytes` as
+        // the end would point the continuation test at bytes that were never fetched.
+        copy.sideEnd = (up.statusCode === 206 || from === 0) ? from + bytes : null;
+        copy.sideAt = Date.now();
+        if (!res.writableEnded) { try { res.end(); } catch (e) { /* gone */ } }
+        const secs = Math.max(0.001, (Date.now() - t0) / 1000);
+        log(cause === 'eof' ? 'PROXY END' : 'PROXY CUT', copy.tag(), 'phase=body', 'cause=' + cause,
+          'elapsed=' + Math.round(secs * 1000) + 'ms', 'bytes=' + bytes, 'note=probe',
+          'windowMB=' + Math.round(copy.held() / MB));
+        resolve(true);
+      };
+      up.on('data', (b) => { bytes += b.length; if (!res.write(b)) { try { up.pause(); } catch (e) { /* gone */ } } });
+      up.on('end', () => finish('eof'));
+      up.on('error', () => finish('probe-read-failed'));
+      res.on('close', () => finish('client-disconnect'));
+    });
+    req.on('timeout', () => { req.destroy(); });
+    req.on('error', (e) => {
+      if (res.headersSent) { finishSide(res); resolve(true); return; }
+      res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' });
+      res.end(JSON.stringify({ error: 'warming', warming: true, detail: 'probe read failed: ' + (e.message || e.code) }));
+      log('PROXY FAIL', copy.tag(), 'phase=headers', 'cause=probe-read-failed', String(e.message || e.code || ''),
+        'range=' + range);
+      resolve(true);
+    });
+    req.end();
+  });
+}
+
+function finishSide(res) {
+  if (!res.writableEnded) { try { res.end(); } catch (e) { /* gone */ } }
+}
+
 async function serve(req, res, who, opts = {}) {
   const c = cfg();
   const copy = acquire(who);
@@ -641,18 +1112,68 @@ async function serve(req, res, who, opts = {}) {
   const tag = copy.tag();
   const t0 = Date.now();
   const want = rangeOf(req);
+  if (want.invalid) {
+    res.writeHead(416, { 'content-range': 'bytes */' +
+      (Number.isFinite(copy.fileSize) && copy.fileSize > 0 ? copy.fileSize : '*') });
+    res.end();
+    return true;
+  }
 
   if (want.begin === null) {
-    // `bytes=-N`, a suffix read: ffmpeg probing the end of a container. Rare through this route, and it
-    // needs a file length we only learn from the engine, so let the old pass-through handle it.
-    return false;
+    // `bytes=-N`, a suffix read: a player probing the end of a container (Matroska keeps its seek head
+    // there). The pass-through used to answer this itself, and a free file host often refuses it — the
+    // 500 that a suffix range got tonight came back to the screen as ERROR_CODE_IO_BAD_HTTP_STATUS and
+    // killed playback of a copy that was playing fine. Once a ranged cushion knows the file's length,
+    // the suffix is just an absolute range and this box can answer it out of RAM.
+    if (copy.ranges && want.suffix > 0 && Number.isFinite(copy.fileSize) && copy.fileSize > 0) {
+      want.begin = Math.max(0, copy.fileSize - want.suffix);
+      want.end = copy.fileSize - 1;
+    } else {
+      return false;
+    }
   }
   const offset = want.begin;
-  const insideWindow = (o) => o >= copy.base && (copy.pos > copy.base ? o < copy.pos : true);
+  // What the cushion actually holds, right now. The old test treated an empty window as if it contained
+  // every offset — `pos === base` made any number look inside — so a player probing the end of a
+  // two-gigabyte file minutes before its first byte landed attached itself to a window that could never
+  // answer, waited out the whole header budget, and failed over on a copy that was filling fine.
+  const insideWindow = (o) => o >= copy.base && o < Math.max(copy.pos, copy.base + 1);
+
+  // A player probing a container's index is not changing what it watches. Matroska keeps its seek head at
+  // the END of the file and MP4 its moov atom there too, so ExoPlayer opens the front, reads a few
+  // megabytes, hangs up, asks for the last 27 KB of a two-gigabyte file, and comes back — measured on this
+  // exact copy tonight. A cushion has ONE window; following that probe means throwing away the 90 seconds
+  // of film already in RAM, paying the host's time-to-first-byte again, and arriving back at the front with
+  // nothing, which is how a request for the end of a file turned into "playback error / 2004". So a probe
+  // that is small and outside the window is answered with one throwaway ranged read from the host, and the
+  // window the screen is actually watching stays where it is. A real seek — an open-ended range far from
+  // the window — still moves it, because then the viewer has genuinely moved.
+  // …unless the screen is doing it repeatedly. A chain of bounded reads that each begin where the last one
+  // ended is not an index peek, it is a player eating the film in mouthfuls; answer two mouthfuls from the
+  // host and then move the cushion behind the next one, or the fill never gets where the viewer is.
+  const continues = copy.sideEnd != null && Date.now() - copy.sideAt < 30000
+    && Math.abs(offset - copy.sideEnd) <= Math.max(1 * MB, c.chunkBytes / 4);
+  if (!insideWindow(offset) && !continues && isProbe(copy, want, c)
+      && (copy.readers.size || copy.isActive() || isWatched(copy))) {
+    return await sideRead(res, copy, want, t0);
+  }
+  // The screen re-opened a little *behind* the window. A player does this constantly: it stops one loader
+  // and starts the next at its own playhead, which sits a few megabytes back because the cushion ran ahead
+  // of it while the read was open. Chasing that with a seek throws away a forward fill this box already
+  // paid the host for — measured tonight, eleven megabytes dropped and re-fetched every five seconds of
+  // playback, which is the "it plays in chunks" complaint wearing its working clothes. Fill the small gap
+  // behind with one throwaway read instead; the window the screen reads next second stays exactly where
+  // it is, and the player's next request lands inside it out of RAM.
+  const behind = copy.base - offset;
+  if (behind > 0 && copy.held() > 0 && isWatched(copy)
+      && behind <= Math.max(32 * MB, c.chunkBytes * 8)) {
+    return await sideRead(res, copy, { begin: offset, end: copy.base - 1, ranged: want.ranged }, t0);
+  }
+
   if (!insideWindow(offset)) copy.seekTo(offset);
   else copy.ensureReader(copy.pos);
 
-  const first = await copy.waitFor(() => copy.find(offset) !== null || copy.eof || !!copy.error, headersMs);
+  const first = await copy.waitFor(() => copy.find(offset) !== null || copy.eof || copy.givenUp, headersMs);
   if (!first || !(copy.find(offset) || copy.eof)) {
     const waited = Date.now() - t0;
     log('PROXY FAIL', tag, 'phase=headers', 'cause=readahead-no-bytes', 'elapsed=' + waited + 'ms',
@@ -690,8 +1211,11 @@ async function serve(req, res, who, opts = {}) {
   if (!sameRange) {
     hdrs['accept-ranges'] = 'bytes';
     if (want.ranged) {
+      // A total this hub has never seen stays `*` (valid per RFC 9110): inventing `offset+1` used to
+      // claim a file was one byte longer than the byte just asked for, and media3 takes content-range
+      // totals at their word when it computes end-of-file.
       hdrs['content-range'] = 'bytes ' + offset + '-' + (end == null ? '*' : end)
-        + '/' + (copy.fileSize || (offset + 1));
+        + '/' + (Number.isFinite(copy.fileSize) && copy.fileSize > 0 ? copy.fileSize : '*');
       if (end != null) hdrs['content-length'] = String(end - offset + 1);
     } else if (Number.isFinite(copy.fileSize) && copy.fileSize > 0) {
       hdrs['content-length'] = String(Math.max(0, copy.fileSize - offset));
@@ -715,6 +1239,7 @@ async function serve(req, res, who, opts = {}) {
   const consumer = { off: offset };
   copy.readers.add(consumer);
   copy.lastUsed = Date.now();
+  copy.lastReadAt = Date.now();
   const offReader = typeof opts.onReader === 'function' ? opts.onReader() : null;
   let delivered = 0;
   let cause = 'eof';
@@ -732,14 +1257,14 @@ async function serve(req, res, who, opts = {}) {
       const ch = copy.find(cursor);
       if (!ch) {
         if (cursor < copy.base) { copy.seekTo(cursor); consumer.off = cursor; continue; }
-        if (!copy.req && !copy.eof) copy.ensureReader(cursor);
-        await copy.waitFor(() => !!copy.find(cursor) || copy.base > cursor || copy.eof || !!copy.error
+        if (!copy.isActive() && !copy.eof) copy.ensureReader(cursor);
+        await copy.waitFor(() => !!copy.find(cursor) || copy.base > cursor || copy.eof || copy.givenUp
           || closedByClient, BODY_WAIT_MS);
         if (closedByClient) { cause = 'client-disconnect'; break; }
         // Another reader dragged the window past us (a seek, a second screen): follow it with one read.
         if (copy.base > cursor) { copy.seekTo(cursor); consumer.off = cursor; continue; }
         if (copy.find(cursor)) continue;
-        cause = copy.eof ? 'eof' : (copy.error ? 'engine-error' : 'no-bytes');
+        cause = copy.eof ? 'eof' : (copy.givenUp || copy.error ? 'engine-error' : 'no-bytes');
         break;
       }
       const skip = Math.max(0, cursor - ch.start);
@@ -761,6 +1286,7 @@ async function serve(req, res, who, opts = {}) {
     copy.readers.delete(consumer);
     if (typeof offReader === 'function') offReader();
     copy.lastUsed = Date.now();
+    copy.lastReadAt = Date.now();
   }
   const secs = Math.max(0.001, (Date.now() - t0) / 1000);
   const mbps = (delivered * 8) / 1e6 / secs;
@@ -782,8 +1308,13 @@ const tick = setInterval(() => {
   for (const copy of Array.from(copies.values())) {
     copy.closeWindow(c);
     copy.trim(c);
+    // A cushion that stopped filling because it was full starts again as soon as a screen eats into it.
+    if (copy.ranges) copy.planFetch(c);
     if (!copy.readers.size && now - copy.lastUsed > c.idleMs) drop(copy, 'idle');
   }
+  // Copies the watcher protected (read a moment ago, prime target filled) can each sit at their own
+  // bound; only a global pass keeps the SUM inside readAheadMB between Play presses.
+  evictBytes(c);
   for (const [h, s] of Array.from(slow.entries())) if (s.until < now) slow.delete(h);
 }, 500);
 if (tick.unref) tick.unref();
@@ -865,7 +1396,78 @@ function parseWho(u) {
   return m ? { hash: m[1].toLowerCase(), fileId: Number(m[2]) } : { hash: null, fileId: null };
 }
 
+/**
+ * The same report as live(), but about the copy a GIVEN screen is reading, not "whichever watched
+ * copy was touched last". Two screens on one hub: the bedroom's healthy 4K torrent used to get
+ * downgraded by the living room's starved buffer, because /progress had no way to name its own copy.
+ * A screen that says which URL it holds gets stats for exactly that copy; `null` means this hub is
+ * not serving those bytes (a direct third-party URL), which the client reads as "judge for yourself".
+ */
+function statsFor(who) {
+  const copy = get(who);
+  if (!copy) return null;
+  const w = copy.lastValidWindow();
+  const sec = copy.bufferedSec();
+  return {
+    hash: String(copy.hash || copy.key).slice(0, 12),
+    fileId: copy.fileId,
+    mbps: w == null ? null : Math.round(w.mbps * 100) / 100,
+    needMbps: Number.isFinite(copy.needMbps) ? Math.round(copy.needMbps * 100) / 100 : null,
+    bufferedMB: Math.round((copy.held() / MB) * 10) / 10,
+    bufferedSec: sec == null ? null : Math.round(sec),
+    slowRun: copy.slowRun,
+    starved: copy.starved,
+    runway: copy.runway(),
+  };
+}
+
+/**
+ * Measure a plain internet copy *through* the cushion and then hand back what the cushion holds.
+ *
+ * This is the difference between the two answers a free file host gives. Measured on one tonight: a
+ * single connection took 5 Mbps for the first ten megabytes, decayed to 2 Mbps by 25 MB and stopped
+ * dead at 30 MB after 90 seconds, while four ranged reads in parallel carried 48 MB in 36 seconds.
+ * The 256 KB probe samples the burst at the front of that curve and reports "3.9 Mbps, enough", which
+ * is how a 1080p copy gets promised to a screen that then freezes four minutes in. Reading through the
+ * buffer measures the curve instead of its first point, and the bytes it pulls are the pre-roll the
+ * film starts with — so the measurement costs the viewer nothing they would not have waited for anyway.
+ *
+ * Returns the same shape as `sustain`, plus the pre-roll, so the picker can judge it with the same
+ * arithmetic it already uses on a torrent.
+ */
+async function cushionUrl(url, headers, opts = {}) {
+  const c = cfg();
+  if (!c.on || !c.direct || !url) return null;
+  const copy = acquire({ url: String(url), headers: headers || {} });
+  if (!copy) return null;
+  const need = Number(opts.needMbps);
+  if (Number.isFinite(need) && need > 0) copy.needMbps = need;
+  // A Play press has a deadline and several copies in front of it; take a fair share of what is left
+  // rather than the whole of it. The floor is not arbitrary: a verdict needs a full window plus a second
+  // partial one, and the host's time-to-first-byte (measured: 500-1000 ms on a cold signed link) is
+  // already spent before the first window opens.
+  const left = Number.isFinite(Number(opts.leftMs)) ? Math.max(0, Number(opts.leftMs)) : c.sustainMs;
+  const budgetMs = left < 1200 ? Math.max(600, left)
+    : Math.max(2000, Math.min(c.sustainMs, Math.floor(left * 0.65)));
+  const at = Number.isFinite(Number(opts.at)) ? Math.max(0, Number(opts.at)) : 0;
+  const m = await sustain(copy, { needMbps: need, at, budgetMs });
+  // Then hold enough of it that the screen starts ahead of its own first frame. The cushion keeps
+  // filling while the player reads, so this waits for the difference, not for the whole pre-roll.
+  const pb = await preBuffer(copy, {
+    sec: Number.isFinite(need) && need > 0 ? c.preSec : 10,
+    bytes: Math.max(4, Math.min(c.preMB / MB, 8)),
+    budgetMs: Math.max(0, Math.min(1500, left - budgetMs)),
+  });
+  return Object.assign(m, {
+    prebuffer: pb,
+    bufferedSec: pb.sec,
+    runway: copy.runway(),
+    conns: c.conns,
+  });
+}
+
 module.exports = {
-  cfg, acquire, get, drop, noteNeed, isSlow, clearSlow,
-  sustain, preBuffer, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
+  cfg, acquire, get, drop, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
+  sustain, preBuffer, prime, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
+  statsFor, cushionUrl,
 };

@@ -1,0 +1,49 @@
+{
+  "id": "atom.chip",
+  "version": 1,
+  "level": "atom",
+  "summary": "Frost or solid pill for shelf shortcuts and filters, with icon, label and an optional count.",
+  "props": {
+    "label": {
+      "type": "string",
+      "required": true,
+      "maxLength": 32
+    },
+    "icon": {
+      "type": "enum",
+      "default": "none",
+      "enum": ["none", "home", "films", "series", "kids", "live", "search", "settings"]
+    },
+    "selected": {
+      "type": "boolean",
+      "default": false
+    },
+    "tone": {
+      "type": "enum",
+      "default": "glass",
+      "enum": ["glass", "solid", "outline"]
+    },
+    "count": {
+      "type": "integer",
+      "min": 0,
+      "max": 999
+    }
+  },
+  "states": ["default", "focus", "pressed", "selected", "disabled"],
+  "events": ["press", "focus", "blur"],
+  "slots": [
+    { "name": "icon", "accepts": ["atom.icon"], "optional": true },
+    { "name": "label", "accepts": ["atom.label"], "optional": true }
+  ],
+  "a11y": {
+    "role": "tab",
+    "label": "{{label}}",
+    "selected": false
+  },
+  "targets": {
+    "android": { "renderer": "GlassKit.chip", "focus": "host-ring" },
+    "ios": { "renderer": "ScenixChip", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-chip", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 5, "maxLayers": 2, "maxImageBytes": 0 }
+}

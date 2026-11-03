@@ -1,0 +1,56 @@
+{
+  "id": "molecule.settings-row",
+  "version": 1,
+  "level": "molecule",
+  "summary": "Secondary-screen list row: label, note, current value, chevron and an optional inline control.",
+  "props": {
+    "label": {
+      "type": "string",
+      "required": true,
+      "maxLength": 60
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "value": {
+      "type": "string",
+      "maxLength": 32
+    },
+    "chevron": {
+      "type": "boolean",
+      "default": false
+    },
+    "control": {
+      "type": "enum",
+      "default": "chevron",
+      "enum": ["none", "chevron", "toggle", "slider", "picker"]
+    },
+    "icon": {
+      "type": "enum",
+      "default": "none",
+      "enum": ["none", "theme", "audio", "subtitles", "quality", "update", "lock", "profile"]
+    },
+    "toggleOn": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "states": ["default", "focus", "pressed", "disabled"],
+  "events": ["press", "change", "focus"],
+  "slots": [
+    { "name": "label", "accepts": ["atom.label"], "optional": true },
+    { "name": "value", "accepts": ["atom.label"], "optional": true },
+    { "name": "control", "accepts": ["atom.icon", "atom.progress"], "optional": true }
+  ],
+  "a11y": {
+    "role": "button",
+    "label": "{{label}}, {{value}}"
+  },
+  "targets": {
+    "android": { "renderer": "Screens.row", "focus": "host-ring" },
+    "ios": { "renderer": "SettingsRow", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-settings-row", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 9, "maxLayers": 2, "maxImageBytes": 0 }
+}

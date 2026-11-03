@@ -25,13 +25,20 @@
  */
 
 const http = require('http');
+const https = require('https');
 const { URL } = require('url');
 // One-way dependency: the engine knows which file a torrent is, and only that makes it worth asking the
 // file what languages it carries. core/media.js never asks about the engine.
 const media = require('./media');
+const readahead = require('./readahead');
 
 const MODE = String(process.env.GATEWAY || 'off').toLowerCase();
 const ENGINE = String(process.env.TORR_URL || 'http://127.0.0.1:8090').replace(/\/+$/, '');
+// Pick the client from the engine's own scheme. An https TORR_URL through http.get does not fail
+// politely — it throws ERR_INVALID_PROTOCOL and, with no supervisor, takes the hub down. readahead.js
+// already learned this lesson the hard way (prod outage, 2026-11-01); the engine URL is configurable,
+// so this file must not assume the habit of a plain http localhost default.
+const ELIB = /^https:/i.test(ENGINE) ? https : http;
 /** Same format as the hub's own lines, so `grep 'PROXY TTFB' hub.log` reads across both files. */
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 // Only needed when the engine is reached through something other than its own address.
@@ -90,7 +97,7 @@ function engineGet(pathAndQuery, timeoutMs) {
   return new Promise((resolve) => {
     let url;
     try { url = new URL(ENGINE + pathAndQuery); } catch (e) { return resolve({ error: 'bad TORR_URL: ' + e.message }); }
-    const req = http.get(url, { timeout: timeoutMs || PROBE_TIMEOUT_MS }, (res) => {
+    const req = ELIB.get(url, { timeout: timeoutMs || PROBE_TIMEOUT_MS }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
@@ -161,7 +168,7 @@ function enginePost(path, body, timeoutMs) {
   return new Promise((resolve) => {
     let url, payload;
     try { url = new URL(ENGINE + path); payload = Buffer.from(JSON.stringify(body)); } catch (e) { return resolve({ error: 'bad TORR_URL: ' + e.message }); }
-    const req = http.request(url, {
+    const req = ELIB.request(url, {
       method: 'POST',
       timeout: timeoutMs || PROBE_TIMEOUT_MS,
       headers: { 'content-type': 'application/json', 'content-length': payload.length },
@@ -248,7 +255,7 @@ function touchPlay(hash, fileId, bytes) {
   const want = Math.max(1, Number(bytes) || TOUCH_BYTES);
   const t0 = Date.now();
   try {
-    const req = http.get(ENGINE + '/play/' + hash + '/' + fileId,
+    const req = ELIB.get(ENGINE + '/play/' + hash + '/' + fileId,
       { timeout: TOUCH_TIMEOUT_MS, headers: { Range: 'bytes=0-' + (want - 1) } }, (res) => {
         let got = 0;
         res.on('data', (c) => {
@@ -312,6 +319,15 @@ function isCold(hash) {
 
 setInterval(() => {
   const now = Date.now();
+  // Both side-maps only ever get NEW entries: `prepared` grows one per title this box has ever
+  // touched (six-hour TTLs are checked on read, never swept) and `cold` expires only if the same
+  // hash is asked about again. A long-lived hub would otherwise carry every torrent it ever met.
+  for (const [k, p] of prepared) {
+    if (!p) { prepared.delete(k); continue; }
+    const life = String(k).startsWith('miss:') ? (p.ttl || MISS_DEAD_MS) : 6 * 3600e3;
+    if (now - (Number(p.at) || 0) > life) prepared.delete(k);
+  }
+  for (const [h, c] of cold) if (c.until < now) cold.delete(h);
   for (const [hash, w] of warm) {
     if (w.until < now) { warm.delete(hash); continue; }
     enginePost('/torrents', { action: 'add', link: w.link, save_to_db: true }, 3000);
@@ -339,7 +355,7 @@ function pump(hash, fileId, fileSize) {
   const target = Math.min(PUMP_BYTES, Number(fileSize) > 0 ? Number(fileSize) : PUMP_BYTES);
   if (target < 1048576) return;
   try {
-    const req = http.get(ENGINE + '/play/' + hash + '/' + fileId,
+    const req = ELIB.get(ENGINE + '/play/' + hash + '/' + fileId,
       { timeout: 60e3, headers: { Range: 'bytes=0-' + (target - 1) } }, (res) => {
         let got = 0;
         res.on('data', (c) => { got += c.length; if (got >= target) { res.destroy(); } });
@@ -443,6 +459,7 @@ async function prepare(source, budgetMs, want) {
  */
 function prewarm(sources, want) {
   if (MODE !== 'http') return;
+  let primed = false;
   for (const s of (sources || []).slice(0, 4)) {
     if (s && s.kind === 'torrent') {
       // `want` is the season/episode the viewer is actually looking at. Without it a season pack resolves
@@ -456,6 +473,10 @@ function prewarm(sources, want) {
         .then((r) => {
           if (r && r.hash && r.fileId !== undefined) {
             media.prewarm([{ hash: r.hash, fileId: r.fileId, url: enginePlayUrl(r.hash, r.fileId) }]);
+            // Only the first candidate gets a byte cushion. The rest are metadata-warm, which is enough
+            // for a failover; pulling 24 MB for each of four candidates would spend the box's RAM on
+            // films nobody pressed Play on.
+            if (!primed) { primed = true; readahead.prime({ hash: r.hash, fileId: r.fileId }); }
           }
         })
         .catch(() => {});
@@ -501,15 +522,21 @@ function peekPrepared(source, want) {
  * when the engine is another machine we hand out that machine's address as configured. `TORR_PUBLIC_URL`
  * overrides both, for an engine behind a reverse proxy or a different port.
  */
-function clientBaseUrl(clientHost) {
+function clientBaseUrl(clientOrigin) {
   if (PUBLIC_ENGINE) return PUBLIC_ENGINE;
   const u = new URL(ENGINE);
   // Any 127/8 loopback form, not just the literal string: a hostname is the whole match, so the
   // alternation has to stay inside the group and the anchor has to sit outside it.
   const local = u.hostname === 'localhost' || u.hostname === '::1' || u.hostname === '[::1]'
     || u.hostname === '0.0.0.0' || /^127\.\d+\.\d+\.\d+$/.test(u.hostname);
-  if (clientHost && local) {
-    try { u.hostname = new URL('http://' + clientHost).hostname; } catch (e) { /* keep the configured host */ }
+  if (clientOrigin && local) {
+    try {
+      // Keep the scheme the client used as well as its host: a TLS proxy that terminated https must not
+      // have its stream URL rewritten back to http, or the browser blocks it as mixed content.
+      const c = new URL(clientOrigin);
+      u.hostname = c.hostname;
+      if (c.protocol === 'https:' || c.protocol === 'http:') u.protocol = c.protocol;
+    } catch (e) { /* keep the configured origin */ }
   }
   return (u.protocol + '//' + u.host).replace(/\/+$/, '');
 }
@@ -535,7 +562,7 @@ async function resolve(source, opts = {}) {
   if (MODE === 'off') return { url: null, reason: 'gateway off' };
   if (MODE !== 'http') return { url: null, reason: 'unknown GATEWAY value "' + MODE + '": expected off or http' };
   if (!source) return { url: null, reason: 'no source' };
-  if (source.kind !== 'torrent') return { url: null, reason: 'not a torrent source' };
+  if (source.kind !== 'torrent') return { url: null, reason: 'not a P2P source' };
   if (!hashOf(source)) return { url: null, reason: 'addon gave no magnet or info hash' };
   // Ask the engine directly rather than trusting the 30s cache: right after a deploy the cache still
   // says "not checked", and a TV handed a magnet cannot play anything at all.
@@ -545,10 +572,10 @@ async function resolve(source, opts = {}) {
   const info = await prepare(source, opts.budgetMs, opts.want);
   if (!info) return { url: null, reason: 'no info hash to serve' };
   if (info.error || info.fileId === undefined) {
-    return { url: null, reason: 'engine has not read this torrent (' + (info.error || 'no file list') + ')' };
+    return { url: null, reason: 'engine has not read this copy (' + (info.error || 'no file list') + ')' };
   }
   return {
-    url: clientBaseUrl(opts.clientHost) + '/play/' + info.hash + '/' + info.fileId,
+    url: clientBaseUrl(opts.clientOrigin) + '/play/' + info.hash + '/' + info.fileId,
     hash: info.hash,
     fileId: info.fileId,
     fileName: info.fileName,
@@ -563,9 +590,9 @@ async function gatewayUrl(source, opts = {}) {
 }
 
 function statusNote() {
-  if (MODE === 'off') return 'gateway off: torrents are handed to the client as magnets';
+  if (MODE === 'off') return 'gateway off: P2P copies are handed to the client as links';
   if (MODE === 'http') {
-    return engineSeen.ok ? 'torrents served as seekable HTTP by the engine'
+    return engineSeen.ok ? 'P2P copies served as seekable HTTP by the engine'
       : 'gateway on, engine not answering at ' + ENGINE + (engineSeen.note ? ' (' + engineSeen.note + ')' : '');
   }
   return 'unknown GATEWAY value "' + MODE + '": expected off or http';
@@ -616,7 +643,21 @@ async function ready() {
   return engineSeen.ok === true;
 }
 
-/** Whether the ranking rules may treat torrents as play-ready HTTP. Cheap, cached, never throws. */
+/**
+ * The engine's live peer count for one info hash. /progress asks this every few seconds while a
+ * viewer watches, so the screen can show whether the swarm is actually carrying the copy. A dead
+ * engine or an idle torrent answers null: an unknown number is not zero.
+ */
+async function peers(hash) {
+  const h = String(hash || '').trim();
+  if (!h || MODE !== 'http') return null;
+  const r = await enginePost('/torrents', { action: 'get', hash: h }, 900);
+  if (!r || !r.json) return null;
+  const n = Number(r.json.total_peers);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Whether the ranking rules may treat torrents as play-ready HTTP. Cheaper, cached, never throws. */
 function available() {
   if (MODE !== 'http') return false;
   if (Date.now() - engineSeen.at > CHECK_TTL_MS) checkEngine().catch(() => {});
@@ -634,6 +675,7 @@ module.exports = {
   ready,
   prepare,
   prewarm,
+  peers,
   pump,
   resolve,
   gatewayUrl,

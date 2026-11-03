@@ -1,0 +1,52 @@
+{
+  "themes": [
+    {
+      "id": "scenix-dark",
+      "name": "Scenix Dark",
+      "asset": "theme.json",
+      "pack": "Classic"
+    },
+    {
+      "id": "scenix-midnight",
+      "name": "Midnight",
+      "asset": "theme-midnight.json",
+      "pack": "Cinema"
+    },
+    {
+      "id": "scenix-ember",
+      "name": "Ember",
+      "asset": "theme-ember.json",
+      "pack": "Editorial"
+    },
+    {
+      "id": "scenix-apple",
+      "name": "Apple",
+      "asset": "theme-apple.json",
+      "pack": "Scene"
+    },
+    {
+      "id": "scenix-netflix",
+      "name": "Netflix",
+      "asset": "theme-netflix.json",
+      "pack": "Classic"
+    },
+    {
+      "id": "scenix-ps5",
+      "name": "PS5",
+      "asset": "theme-ps5.json",
+      "pack": "Console Scene"
+    },
+    {
+      "id": "scenix-kids",
+      "name": "Kids",
+      "asset": "theme-kids.json",
+      "pack": "kids"
+    },
+    {
+      "id": "scenix-glass",
+      "name": "Glass",
+      "asset": "theme-glass.json",
+      "pack": "Liquid Glass"
+    }
+  ]
+}

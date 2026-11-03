@@ -2,9 +2,12 @@
  * js/state.js — what the interface remembers between screens.
  *
  * Deliberately small. The hub owns the library, progress and preferences; this module holds only the
- * session (who is watching, what was fetched, what focus was on a screen when you left it) plus the one
- * thing the hub has no endpoint for yet: a personal "My list".
+ * session (who is watching, what was fetched, what focus was on a screen when you left it) plus a
+ * cached copy of the hub's per-profile "My list" so buttons flip instantly and the page still works
+ * when the hub is briefly away.
  */
+
+import { api } from './api.js';
 
 const LS = {
   profile: 'scenix.profile',
@@ -21,6 +24,7 @@ export const session = {
   homeKey: null,
   search: '',            // last query, so returning to search keeps your typing
   focusMemory: new Map(), // screen key -> the identity to put the ring back on
+  returnMemory: new Map(), // route key -> where the ring stood when that screen was left
   myList: new Set(),
 };
 
@@ -67,7 +71,13 @@ export function profileAvatarClass(p, index) {
   return `grad${(index % 4) + 1}`;
 }
 
-/* ---- My list: local until the hub offers an endpoint (noted in the report) ---- */
+/* ---- My list: the hub's shelf (data/list.json), this page just renders it ----
+ *
+ * It used to be localStorage per browser — three screens, three different lists, and every one of
+ * them wrong about the other two. The hub endpoint exists now, so local storage only serves as the
+ * offline cache and the one-time seed: a list a person built in this browser before migration is
+ * pushed up once instead of silently vanishing.
+ */
 
 function listKey() { return `${LS.list}.${session.profile ? session.profile.id : 'default'}`; }
 
@@ -76,16 +86,35 @@ export function loadMyList() {
     const raw = localStorage.getItem(listKey());
     session.myList = new Set(raw ? JSON.parse(raw) : []);
   } catch (e) { session.myList = new Set(); }
+  // Ask the hub, then adopt its answer. The GET also seeds the hub with what this browser already
+  // had, so the migration cannot lose a list on the day of the switch.
+  const profile = session.profile ? session.profile.id : 'default';
+  const local = [...session.myList];
+  api.myList(profile).then((r) => {
+    const hubIds = (r && Array.isArray(r.ids)) ? r.ids : [];
+    const missing = hubIds.filter((id) => !session.myList.has(id));
+    missing.forEach((id) => session.myList.add(id));
+    local.filter((id) => !hubIds.includes(id)).forEach((id) => api.setMyList(profile, id, true));
+    try { localStorage.setItem(listKey(), JSON.stringify([...session.myList])); } catch (e) { /* ignore */ }
+    if (missing.length) window.dispatchEvent(new CustomEvent('mylist-changed'));
+  }).catch(() => { /* offline: the local cache is the list until the hub answers */ });
   return session.myList;
 }
 
 export function inMyList(identity) { return session.myList.has(identity); }
 
 export function toggleMyList(identity) {
-  if (session.myList.has(identity)) session.myList.delete(identity);
-  else session.myList.add(identity);
+  const on = !session.myList.has(identity);
+  // Optimistic: the button must flip this frame. The POST confirms; a failed POST flips back.
+  if (on) session.myList.add(identity); else session.myList.delete(identity);
   try { localStorage.setItem(listKey(), JSON.stringify([...session.myList])); } catch (e) { /* ignore */ }
-  return session.myList.has(identity);
+  const profile = session.profile ? session.profile.id : 'default';
+  api.setMyList(profile, identity, on).catch(() => {
+    if (on) session.myList.delete(identity); else session.myList.add(identity);
+    try { localStorage.setItem(listKey(), JSON.stringify([...session.myList])); } catch (e) { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('mylist-changed'));
+  });
+  return on;
 }
 
 /* ---- trailer preview cache: one lookup per title per session, including the misses ---- */
@@ -104,6 +133,16 @@ export function rememberFocus(screenKey, identity) {
   if (screenKey && identity) session.focusMemory.set(screenKey, identity);
 }
 export function focusMemoryFor(screenKey) { return session.focusMemory.get(screenKey) || null; }
+
+/**
+ * Where a viewer stood when they left a screen, kept for the way back. The control is named by
+ * whatever stable handle it carries — a card's identity, a settings-style row's `ctl` tag, or failing
+ * both its ordinal place among the screen's focus stops — plus anything the screen itself adds:
+ * search remembers the word that was typed. Scroll needs no separate record: the focus engine
+ * scrolls whatever holds the ring into view.
+ */
+export function rememberReturn(key, rec) { if (key && rec) session.returnMemory.set(key, rec); }
+export function returnMemoryFor(key) { return session.returnMemory.get(key) || null; }
 
 /* ---- native shell capabilities, feature-detected and never assumed ---- */
 

@@ -3,9 +3,9 @@
  *
  * Android TV's WebView delivers the D-pad as ordinary `keydown` events (`Arrow*`, `Enter`), and some
  * firmwares fire one physical press twice. That exact bug made the old native player pause a film the
- * instant it opened, so a repeat of the same key inside ~300 ms is treated as one press here. A physical
+ * instant it opened, so a repeat of the same key inside ~120 ms is treated as one press here. A physical
  * keyboard auto-repeat (`event.repeat`) is dropped outright, and typing into a field is exempt from the
- * 300 ms rule — otherwise "tt" typed fast loses a letter.
+ * 120 ms rule — otherwise "tt" typed fast loses a letter.
  *
  * Every handled key calls `preventDefault()`: the browser otherwise scrolls a page sideways, and the TV
  * shell otherwise treats Enter as a click on whatever element it last had.
@@ -13,7 +13,7 @@
 
 import * as focus from '/ui/js/focus.js';
 
-const REPEAT_WINDOW_MS = 300;
+const REPEAT_WINDOW_MS = 120;
 
 const NAV_KEYS = new Set([
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'NumpadEnter',
@@ -21,6 +21,8 @@ const NAV_KEYS = new Set([
 ]);
 const MEDIA_KEYS = new Set([
   'MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaTrackNext', 'MediaTrackPrevious',
+  // The channel keys belong to whoever is showing a live feed; the page never scrolls under them.
+  'ChannelUp', 'ChannelDown',
 ]);
 
 /* Some boxes deliver only a keyCode; map the Android TV keycodes onto the names the rest of the code uses. */
@@ -29,6 +31,9 @@ const KEYCODES = {
   39: 'ArrowRight', 40: 'ArrowDown', 46: 'Delete',
   48: '0', 49: '1', 50: '2', 51: '3', 52: '4', 53: '5', 54: '6', 55: '7', 56: '8', 57: '9',
   85: 'MediaPlayPause', 89: 'MediaTrackNext', 90: 'MediaTrackPrevious',
+  // Android TV's KEYCODE_CHANNEL_UP/DOWN, which the live player tunes with — the same keys the native
+  // player answers. Some firmwares deliver them as `key` names directly; those need no mapping.
+  166: 'ChannelUp', 167: 'ChannelDown',
   96: '0', 97: '1', 98: '2', 99: '3', 100: '4', 101: '5', 102: '6', 103: '7', 104: '8', 105: '9',
   160: 'MediaPlayPause', 161: 'MediaPause', 162: 'MediaPlay',
 };
@@ -68,6 +73,11 @@ export function typingActive() { return !!typingTarget; }
 
 export function initInput({ onBack, onLetterSearch } = {}) {
   document.addEventListener('keydown', (e) => {
+    // A real form field owns its own keys. The old capture handler treated Backspace as "go back" even
+    // while an <input> was focused, so a desktop or phone user could not delete a character: the page
+    // navigated away first. On the TV the field is a div and the D-pad pad below it, so nothing is lost.
+    const target = e.target;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
     const key = normalize(e);
     if (!key) return;
 
@@ -77,9 +87,12 @@ export function initInput({ onBack, onLetterSearch } = {}) {
     // Auto-repeat from a keyboard: never a second press.
     if (e.repeat && !isTyping) { e.preventDefault(); return; }
 
-    // The Sony remote fires one press twice. Ignore the echo.
+    // The Sony remote fires one press twice. Ignore the echo — but never for a digit: a PIN of 1000 or
+    // a house number typed on a real keyboard repeats a key on purpose, and dropping the second 0 makes
+    // the code wrong with no visible reason.
     const now = Date.now();
-    if (!isTyping && key === lastKey && now - lastAt < REPEAT_WINDOW_MS) {
+    const isDigit = /^[0-9]$/.test(key);
+    if (!isTyping && !isDigit && key === lastKey && now - lastAt < REPEAT_WINDOW_MS) {
       lastAt = now;
       e.preventDefault();
       return;

@@ -1,0 +1,61 @@
+{
+  "id": "atom.label",
+  "version": 1,
+  "level": "atom",
+  "summary": "Tokenised text for titles, captions, metadata and section headings; truncation is explicit, never a surprise.",
+  "props": {
+    "text": {
+      "type": "string",
+      "required": true,
+      "maxLength": 240
+    },
+    "type": {
+      "type": "enum",
+      "default": "li",
+      "enum": ["brand", "nav", "h1", "h2", "h3", "sub", "rowTitle", "caption", "meta", "li", "badge"],
+      "description": "Ramp name; resolves to type.<name> in the active pack."
+    },
+    "tone": {
+      "type": "enum",
+      "default": "ink",
+      "enum": ["ink", "ink1", "ink2", "ink3", "brand", "match", "live"]
+    },
+    "weight": {
+      "type": "enum",
+      "default": "regular",
+      "enum": ["regular", "medium", "bold"]
+    },
+    "align": {
+      "type": "enum",
+      "default": "start",
+      "enum": ["start", "center", "end"]
+    },
+    "maxLines": {
+      "type": "integer",
+      "default": 1,
+      "min": 1,
+      "max": 3
+    },
+    "uppercase": {
+      "type": "boolean",
+      "default": false
+    },
+    "truncate": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "states": ["default", "disabled", "empty"],
+  "events": [],
+  "slots": [],
+  "a11y": {
+    "role": "text",
+    "label": "{{text}}"
+  },
+  "targets": {
+    "android": { "renderer": "TextView", "focus": "none" },
+    "ios": { "renderer": "ScenixText", "focus": "none" },
+    "web": { "renderer": "scenix-label", "focus": "none" }
+  },
+  "budget": { "maxViews": 1, "maxLayers": 1, "maxImageBytes": 0 }
+}

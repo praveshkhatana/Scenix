@@ -1,7 +1,7 @@
 'use strict';
 /*
  * rows/punjabiclassics.js — added as a NEW FILE, with no edit to index.js or to core/*.
- * (design/plugin-architecture.md §4, the "New 'Punjabi Classics' row" line of the change-cost table.)
+ * The worked example of that: a new taste row is one file and one registration.
  *
  * It reads the shared library and filters on a language tag, so it works with the live TV addon, with
  * an installed addon that publishes Punjabi titles, and with both at once. Delete the file, the row is

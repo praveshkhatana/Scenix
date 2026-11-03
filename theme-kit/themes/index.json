@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "themes": ["apple.json", "glass.json", "kids.json"],
+  "layouts": [
+    "layout/home.glass.json",
+    "layout/home.kids.json",
+    "layout/detail.kids.json",
+    "layout/detail.glass.json",
+    "layout/settings.glass.json",
+    "layout/player.default.json"
+  ]
+}

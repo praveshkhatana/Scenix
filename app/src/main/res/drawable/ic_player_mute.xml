@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Speaker crossed out: shown while the in-player volume is muted. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,9h4l5,-4.5v15l-5,-4.5H3z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M15,8.4l1.5,-1.5 6,6 -1.5,1.5z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M22.5,8.4l-6,6 -1.5,-1.5 6,-6z" />
+</vector>

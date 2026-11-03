@@ -1,0 +1,73 @@
+{
+  "template": "detail",
+  "theme": "scene.glass",
+  "description": "Glass title page: a full-bleed backdrop melted into the wall, words over it, a lit translucent Play, the reaction band, then cast, episodes and related rails.",
+  "root": {
+    "type": "stack",
+    "children": [
+      {
+        "component": "organism.wall",
+        "props": {
+          "tone": "color.bg",
+          "texture": "pack.wallBlobs",
+          "grain": "pack.wallGrain"
+        }
+      },
+      {
+        "type": "column",
+        "safe": "tv",
+        "gap": "space.rowGap",
+        "children": [
+          {
+            "component": "organism.detail.header",
+            "props": {
+              "record": "@record",
+              "variant": "backdrop",
+              "artSide": "fill",
+              "titleWidth": "radius.panel",
+              "actions": "@actions",
+              "reactions": "@reactions",
+              "showLogo": true,
+              "playMaterial": "glass"
+            }
+          },
+          {
+            "component": "organism.rail",
+            "when": "@cast.length",
+            "props": {
+              "title": "Cast",
+              "items": "@cast",
+              "variant": "poster",
+              "caption": "overlay",
+              "seeAll": false
+            }
+          },
+          {
+            "component": "organism.rail",
+            "when": "@episodes.length",
+            "props": {
+              "title": "Episodes",
+              "items": "@episodes",
+              "variant": "landscape",
+              "caption": "below",
+              "seeAll": true,
+              "total": "@episodes.total"
+            }
+          },
+          {
+            "component": "organism.rail",
+            "when": "@related.length",
+            "props": {
+              "title": "More like this",
+              "items": "@related",
+              "variant": "poster",
+              "caption": "below",
+              "seeAll": true,
+              "total": "@related.total"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

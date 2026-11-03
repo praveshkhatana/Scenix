@@ -1,0 +1,54 @@
+{
+  "id": "atom.progress",
+  "version": 1,
+  "level": "atom",
+  "summary": "Played and buffered progress for cards, the player timeline and long-running actions.",
+  "props": {
+    "value": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 1
+    },
+    "buffered": {
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 1
+    },
+    "kind": {
+      "type": "enum",
+      "default": "linear",
+      "enum": ["linear", "ring", "indeterminate"]
+    },
+    "thickness": {
+      "type": "number",
+      "default": 4,
+      "min": 1,
+      "max": 12
+    },
+    "tone": {
+      "type": "enum",
+      "default": "brand",
+      "enum": ["brand", "ink", "match"]
+    },
+    "showValue": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "states": ["default", "focus", "loading", "complete", "disabled"],
+  "events": [],
+  "slots": [],
+  "a11y": {
+    "role": "progressbar",
+    "label": "{{value}} percent",
+    "value": "{{value}}"
+  },
+  "targets": {
+    "android": { "renderer": "ProgressBar / SeekLine", "focus": "none" },
+    "ios": { "renderer": "ScenixProgress", "focus": "none" },
+    "web": { "renderer": "scenix-progress", "focus": "none" }
+  },
+  "budget": { "maxViews": 2, "maxLayers": 2, "maxImageBytes": 0 }
+}

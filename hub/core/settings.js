@@ -2,7 +2,7 @@
 /*
  * core/settings.js — what the owner chose, read at request time.
  *
- * This file exists to enforce one rule (design/deployment-modes.md): **no household-specific value is a
+ * This file exists to enforce one rule: **no household-specific value is a
  * constant in the code.** The languages a family watches, which live-TV playlist they pull, how many
  * torrent copies a picker shows — those belong to the person who installed the hub, not to the build they
  * downloaded. A hub that hardcodes someone else's language list hands a stranger in Brazil a product that
@@ -39,19 +39,45 @@ const DEFAULTS = {
   // What this hub calls itself where a client lists what it found on the network. Not a machine name:
   // the owner gives it, and two hubs on one LAN must be tellable apart by a person, not by a hostname.
   hubName: 'Scenix Hub',
+  // The visual theme selected for the browser/native chrome. The token files live in web/assets and
+  // are the same shape as the Android assets; an unknown id falls back to the shipped default pack.
+  theme: 'scenix-apple',
   // ISO-639-2/T codes, the form the hub's own rules and profiles work in (hin, eng, pan).
   // Empty means: no language filter at all — every copy the addons return is allowed.
   languages: [],
   // Live TV. One playlist URL, because that is what an owner can actually find and paste; empty means no
   // live TV row rather than a row full of somebody else's country.
-  live: { playlist: '' },
+  // Live TV: one playlist URL and the owner's selection over it. `hidden` names channel identities
+  // (`norm:<slug>`) the household does not want; `groupsHidden` removes a whole genre; `order` is the
+  // owner's own sequence, with anything it does not mention following in the provider's order. All three
+  // ship empty, so a fresh hub shows the playlist as published and the owner edits from the UI.
+  live: { playlist: '', xmltv: '', hidden: [], groupsHidden: [], order: [] },
   // How the addon host behaves. These were env-var constants; they are the owner's to set now.
   addons: { maxSources: 12, minSizeMB: 100, sizeFilter: '200MB-1.5GB,1.5GB-8GB' },
+  // Owner-defined source packs. Both are descriptors, not code: a native addon reads them by id and
+  // builds URLs from the templates the owner wrote. `igc` supplies video/stream sources; `audio`
+  // supplies audio-only sources that can be muxed with a higher-quality picture. Empty means off.
+  igc: { sources: [] },
+  audio: { sources: [] },
   // Which of this hub's home rows a viewer sees, and in what order. Both lists are empty by default:
   // every hub ships the rows its own plugins define, in the order those plugins ask for, and an owner's
   // edits land here as an override rather than a rewrite. `hidden` names rows to leave off the screen;
   // `order` is the sequence they should appear in, with anything it does not mention following behind.
   rows: { hidden: [], order: [] },
+  // A household PIN in front of the settings surfaces (add-on list, packs, debrid, household rules).
+  // `pinHash` is a scrypt tag/salt/hash string and is redacted from every GET; `enabled` is the switch
+  // the television reads to decide whether to ask before opening Settings.
+  lock: { enabled: false, pinHash: '' },
+  // Owner-made shelves: a provider's catalogue, optionally narrowed to one genre it publishes. This is
+  // the one place "more categories" lives, because which genres a household wants is not something a
+  // build can know. Each entry is { id, title, provider, catalog, genre, enabled, order }; `genre` is
+  // empty for the whole catalogue. They are virtual rows on /app/v1/home — no file is written under
+  // rows/ — and they follow `rows.hidden`/`rows.order` like every plugin row once their id is known.
+  categories: [],
+  // Owner-given names for the addon catalogue tiles on Home, keyed `addonId:catalogId`. The tile is
+  // generated from the addon's manifest, which often names it "Movies - DesiFlix"; this lets the
+  // household call it what it actually is without editing the addon.
+  addonCatalogNames: {},
   // Generated profile faces. Empty means this hub does not proxy any avatar service and a client draws
   // its own; pointing it at one (self-hosted or public) makes the hub fetch and cache through it, so the
   // TV still only ever talks to this box.
@@ -68,16 +94,21 @@ const DEFAULTS = {
   // its own bitrate and (b) read ahead of the player into RAM, so a torrent that bursts and pauses plays
   // like a file on a server. Both are the owner's call, so both live here and on the Settings screen.
   // What does NOT live here is "what counts as stuck" — that stays a timing rule in code (see
-  // Scenix/design/playback-strategy.md §5). These are how much of the film we hold, not how long we wait.
+  // see core/readahead.js). These are how much of the film we hold, not how long we wait.
   playback: {
     readAhead: true,      // buffer torrent bytes in the hub ahead of the player at all
+    bufferDirect: true,   // do the same for a plain internet copy: the screen reads the hub, not the host
     readAheadMB: 96,      // the cushion, in bytes of RAM, per copy
     readAheadSec: 90,     // the same cushion as seconds of media; whichever is smaller wins
+    readAheadConns: 4,    // range connections per cushioned copy (free hosts ration each one)
+    readAheadChunkMB: 4,  // how much of the file one of those connections pulls
     preBufferSec: 15,     // hold this much picture before promising the first frame
     sustainBudgetMs: 4000, // how long a Play press spends learning a copy's real, sustained rate
     starvedWindows: 2,    // slow windows in a row before the hub moves the viewer to a smaller copy
     // Kept out of the Settings screen because an owner has no reason to touch them:
-    readAheadCopies: 2,      // how many copies may be cushioned at the same time
+    readAheadCopies: 4,      // how many copies may be cushioned at the same time — a Play press
+                             // cushions every quality it measures, and the one the screen is watching
+                             // must never be dropped to make room for the others
     readAheadIdleMs: 45000,  // release a cushion this long after the last reader hangs up
     preBufferMB: 32,         // never pre-roll more bytes than this, whatever the seconds say
     preBufferMs: 6000,       // never delay the first frame longer than this to get the pre-roll
@@ -86,6 +117,20 @@ const DEFAULTS = {
     starvedGraceSec: 20,     // a cushion this deep absorbs a slow window without calling it starvation
     starvedHoldMs: 900000,   // how long a copy that starved a viewer stays out of favour
   },
+
+  // Optional adaptive ladder (core/ladder.js). Off: the hub normally copies the chosen video rather
+  // than transcoding it. When on, a Play press can return one HLS master with 1080/720/480 variants
+  // generated on this machine, so the player can change quality mid-film instead of rebuffering.
+  // maxHeight is the highest rung a ladder may offer. The client also sends its own display ceiling;
+  // the lower of the two wins, so a 4K phone and a 1080 TV do not get the same ladder.
+  adaptive: { enabled: false, transcode: true, maxHeight: 1080 },
+  // Optional debrid/direct resolver (core/debrid.js). Off, with no provider and no token, because a
+  // paid account is the owner's decision and must never be required for this hub to work. When it is
+  // configured, a magnet or a file-hoster link can become an ordinary HTTP stream before the torrent
+  // gateway is asked. `token` is a private API token: it is written here, read by core/debrid.js, and
+  // never returned by GET /app/v1/settings. An empty token in a PUT means "keep the stored one"; null
+  // explicitly removes it.
+  debrid: { enabled: false, provider: '', token: '' },
 };
 
 let cached = null; // the last parsed+merged object, or null when the file has not been read yet
@@ -140,13 +185,18 @@ function normalizePlayback(p) {
   const src = p && typeof p === 'object' ? p : {};
   const out = {};
   for (const k of Object.keys(d)) {
-    if (k === 'readAhead') { out[k] = src[k] !== false; continue; }
+    if (k === 'readAhead' || k === 'bufferDirect') { out[k] = src[k] !== false; continue; }
     out[k] = num(src[k], d[k], 0, 1e9);
   }
   // Sizes and seconds have their own sane ceilings; a 4 GB cushion on a 32 GB box that also runs the
   // torrent engine is not a preference, it is a swap.
   out.readAheadMB = num(src.readAheadMB, d.readAheadMB, 8, 2048);
   out.readAheadSec = num(src.readAheadSec, d.readAheadSec, 5, 900);
+  // A free file host (Heroku, a drive direct link) gives each connection its own small share of the
+  // pipe, so one reader is the bottleneck, not the film: several ranges in flight is what makes a
+  // 2 Mbps-per-socket host feed a 1080p copy.
+  out.readAheadConns = Math.round(num(src.readAheadConns, d.readAheadConns, 1, 8));
+  out.readAheadChunkMB = num(src.readAheadChunkMB, d.readAheadChunkMB, 1, 32);
   out.preBufferSec = num(src.preBufferSec, d.preBufferSec, 0, 180);
   out.preBufferMB = num(src.preBufferMB, d.preBufferMB, 1, 512);
   out.preBufferMs = num(src.preBufferMs, d.preBufferMs, 0, 20000);
@@ -161,11 +211,129 @@ function normalizePlayback(p) {
   return out;
 }
 
+/** A stable, URL-safe piece of an id. Titles change; the id a row is addressed by must not. */
+function slugPart(raw) {
+  return String(raw || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
+
+/**
+ * The owner's category shelves, cleaned and renumbered.
+ *
+ * A category is only meaningful with a provider and a catalogue, so an entry missing either is dropped:
+ * a broken row on the home screen is worse than a category the owner has to add again. Ids are kept when
+ * they are safe, generated from the three fields when they are not, and made unique so two "Action" rows
+ * from different providers remain two rows. `order` is renumbered in the stored sequence, which is what
+ * the home route and the Categories screen both read.
+ */
+function normalizeCategories(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const parsed = [];
+  const seen = new Set();
+  list.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+    const provider = String(entry.provider || '').trim().slice(0, 80);
+    const catalog = String(entry.catalog || '').trim().slice(0, 120);
+    if (!provider || !catalog) return;
+    const genre = String(entry.genre == null ? '' : entry.genre).trim().slice(0, 80);
+    let id = String(entry.id || '').trim().toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    if (!id) id = [provider, catalog, genre].filter(Boolean).map(slugPart).join('-').slice(0, 64) || 'category';
+    let unique = id;
+    let n = 2;
+    while (seen.has(unique)) {
+      unique = id.slice(0, 60).replace(/-+$/, '') + '-' + n;
+      n++;
+    }
+    seen.add(unique);
+    const title = String(entry.title || '').trim().slice(0, 60)
+      || [genre, catalog].filter(Boolean).join(' · ') || 'Category';
+    const order = Number(entry.order);
+    parsed.push({
+      id: unique,
+      title,
+      provider,
+      catalog,
+      genre,
+      enabled: entry.enabled !== false,
+      order: Number.isFinite(order) ? order : index,
+    });
+  });
+  parsed.sort((a, b) => a.order - b.order);
+  return parsed.map((entry, index) => Object.assign(entry, { order: index }));
+}
+
+/**
+ * Owner-defined source descriptors for the `igc` and `audio` addons.
+ *
+ * A descriptor is deliberately generic: `id` names it, `name` is the label a screen shows, and `url` is
+ * a template with placeholders (`{title}`, `{year}`, `{type}`, `{season}`, `{episode}`, `{lang}`). The
+ * addon substitutes them and sends the resulting URL; no provider host is written into code. Missing or
+ * malformed entries are dropped rather than allowed to produce a broken row.
+ */
+function normalizeSourcePacks(raw, audioOnly) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const id = String(entry.id || '').trim().toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    if (!id || seen.has(id)) continue;
+    const url = String(entry.url || entry.template || '').trim().slice(0, 1500);
+    if (!url) continue;
+    const name = String(entry.name || entry.label || '').trim().slice(0, 60) || id;
+    const languages = normalizeLanguages(entry.languages == null ? entry.language : entry.languages);
+    const quality = String(entry.quality || '').trim().slice(0, 20);
+    let type = String(entry.type || '').trim().toLowerCase();
+    if (type === 'tv') type = 'series';
+    if (!['movie', 'series', 'channel', 'any', ''].includes(type)) type = 'any';
+    const headers = {};
+    if (entry.headers && typeof entry.headers === 'object' && !Array.isArray(entry.headers)) {
+      for (const [k, v] of Object.entries(entry.headers)) {
+        const key = String(k || '').trim().slice(0, 60);
+        const value = String(v == null ? '' : v).trim().slice(0, 300);
+        if (key && value) headers[key] = value;
+      }
+    }
+    seen.add(id);
+    out.push({
+      id, name, url, languages, quality, type, headers,
+      enabled: entry.enabled !== false,
+      audioOnly: audioOnly === true,
+      manifestUrl: String(entry.manifestUrl || '').trim().slice(0, 600),
+    });
+  }
+  return out;
+}
+
+/**
+ * The optional debrid settings, in the one shape core/debrid.js reads. `provider` is a slug because it
+ * names a file in core/debrid/; the token is kept verbatim (trimmed) because providers do not all use
+ * the same alphabet, and a token that is shortened or lowercased is a token that does not work.
+ */
+function normalizeDebrid(d) {
+  const src = d && typeof d === 'object' ? d : {};
+  return {
+    enabled: src.enabled === true,
+    provider: String(src.provider || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32),
+    token: String(src.token == null ? '' : src.token).trim().slice(0, 512),
+  };
+}
+
 function normalize(s) {
   const out = {
     hubName: String(s.hubName || DEFAULTS.hubName).trim().slice(0, 60) || DEFAULTS.hubName,
+    theme: String(s.theme || DEFAULTS.theme).trim().slice(0, 40) || DEFAULTS.theme,
     languages: normalizeLanguages(s.languages),
-    live: { playlist: String((s.live || {}).playlist || '').trim().slice(0, 400) },
+    live: {
+      playlist: String((s.live || {}).playlist || '').trim().slice(0, 400),
+      // An optional XMLTV guide URL. Channels play perfectly without one; a guide is what puts
+      // "now / next" on the player header and the wall instead of nothing at all.
+      xmltv: String((s.live || {}).xmltv || '').trim().slice(0, 400),
+      hidden: idList((s.live || {}).hidden),
+      groupsHidden: idList((s.live || {}).groupsHidden),
+      order: idList((s.live || {}).order),
+    },
     addons: {
       maxSources: Math.max(1, Math.min(60, Number((s.addons || {}).maxSources) || DEFAULTS.addons.maxSources)),
       minSizeMB: Math.max(0, Math.min(10000, Number((s.addons || {}).minSizeMB) || DEFAULTS.addons.minSizeMB)),
@@ -176,6 +344,13 @@ function normalize(s) {
       hidden: idList((s.rows || {}).hidden),
       order: idList((s.rows || {}).order),
     },
+    lock: {
+      enabled: (s.lock || {}).enabled === true,
+      pinHash: String((s.lock || {}).pinHash || '').slice(0, 200),
+    },
+    categories: normalizeCategories(s.categories),
+    igc: { sources: normalizeSourcePacks((s.igc || {}).sources, false) },
+    audio: { sources: normalizeSourcePacks((s.audio || {}).sources, true) },
     avatar: {
       baseUrl: String((s.avatar || {}).baseUrl || '').trim().slice(0, 300),
       superheroApi: String((s.avatar || {}).superheroApi == null
@@ -184,6 +359,13 @@ function normalize(s) {
         ? DEFAULTS.avatar.wikiApi : (s.avatar || {}).wikiApi).trim().slice(0, 300),
     },
     playback: normalizePlayback(s.playback),
+    adaptive: {
+      enabled: (s.adaptive || {}).enabled === true,
+      transcode: (s.adaptive || {}).transcode !== false,
+      maxHeight: Math.max(480, Math.min(2160,
+        Number((s.adaptive || {}).maxHeight) || DEFAULTS.adaptive.maxHeight)),
+    },
+    debrid: normalizeDebrid(s.debrid),
   };
   // Anything the owner put in the file that this build does not know about is kept, so an older hub
   // reading a newer file does not quietly delete a setting a newer hub wrote.
@@ -200,15 +382,30 @@ function seedFromEnv(s) {
   if (process.env.PLAYLIST_URL && !s.live.playlist) s.live.playlist = String(process.env.PLAYLIST_URL).trim();
   const max = process.env.ADDON_MAX_SOURCES;
   const min = process.env.ADDON_MIN_SIZE_MB;
-  if (max !== undefined && s.addons.maxSources === DEFAULTS.addons.maxSources) s.addons.maxSources = Number(max);
-  if (min !== undefined && s.addons.minSizeMB === DEFAULTS.addons.minSizeMB) s.addons.minSizeMB = Number(min);
+  // A blank environment variable is not a value: `ADDON_MAX_SOURCES=` must not mean "zero sources"
+  // and `READ_AHEAD_MB=` must not mean "no cushion".
+  const envNum = (raw) => (raw === undefined || String(raw).trim() === '' || !Number.isFinite(Number(raw)))
+    ? null : Number(raw);
+  if (envNum(max) !== null && s.addons.maxSources === DEFAULTS.addons.maxSources) s.addons.maxSources = envNum(max);
+  if (envNum(min) !== null && s.addons.minSizeMB === DEFAULTS.addons.minSizeMB) s.addons.minSizeMB = envNum(min);
   // Read-ahead is on by default; an owner who wants the old pass-through pipe, or a smaller cushion on a
   // smaller box, can say so at install time without opening the UI.
   if (process.env.READ_AHEAD === '0' && s.playback.readAhead === DEFAULTS.playback.readAhead) {
     s.playback.readAhead = false;
   }
   const ra = process.env.READ_AHEAD_MB;
-  if (ra !== undefined && s.playback.readAheadMB === DEFAULTS.playback.readAheadMB) s.playback.readAheadMB = Number(ra);
+  if (envNum(ra) !== null && s.playback.readAheadMB === DEFAULTS.playback.readAheadMB) s.playback.readAheadMB = envNum(ra);
+  // A debrid account is optional, so these only fill a blank install: an owner who turned it off in the
+  // UI must not have it switched back on by an environment variable left in a compose file.
+  if (process.env.DEBRID_ENABLED === '1' && s.debrid.enabled === DEFAULTS.debrid.enabled) {
+    s.debrid.enabled = true;
+  }
+  if (process.env.DEBRID_PROVIDER && !s.debrid.provider) {
+    s.debrid.provider = normalizeDebrid({ provider: process.env.DEBRID_PROVIDER }).provider;
+  }
+  if (process.env.DEBRID_TOKEN && !s.debrid.token) {
+    s.debrid.token = String(process.env.DEBRID_TOKEN).trim().slice(0, 512);
+  }
   return s;
 }
 
@@ -258,15 +455,73 @@ function playback() {
   return Object.assign({}, read().playback);
 }
 
+/**
+ * A deep copy of the settings-shaped JSON. Used only to answer a browser: the live object is cached and
+ * shared, and a screen must never be able to mutate the hub's copy of its own configuration.
+ */
+function clone(v) {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(clone);
+  const out = {};
+  for (const [k, x] of Object.entries(v)) out[k] = clone(x);
+  return out;
+}
+
+/**
+ * The settings a browser may see. A debrid token is write-only: the answer says whether one is stored,
+ * never what it is. This is the only shape GET /app/v1/settings and the PUT reply are allowed to send.
+ */
+function redacted(which) {
+  const out = clone(which === undefined ? read() : which);
+  if (out && out.debrid && typeof out.debrid === 'object') {
+    const token = String(out.debrid.token || '');
+    out.debrid.tokenSet = !!token;
+    delete out.debrid.token;
+  }
+  if (out && out.lock && typeof out.lock === 'object') {
+    out.lock = { enabled: out.lock.enabled === true, pinSet: !!out.lock.pinHash };
+  }
+  return out;
+}
+
+/**
+ * A PUT from the settings screen carries the whole debrid object it last read, and that object cannot
+ * contain the token. An empty token therefore means "keep the one already stored", not "erase it"; an
+ * explicit null is the way to remove it.
+ */
+function scrubSecretPatch(patch) {
+  const p = clone(patch);
+  if (!p || typeof p !== 'object' || !p.debrid || typeof p.debrid !== 'object') return p;
+  const d = p.debrid;
+  if (Object.prototype.hasOwnProperty.call(d, 'token')) {
+    if (d.token === null) d.token = '';
+    else if (typeof d.token === 'string') {
+      const token = d.token.trim();
+      if (token) d.token = token; else delete d.token;
+    } else {
+      // A number, object or array is not a token. Treat it like a field the screen did not have, so a
+      // malformed PUT cannot replace a working credential with "[object Object]".
+      delete d.token;
+    }
+  }
+  // `tokenSet` is an answer from redacted(), never a value the file stores.
+  delete d.tokenSet;
+  return p;
+}
+
 /** Merge a patch into the file and return what it became. Nested objects merge key by key. */
 function set(patch) {
   const current = read();
-  const next = normalize(merge(current, patch && typeof patch === 'object' ? patch : {}));
+  const scrubbed = scrubSecretPatch(patch && typeof patch === 'object' ? patch : {});
+  const next = normalize(merge(current, scrubbed));
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     const tmp = FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    // This file can hold a paid account's API token. Create it readable by its owner only; rename
+    // replaces the old inode, so an older 0644 settings.json does not keep its mode.
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
     fs.renameSync(tmp, FILE);
+    try { fs.chmodSync(FILE, 0o600); } catch (e) { /* a filesystem without chmod; write still succeeded */ }
   } catch (e) {
     console.log(new Date().toISOString(), 'SETTINGS write failed:', FILE, e.message);
   }
@@ -290,4 +545,4 @@ function status() {
   };
 }
 
-module.exports = { get, set, languages, playback, status, DEFAULTS, FILE };
+module.exports = { get, set, languages, playback, status, redacted, DEFAULTS, FILE };

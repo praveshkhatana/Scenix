@@ -1,0 +1,54 @@
+{
+  "id": "molecule.nav-item",
+  "version": 1,
+  "level": "molecule",
+  "summary": "One destination in the top nav or profile pill: icon, label, active marker and optional count.",
+  "props": {
+    "label": {
+      "type": "string",
+      "required": true,
+      "maxLength": 24
+    },
+    "icon": {
+      "type": "enum",
+      "default": "home",
+      "enum": ["home", "films", "series", "kids", "live", "search", "settings", "profile"]
+    },
+    "active": {
+      "type": "boolean",
+      "default": false
+    },
+    "count": {
+      "type": "integer",
+      "min": 0,
+      "max": 99
+    },
+    "collapsed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Icon-only form used by the narrow profile pill."
+    },
+    "tone": {
+      "type": "enum",
+      "default": "plain",
+      "enum": ["plain", "pill", "stage"]
+    }
+  },
+  "states": ["default", "focus", "pressed", "selected", "disabled"],
+  "events": ["press", "focus", "blur"],
+  "slots": [
+    { "name": "icon", "accepts": ["atom.icon"], "optional": true },
+    { "name": "label", "accepts": ["atom.label"], "optional": true }
+  ],
+  "a11y": {
+    "role": "tab",
+    "label": "{{label}}",
+    "selected": false
+  },
+  "targets": {
+    "android": { "renderer": "TextView + Focus.attach", "focus": "host-ring" },
+    "ios": { "renderer": "NavItem", "focus": "focusEffect" },
+    "web": { "renderer": "scenix-nav-item", "focus": "focus-visible" }
+  },
+  "budget": { "maxViews": 6, "maxLayers": 2, "maxImageBytes": 0 }
+}
