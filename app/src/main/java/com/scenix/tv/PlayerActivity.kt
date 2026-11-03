@@ -1786,7 +1786,7 @@ class PlayerActivity : Activity() {
         // Visual order, left to right: the remote's RIGHT must visit the same icons the eye does.
         val controls = listOfNotNull(
             playButton,
-            rewindButton,
+            rewindButton.takeIf { it.visibility == View.VISIBLE },
             subButton,
             audioButton,
             speedButton.takeIf { it.visibility == View.VISIBLE },
@@ -2229,6 +2229,37 @@ class PlayerActivity : Activity() {
         choices.firstOrNull { it.id == selectedSubId }?.lang.orEmpty()
 
     private fun buildSubtitleSheet(keepFocus: Boolean, focused: View?) {
+        if (timelineOffsetMs > 0L) {
+            // A resume ladder's media timeline starts at the resume point; an external subtitle is
+            // timed from the film's beginning. Offering files here would show every line early.
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(theme.px(34f), theme.px(28f), theme.px(34f), theme.px(26f))
+                background = Views.rounded(
+                    Color.argb(0xFF, 16, 17, 24), theme.px(18f), theme.px(1f),
+                    Color.argb(0x33, 255, 255, 255),
+                )
+            }
+            box.addView(Views.text(app, "panelTitle", 30f, playerInk, "Subtitles", bold = true),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = theme.px(12f) })
+            box.addView(noteRow("Subtitles are off on a resumed ladder"))
+            val back = menuRow("Back", "", true) { closeMenu() }
+            box.addView(back)
+            val container = FrameLayout(this)
+            container.addView(box, FrameLayout.LayoutParams(
+                theme.px(620f), ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+            overlay.addView(container, FrameLayout.LayoutParams(
+                theme.px(620f), ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = Gravity.CENTER })
+            panel = container
+            Motion.sheetIn(container, theme)
+            trapFocus()
+            back.post { focusMenuTarget(back, container) }
+            return
+        }
         val choices = subChoices()
         val langs = choices.map { it.lang }.distinct().sortedWith(
             compareBy({ when (it) { "eng" -> 0; "hin" -> 1; else -> 2 } }, { langName(it) })
@@ -4725,7 +4756,9 @@ class PlayerActivity : Activity() {
         val h = total / 3600L
         val m = (total % 3600L) / 60L
         val s = total % 60L
-        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+        // The cinema bar prints 00:43 / 01:48:39, not 0:43 / 1:48:39: two-digit fields keep the
+        // elapsed/total pair from shifting as the hour rolls over.
+        return if (h > 0) "%02d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
     }
 
     private fun formatSpeed(v: Float): String =
