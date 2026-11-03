@@ -824,6 +824,11 @@ class PlayerActivity : Activity() {
             else -> -1
         }
         val picked = reply.optJSONObject("picked")
+        // The viewer chose a copy by name although the source calls it something else. Say what the
+        // source called it: the copy plays because they asked, and the screen never hides that.
+        str(reply, "labelMismatch").takeIf { it.isNotBlank() }?.let {
+            setStatus("Playing the copy you picked — the source calls it \u201c$it\u201d")
+        }
         if (picked != null) {
             currentSourceLabel = sourceWords(picked)
             // A copy that played is not a failed copy. Putting it in `tried` made the next /play
@@ -4834,6 +4839,9 @@ class PlayerActivity : Activity() {
         if (provider.isNotBlank()) parts.add(provider.replaceFirstChar { it.uppercase() })
         if (size > 0) parts.add(sizeWords(size))
         if (mode.isNotBlank() && !mode.equals("direct", true)) parts.add(mode)
+        // The hub keeps a copy whose own name is a different release on the list, flagged, because a
+        // provider mislabels real files and the viewer is the only one who can tell the two apart.
+        if (src.optBoolean("mislabeled", false)) parts.add("its name is another title")
         return parts.joinToString(" · ")
     }
 

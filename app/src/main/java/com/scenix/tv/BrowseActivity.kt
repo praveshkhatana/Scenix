@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Prefs
@@ -2088,6 +2089,9 @@ class BrowseActivity : Activity() {
                     HomeSurfaceCallbacks(
                         onPlay = ::playItem,
                         onOpen = ::openDetail,
+                        onFavourite = { item ->
+                            CardActions.toggleMyList(this@BrowseActivity, app, api, profileId, item)
+                        },
                         onSelected = ::onSlideFocused,
                         onStep = ::stepHero,
                         onHeroFocused = ::onChromeFocused,
@@ -2252,6 +2256,8 @@ class BrowseActivity : Activity() {
         // the hub marks the record dismissed (the position survives; pressing the title re-arms it).
         // The mutable copy exists so the removal animates without re-reading Home.
         private val dismissible = row.id == "continue"
+        // My List is the mirror image: a held tile that leaves the list should leave the shelf too.
+        private val myListRow = row.id == "mylist"
         private val shown: MutableList<Item> = row.items.toMutableList()
 
         override fun getItemCount(): Int = shown.size + if (seeAll) 1 else 0
@@ -2570,33 +2576,43 @@ class BrowseActivity : Activity() {
             }
             val item = shown[position]
             holder.item = item
-            holder.itemView.contentDescription = itemAnnouncement(item)
+            holder.itemView.contentDescription = CardActions.announcement(
+                app, profileId, item, itemAnnouncement(item),
+                holdHint = if (dismissible && item.progress != null)
+                    "holding takes it off Continue watching" else null,
+            )
             if (item.type == "genre") {
                 bindGenre(holder, item)
                 return
             }
-            // Long-press a Continue tile to take it off Home. Every theme passes through this
-            // adapter, so the behaviour is the app's, not a pack's.
-            if (dismissible && item.progress != null) {
-                holder.itemView.isLongClickable = true
-                holder.itemView.setOnLongClickListener {
-                    val at = holder.bindingAdapterPosition
+            // Hold OK on a card. On Continue that takes the title off Home; anywhere else it puts the
+            // title into (or out of) the profile's list. Every theme walks this one adapter, so the
+            // gesture and its wording belong to the app rather than to a pack.
+            holder.itemView.isLongClickable = item.type != "genre"
+            holder.itemView.setOnLongClickListener {
+                if (item.isLive() || item.type == "genre") return@setOnLongClickListener false
+                val at = holder.bindingAdapterPosition
+                if (dismissible && item.progress != null) {
+                    CardActions.dismissContinue(this@BrowseActivity, api, profileId, item)
                     if (at in shown.indices) {
-                        api.dismiss(profileId, item.identity) { }
                         shown.removeAt(at)
                         notifyItemRemoved(at)
                         notifyItemRangeChanged(at, shown.size - at)
-                        android.widget.Toast.makeText(
-                            this@BrowseActivity,
-                            "Removed from Continue watching — pressing the title brings it back",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
                     }
-                    true
+                } else {
+                    CardActions.toggleMyList(this@BrowseActivity, app, api, profileId, item) { onList ->
+                        val now = holder.bindingAdapterPosition
+                        if (!onList && myListRow && now in shown.indices) {
+                            shown.removeAt(now)
+                            notifyItemRemoved(now)
+                            notifyItemRangeChanged(now, shown.size - now)
+                        }
+                        holder.itemView.contentDescription =
+                            CardActions.announcement(app, profileId, shown.getOrNull(now) ?: item,
+                                itemAnnouncement(item))
+                    }
                 }
-            } else {
-                holder.itemView.setOnLongClickListener(null)
-                holder.itemView.isLongClickable = false
+                true
             }
             holder.chevron.visibility = View.GONE
             if (featured) holder.itemView.nextFocusUpId = navAnchor?.id ?: View.NO_ID

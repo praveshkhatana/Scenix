@@ -42,6 +42,8 @@ internal class KidsHomeLayout(
 
     data class Callbacks(
         val onOpen: (Item) -> Unit,
+        /** Hold OK on the card: the profile's list, without walking into the title first. */
+        val onFavourite: (Item) -> Unit = {},
         val onSection: (String) -> Unit,
         val onProfile: () -> Unit,
         val onSearch: () -> Unit,
@@ -264,6 +266,8 @@ internal class KidsHomeLayout(
         Focus.attach(cardB, b.second, app, heroRadius, scale = false,
             elevate = false, glowInset = theme.focusGlowInset,
             onClick = { itemB?.let(callbacks.onOpen) })
+        armHeroHold(cardA, { itemA }, callbacks.onFavourite)
+        armHeroHold(cardB, { itemB }, callbacks.onFavourite)
 
         // --- black chip capsules: the household's real shelves ----------------------------------
         // The row scrolls: eight shelf chips are wider than the page, and a plain LinearLayout

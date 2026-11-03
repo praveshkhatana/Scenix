@@ -38,6 +38,8 @@ internal class CleanHomeLayout(
 
     data class Callbacks(
         val onOpen: (Item) -> Unit,
+        /** Hold OK on the card: the profile's list, without walking into the title first. */
+        val onFavourite: (Item) -> Unit = {},
         val onSection: (String) -> Unit,
         val onProfile: () -> Unit,
         val onSearch: () -> Unit,
@@ -224,6 +226,8 @@ internal class CleanHomeLayout(
             onClick = { itemA?.let(callbacks.onOpen) })
         Focus.attach(cardB, cardB, app, theme.radius("card", 22f), scale = false, elevate = true,
             onClick = { itemB?.let(callbacks.onOpen) })
+        armHeroHold(cardA, { itemA }, callbacks.onFavourite)
+        armHeroHold(cardB, { itemB }, callbacks.onFavourite)
 
         // --- frosted chip row: the household's real shelves, named exactly as they are ----------
         chipRow = LinearLayout(context).apply {

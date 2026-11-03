@@ -162,6 +162,22 @@ object Focus {
             focusable.setOnClickListener { onClick() }
         }
 
+        // Press-and-hold, the reference app's gesture: a card that answers a hold (`isLongClickable`)
+        // decides on release, so a quick OK still opens the title and holding it past the platform's
+        // long-press timeout runs the hold action instead — add to My List, leave Continue watching.
+        // Key repeat intervals differ wildly across TV remotes, so the decision is made on a clock,
+        // not by counting repeat events: every device delivers a DOWN and eventually an UP.
+        @Suppress("DEPRECATION")
+        val holdMs = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        var holdTimer: Runnable? = null
+        var holdFired = false
+        // The clock lives on the main looper, not on the card: a shelf recycles its views, and a view
+        // that is detached mid-press would take the pending hold with it.
+        val holdHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        fun cancelHold() {
+            holdTimer?.let { holdHandler.removeCallbacks(it) }
+            holdTimer = null
+        }
         focusable.setOnKeyListener { _, code, ev ->
             // Activation is deliberately performed on DOWN for responsive TV feedback. Consume the
             // matching UP too: if a click starts another Activity on DOWN, letting UP fall through
@@ -171,19 +187,50 @@ object Focus {
             if (ev.action == KeyEvent.ACTION_UP && code in setOf(
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                     KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE,
-                )) return@setOnKeyListener true
-            if (ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-            // A row may want an arrow for itself — the hero's Featured rail wraps at its ends to
-            // keep the loop illusion — before the arrow falls through to the system's focus search.
-            arrow?.let { if (it(code)) return@setOnKeyListener true }
-            when (code) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
-                KeyEvent.KEYCODE_SPACE, -> {
-                    val act = actionable(focusable) ?: return@setOnKeyListener false
-                    act.performClick()
-                    true
+                )) {
+                if (code in setOf(
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                        KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE,
+                    ) && holdTimer != null
+                ) {
+                    // Released before the hold clock ran out: an ordinary press, decided now.
+                    cancelHold()
+                    actionable(focusable)?.performClick()
                 }
-                else -> false
+                holdFired = false
+                true
+            } else if (ev.action != KeyEvent.ACTION_DOWN) {
+                false
+            } else {
+                // A row may want an arrow for itself — the hero's Featured rail wraps at its ends to
+                // keep the loop illusion — before the arrow falls through to the system's focus search.
+                arrow?.let { if (it(code)) return@setOnKeyListener true }
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE, -> {
+                        val act = actionable(focusable) ?: return@setOnKeyListener false
+                        if (holdFired) return@setOnKeyListener true   // the hold already answered this press
+                        if (act.isLongClickable && holdTimer == null && ev.repeatCount == 0 && !ev.isLongPress) {
+                            holdTimer = Runnable {
+                                holdTimer = null
+                                holdFired = true
+                                act.performLongClick()
+                            }.also { holdHandler.postDelayed(it, holdMs) }
+                        } else if (act.isLongClickable && (ev.repeatCount > 0 || ev.isLongPress)) {
+                            // Some remotes and input stacks report the hold themselves (a repeat, or the
+                            // long-press flag) rather than leaving the press open for us to time. Either
+                            // one arrives only after the platform's own long-press delay, so it is the
+                            // same decision the clock makes — reached by a different road.
+                            cancelHold()
+                            holdFired = true
+                            act.performLongClick()
+                        } else if (holdTimer == null) {
+                            act.performClick()
+                        }
+                        true
+                    }
+                    else -> false
+                }
             }
         }
 
@@ -196,6 +243,9 @@ object Focus {
 
         val ms = theme.focusDurationMs.toLong()
         focusable.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
+            // A hold that lost the focus mid-press belongs to a card the viewer walked away from:
+            // drop it rather than fire an action on a tile they are no longer pointing at.
+            if (!has) cancelHold()
             paintRing(has)
             onFocus?.invoke(has)
             val target = if (has) {

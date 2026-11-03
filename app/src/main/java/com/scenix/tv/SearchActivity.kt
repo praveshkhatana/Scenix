@@ -20,6 +20,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
@@ -374,12 +375,12 @@ class SearchActivity : Activity() {
 
         override fun onBindViewHolder(holder: ResultHolder, position: Int) {
             val item = items[position]
-            holder.itemView.contentDescription = buildString {
+            holder.itemView.contentDescription = CardActions.announcement(app, profileId, item, buildString {
                 append(item.title)
                 if (item.year > 0) append(", ").append(item.year)
                 if (item.match > 0) append(", ").append(item.match).append("% match")
                 append(", open details")
-            }
+            })
             holder.name.text = item.title
             holder.name.visibility = View.VISIBLE
             holder.logo.visibility = View.GONE
@@ -402,6 +403,13 @@ class SearchActivity : Activity() {
                 }
             }
             holder.itemView.setOnClickListener { open(item) }
+            // The same hold the home shelves answer: the result joins or leaves the profile's list
+            // without walking into the detail page first.
+            holder.itemView.isLongClickable = !item.isLive()
+            holder.itemView.setOnLongClickListener {
+                CardActions.toggleMyList(this@SearchActivity, app, api, profileId, item)
+                true
+            }
         }
     }
 

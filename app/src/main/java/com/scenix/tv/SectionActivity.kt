@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
@@ -324,6 +325,12 @@ class SectionActivity : Activity() {
                 BrowseImages.load(holder.logo, item.logo, theme.px(240f)) { ok ->
                     holder.logo.visibility = if (ok) View.VISIBLE else View.GONE
                 }
+            }
+            // A full row/grid is where a viewer actually builds their list, so the hold works here too.
+            holder.itemView.isLongClickable = !item.isLive()
+            holder.itemView.setOnLongClickListener {
+                CardActions.toggleMyList(this@SectionActivity, app, api, profileId, item)
+                true
             }
             holder.itemView.setOnClickListener {
                 startActivity(

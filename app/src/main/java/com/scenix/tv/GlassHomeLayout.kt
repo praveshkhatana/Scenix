@@ -34,6 +34,8 @@ internal class GlassHomeLayout(
 
     data class Callbacks(
         val onOpen: (Item) -> Unit,
+        /** Hold OK on the card: the profile's list, without walking into the title first. */
+        val onFavourite: (Item) -> Unit = {},
         val onSection: (String) -> Unit,
         val onProfile: () -> Unit,
         val onSearch: () -> Unit,
@@ -206,6 +208,8 @@ internal class GlassHomeLayout(
             glowInset = glowPad, onClick = { itemA?.let(callbacks.onOpen) })
         Focus.attach(cardB, ringB, app, heroR, scale = true, elevate = true,
             glowInset = glowPad, onClick = { itemB?.let(callbacks.onOpen) })
+        armHeroHold(cardA, { itemA }, callbacks.onFavourite)
+        armHeroHold(cardB, { itemB }, callbacks.onFavourite)
 
         // --- frost chip row: the household's real shelves ---------------------------------------
         chipRow = LinearLayout(context).apply {

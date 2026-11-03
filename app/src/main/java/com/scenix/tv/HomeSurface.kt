@@ -58,6 +58,8 @@ internal data class HomeSurfaceCallbacks(
     val onSettings: () -> Unit,
     /** Jump the outer list to the shelf a chip names; surfaces that own their rails ignore it. */
     val onShelf: (String) -> Unit = {},
+    /** Hold OK on a hero card adds that title to (or takes it out of) the profile's list. */
+    val onFavourite: (Item) -> Unit = {},
     /** The active section ("" = Home). Section pills paint ONLY the matching segment active, so
      *  Home shows no selection at all (owner, round 7: "when on home screen why is Movies selected?"). */
     val section: String = "",
@@ -68,6 +70,16 @@ internal data class HomeSurfaceCallbacks(
  * Clean or Magnifier means adding a surface here, rather than spreading `theme.id` checks through
  * BrowseActivity's RecyclerView, key routing and top-bar code.
  */
+/**
+ * Arms the press-and-hold on a hero card. The shelves answer this gesture already; a billboard that
+ * ignored it would leave the profile's list one press away on one half of the page and unreachable
+ * on the other. The item is read at press time because these cards are re-bound as the hero slides.
+ */
+internal fun armHeroHold(card: View, itemAt: () -> Item?, onFavourite: (Item) -> Unit) {
+    card.isLongClickable = true
+    card.setOnLongClickListener { itemAt()?.let(onFavourite); true }
+}
+
 internal object HomeSurfaceFactory {
     fun create(context: Context, app: AppContext, callbacks: HomeSurfaceCallbacks): HomeSurface =
         when (app.theme.homeLayout.hero) {
@@ -103,6 +115,7 @@ internal object HomeSurfaceFactory {
                     app,
                     GlassHomeLayout.Callbacks(
                         onOpen = callbacks.onOpen,
+                        onFavourite = callbacks.onFavourite,
                         onSection = callbacks.onSection,
                         onProfile = callbacks.onProfile,
                         onSearch = callbacks.onSearch,
@@ -117,6 +130,7 @@ internal object HomeSurfaceFactory {
                     app,
                     CleanHomeLayout.Callbacks(
                         onOpen = callbacks.onOpen,
+                        onFavourite = callbacks.onFavourite,
                         onSection = callbacks.onSection,
                         onProfile = callbacks.onProfile,
                         onSearch = callbacks.onSearch,
@@ -145,6 +159,7 @@ internal object HomeSurfaceFactory {
                     app,
                     KidsHomeLayout.Callbacks(
                         onOpen = callbacks.onOpen,
+                        onFavourite = callbacks.onFavourite,
                         onSection = callbacks.onSection,
                         onProfile = callbacks.onProfile,
                         onSearch = callbacks.onSearch,

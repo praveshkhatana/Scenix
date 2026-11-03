@@ -218,6 +218,11 @@ data class Item(
     val episodes: List<Episode> = emptyList(),
     /** Optional hub annotation: subtitle languages it can serve. Drives the CC chip; absent = no chip. */
     val subtitleLanguages: List<String> = emptyList(),
+    /**
+     * Is this title already in the profile's own list? The hub stamps the answer on every item it
+     * delivers, so a card can show its state and a hold can take it out again without asking first.
+     */
+    val inList: Boolean = false,
 ) {
     /** Artwork to draw for a card of this item, given the card's aspect. */
     fun artFor(wide: Boolean): String? =
@@ -257,6 +262,7 @@ data class Item(
             sources = srcList(o.optJSONArray("sources")),
             episodes = epList(o.optJSONArray("episodes")),
             subtitleLanguages = strList(o.optJSONArray("subtitleLanguages") ?: o.optJSONArray("subs")),
+            inList = o.optBoolean("inList", false),
         )
 
         fun list(a: JSONArray?): List<Item> {
