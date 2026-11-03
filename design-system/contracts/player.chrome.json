@@ -104,7 +104,8 @@
     "The preferred audio language selects the track; a donor mix names its source in the status line; a genuinely missing language is stated, not hidden.",
     "Nothing is drawn over a running picture: a late failure at another copy goes to the status pill, not a card.",
     "Seeking a remuxed copy (a donor audio mix or a gateway re-wrap) asks the hub for a new stream at the target film time instead of byte-seeking a generated MP4; the answer carries the start so the timeline stays in film time.",
-    "Captions sit above the chrome while it is up and slide to the bottom safe area when it hides; they are never left mid-screen over a clean picture."
+    "Captions sit above the chrome while it is up and slide to the bottom safe area when it hides; they are never left mid-screen over a clean picture.",
+    "A series asks for subtitles under its episode identity (imdb:tt…:S:E), not the show, or the addon answers nothing; the sheet lists the files for that episode."
   ],
   "platformDeltas": {
     "ios": "Same bottom layout; use safe-area bottom inset; system volume/brightness gestures are allowed; no D-pad hints.",
