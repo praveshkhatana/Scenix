@@ -2285,12 +2285,30 @@ function labelNamesOtherTitle(label, title) {
  * viewer's reach, and the only person who can tell a mislabelled file from a wrong film is the one
  * watching it.
  */
+/**
+ * The copy's resolution in initials — `1080P`. A file's name is not a quality: `Titan VII - Direct
+ * MP4` says nothing about the picture, and the app's source rows need one word the viewer can
+ * compare copies by. Order of trust: the addon's own field, then the label, then the tagline.
+ */
+function resolutionOf(source) {
+  const direct = String((source && source.quality) || '').match(/(\d{3,4})[pP]/);
+  if (direct) return direct[1].toUpperCase() + 'P';
+  for (const field of ['label', 'tagline']) {
+    const m = String((source && source[field]) || '').match(/\b(\d{3,4})[pP]\b/i);
+    if (m) return m[1].toUpperCase() + 'P';
+  }
+  const wide = String((source && source.label) || '').match(/\b(4K|UHD)\b/i);
+  return wide ? '2160P' : null;
+}
+
 function listAlternatives(candidates, source, title) {
   const flagged = candidates.filter((s) => s !== source).map((s) => (
     nameIsntTheTitle(labelOf(s), title) ? Object.assign({}, s, { mislabeled: true }) : s
   ));
   flagged.sort((a, b) => (a.mislabeled === true ? 1 : 0) - (b.mislabeled === true ? 1 : 0));
-  return flagged.slice(0, ALT_MAX);
+  return flagged.slice(0, ALT_MAX).map((s) => (
+    s.resolution ? s : Object.assign({}, s, { resolution: resolutionOf(s) })
+  ));
 }
 
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
@@ -3624,6 +3642,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     checked: next.checked === true,
   } : null;
   if (allExcluded) out.allExcluded = true;
+  // The row for the copy that is playing needs the same one-word label as every other row.
+  if (out.picked && !out.picked.resolution) {
+    out.picked = Object.assign({}, out.picked, { resolution: resolutionOf(source) });
+  }
   out.alternatives = listAlternatives(candidates, source, kept.title);
   if (labelOverride) out.labelMismatch = labelOverride;
   out.title = kept.title || null;

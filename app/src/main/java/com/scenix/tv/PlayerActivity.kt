@@ -247,6 +247,10 @@ class PlayerActivity : Activity() {
     }
     private val tried = LinkedHashSet<String>()
     private var liveChannels: List<Item> = emptyList()
+    /** Channels this session already failed to tune. The zap ring parks them (see [markChannelDead]). */
+    private val deadChannels = HashSet<String>()
+    /** True while Picture size is on Zoom; the surface stays scaled across retunes. */
+    private var zoomSurface = false
     private var liveLoaded = false
     private var pausedForBackground = false
     /** True while the viewer asked for the picture's own audio instead of the hub's language mix. */
@@ -515,6 +519,8 @@ class PlayerActivity : Activity() {
                     handler.removeCallbacks(stallCheck)
                     finishPreloader()
                     hideCenter()
+                    // A retune builds a fresh surface; the viewer's Zoom survives the channel change.
+                    if (zoomSurface) setSurfaceScale(1.3f)
                     durationMs = player?.duration?.takeIf { it > 0 }?.let { d ->
                         // A resume ladder's duration is only the part after the offset; the film's
                         // full length is what the viewer should see on the bar.
@@ -3126,12 +3132,26 @@ class PlayerActivity : Activity() {
             else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
         }
         view.resizeMode = next
+        zoomSurface = next == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        setSurfaceScale(if (zoomSurface) 1.3f else 1f)
         val label = when (next) {
             AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
             AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
             else -> "Fit"
         }
         setStatus("Picture size · $label")
+    }
+
+    /**
+     * Zoom on a live feed. A 16:9 broadcast already fills a 16:9 panel, so the frame's own Zoom mode
+     * changes nothing there and the control looked broken. The surface itself is scaled up and the
+     * panel clips the edges, which is what a viewer pressing "Zoom" on a channel expects to see.
+     */
+    private fun setSurfaceScale(scale: Float) {
+        playerView?.let { v ->
+            v.videoSurfaceView?.scaleX = scale
+            v.videoSurfaceView?.scaleY = scale
+        }
     }
 
     private fun setSpeed(v: Float) {
@@ -3675,8 +3695,9 @@ class PlayerActivity : Activity() {
         return if (said.endsWith(".") || said.endsWith("…")) said else "$said."
     }
 
-    private fun showError(rawMessage: String, title: String = "This copy could not be played") {
+    private fun showError(rawMessage: String, title: String = "") {
         val message = humaniseError(rawMessage)
+        val heading = title.ifBlank { if (live) "This channel is off the air" else "This copy could not be played" }
         // A card over a running picture is the bug the viewer reported: the old copy is fine, the
         // hub was merely late with another one. Say it in the status line and leave the picture be.
         if (pictureLive()) {
@@ -3696,7 +3717,7 @@ class PlayerActivity : Activity() {
         val card = cardBox()
         // One heading language across the app: ink, never a coloured title — the pack's accent
         // already rides on the chips below.
-        card.addView(Views.text(app, "panelTitle", 28f, playerInk, title, bold = true))
+        card.addView(Views.text(app, "panelTitle", 28f, playerInk, heading, bold = true))
         card.addView(Views.text(app, "sub", 21f, playerInk2, message, maxLines = 3),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3706,18 +3727,25 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val retry = chip("Try again") { retryCurrent() }
-        val other = chip("Next copy") {
+        // A live feed has no shelf of copies to walk. The only honest next move is another channel,
+        // and the dead one is parked so the zap ring will not hand it back on the next press.
+        val other = if (live) chip("Next channel") {
+            markChannelDead()
+            strictSource = false
+            clearError()
+            zap(1)
+        } else chip("Next copy") {
             strictSource = false
             failoverToNext()
         }
-        val quality = chip("Quality") {
+        val quality = if (live) null else chip("Quality") {
             clearError()
             if (::qualityButton.isInitialized) openMenu(MenuKind.QUALITY, qualityButton)
         }
         val back = chip("Back") { finishToDetail() }
         row.addView(retry, wrap())
         row.addView(other, wrap().withStart(theme.px(12f)))
-        row.addView(quality, wrap().withStart(theme.px(12f)))
+        quality?.let { row.addView(it, wrap().withStart(theme.px(12f))) }
         row.addView(back, wrap().withStart(theme.px(12f)))
         card.addView(row, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -3977,11 +4005,35 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /**
+     * Park a channel that just refused to tune for the rest of this viewing session. The zap ring
+     * skips parked channels; when every channel is parked the ring forgets the ledger and lets the
+     * viewer try the cold ones again, so zapping can never stall on a dead block.
+     */
+    private fun markChannelDead() {
+        val id = spec?.identity ?: return
+        deadChannels.add(id)
+    }
+
     private fun zap(delta: Int) {
         if (liveChannels.size < 2) return
         val here = spec ?: return
         val at = liveChannels.indexOfFirst { it.identity == here.identity }
-        val next = if (at < 0) 0 else (at + delta + liveChannels.size) % liveChannels.size
+        var next = if (at < 0) 0 else (at + delta + liveChannels.size) % liveChannels.size
+        var skipped = 0
+        while (skipped < liveChannels.size - 1 &&
+            deadChannels.contains(liveChannels[next].identity) &&
+            liveChannels[next].identity != here.identity) {
+            next = (next + delta + liveChannels.size) % liveChannels.size
+            skipped++
+        }
+        if (skipped >= liveChannels.size - 1) {
+            // Every other channel has been parked this session. Zapping further would loop forever,
+            // so clear the ledger and tell the viewer what they are about to walk into.
+            deadChannels.clear()
+            showZapBadge(liveChannels[next])
+            setStatus("Every other channel dropped this session — trying them again", "warn")
+        }
         val item = liveChannels[next]
         if (item.identity == here.identity) return
         showZapBadge(item)
@@ -4817,16 +4869,26 @@ class PlayerActivity : Activity() {
         return listOf(head, extra, codec).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
+    /**
+     * A source row leads with what the viewer compares copies by: the resolution in initials, then
+     * the copy's own name. The hub's label is a file's name, and a file named `Titan VII - Direct
+     * MP4` says nothing about being 1080p — the size and the service ride on the row's note.
+     */
     private fun sourceWords(src: JSONObject?): String {
         if (src == null) return "Auto"
         val label = str(src, "label")
-        val quality = qualityWord(str(src, "quality"))
         val provider = str(src, "provider")
+        val resolution = listOf(str(src, "resolution"), qualityWord(str(src, "quality")), qualityWord(label))
+            .firstOrNull { Regex("(?i)^\\d{3,4}p$").matches(it) }
+            ?.uppercase(java.util.Locale.US)
+            .orEmpty()
         // The hub often uses the quality as both the label and the quality ("480p · 480p" on a
         // YouTube copy). Never print the same word twice on one row.
-        val head = label.ifBlank { provider }.ifBlank { "Copy" }
-        val parts = arrayListOf(head)
-        if (quality.isNotBlank() && parts.none { it.contains(quality, true) }) parts.add(quality)
+        val name = label.ifBlank { provider }.ifBlank { "" }
+        val parts = arrayListOf<String>()
+        if (resolution.isNotBlank()) parts.add(resolution)
+        if (name.isNotBlank() && parts.none { it.equals(name, true) }) parts.add(name)
+        if (parts.isEmpty()) parts.add(provider.ifBlank { "Copy" })
         return parts.joinToString(" · ")
     }
 
