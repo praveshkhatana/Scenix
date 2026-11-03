@@ -293,6 +293,7 @@ function serve(req, res, u, cors, tracksLookup) {
   const audioHeaders = headersFromParam(u.searchParams.get('ah'));
   const startMs = Math.max(0, Number(u.searchParams.get('start')) || 0);
   const durMs = Math.max(0, Number(u.searchParams.get('dur')) || 0);
+  const sizeHint = Math.max(0, Number(u.searchParams.get('size')) || 0);
   const tracks = who.hash && tracksLookup ? tracksLookup(who.hash, who.fileId) : null;
   // The donor's audio is not in the picture's container, so the primary track list cannot decide how it
   // enters MP4. The play path already chose `ap` from the donor's own codec; the fallback walk changes a
@@ -326,8 +327,10 @@ function serve(req, res, u, cors, tracksLookup) {
   let seekMs = startMs;
   let seekApprox = false;
   if (range && range.from > 0) {
-    const est = tracks && tracks.durationMs && tracks.sizeBytes
-      ? Math.round((range.from / tracks.sizeBytes) * tracks.durationMs) : 0;
+    const totalBytes = (tracks && tracks.sizeBytes) || sizeHint;
+    const totalMs = (tracks && tracks.durationMs) || durMs;
+    const est = totalBytes > 0 && totalMs > 0
+      ? Math.round((range.from / totalBytes) * totalMs) : 0;
     if (est > 0) {
       seekMs = startMs + est;
       seekApprox = true;
@@ -547,6 +550,10 @@ function mp4Url(p) {
   if (p.audio != null) q.set('a', String(p.audio));
   if (p.sub != null) q.set('s', String(p.sub));
   if (p.startMs) q.set('start', String(Math.round(p.startMs)));
+  // A direct copy has no torrent hash, so the remux has no cached track list to map a byte range to
+  // a time. Carry its size and duration on the URL instead; without them every seek restarted at 0.
+  if (p.sizeBytes) q.set('size', String(Math.round(p.sizeBytes)));
+  if (p.durationMs) q.set('dur', String(Math.round(p.durationMs)));
   if (p.audioUrl) {
     q.set('au', p.audioUrl);
     if (p.audioOrd != null) q.set('ao', String(p.audioOrd));
