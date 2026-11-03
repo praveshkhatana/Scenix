@@ -134,6 +134,8 @@ class PlayerActivity : Activity() {
     private var remuxSeek: Runnable? = null
     /** The target of a seek still waiting for its remux; repeated presses accumulate from it. */
     private var pendingSeekTarget = -1L
+    /** Why the last manual copy did not start; shown at the top of Quality until one does. */
+    private var sourceFailureNote = ""
     private var displayTitle = ""
     private var currentSourceLabel = ""
     /** The copy the viewer explicitly picked; empty means Auto (the hub's ranked pick). */
@@ -1467,6 +1469,7 @@ class PlayerActivity : Activity() {
                     val why = humaniseError(str(reply, "error"))
                         .ifBlank { transport ?: "that copy would not open" }
                     pendingSourceKey = ""
+                    sourceFailureNote = "That copy did not open — still playing $staying"
                     setStatus(why + " · still playing " + staying, "warn")
                     player?.playWhenReady = playWhenReady
                 }
@@ -1484,6 +1487,7 @@ class PlayerActivity : Activity() {
                 // row it happened to choose this time.
                 chosenSourceKey = ""
                 strictSource = false
+                sourceFailureNote = ""
             } else {
                 // The checkmark belongs to the copy that is actually running. A hub substitution (or a
                 // stale pick that resolved to another copy) must move it, not leave Quality lying.
@@ -1492,8 +1496,14 @@ class PlayerActivity : Activity() {
                 if (quiet) {
                     // The same copy re-opened at a new film time, not a source change.
                 } else if (wantedKey.isNotBlank() && pickedKey.isNotBlank() && wantedKey != pickedKey) {
+                    // A substitution is not the choice the viewer made. Uncheck the manual copy and
+                    // keep the reason visible in Quality instead of a six-second status they missed.
+                    chosenSourceKey = ""
+                    sourceFailureNote = "The copy you picked did not start — playing " +
+                        currentSourceLabel.ifBlank { "another copy" }
                     setStatus("That copy didn't start — playing " + currentSourceLabel.ifBlank { "another copy" }, "warn")
                 } else {
+                    sourceFailureNote = ""
                     setStatus("Switched to ${currentSourceLabel.ifBlank { "another copy" }}")
                 }
             }
@@ -2782,6 +2792,7 @@ class PlayerActivity : Activity() {
         // a ladder, the top rows are its own rungs and the copy list moves below a heading.
         val rungs = ladderRungs()
         val currentKey = answer?.optJSONObject("picked")?.let { sourceKey(it) }.orEmpty()
+        if (sourceFailureNote.isNotBlank()) parent.addView(noteRow(sourceFailureNote))
         val others = sourceCatalog.values.toList()
         val automatic = chosenSourceKey.isEmpty()
         if (rungs.isNotEmpty()) {
@@ -2869,6 +2880,7 @@ class PlayerActivity : Activity() {
                 .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(index)))
                 .build()
         }
+        sourceFailureNote = ""
         paintChips()
         closeMenu()
     }
