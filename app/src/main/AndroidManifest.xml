@@ -15,6 +15,19 @@
          holding the remote still confirms on Android's own screen; this only allows that handoff. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Android 11+ package visibility: the handoff is an implicit VIEW of an APK, and without this
+         the app cannot see the system installer at all — startActivity then fails with "no activity
+         found" and the update stops one step short of Android's own confirm screen. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.INSTALL_PACKAGE" />
+        </intent>
+    </queries>
+
     <!-- TV-only: this app is never a phone app. -->
     <uses-feature android:name="android.software.leanback" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

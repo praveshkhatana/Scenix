@@ -70,8 +70,16 @@ object Updates {
                 conn.setRequestProperty("Accept", "application/vnd.github+json")
                 // GitHub returns 403 to any request without a User-Agent.
                 conn.setRequestProperty("User-Agent", "Scenix-TV")
-                if (conn.responseCode !in 200..299) {
-                    done(null, "GitHub answered ${conn.responseCode}")
+                val status = conn.responseCode
+                // A repository with no published release answers 404. That is not a failure: the
+                // television is running the newest build that exists, and a scary network error on
+                // the Settings row would send the owner hunting for a fault that is not there.
+                if (status == HttpURLConnection.HTTP_NOT_FOUND) {
+                    done(null, null)
+                    return@execute
+                }
+                if (status !in 200..299) {
+                    done(null, "GitHub answered $status")
                     return@execute
                 }
                 val root = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
@@ -187,9 +195,11 @@ object Updates {
      */
     fun install(context: Context, file: java.io.File): Boolean = try {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        // setDataAndType, never setType: setType clears the content:// URI, and an installer intent
+        // with a MIME type but no data resolves to nothing ("No Activity found") on this TV.
         context.startActivity(
-            Intent(Intent.ACTION_VIEW, uri)
-                .setType("application/vnd.android.package-archive")
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
         )
         true
@@ -207,13 +217,18 @@ object Updates {
         if (inFlight) return
         inFlight = true
         activity.runOnUiThread {
-            val sizeMb = if (release.apkSize > 0) " · ${(release.apkSize / (1024 * 1024)).toInt()} MB" else ""
+            // A release under a megabyte is not "0 MB": say KB rather than a size that reads as broken.
+            val size = when {
+                release.apkSize <= 0 -> ""
+                release.apkSize >= 1024 * 1024 -> " · ${release.apkSize / (1024 * 1024)} MB"
+                else -> " · ${(release.apkSize / 1024).coerceAtLeast(1)} KB"
+            }
             val notes = release.notes.trim().take(500)
             android.app.AlertDialog.Builder(activity)
                 .setTitle("Update ${release.title.ifBlank { "build " + release.versionCode }}")
                 .setMessage(
-                    if (notes.isBlank()) "A newer Scenix build is published.$sizeMb Download and install it now?"
-                    else "A newer Scenix build is published.$sizeMb\n\n$notes"
+                    if (notes.isBlank()) "A newer Scenix build is published.$size Download and install it now?"
+                    else "A newer Scenix build is published.$size\n\n$notes"
                 )
                 .setPositiveButton("Download & install") { _, _ -> downloadAndInstall(activity, release) }
                 .setNegativeButton("Later") { d, _ -> d.cancel() }
