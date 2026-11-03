@@ -2,28 +2,92 @@
   "id": "card.tile",
   "version": 1,
   "kind": "widget",
-  "platforms": ["android-tv"],
+  "platforms": [
+    "android-tv"
+  ],
   "purpose": "One title in a shelf or grid: poster or landscape art, facts on the art (rating, NEW/HOT, certificate, progress), and a caption below or over the art. Hold opens the confirmation sheet; OK opens the title or resumes it.",
-  "source": { "android": "BrowseActivity CardHolder / poster card builders; SearchActivity and SectionActivity reuse the same cards" },
-  "tokens": ["space.posterWidth", "space.cardRadius", "color.ink", "color.ink2", "color.badgeBg", "radius.card", "type.cardTitle", "type.cardMeta", "focus.scale", "focus.glowInset"],
+  "source": {
+    "android": "BrowseActivity CardHolder / poster card builders; SearchActivity and SectionActivity reuse the same cards"
+  },
+  "tokens": [
+    "space.posterWidth",
+    "space.cardRadius",
+    "color.ink",
+    "color.ink2",
+    "color.badgeBg",
+    "radius.card",
+    "type.cardTitle",
+    "type.cardMeta",
+    "focus.scale",
+    "focus.glowInset"
+  ],
   "anatomy": [
-    { "part": "art", "note": "Poster 2:3 or landscape 16:9; inset plate for Glass; rounded to radius.card." },
-    { "part": "badges", "note": "Top-left: rating (star + value), NEW/HOT; top-right: certificate; bottom: progress for Continue." },
-    { "part": "title", "note": "Below art (or over it when caption=overlay), 1 line, ellipsis." },
-    { "part": "meta", "note": "Year · genre, or S01E04 · 52m; 1 line, ink2." },
-    { "part": "focus", "note": "Pack focus language: ring, lift or glow; scale and glow come from tokens." }
+    {
+      "part": "art",
+      "note": "Poster 2:3 or landscape 16:9; inset plate for Glass; rounded to radius.card."
+    },
+    {
+      "part": "badges",
+      "note": "Top-left: rating (star + value), NEW/HOT; top-right: certificate; bottom: progress for Continue."
+    },
+    {
+      "part": "title",
+      "note": "Below art (or over it when caption=overlay), 1 line, ellipsis."
+    },
+    {
+      "part": "meta",
+      "note": "Year · genre, or S01E04 · 52m; 1 line, ink2."
+    },
+    {
+      "part": "focus",
+      "note": "Pack focus language: ring, lift or glow; scale and glow come from tokens."
+    }
   ],
   "geometry": {
-    "poster": { "width": "space.posterWidth (280dp)", "height": "3:2 poster ratio", "caption": "below" },
-    "landscape": { "width": "space.posterWidthLandscape (480dp)", "ratio": "16:9" },
-    "continue": { "ratio": "16:9", "progress": "4dp bar at the caption edge" },
-    "rank": { "numeral": "0.8 of card width, behind/beside the poster" },
-    "channel": { "ratio": "16:9", "logo": "centred, contain, 80% width" }
+    "poster": {
+      "width": "space.posterWidth (280dp)",
+      "height": "3:2 poster ratio",
+      "caption": "below"
+    },
+    "landscape": {
+      "width": "space.posterWidthLandscape (480dp)",
+      "ratio": "16:9"
+    },
+    "continue": {
+      "ratio": "16:9",
+      "progress": "4dp bar at the caption edge"
+    },
+    "rank": {
+      "numeral": "0.8 of card width, behind/beside the poster"
+    },
+    "channel": {
+      "ratio": "16:9",
+      "logo": "centred, contain, 80% width"
+    }
   },
-  "states": ["idle", "focused", "pressed", "held", "watching", "unavailable"],
+  "states": [
+    "idle",
+    "focused",
+    "pressed",
+    "held",
+    "watching",
+    "unavailable"
+  ],
   "copy": {
-    "holdSheet": ["Add to My List", "Remove from My List", "Remove from Continue watching"],
-    "badges": ["4K", "HD", "NEW", "99% match", "PG-13", "U", "A"]
+    "holdSheet": [
+      "Add to My List",
+      "Remove from My List",
+      "Remove from Continue watching"
+    ],
+    "badges": [
+      "4K",
+      "HD",
+      "NEW",
+      "99% match",
+      "PG-13",
+      "U",
+      "A"
+    ]
   },
   "focus": {
     "rules": [
@@ -44,10 +108,14 @@
     "windows": "Hover reveals the same badges/title; right-click opens the sheet; keyboard focus ring.",
     "apple-tv": "Focus lift + parallax; caption appears on focus; hold = same sheet."
   },
-  "a11y": { "role": "button", "label": "{{title}}, {{year}}", "minTarget": "card face" },
+  "a11y": {
+    "role": "button",
+    "label": "{{title}}, {{year}}",
+    "minTarget": "card face"
+  },
   "evidence": {
     "catalog": "card.tile",
-    "status": "blocked: host-owned builder not yet extracted from BrowseActivity",
+    "status": "real: ShelfAdapter",
     "goldens": "goldens/android/card.tile/<variant>/<state>/<theme>.png"
   }
 }

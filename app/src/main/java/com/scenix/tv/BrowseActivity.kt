@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.TopNav
 import com.scenix.tv.core.CardActionSheet
 import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
@@ -31,6 +32,7 @@ import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.HomeLayoutSpec
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.LeftRail
 import com.scenix.tv.core.Updates
 import com.scenix.tv.core.Views
 
@@ -108,7 +110,7 @@ class BrowseActivity : Activity() {
     private var caps: FeatureCaps? = null
     private var barCaps: FeatureCaps? = null
     /** The Live TV doors on screen (pill, classic bar), so an older hub can still earn one from a row. */
-    private val liveNavs = ArrayList<View>()
+    private var liveNav: View? = null
     // The pill floats over a full-bleed stage, so geometric focus search can't be trusted to walk
     // from a tile up into it. One named anchor on the pill and one on the list make the route
     // explicit: UP from the featured tiles lands on the bar, DOWN from the bar returns to the top.
@@ -120,11 +122,7 @@ class BrowseActivity : Activity() {
     // The left rail is the way to another screen from the middle of the page. Netflix and YouTube
     // put navigation on the left edge for the same reason: asking a viewer to scroll
     // back to a top bar to change tabs is a trap. It is an overlay, so the shelf keeps its place.
-    private var railPanel: LinearLayout? = null
-    private var railScrim: View? = null
-    private val railItems = ArrayList<View>()
-    private var railOpen = false
-    private var railReturn: View? = null
+    private var leftRail: LeftRail? = null
     /** The page shell, so an empty library can explain itself above every theme layout. */
     private var shellView: FrameLayout? = null
     private var emptyPanel: LinearLayout? = null
@@ -168,18 +166,18 @@ class BrowseActivity : Activity() {
         }
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             lastKeyAt = android.os.SystemClock.elapsedRealtime()
-            if (railOpen) {
+            val rail = leftRail
+            if (rail?.isOpen == true) {
                 when (event.keyCode) {
-                    android.view.KeyEvent.KEYCODE_DPAD_UP -> { moveRail(-1); return true }
-                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { moveRail(1); return true }
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> { rail.move(-1); return true }
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { rail.move(1); return true }
                     android.view.KeyEvent.KEYCODE_DPAD_LEFT,
                     android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
-                    android.view.KeyEvent.KEYCODE_BACK -> { closeRail(); return true }
+                    android.view.KeyEvent.KEYCODE_BACK -> { rail.close(); return true }
                     android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                     android.view.KeyEvent.KEYCODE_ENTER,
                     android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                        val focused = railItems.firstOrNull { it.isFocused }
-                        focused?.performClick()
+                        rail.focusedRow()?.performClick()
                         return true
                     }
                 }
@@ -189,7 +187,7 @@ class BrowseActivity : Activity() {
             // A LEFT that can still move within the row belongs to the row.
             if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT &&
                 shouldOpenRail(currentFocus)) {
-                openRail()
+                leftRail?.open(section)
                 return true
             }
             val adapter = browseAdapter
@@ -537,162 +535,39 @@ class BrowseActivity : Activity() {
      * back to the top; the rail closes onto the exact tile they left.
      */
     private fun buildLeftRail(shell: FrameLayout) {
-        val theme = app.theme
-        val width = theme.px(340f)
-        val scrim = View(this).apply {
-            setBackgroundColor(Color.argb(170, 0, 0, 0))
-            visibility = View.GONE
-            isClickable = true
-            setOnClickListener { closeRail() }
-        }
-        shell.addView(scrim, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.argb(245, 9, 10, 14))
-            setPadding(theme.px(24f), theme.px(26f), theme.px(18f), theme.px(24f))
-            visibility = View.GONE
-            translationX = -width.toFloat()
-            elevation = theme.px(18f).toFloat()
-        }
-        panel.addView(Views.text(app, "li", 20f, theme.ink2, "SCENIX", bold = true).apply {
-            letterSpacing = 0.18f
-        }, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            leftMargin = theme.px(16f)
-            bottomMargin = theme.px(18f)
-        })
-        // Profile, then Search, then the library. Search is a destination, not a footnote at the
-        // bottom: it sits above Home the way the owner asked, and every row carries an icon.
-        // Games and Live TV are doors to optional add-ons, so the rail offers them only when the
-        // household actually installed them — an empty room is not a destination.
         val nav = barCaps ?: effectiveCaps()
-        val destinations = buildList<Triple<String, Int, () -> Unit>> {
-            add(Triple("Switch profile", R.drawable.ic_rail_profile) {
-                startActivity(Intent(this@BrowseActivity, ProfilesActivity::class.java))
-            })
-            add(Triple("Search", R.drawable.ic_nav_search) {
-                startActivity(Intent(this@BrowseActivity, SearchActivity::class.java)
-                    .putExtra(SearchActivity.EXTRA_PROFILE, profileId))
-            })
-            add(Triple("Home", R.drawable.ic_rail_home) { goTab("") })
-            add(Triple("Movies", R.drawable.ic_rail_movies) { goTab("movies") })
-            add(Triple("Series", R.drawable.ic_rail_series) { goTab("series") })
-            if (nav.games) add(Triple("Games", R.drawable.ic_rail_games) {
-                startActivity(Intent(this@BrowseActivity, GamesActivity::class.java)
-                    .putExtra(GamesActivity.EXTRA_PROFILE, profileId))
-            })
-            if (nav.live) add(Triple("Live TV", R.drawable.ic_rail_live) {
-                startActivity(Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
-                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
-            })
-            add(Triple("Settings", R.drawable.ic_nav_settings) {
-                startActivity(Intent(this@BrowseActivity, SettingsActivity::class.java)
-                    .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
-            })
+        val entries = ArrayList<LeftRail.Entry>()
+        entries += LeftRail.Entry("Switch profile", R.drawable.ic_rail_profile, "profile") {
+            startActivity(Intent(this, ProfilesActivity::class.java))
         }
-        for ((label, icon, action) in destinations) {
-            panel.addView(railRow(label, icon, action), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(66f)
-            ).apply { bottomMargin = theme.px(4f) })
+        entries += LeftRail.Entry("Search", R.drawable.ic_nav_search, "search") {
+            startActivity(Intent(this, SearchActivity::class.java).putExtra(SearchActivity.EXTRA_PROFILE, profileId))
         }
-        shell.addView(panel, FrameLayout.LayoutParams(
-            width, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
-        railPanel = panel
-        railScrim = scrim
+        entries += LeftRail.Entry("Home", R.drawable.ic_rail_home, "home") { goTab("") }
+        entries += LeftRail.Entry("Movies", R.drawable.ic_rail_movies, "movies") { goTab("movies") }
+        entries += LeftRail.Entry("Series", R.drawable.ic_rail_series, "series") { goTab("series") }
+        if (nav.games) {
+            entries += LeftRail.Entry("Games", R.drawable.ic_rail_games, "games") {
+                startActivity(Intent(this, GamesActivity::class.java).putExtra(GamesActivity.EXTRA_PROFILE, profileId))
+            }
+        }
+        if (nav.live) {
+            entries += LeftRail.Entry("Live TV", R.drawable.ic_rail_live, "live") {
+                startActivity(Intent(this, LiveChannelsActivity::class.java).putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
+            }
+        }
+        entries += LeftRail.Entry("Settings", R.drawable.ic_nav_settings, "settings") {
+            startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
+        }
+        val rail = LeftRail(this, app, entries)
+        leftRail = rail
+        shell.addView(rail, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
     }
 
-    private fun railRow(label: String, iconRes: Int, action: () -> Unit): View {
-        val theme = app.theme
-        val radius = theme.px(12f)
-        val idleInk = theme.color("railInk", "#F4F8FC")
-        val idleIcon = theme.color("railInk2", "#B9C6D2")
-        val focusInk = theme.color("railFocusInk", "#0A0F14")
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(theme.px(16f), 0, theme.px(16f), 0)
-            isFocusable = true
-            isClickable = true
-            contentDescription = label
-            background = Views.rounded(Color.TRANSPARENT, radius)
-        }
-        val icon = ImageView(this).apply {
-            setImageResource(iconRes)
-            setColorFilter(idleIcon)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-        }
-        row.addView(icon, LinearLayout.LayoutParams(theme.px(24f), theme.px(24f)))
-        val text = Views.text(app, "li", 23f, idleInk, label, bold = true)
-        text.setPadding(theme.px(18f), 0, 0, 0)
-        row.addView(text, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        Focus.attach(row, row, app, radius, scale = false, elevate = false,
-            // Choosing a destination closes the rail first: leaving it up would cover the page the
-            // viewer just asked for, and coming back from another activity would still show it.
-            onClick = { closeRail(); action() },
-            onFocus = { focused ->
-                // A WHITE pill with dark ink reads on every wall. Using the pack's brand made the
-                // Glass rail bright blue (brand #2D6BFF) while the rest of Glass is neutral glass;
-                // and on Kids a dark-brand pill plus dark ink made every item disappear.
-                row.background = if (focused) Views.rounded(Color.WHITE, radius)
-                else Views.rounded(Color.TRANSPARENT, radius)
-                text.setTextColor(if (focused) focusInk else idleInk)
-                icon.setColorFilter(if (focused) focusInk else idleIcon)
-            })
-        railItems += row
-        return row
-    }
-
-    private fun openRail() {
-        val panel = railPanel ?: return
-        if (railOpen) return
-        railOpen = true
-        railReturn = currentFocus
-        railScrim?.visibility = View.VISIBLE
-        panel.visibility = View.VISIBLE
-        panel.animate().translationX(0f).setDuration(180L).start()
-        val wanted = when (section) {
-            "movies" -> "Movies"
-            "series" -> "Series"
-            "games" -> "Games"
-            "live" -> "Live TV"
-            else -> "Home"
-        }
-        val target = railItems.firstOrNull { it.contentDescription == wanted } ?: railItems.firstOrNull()
-        target?.post { if (railOpen && !isFinishing && !isDestroyed) target.requestFocus() }
-    }
-
-    private fun closeRail() {
-        if (!railOpen) return
-        railOpen = false
-        railScrim?.visibility = View.GONE
-        val panel = railPanel
-        // Put the remote back before the panel leaves; hiding a focused subtree otherwise hands
-        // focus to whatever the framework finds first.
-        railReturn?.takeIf { it.isAttachedToWindow }?.requestFocus()
-        railReturn = null
-        panel?.animate()?.translationX(-(panel.width.takeIf { it > 0 }
-            ?: app.theme.px(340f)).toFloat())?.setDuration(160L)?.withEndAction {
-            if (!railOpen) panel.visibility = View.GONE
-        }?.start()
-    }
-
-    private fun moveRail(delta: Int) {
-        if (railItems.isEmpty()) return
-        val at = railItems.indexOfFirst { it.isFocused }
-        val next = if (at < 0) 0 else (at + delta).coerceIn(0, railItems.lastIndex)
-        railItems.getOrNull(next)?.requestFocus()
-    }
-
-    /**
-     * LEFT only belongs to the rail when it cannot move the page: the focused card is the first in
-     * its rail, the rail cannot scroll further left, or the billboard has one slide. Anything else is
-     * an intra-row step and stays with the row.
-     */
     private fun shouldOpenRail(focus: View?): Boolean {
-        if (focus == null || railPanel == null) return false
+        if (focus == null || leftRail == null) return false
         val adapter = browseAdapter
         if (adapter != null && isInside(adapter.heroRoot, focus)) {
             // A multi-slide Apple billboard owns LEFT for its carousel. Every other hero — the
@@ -736,8 +611,8 @@ class BrowseActivity : Activity() {
             CardActionSheet.close()
             return
         }
-        if (railOpen) {
-            closeRail()
+        if (leftRail?.isOpen == true) {
+            leftRail?.close()
             return
         }
         super.onBackPressed()
@@ -1172,368 +1047,44 @@ class BrowseActivity : Activity() {
     }
 
     private fun topBar(transparent: Boolean = false): View {
-        val theme = app.theme
-        // The owner's SCENIX-Logo.svg, not styled text: the letterforms must not change with the
-        // font the television happens to ship.
-        val brand = ImageView(this).apply {
-            setImageResource(R.drawable.scenix_wordmark)
-            // The mark is drawn from the owner's SVG in its brand red, then tinted from the active
-            // pack: Apple's is off-white, Netflix's red, PS5's blue. A fixed red wordmark on a
-            // white/blue pack read as a borrowed Netflix logo.
-            setColorFilter(theme.brand)
-            scaleType = ImageView.ScaleType.FIT_START
-            contentDescription = "Scenix"
-        }
-        val profile = navButton("Profile") {
-            startActivity(
-                Intent(this@BrowseActivity, ProfilesActivity::class.java)
-                    .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true)
-            )
-        }
-        val search = navButton("Search", theme.px(24f)) {
-            startActivity(
-                Intent(this@BrowseActivity, SearchActivity::class.java)
-                    .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
-            )
-        }
-        val settings = navButton("Settings", theme.px(28f)) {
-            startActivity(
-                Intent(this@BrowseActivity, SettingsActivity::class.java)
-                    .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
-            )
-        }
-        if (theme.navStyle == "pill") {
-            // Apple-style packs float one centred pill over the stage; the wordmark stays at the edge.
-            // The pill carries the household and the sections this app can play, in the order the web
-            // bar teaches: face, Home, Movies, Series, Games, Live TV, then the actions.
-            val bar = FrameLayout(this)
-            bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
-            bar.addView(brand, FrameLayout.LayoutParams(
-                theme.px(80f), theme.px(28f)
-            ).apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                leftMargin = theme.gutter
-            })
-            val pill = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(theme.px(10f), theme.px(6f), theme.px(10f), theme.px(6f))
-                background = Views.rounded(theme.surface2, theme.px(999f), theme.px(1f), theme.line)
-            }
-            val pillProfile = profileDisc().apply { id = View.generateViewId() }
-            pill.addView(pillProfile)
-            val homeTab = navTab("Home", active = section.isBlank()) { goTab("") }.apply {
-                id = View.generateViewId()
-            }
-            val moviesTab = navTab("Movies", active = section == "movies") { goTab("movies") }.apply {
-                id = View.generateViewId()
-            }
-            val seriesTab = navTab("Series", active = section == "series") { goTab("series") }.apply {
-                id = View.generateViewId()
-            }
-            pill.addView(homeTab)
-            pill.addView(moviesTab)
-            pill.addView(seriesTab)
-            // Games is its own mode, not another catalogue tab: the hub answers a games shelf set
-            // that has nothing in common with movie rows, so the tab opens its own screen. It is a
-            // door to an add-on, so a household without the games add-on gets no tab.
-            val nav = barCaps ?: effectiveCaps()
-            val gamesTab = navTab("Games", active = false) {
-                startActivity(
-                    Intent(this@BrowseActivity, GamesActivity::class.java)
-                        .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
-                )
-            }.apply { id = View.generateViewId() }
-            gamesTab.visibility = if (nav.games) View.VISIBLE else View.GONE
-            pill.addView(gamesTab)
-            val live = navTab("Live TV") {
-                startActivity(
-                    Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
-                        .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
-                )
-            }
-            // Live TV earns its place in the pill from the add-on and its playlist, not from a
-            // guessed row. The answer outlives a tab switch so the bar never changes shape mid-walk.
-            live.visibility = if (nav.live) View.VISIBLE else View.GONE
-            liveNavs += live
-            live.id = View.generateViewId()
-            pill.addView(live)
-            pill.addView(View(this).apply { setBackgroundColor(theme.line) },
-                LinearLayout.LayoutParams(theme.px(1f), theme.px(26f)).apply {
-                    marginStart = theme.px(10f); marginEnd = theme.px(4f)
-                })
-            // Search and Settings ride as icons in the pill, as Apple's bar and the prototype draw them.
-            val searchIcon = navIcon(R.drawable.ic_nav_search, "Search") {
-                startActivity(
-                    Intent(this@BrowseActivity, SearchActivity::class.java)
-                        .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
-                )
-            }.apply { id = View.generateViewId() }
-            pill.addView(searchIcon)
-            val gear = navIcon(R.drawable.ic_nav_settings, "Settings") {
-                startActivity(
-                    Intent(this@BrowseActivity, SettingsActivity::class.java)
-                        .putExtra(SettingsActivity.EXTRA_PROFILE, profileId)
-                )
-            }
-            gear.id = View.generateViewId()
-            // UP from the top row reaches the pill at the tab you are standing on, not at the far
-            // end of the bar — walking in should land where you already are.
-            navAnchor = when (section) {
-                "movies" -> moviesTab
-                "series" -> seriesTab
-                else -> homeTab
-            }
-            pillGroup = pill
-            pill.addView(gear)
-            // Focus search treats the 1px divider and the full-screen stage as valid geometry.
-            // The result was that RIGHT at the end of the tabs could fall into a shelf instead of
-            // reaching Search.  A TV navigation bar is an ordered remote path, so spell it out.
-            pillStops = ArrayList<View>().apply {
-                add(pillProfile)
-                add(homeTab)
-                add(moviesTab)
-                add(seriesTab)
-                add(gamesTab)
-                add(live)
-                add(searchIcon)
-                add(gear)
-            }
-            wirePillFocus()
-            bar.addView(pill, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { gravity = Gravity.CENTER })
-            // DOWN from anywhere on the bar returns to the top of the shelves.
-            for (i in 0 until pill.childCount) pill.getChildAt(i).nextFocusDownId = shelfListId
-            if (transparent) chromeBar = bar
-            return bar
-        }
-        // Classic/Netflix navigation uses the wordmark as its Home stop.  It used to be only
-        // decoration, leaving `navAnchor` unset for these packs: UP from Hero Play then had no
-        // route at all.  Give it the same padded, explicit remote target as the rest of the bar.
-        val homeBrand = FrameLayout(this).apply {
-            id = View.generateViewId()
-            contentDescription = "Home"
-            isClickable = true
-            clipChildren = false
-            setPadding(theme.px(10f), theme.px(7f), theme.px(10f), theme.px(7f))
-            setOnClickListener { goTab("") }
-        }
-        // The wordmark itself has no opaque surface for Android to paint a keyline onto.  A
-        // FrameLayout lets Focus use its foreground, keeping the compact ring above the mark
-        // without letting a background child influence the bar's wrap-content measurement.
-        // The mark's vector canvas is 351x81 dp — enormous if left at wrap-content, where it
-        // towered over the bar. The wordmark is a signature, not the page's hero.
-        homeBrand.addView(brand, FrameLayout.LayoutParams(
-            theme.px(132f), theme.px(30f)
-        ).apply { gravity = Gravity.CENTER })
-        Focus.attach(homeBrand, homeBrand, app, theme.radius("button", 6f), scale = false, elevate = false,
-            onFocus = { if (it) onChromeFocused() })
-        val movies = navButton("Movies") { goTab("movies") }.apply { id = View.generateViewId() }
-        val series = navButton("Series") { goTab("series") }.apply { id = View.generateViewId() }
-        // Games is a mode, not a catalogue tab, in this bar too: without it the only way to the
-        // games screens from the Netflix and Classic packs was the settings page. It is a door to
-        // an add-on, so it exists only when the household installed the games add-on.
-        val nav = barCaps ?: effectiveCaps()
-        val games = navButton("Games") {
-            startActivity(
-                Intent(this@BrowseActivity, GamesActivity::class.java)
-                    .putExtra(GamesActivity.EXTRA_PROFILE, profileId)
-            )
-        }.apply { id = View.generateViewId() }
-        games.visibility = if (nav.games) View.VISIBLE else View.GONE
-        // Live TV belongs in every pack's bar, not just the Apple pill — when the hub carries the
-        // live add-on and a playlist. The Netflix and Classic bars were the one place a household
-        // with channels could not reach them without the left rail.
-        val live = navButton("Live TV") {
-            startActivity(
-                Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
-                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
-            )
-        }.apply { id = View.generateViewId() }
-        live.visibility = if (nav.live) View.VISIBLE else View.GONE
-        liveNavs += live
-        profile.id = View.generateViewId()
-        search.id = View.generateViewId()
-        settings.id = View.generateViewId()
-        val bar = LinearLayout(this)
-        bar.orientation = LinearLayout.HORIZONTAL
-        bar.gravity = Gravity.CENTER_VERTICAL
-        bar.setPadding(theme.gutter, 0, theme.gutter, 0)
-        bar.setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
-        bar.addView(homeBrand, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        bar.addView(movies,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = theme.px(22f)
-            })
-        bar.addView(series,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = theme.px(18f)
-            })
-        bar.addView(games,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = theme.px(18f)
-            })
-        bar.addView(live,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = theme.px(18f)
-            })
-        bar.addView(profile, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            marginStart = theme.px(24f)
-        })
-        bar.addView(search, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            marginStart = theme.px(24f)
-        })
-        bar.addView(settings, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            marginStart = theme.px(28f)
-        })
-        // Do not leave classic packs to geometric focus search.  The spacer occupies most of the
-        // bar, and on TV that made the Home/Play boundary impossible to traverse reliably.
-        navAnchor = homeBrand
-        pillGroup = bar
-        pillStops = listOf(homeBrand, movies, series, games, live, profile, search, settings)
-        wirePillFocus()
-        for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
-        if (transparent) chromeBar = bar
-        return bar
-    }
-
-    private fun navButton(
-        label: String, left: Int = 0, preAttach: ((TextView) -> Unit)? = null, action: () -> Unit,
-    ): View {
-        val b = Views.text(app, "li", 20f, app.theme.ink, label, bold = true, gravity = Gravity.CENTER)
-        b.setPadding(app.theme.px(17f), app.theme.px(9f), app.theme.px(17f), app.theme.px(9f))
-        b.isFocusable = true
-        b.isClickable = true
-        b.setOnClickListener { action() }
-        // Whatever identity the tab wears — the pill of the section you stand on — goes on before
-        // the focus paint below, so walking focus over the tab and away never erases it.
-        preAttach?.invoke(b)
-        val plain = b.background
-        val active = preAttach != null
-        // A soft halo band around a 27 px line of text is invisible on a TV panel: the viewer could
-        // not tell which tab in the bar held the ring. Chrome items get an explicit outline instead,
-        // and the white-faced active tab turns silver while focused so its ring still reads.
-        fun paintChrome(focused: Boolean) {
-            b.background = when {
-                !focused -> plain
-                active -> Views.rounded(
-                    Color.argb(255, 198, 200, 206), app.theme.px(999f),
-                    app.theme.px(3f), Color.argb(235, 255, 255, 255))
-                else -> Views.rounded(
-                    Color.argb(36, 255, 255, 255), app.theme.px(999f),
-                    app.theme.px(2f), Color.argb(235, 255, 255, 255))
-            }
-        }
-        paintChrome(false)
-        Focus.attach(b, null, app, app.theme.radius("button", 6f), scale = false, elevate = false,
-            onFocus = { f -> if (f) onChromeFocused(); paintChrome(f) })
-        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.marginStart = left
-        b.layoutParams = lp
-        return b
-    }
-
-    /**
-     * A section of the pill.  The text lives in a child and the selected face on its container;
-     * a sibling paints the focus ring.  Painting focus directly onto a TextView was letting Android
-     * replace the pill's drawable and intermittently hide the label itself.
-     */
-    private fun navTab(label: String, active: Boolean = false, action: () -> Unit): View {
-        val theme = app.theme
-        val chip = FrameLayout(this).apply {
-            isFocusable = true
-            isClickable = true
-            contentDescription = label
-            clipChildren = false
-            setOnClickListener { action() }
-        }
-        chip.background = if (active) Views.rounded(theme.brand, theme.px(999f)) else null
-        val words = Views.text(app, "nav", 20f, if (active) theme.onBrand else theme.ink, label,
-            bold = true, gravity = Gravity.CENTER).apply {
-            // The content view never takes focus; focus belongs to the whole padded target.
-            isFocusable = false
-            isClickable = false
-            setPadding(theme.px(20f), theme.px(12f), theme.px(20f), theme.px(12f))
-        }
-        // A foreground drawable on this Android TV renderer can suppress child text after focus
-        // leaves it.  Keep the ring in a separately-sized sibling instead.
-        val focusPlate = View(this)
-        chip.addView(focusPlate, FrameLayout.LayoutParams(0, 0))
-        chip.addView(words, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        chip.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            val lp = focusPlate.layoutParams
-            if (lp.width != chip.width || lp.height != chip.height) {
-                lp.width = chip.width
-                lp.height = chip.height
-                focusPlate.layoutParams = lp
-            }
-        }
-        Focus.attach(chip, focusPlate, app, theme.px(999f), scale = false, elevate = false,
-            onFocus = { focused ->
-                // Home's white selected state is semantic, not a focus effect. Give a focused
-                // selected tab a dark keyline so the remote target stays unambiguous.
-                if (focused && active) {
-                    focusPlate.background = Views.ring(Color.argb(225, 20, 21, 26), theme.px(999f), theme.px(3f))
+        val nav = TopNav(
+            this, app, profileId, section, transparent, shelfListId,
+            showsGames = (barCaps ?: effectiveCaps()).games,
+            showsLive = (barCaps ?: effectiveCaps()).live,
+            profileView = profileDisc(),
+            callbacks = object : TopNav.Callbacks {
+                override fun goTab(route: String) = this@BrowseActivity.goTab(route)
+                override fun onGames() {
+                    startActivity(Intent(this@BrowseActivity, GamesActivity::class.java)
+                        .putExtra(GamesActivity.EXTRA_PROFILE, profileId))
                 }
-                if (focused) onChromeFocused()
-            })
-        chip.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { marginStart = theme.px(4f) }
-        return chip
-    }
-
-    /**
-     * The pill's icon actions.  The glyph is fixed inside a full remote target instead of using
-     * ImageView padding as both visual and focus geometry; that makes Search and Settings equal in
-     * size and gives their focus plate room to read.
-     */
-    private fun navIcon(res: Int, desc: String, action: () -> Unit): View {
-        val theme = app.theme
-        val hit = FrameLayout(this).apply {
-            isFocusable = true
-            isClickable = true
-            contentDescription = desc
-            clipChildren = false
-            setOnClickListener { action() }
-        }
-        val glyph = ImageView(this).apply {
-            setImageResource(res)
-            setColorFilter(theme.ink)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        val target = theme.px(56f)
-        val glyphSize = theme.px(26f)
-        val focusPlate = View(this)
-        hit.addView(focusPlate, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        hit.addView(glyph, FrameLayout.LayoutParams(glyphSize, glyphSize).apply {
-            gravity = Gravity.CENTER
-        })
-        Focus.attach(hit, focusPlate, app, theme.px(999f), scale = false, elevate = false,
-            onFocus = { focused ->
-                if (focused) {
-                    // Keep the glyph centred inside a real 56px hit target and draw its focus on
-                    // the separate plate, never over the icon itself.
-                    focusPlate.background = Views.ring(theme.focusRingColor, theme.px(999f), theme.px(2f))
+                override fun onLive() {
+                    startActivity(Intent(this@BrowseActivity, LiveChannelsActivity::class.java)
+                        .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
                 }
-                if (focused) onChromeFocused()
-                hit.background = if (focused) Views.rounded(
-                    Color.argb(42, 255, 255, 255), theme.px(999f)
-                ) else null
-            })
-        hit.layoutParams = LinearLayout.LayoutParams(target, target).apply {
-            marginStart = theme.px(2f); marginEnd = theme.px(2f)
-        }
-        return hit
+                override fun onSearch() {
+                    startActivity(Intent(this@BrowseActivity, SearchActivity::class.java)
+                        .putExtra(SearchActivity.EXTRA_PROFILE, profileId))
+                }
+                override fun onSettings() {
+                    startActivity(Intent(this@BrowseActivity, SettingsActivity::class.java)
+                        .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
+                }
+                override fun onProfile() {
+                    startActivity(Intent(this@BrowseActivity, ProfilesActivity::class.java)
+                        .putExtra(ProfilesActivity.EXTRA_FROM_BROWSE, true))
+                }
+                override fun onChromeFocused() = this@BrowseActivity.onChromeFocused()
+            },
+        )
+        navAnchor = nav.anchor
+        pillGroup = nav.group
+        pillStops = nav.stops
+        liveNav = nav.liveStop
+        if (transparent) chromeBar = nav
+        return nav
     }
 
-    /** The household at the head of the pill: the profile's face when the hub has one, its initial otherwise. */
     private fun profileDisc(): View {
         val theme = app.theme
         val size = theme.px(36f)
@@ -1664,7 +1215,7 @@ class BrowseActivity : Activity() {
             // keeps changing shape under the thumb is worse than one that arrives late.
             if (rows.any { it.id == "live" || it.card == "channel" }) liveSeen = true
             if (caps == null && liveSeen) {
-                liveNavs.forEach { it.visibility = View.VISIBLE }
+                liveNav?.visibility = View.VISIBLE
                 wirePillFocus()
             }
             // Live has a whole tab and a wall of its own; the Home shelves are for films and shows,

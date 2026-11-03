@@ -60,6 +60,7 @@ class StudioActivity : Activity() {
     private lateinit var stageMeta: TextView
     private lateinit var themeButton: TextView
     private var listColumn: LinearLayout? = null
+    private var railPreview: com.scenix.tv.core.LeftRail? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -326,6 +327,12 @@ class StudioActivity : Activity() {
             return
         }
 
+        if (entry.builder == "nav.rail.left") {
+            stage.addView(actionRow("Open the left rail", "The real LeftRail, over this page.") {
+                openRailPreview(currentState)
+            })
+            return
+        }
         if (entry.builder == "sheet.action") {
             stage.addView(actionRow("Open the hold sheet", "It is the real CardActionSheet, over this page.") {
                 StudioCatalog.openHoldSheet(this, app)
@@ -393,6 +400,10 @@ class StudioActivity : Activity() {
             stage.postDelayed({ StudioCatalog.launchPlayerPreview(this, currentState, themeId) }, 250L)
             return
         }
+        if (entry.builder == "nav.rail.left") {
+            stage.postDelayed({ openRailPreview(currentState) }, 250L)
+            return
+        }
         if (entry.builder == "sheet.action") {
             stage.postDelayed({ StudioCatalog.openHoldSheet(this, app) }, 250L)
             return
@@ -401,7 +412,30 @@ class StudioActivity : Activity() {
             stage.addView(it, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ))
+            // A widget with focusable children grabs the first one when the window opens, so an
+            // "idle" golden could silently record a focused control. Only a state that is about
+            // focus may take it.
+            if (currentState != "focused") {
+                stage.post {
+                    root.findFocus()?.clearFocus()
+                    root.isFocusable = true
+                    root.isFocusableInTouchMode = true
+                    root.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    root.requestFocus()
+                }
+            }
         }
+    }
+
+    private fun openRailPreview(state: String) {
+        railPreview?.let { if (it.parent === root) root.removeView(it) }
+        val rail = StudioCatalog.leftRail(this, app)
+        railPreview = rail
+        val lp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        root.addView(rail, lp)
+        rail.open(if (state == "focused") "games" else "home")
     }
 
     companion object {

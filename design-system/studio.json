@@ -90,11 +90,12 @@
     {
       "id": "nav.top",
       "contract": "nav.top",
-      "title": "Top navigation (all packs)",
+      "title": "Top navigation (Apple / Netflix / Classic)",
       "kind": "widget",
       "builder": "nav.top",
-      "states": ["idle", "active", "focused"],
-      "status": "blocked: host-owned builder inside BrowseActivity"
+      "states": ["default", "focused"],
+      "themes": ["scenix-apple", "scenix-netflix", "scenix-dark"],
+      "status": "real"
     },
     {
       "id": "nav.rail.left",
@@ -103,7 +104,7 @@
       "kind": "widget",
       "builder": "nav.rail.left",
       "states": ["open", "focused"],
-      "status": "blocked: host-owned builder inside BrowseActivity"
+      "status": "real"
     },
     {
       "id": "card.tile",

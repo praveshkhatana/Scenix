@@ -13,8 +13,10 @@ import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
+import com.scenix.tv.core.LeftRail
 import com.scenix.tv.core.Progress
 import com.scenix.tv.core.Screens
+import com.scenix.tv.core.TopNav
 import com.scenix.tv.core.Views
 
 /**
@@ -35,6 +37,7 @@ internal object StudioCatalog {
             "glass.chips" -> glassChips(activity, app, state)
             "kids.chips" -> kidsChips(activity, app)
             "card.tile" -> cardTiles(activity, app, state)
+            "nav.top" -> navTop(activity, app, state)
             "settings.rows" -> settingsRows(activity, app, state)
             "screens.topbar" -> screenTopBar(activity, app)
             else -> null
@@ -177,6 +180,45 @@ internal object StudioCatalog {
         return col
     }
 
+    // ---- navigation ---------------------------------------------------------------------
+
+    /** The host top bar for this pack: Apple draws the pill, Netflix/Classic the classic bar. */
+    private fun navTop(context: Activity, app: AppContext, state: String): View {
+        val theme = app.theme
+        val disc = TextView(context).apply {
+            text = "N"
+            setTextColor(theme.ink)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            isFocusable = true
+            isClickable = true
+            background = Views.rounded(theme.surface2, theme.px(18f), theme.px(1f), theme.line)
+        }
+        val nav = TopNav(
+            context, app, "studio", "", false, View.NO_ID,
+            showsGames = true, showsLive = true, profileView = disc, navStyle = null,
+            callbacks = object : TopNav.Callbacks {
+                override fun goTab(route: String) {}
+                override fun onGames() {}
+                override fun onLive() {}
+                override fun onSearch() {}
+                override fun onSettings() {}
+                override fun onProfile() {}
+                override fun onChromeFocused() {}
+            },
+        )
+        val col = stage(context, app)
+        col.addView(Views.text(app, "meta", 16f, theme.ink3,
+            "TopNav · ${if ((theme.navStyle) == "pill") "pill" else "classic"} bar"))
+        col.addView(nav, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(96f)
+        ).apply { topMargin = theme.px(20f) })
+        if (state == "focused") {
+            nav.post { nav.stops.firstOrNull { it.visibility == View.VISIBLE }?.requestFocus() }
+        }
+        return col
+    }
+
     // ---- shelves ------------------------------------------------------------------------
 
     /**
@@ -265,6 +307,18 @@ internal object StudioCatalog {
     }
 
     // ---- overlays / screens handled by the activity -------------------------------------
+
+    /** The real left rail, with the host's destinations and icons. Routes are inert in the Studio. */
+    fun leftRail(activity: Activity, app: AppContext): LeftRail = LeftRail(activity, app, listOf(
+        LeftRail.Entry("Switch profile", R.drawable.ic_rail_profile, "profile") {},
+        LeftRail.Entry("Search", R.drawable.ic_nav_search, "search") {},
+        LeftRail.Entry("Home", R.drawable.ic_rail_home, "home") {},
+        LeftRail.Entry("Movies", R.drawable.ic_rail_movies, "movies") {},
+        LeftRail.Entry("Series", R.drawable.ic_rail_series, "series") {},
+        LeftRail.Entry("Games", R.drawable.ic_rail_games, "games") {},
+        LeftRail.Entry("Live TV", R.drawable.ic_rail_live, "live") {},
+        LeftRail.Entry("Settings", R.drawable.ic_nav_settings, "settings") {},
+    ))
 
     fun openHoldSheet(activity: Activity, app: AppContext) {
         com.scenix.tv.core.CardActionSheet.open(activity, app, "Breaking Bad", listOf(

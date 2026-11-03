@@ -56,9 +56,9 @@ node design-system/tools/coverage.mjs --strict
 scripts/studio-capture.sh --check             # capture the catalog from the TV and diff
 ```
 
-`coverage --strict` is expected to be red while host-owned components are still inside
-`BrowseActivity`. That is the debt list, not a broken build: the Studio names what is left to
-extract.
+`coverage --strict` fails when a contract has no real catalog entry or a golden is missing. The
+Android set is green (12 contracts); a newly added component stays red until its Studio entry and
+goldens exist, which is the point.
 
 ## The catalog on Android
 
