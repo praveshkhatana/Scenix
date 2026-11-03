@@ -19,6 +19,10 @@ Open **<http://localhost:8000/gallery/>**.
 
 Do not open `gallery/index.html` directly from disk: browsers block `fetch()` on `file://` pages.
 
+`index.html` loads `gallery.css` and `gallery.js` with a `?v=` stamp. Browsers cache a static
+server's files aggressively, so after editing either file, bump that number — otherwise the
+browser keeps painting the previous gallery.
+
 The gallery accepts shareable query parameters:
 
 ```text
@@ -28,6 +32,7 @@ http://localhost:8000/gallery/?theme=scene.glass&device=tv&component=molecule.ti
 - `theme`: `scene.apple`, `scene.glass`, `scene.kids`
 - `device`: `tv` (1920×1080), `ipad` (1366×1024), `iphone` (393×852), `desktop` (1440×900)
 - `component`: any declared component id
+- `live=0`, `games=0`: the household removed that add-on, so its door is gone
 - `level`: `all`, `atom`, `molecule`, `organism` or `template`
 
 ## What is here
@@ -134,6 +139,11 @@ plan: `stack | row | column | grid | overlay | scroll`, `component`, `slot`, `re
 
 ## Gallery behaviour
 
+- **Household add-ons** switches Live TV and Games on or off for every story and every theme. A
+  nav stop is a door to an installed add-on: with both removed the nav is Home / Movies / Series,
+  the left rail loses both rows, and the chip row drops their shortcuts. This mirrors the app's
+  `/app/v1/caps` answer and the `showsLive` / `showsGames` props on `organism.nav.top`,
+  `organism.rail.left` and `template.home`.
 - Sidebar lists components by level; clicking scrolls the device preview and switches the contract JSON.
 - Theme control switches Apple / Glass / Kids; tokens are applied as CSS custom properties
   (`--color-*`, `--space-*`, `--radius-*`, `--type-*`) on the device stage.

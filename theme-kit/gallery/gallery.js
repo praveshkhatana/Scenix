@@ -42,6 +42,19 @@ const LEFT_ITEMS = [
   { label: 'Settings', icon: 'settings', route: 'settings' }
 ];
 
+/*
+ * A nav stop is a door to an installed add-on. Games needs an enabled add-on that declares the
+ * games resource, Live needs the live add-on and a playlist — the facts the hub answers at
+ * /app/v1/caps and the standalone backend answers for itself. The kit shows both doors by default
+ * (a fresh install carries both add-ons); the header knobs tell the same story with one missing.
+ */
+function stopVisible(item, sample) {
+  const route = String((item && (item.route || item.label)) || '').toLowerCase();
+  if (route === 'live') return sample.showsLive !== false;
+  if (route === 'games') return sample.showsGames !== false;
+  return true;
+}
+
 const HERO_ITEMS = [
   { title: 'The Last of Us', secondary: 'S1 E4 · 52m', badge: '4k' },
   { title: 'Dune: Part Two', secondary: '2024 · Science fiction', badge: 'hd' }
@@ -137,7 +150,7 @@ const SAMPLES = {
     chips: HERO_CHIPS, maxChips: 8, titleAlign: 'start'
   },
   'organism.nav.top': {
-    items: NAV_ITEMS, variant: 'pill', active: 'home', search: true, live: true,
+    items: NAV_ITEMS, variant: 'pill', active: 'home', search: true, showsLive: true, showsGames: true,
     wordmark: true, compact: false, profile: { name: 'Alex', initials: 'A' }
   },
   'organism.rail': {
@@ -228,6 +241,7 @@ const state = {
   device: DEVICES[0],
   selectedId: null,
   levelFilter: 'all',
+  caps: { live: true, games: true },
   copyTimer: null
 };
 
@@ -416,6 +430,11 @@ function sampleFor(component, variant) {
     Object.assign(base, VARIANT_SAMPLES[component.id][variant]);
   }
   if (variant) base.variant = variant;
+  if (component.id === 'organism.nav.top' || component.id === 'organism.rail.left'
+    || component.id === 'template.home') {
+    base.showsLive = state.caps.live;
+    base.showsGames = state.caps.games;
+  }
   if (component.id === 'template.detail') {
     base.kids = variant === 'split';
     base.glass = variant !== 'split';
@@ -676,7 +695,8 @@ function renderHeroGlass(sample, stateName, classes) {
 function renderNavTop(sample, stateName, classes) {
   const variant = sample.variant || 'pill';
   const active = String(sample.active || 'home').toLowerCase();
-  const items = (Array.isArray(sample.items) ? sample.items : NAV_ITEMS).slice(0, 5);
+  const items = (Array.isArray(sample.items) ? sample.items : NAV_ITEMS)
+    .filter((item) => stopVisible(item, sample)).slice(0, 5);
   const focus = stateName === 'focus';
   const stops = items.map((item, index) => {
     const selected = String(item.route || item.label).toLowerCase() === active;
@@ -743,7 +763,8 @@ function renderRail(sample, stateName, classes) {
 }
 
 function renderRailLeft(sample, stateName, classes) {
-  const items = (Array.isArray(sample.items) ? sample.items : LEFT_ITEMS).slice(0, 8);
+  const items = (Array.isArray(sample.items) ? sample.items : LEFT_ITEMS)
+    .filter((item) => stopVisible(item, sample)).slice(0, 8);
   const active = String(sample.active || 'home').toLowerCase();
   const focus = stateName === 'focus';
   const rows = items.map((item, index) => {
@@ -783,12 +804,16 @@ function renderTemplateHome(sample, stateName, classes) {
     items: sample.nav || NAV_ITEMS,
     variant: sample.family === 'kids' ? 'kids' : 'pill',
     active: 'home', search: true,
+    showsLive: sample.showsLive !== false, showsGames: sample.showsGames !== false,
     profile: { name: 'Alex', initials: 'A' }
   }, 'default', '');
+  // Chips mirror shelf shortcuts, and a shelf for a mode nobody installed does not exist — so the
+  // chip row follows the same doors as the nav.
+  const chips = (sample.chips || HERO_CHIPS).filter((chip) => stopVisible({ label: chip }, sample));
   const hero = renderHeroGlass({
     items: sample.hero || HERO_ITEMS,
     variant: sample.family === 'kids' ? 'kids-stage' : 'glass-cards',
-    chips: sample.chips || HERO_CHIPS, max: 2
+    chips, max: 2
   }, focus ? 'focus' : 'default', '');
   const rails = rows.slice(0, 2).map((row) => renderRail({
     ...row, seeAll: true, total: row.total || 24, showCount: false
@@ -1300,6 +1325,8 @@ function writeUrl() {
     params.set('theme', state.theme.id);
     params.set('device', state.device.id);
     if (state.levelFilter !== 'all') params.set('level', state.levelFilter);
+    if (!state.caps.live) params.set('live', '0');
+    if (!state.caps.games) params.set('games', '0');
     if (state.selectedId) params.set('component', state.selectedId);
     history.replaceState(null, '', `${location.pathname}?${params.toString()}`);
   } catch (error) {
@@ -1330,12 +1357,36 @@ function bootChrome() {
     levelSelect.addEventListener('change', (event) => setLevelFilter(event.target.value));
   }
 
+  // The add-on knobs are the shared story control every nav story reads: Home, Movies and Series
+  // are always there; Games and Live are doors only an installed add-on can open.
+  const capsLive = $('#caps-live');
+  const capsGames = $('#caps-games');
+  const paintCaps = () => {
+    [[capsLive, 'live'], [capsGames, 'games']].forEach(([input, key]) => {
+      if (!input) return;
+      input.checked = state.caps[key];
+      const chip = input.closest('.addon-toggle');
+      if (chip) chip.classList.toggle('is-on', state.caps[key]);
+    });
+  };
+  const setCaps = (next) => {
+    state.caps = { ...state.caps, ...next };
+    paintCaps();
+    renderStage(true);
+    writeUrl();
+  };
+  if (capsLive) capsLive.addEventListener('change', () => setCaps({ live: capsLive.checked }));
+  if (capsGames) capsGames.addEventListener('change', () => setCaps({ games: capsGames.checked }));
+  paintCaps();
+
   const reset = $('#reset-view');
   if (reset) {
     reset.addEventListener('click', () => {
       setTheme(state.themes[0].id, false);
       setDevice('tv', false);
       state.levelFilter = 'all';
+      state.caps = { live: true, games: true };
+      paintCaps();
       state.selectedId = state.components[0].id;
       renderSidebar();
       renderStage(false);
@@ -1382,6 +1433,12 @@ async function boot() {
       || theme.name.toLowerCase() === String(requestedTheme || '').toLowerCase()) || state.themes[0];
     state.device = DEVICES.find((device) => device.id === requestedDevice) || DEVICES[0];
     state.levelFilter = LEVELS.includes(requestedLevel) ? requestedLevel : 'all';
+    // Add-ons are on by default, as on a fresh install; ?live=0 / ?games=0 tell the story of a
+    // household that removed one, and the URL keeps that shape shareable.
+    state.caps = {
+      live: params.get('live') !== '0',
+      games: params.get('games') !== '0'
+    };
     const requested = state.components.find((component) => component.id === requestedComponent);
     const visible = visibleComponents();
     state.selectedId = requested && visible.includes(requested)

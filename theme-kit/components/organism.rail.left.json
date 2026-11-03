@@ -2,12 +2,12 @@
   "id": "organism.rail.left",
   "version": 1,
   "level": "organism",
-  "summary": "The host overlay rail: icon destinations with Profile first and Search second, a white focus pill, and a scrim that closes onto the exact tile the viewer left.",
+  "summary": "The host overlay rail: icon destinations with Profile first and Search second, a white focus pill, and a scrim that closes onto the exact tile the viewer left. Games and Live TV appear only when those add-ons are installed.",
   "props": {
     "items": {
       "type": "array",
       "required": true,
-      "description": "Destination rows in host order: Profile, Search, Home, Movies, Series, Games, Live TV, Settings."
+      "description": "Destination rows in host order: Profile, Search, Home, Movies, Series, then Games and Live TV when their add-ons are installed, then Settings."
     },
     "open": {
       "type": "boolean",
@@ -17,6 +17,16 @@
       "type": "string",
       "default": "home",
       "maxLength": 24
+    },
+    "showsLive": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include the Live TV row only when the household's hub carries the live add-on and a playlist."
+    },
+    "showsGames": {
+      "type": "boolean",
+      "default": true,
+      "description": "Include the Games row only when an enabled add-on declares the games resource."
     },
     "width": {
       "type": "number",

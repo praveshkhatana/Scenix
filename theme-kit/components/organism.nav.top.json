@@ -2,7 +2,7 @@
   "id": "organism.nav.top",
   "version": 1,
   "level": "organism",
-  "summary": "Top navigation: the pack's pill stops plus search, profile and gear, with Home, Movies, Series, Games and Live in a fixed D-pad order.",
+  "summary": "Top navigation: the pack's pill stops plus search, profile and gear. Home, Movies and Series are always there; Games and Live TV are doors the host draws only when the household installed the add-on behind them.",
   "props": {
     "items": {
       "type": "array",
@@ -25,10 +25,15 @@
       "type": "boolean",
       "default": true
     },
-    "live": {
+    "showsLive": {
       "type": "boolean",
       "default": true,
-      "description": "Live only appears when the hub actually carries the live row."
+      "description": "Draw the Live TV stop only when the household's hub carries the live add-on and a playlist. The host decides; the theme never guesses from a row."
+    },
+    "showsGames": {
+      "type": "boolean",
+      "default": true,
+      "description": "Draw the Games stop only when an enabled add-on declares the games resource."
     },
     "wordmark": {
       "type": "boolean",
