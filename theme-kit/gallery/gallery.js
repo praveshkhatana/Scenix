@@ -95,7 +95,6 @@ const SETTINGS_SECTIONS = [
   }
 ];
 
-const PLAYER_OPTIONS = ['audio', 'subtitles', 'speed', 'quality', 'episodes'];
 
 const VARIANT_COMPONENTS = new Set([
   'molecule.tile',
@@ -190,10 +189,18 @@ const SAMPLES = {
     wall: 'pack', back: true, pickerOpen: true
   },
   'template.player': {
-    title: 'The Last of Us', subtitle: 'S1 E4 · Please Hold to My Hand',
-    mode: 'vod', position: 0.38, buffered: 0.61, duration: 3180, playing: true,
-    options: PLAYER_OPTIONS, hint: 'Timeline · LEFT / RIGHT to seek',
-    skipIntro: true, nextEpisode: true, speed: 1
+    title: 'Best of the Best', meta: '2026 · Action · 1h 52m',
+    certificate: 'PG-13', quality: '720p', peers: 0,
+    mode: 'vod', position: 0.766, buffered: 0.82, duration: 6740, playing: true,
+    skipIntro: true, speed: 1,
+    liveTitle: '&TV', liveNow: 'Now: Music Countdown · 24 min left',
+    next: { code: 'S02E05', title: 'Please Hold to My Hand', countdown: 'Starting in 8s · Cancel to stay' },
+    menu: { kind: 'Quality', value: '720p' },
+    error: {
+      heading: 'This copy could not be played',
+      message: 'No source in this hub carries this title.',
+      actions: ['Try again', 'Next copy', 'Quality', 'Back']
+    }
   }
 };
 
@@ -216,6 +223,7 @@ const ICONS = {
   subtitles: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14h4M13 14h4"/>',
   speed: '<path d="M12 20a8 8 0 118-8"/><path d="M12 12l4.4-4.4"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   quality: '<rect x="3" y="6" width="18" height="12" rx="2"/><text x="12" y="15.3" text-anchor="middle" font-size="7" font-weight="700" font-family="system-ui" fill="currentColor" stroke="none">4K</text>',
+  aspect: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   episodes: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/>',
   search: '<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.8 5.8l1.8 1.8M16.4 16.4l1.8 1.8M18.2 5.8l-1.8 1.8M7.6 16.4l-1.8 1.8"/>',
@@ -906,48 +914,151 @@ function renderTemplateSettings(sample, stateName, classes) {
     `<div class="settings-body">${body}</div>${picker}</div>`;
 }
 
+function playerClock(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  // The cinema bar prints 00:43 / 01:48:39 — two-digit fields keep the pair from shifting as the
+  // hour rolls over.
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+function playerChip(label, primary = false) {
+  return `<span class="player-chip${primary ? ' primary' : ''}">${esc(label)}</span>`;
+}
+
+function playerIcon(name, label, focused) {
+  return `<span class="player-icon${focused ? ' is-focus' : ''}" role="img" aria-label="${esc(label)}">` +
+    iconSvg(name) + '</span>';
+}
+
+/*
+ * The app's PlayerActivity chrome, not a generic video player: no header, one bottom
+ * gradient carrying the title row (title, certificate, LIVE, meta, the quality pill), a
+ * full-width timeline, and a single transport line. Live has no timeline, no elapsed pair,
+ * no speed and no rewind. Chrome hides while the film plays; skip-intro lives outside it.
+ */
 function renderTemplatePlayer(sample, stateName, classes) {
-  const live = sample.mode === 'live' || stateName === 'live';
+  if (stateName === 'loading') {
+    // The cinema preloader: the title's art behind, its name as a mark, and one thin line filling
+    // while the hub prepares a copy. The film's first frame replaces it.
+    return `<div class="c-page c-player ${classes}"><div class="player-frame player-preload-frame">` +
+      '<div class="player-video"></div><span class="player-preload-scrim"></span>' +
+      '<div class="player-preload">' +
+      `<span class="mark">${esc((sample.title || '').toUpperCase())}</span>` +
+      '<span class="line"><i style="width:46%"></i></span>' +
+      '<span class="status">Preparing your copy</span>' +
+      '</div></div></div>';
+  }
+  const liveError = stateName === 'live-error';
+  const live = sample.mode === 'live' || stateName === 'live' || liveError;
   const buffering = stateName === 'buffering';
+  const error = stateName === 'error' || liveError;
+  const menu = stateName === 'menu';
+  const nextCard = stateName === 'next';
   const paused = stateName === 'paused' || (sample.playing === false && stateName === 'default');
-  const focus = stateName === 'focus';
-  const error = stateName === 'error';
+  const chromeHidden = stateName === 'playing';
   const playing = !paused && !buffering && !error;
-  const position = live ? 1 : Math.max(0, Math.min(1, Number(sample.position) || 0));
-  const buffered = Math.max(position, Math.min(1, Number(sample.buffered) || 0));
   const duration = Number(sample.duration) || 0;
-  const options = (Array.isArray(sample.options) ? sample.options : PLAYER_OPTIONS)
-    .map((icon) => `<span class="player-opt">${iconSvg(icon)}</span>`).join('');
-  const center = error
-    ? `<span class="player-error">This copy did not open. <span class="player-retry">Retry</span></span>`
-    : buffering
-      ? '<span class="player-buffer"><span class="c-spinner"></span> Buffering…</span>'
-      : '';
+  const position = Math.max(0, Math.min(1, Number(sample.position) || 0));
+  const buffered = Math.max(position, Math.min(1, Number(sample.buffered) || 0));
+  const elapsed = playerClock(duration * position);
+  const total = playerClock(duration);
+  // The app focuses Play when the chrome appears; the focus story walks the ring to Quality to
+  // show the underline the remote actually gets.
+  const focusOn = stateName === 'focus' ? 'quality' : 'play';
+
+  const titleRow = '<div class="player-title-row">' +
+    `<span class="player-title">${esc((live && sample.liveTitle) || sample.title || '')}</span>` +
+    (!live && sample.certificate ? `<span class="player-badge cert">${esc(sample.certificate)}</span>` : '') +
+    (live ? '<span class="player-badge live">LIVE</span>' : '') +
+    `<span class="player-meta">${esc(live ? (sample.liveNow || '') : (sample.meta || ''))}</span>` +
+    (!live && sample.quality
+      ? `<span class="player-quality">${esc(sample.quality)}` +
+        (Number(sample.peers) > 0 ? ` · ${sample.peers} ${Number(sample.peers) === 1 ? 'peer' : 'peers'}` : '') +
+        '</span>'
+      : '') +
+    '</div>';
+
+  const seek = live ? '' : '<div class="player-seekline">' +
+    '<span class="player-track"></span>' +
+    `<span class="player-buffer" style="width:${buffered * 100}%"></span>` +
+    `<span class="player-played" style="width:${position * 100}%"></span>` +
+    `<span class="player-knob" style="left:${position * 100}%"></span>` +
+    '</div>';
+
+  const series = sample.series === true || nextCard;
+  const transport = [
+    playerIcon(playing ? 'pause' : 'play', playing ? 'Pause' : 'Play', focusOn === 'play')
+  ];
+  if (!live) transport.push(playerIcon('rewind', 'Back 10 seconds', false));
+  transport.push('<span class="player-divider"></span>');
+  transport.push(playerIcon('subtitles', 'Subtitles', false));
+  transport.push(playerIcon('audio', 'Audio', false));
+  if (!live) transport.push(playerIcon('speed', 'Speed', false));
+  transport.push(playerIcon('quality', 'Quality', focusOn === 'quality'));
+  transport.push(playerIcon('aspect', 'Picture size', false));
+  transport.push('<span class="player-divider"></span>');
+  if (!live && series) transport.push(playerIcon('forward', 'Next episode', false));
+  if (series) transport.push(playerIcon('episodes', 'Episodes', false));
+  transport.push('<span class="player-spacer"></span>');
+  if (!live) {
+    transport.push(`<span class="player-time">${elapsed}</span>`);
+    transport.push(`<span class="player-time dim"> / ${total}</span>`);
+  }
+
+  const bottom = chromeHidden ? '' : '<div class="player-bottom">' + titleRow + seek +
+    `<div class="player-transport">${transport.join('')}</div></div>`;
+
+  const center = buffering
+    ? '<div class="player-center"><span class="c-spinner"></span><span>Buffering…</span></div>'
+    : '';
+
+  let card = '';
+  if (error) {
+    const fallback = sample.error || {};
+    const heading = live ? 'This channel is off the air' : (fallback.heading || 'This copy could not be played');
+    const message = live ? 'This channel is not answering. Try another one.' : (fallback.message || '');
+    const actions = live ? ['Try again', 'Next channel', 'Back']
+      : (fallback.actions || ['Try again', 'Next copy', 'Quality', 'Back']);
+    card = '<div class="player-card player-error-card">' +
+      `<b>${esc(heading)}</b><span>${esc(message)}</span>` +
+      `<div class="player-chips">${actions.map((a, i) => playerChip(a, i === 0)).join('')}</div></div>`;
+  } else if (menu) {
+    const m = sample.menu || { kind: 'Quality', value: '720p' };
+    const rows = [
+      ['Auto', 'Best available', false],
+      ['1080p', 'Full HD', false],
+      ['720p', 'Selected', true],
+      ['480p', 'Safer on Wi-Fi', false]
+    ];
+    card = '<div class="player-card player-menu-card">' +
+      `<b>${esc(m.kind || 'Quality')}<span> · ${esc(m.value || '')}</span></b>` +
+      rows.map(([label, note, selected]) =>
+        `<div class="player-menu-row${selected ? ' is-selected' : ''}">` +
+        `<span class="label">${esc(label)}</span><span class="note">${esc(note)}</span>` +
+        `<span class="check">${selected ? iconSvg('check') : ''}</span></div>`).join('') +
+      '</div>';
+  } else if (nextCard) {
+    const n = sample.next || { code: 'S02E05', title: 'Please Hold to My Hand', countdown: 'Starting in 8s · Cancel to stay' };
+    card = '<div class="player-card player-next-card">' +
+      '<span class="eyebrow">UP NEXT</span>' +
+      `<b>${esc(n.code || '')}${n.title ? '  ·  ' + esc(n.title) : ''}</b>` +
+      `<span class="count">${esc(n.countdown || 'Press Play next, or Cancel to stay')}</span>` +
+      `<div class="player-chips">${playerChip('Play next', true)}${playerChip('Cancel')}</div></div>`;
+  }
+
+  const skip = sample.skipIntro && !error && !menu && !nextCard
+    ? '<span class="player-skip">Skip intro</span>'
+    : '';
+  const scrim = (menu || error) ? '<span class="player-scrim"></span>' : '';
 
   return `<div class="c-page c-player ${classes}"><div class="player-frame">` +
     '<div class="player-video"></div>' +
-    `<span class="player-frame-title">${esc(sample.title || '')}</span>` +
-    center +
-    `<div class="player-top"><span class="player-back">‹</span>` +
-      `<span class="player-title">${esc(sample.title || '')}</span>` +
-      `<span class="player-meta">${esc(sample.subtitle || '')}</span>` +
-      `${live ? '<span class="player-live">LIVE</span>' : ''}</div>` +
-    '<div class="player-bottom"><div class="player-line">' +
-      `<span>${live ? 'LIVE' : formatTime(duration * position)}</span>` +
-      `<span class="player-seek${live ? ' is-live' : ''}">` +
-        `<i class="buffer" style="width:${buffered * 100}%"></i>` +
-        `<i class="played" style="width:${position * 100}%"></i>` +
-        `${live ? '' : `<b class="knob" style="left:${position * 100}%"></b>`}</span>` +
-      `<span>${formatTime(duration)}</span></div>` +
-      `<div class="player-transport">` +
-        `<span class="player-btn main${focus ? ' is-focus' : ''}">${iconSvg(playing ? 'pause' : 'play')}</span>` +
-        `${sample.nextEpisode ? `<span class="player-btn">${iconSvg('forward')}</span>` : ''}` +
-        `<span class="player-btn">${iconSvg('rewind')}</span>` +
-        `<span class="player-btn">${iconSvg('forward')}</span>` +
-        '<span class="player-spacer"></span>' +
-        `<span class="player-options">${options}</span></div>` +
-      `<span class="player-hint">${esc(sample.hint || '')}</span></div>` +
-    `${sample.skipIntro ? '<span class="player-skip">Skip intro</span>' : ''}` +
+    `<span class="player-frame-title">${esc((live && sample.liveTitle) || sample.title || '')}</span>` +
+    scrim + center + card + bottom + skip +
     '</div></div>';
 }
 

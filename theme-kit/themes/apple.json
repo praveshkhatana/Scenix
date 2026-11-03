@@ -66,7 +66,8 @@
       "matBorder": "rgba(255,255,255,0.28)",
       "hdInk": "#F2F3F5",
       "listFill": "#101219",
-      "listStroke": "#1B1D24"
+      "listStroke": "#1B1D24",
+      "playerAccent": "#F2F3F5"
     },
     "space": {
       "gutter": 72,

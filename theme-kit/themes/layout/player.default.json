@@ -1,7 +1,7 @@
 {
   "template": "player",
   "theme": "scene.apple",
-  "description": "Default player chrome: top title bar, timeline, transport row, one translucent options capsule and the hint line naming the focused control. Live omits the scrubber and speed.",
+  "description": "PlayerActivity cinema chrome: no header. A bottom gradient carries the title row (title, certificate, LIVE, meta, the running-quality pill), a full-width timeline and one transport line; live drops the timeline, elapsed pair, speed and rewind. The error, track-menu and up-next cards sit over the picture, and the skip-intro chip lives outside the chrome so it survives the auto-hide.",
   "root": {
     "type": "overlay",
     "children": [
@@ -19,18 +19,11 @@
         "children": [
           {
             "type": "row",
+            "slot": "title",
             "props": {
-              "padding": "space.gutter"
+              "gap": "space.listItem"
             },
             "children": [
-              {
-                "component": "atom.button",
-                "props": {
-                  "label": "Back",
-                  "kind": "ghost",
-                  "icon": "chevron"
-                }
-              },
               {
                 "component": "atom.label",
                 "props": {
@@ -38,6 +31,23 @@
                   "type": "h3",
                   "tone": "ink",
                   "weight": "bold"
+                }
+              },
+              {
+                "component": "atom.chip",
+                "when": "@certificate",
+                "props": {
+                  "label": "@certificate",
+                  "tone": "outline"
+                }
+              },
+              {
+                "component": "atom.chip",
+                "when": "@live",
+                "props": {
+                  "label": "LIVE",
+                  "tone": "solid",
+                  "icon": "live"
                 }
               },
               {
@@ -50,50 +60,23 @@
               },
               {
                 "component": "atom.chip",
-                "when": "@live",
+                "when": "@quality",
                 "props": {
-                  "label": "LIVE",
-                  "tone": "solid",
-                  "icon": "live"
+                  "label": "@quality",
+                  "tone": "muted"
                 }
               }
             ]
           },
           {
-            "type": "row",
+            "component": "molecule.seek-bar",
+            "when": "@vod",
             "props": {
-              "gap": "space.listItem"
-            },
-            "children": [
-              {
-                "component": "atom.label",
-                "props": {
-                  "text": "@elapsed",
-                  "type": "meta",
-                  "tone": "ink2"
-                }
-              },
-              {
-                "component": "molecule.seek-bar",
-                "props": {
-                  "position": "@progress.position",
-                  "buffered": "@progress.buffered",
-                  "duration": "@progress.duration",
-                  "live": "@live",
-                  "chapters": "@chapters",
-                  "hint": "time"
-                }
-              },
-              {
-                "component": "atom.label",
-                "props": {
-                  "text": "@remaining",
-                  "type": "meta",
-                  "tone": "ink2",
-                  "align": "end"
-                }
-              }
-            ]
+              "position": "@progress.position",
+              "buffered": "@progress.buffered",
+              "duration": "@progress.duration",
+              "hint": "time"
+            }
           },
           {
             "type": "row",
@@ -103,54 +86,136 @@
                 "component": "atom.button",
                 "props": {
                   "label": "Play",
-                  "kind": "primary",
+                  "kind": "flat",
                   "icon": "play"
                 }
               },
               {
-                "component": "atom.button",
+                "component": "atom.icon",
+                "when": "@vod",
                 "props": {
-                  "label": "Back 10",
-                  "kind": "ghost",
-                  "icon": "rewind"
+                  "name": "rewind",
+                  "label": "Back 10 seconds"
                 }
               },
               {
-                "component": "atom.button",
+                "type": "divider"
+              },
+              {
+                "component": "atom.icon",
                 "props": {
-                  "label": "Forward 10",
-                  "kind": "ghost",
-                  "icon": "forward"
+                  "name": "subtitles",
+                  "label": "Subtitles"
                 }
               },
               {
-                "component": "atom.surface",
+                "component": "atom.icon",
                 "props": {
-                  "tone": "glass",
-                  "blur": true,
-                  "radius": "radius.button"
+                  "name": "audio",
+                  "label": "Audio"
+                }
+              },
+              {
+                "component": "atom.icon",
+                "when": "@vod",
+                "props": {
+                  "name": "speed",
+                  "label": "Speed"
+                }
+              },
+              {
+                "component": "atom.icon",
+                "props": {
+                  "name": "quality",
+                  "label": "Quality"
+                }
+              },
+              {
+                "component": "atom.icon",
+                "props": {
+                  "name": "aspect",
+                  "label": "Picture size"
+                }
+              },
+              {
+                "type": "divider"
+              },
+              {
+                "component": "atom.icon",
+                "when": "@next",
+                "props": {
+                  "name": "forward",
+                  "label": "Next episode"
+                }
+              },
+              {
+                "component": "atom.icon",
+                "when": "@series",
+                "props": {
+                  "name": "episodes",
+                  "label": "Episodes"
+                }
+              },
+              {
+                "component": "atom.label",
+                "when": "@vod",
+                "props": {
+                  "text": "@elapsed",
+                  "type": "meta",
+                  "tone": "ink"
+                }
+              },
+              {
+                "component": "atom.label",
+                "when": "@vod",
+                "props": {
+                  "text": "@remaining",
+                  "type": "meta",
+                  "tone": "ink2"
                 }
               }
             ]
-          },
-          {
-            "component": "atom.label",
-            "when": "@hint",
-            "props": {
-              "text": "@hint",
-              "type": "meta",
-              "tone": "ink3"
-            }
-          },
-          {
-            "component": "atom.chip",
-            "when": "@skipIntro",
-            "props": {
-              "label": "Skip intro",
-              "tone": "solid"
-            }
           }
         ]
+      },
+      {
+        "component": "atom.chip",
+        "when": "@skipIntro",
+        "props": {
+          "label": "Skip intro",
+          "tone": "solid",
+          "anchor": "bottom-end",
+          "outside": "chrome"
+        }
+      },
+      {
+        "component": "atom.surface",
+        "when": "@error",
+        "slot": "cards",
+        "props": {
+          "tone": "panel",
+          "radius": "radius.panel"
+        }
+      },
+      {
+        "component": "atom.surface",
+        "when": "@next",
+        "slot": "cards",
+        "props": {
+          "tone": "panel",
+          "radius": "radius.panel",
+          "anchor": "bottom-end"
+        }
+      },
+      {
+        "component": "atom.surface",
+        "when": "@menu",
+        "slot": "cards",
+        "props": {
+          "tone": "panel",
+          "radius": "radius.panel",
+          "anchor": "center"
+        }
       }
     ]
   }
