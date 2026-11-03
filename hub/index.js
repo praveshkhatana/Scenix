@@ -3278,7 +3278,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     extraWhy.push('this device cannot decode ' + ranking.codecFamily(out.videoCodec)
       + ', and no copy of this title it can play was found');
   }
-  out.audioTracks = ((picture && picture.audioTracks) || []).map((t) => ({ ...t }));
+  // The picture probe is the best truth, but it is not always there: a cold torrent's header read
+  // runs out of the play budget, and the addon's own track list is then the only fact about the copy
+  // being served. Dropping it left the player with no audio language at all, so the packager's
+  // default (usually English) won and a Hindi profile saw no Hindi in the Audio menu — even when the
+  // chosen file stated it. For a native pass-through (container "any") the addon's stream indices are
+  // the very indices media3 addresses, so its list is safe to hand over.
+  const sourceTracks = (container === 'any' && Array.isArray(source.audioTracks))
+    ? source.audioTracks : [];
+  out.audioTracks = ((picture && picture.audioTracks) || sourceTracks).map((t) => ({ ...t }));
+
   out.subtitleTracks = ((picture && picture.subtitleTracks) || []).map((t) => {
     const c = { ...t };
     // A browser is same-origin with the hub, so the relative path the cache stores is enough; a TV is
@@ -3800,6 +3809,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         'bufferedMB=' + ((out.prebuffer && out.prebuffer.MB) != null ? out.prebuffer.MB : out.bufferedMB),
         'need=' + (out.neededMbps == null ? '?' : out.neededMbps),
         'measured=' + (out.measuredMbps == null ? '?' : out.measuredMbps));
+    }
+  }
+  // Be honest when the household's first language is nowhere in what is about to play, after the
+  // donor block has had its chance: the client can say so instead of quietly starting in another
+  // language. A missing Hindi track is a fact about this title's copies, not about the player.
+  if (prefAudio.length) {
+    const have = new Set((out.audioTracks || []).map((t) => media.langOf(t.language)));
+    if (!have.has(prefAudio[0])) {
+      out.audioMissing = prefAudio[0];
+      out.audioMissingName = ranking.LANG_NAMES[prefAudio[0]] || prefAudio[0];
     }
   }
   return { status: 200, body: out };
