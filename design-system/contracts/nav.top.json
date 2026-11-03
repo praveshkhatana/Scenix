@@ -2,29 +2,84 @@
   "id": "nav.top",
   "version": 1,
   "kind": "widget",
-  "platforms": ["android-tv"],
+  "platforms": [
+    "android-tv"
+  ],
   "purpose": "Top navigation for every pack: the pack's own stop treatment, search, the household and the gear. Home, Movies and Series are always present; Games and Live TV are doors the host draws only when the household installed those add-ons.",
-  "source": { "android": "BrowseActivity.topBar / GlassHomeLayout / KidsHomeLayout / Ps5HomeLayout" },
-  "tokens": ["color.pill", "color.pillInk", "color.segInk", "color.pillActive", "space.segPad", "radius.pill", "type.nav"],
+  "source": {
+    "android": "BrowseActivity.topBar / GlassHomeLayout / KidsHomeLayout / Ps5HomeLayout"
+  },
+  "tokens": [
+    "color.pill",
+    "color.pillInk",
+    "color.segInk",
+    "color.pillActive",
+    "space.segPad",
+    "radius.pill",
+    "type.nav"
+  ],
   "anatomy": [
-    { "part": "brand", "note": "Wordmark or brand disc; on Apple/Netflix/Classic it is also the Home stop." },
-    { "part": "stops", "note": "Home, Movies, Series, then Games and Live TV only when installed, in that order." },
-    { "part": "search", "note": "Should be a knob/dot at the end of the pill, never an afterthought at the far edge." },
-    { "part": "household", "note": "Profile disc plus Settings gear; gear is the last stop." }
+    {
+      "part": "brand",
+      "note": "Wordmark or brand disc; on Apple/Netflix/Classic it is also the Home stop."
+    },
+    {
+      "part": "stops",
+      "note": "Home, Movies, Series, then Games and Live TV only when installed, in that order."
+    },
+    {
+      "part": "search",
+      "note": "Should be a knob/dot at the end of the pill, never an afterthought at the far edge."
+    },
+    {
+      "part": "household",
+      "note": "Profile disc plus Settings gear; gear is the last stop."
+    }
   ],
   "geometry": {
     "bandHeight": "96dp on classic packs; pack nav band token on Glass/Kids/PS5",
-    "glassPill": { "height": "space.navBand", "segPad": "space.segPad", "radius": "radius.pill" },
-    "kidsPill": { "height": "space.kidsPillH", "knob": "space.kidsKnob" },
-    "classic": { "wordmark": "132x30dp", "stopGap": "18dp after the first 22dp" }
+    "glassPill": {
+      "height": "space.navBand",
+      "segPad": "space.segPad",
+      "radius": "radius.pill"
+    },
+    "kidsPill": {
+      "height": "space.kidsPillH",
+      "knob": "space.kidsKnob"
+    },
+    "classic": {
+      "wordmark": "132x30dp",
+      "stopGap": "18dp after the first 22dp"
+    }
   },
-  "states": ["idle", "active", "focused", "disabled"],
+  "states": [
+    "idle",
+    "active",
+    "focused",
+    "disabled"
+  ],
   "copy": {
-    "stops": ["Home", "Movies", "Series", "Games", "Live TV"],
+    "stops": [
+      "Home",
+      "Movies",
+      "Series",
+      "Games",
+      "Live TV"
+    ],
     "liveLabelIsShort": "Packs that draw a four-word pill may shorten Live TV to Live; the content description stays 'Live TV'."
   },
   "focus": {
-    "order": ["brand", "Home", "Movies", "Series", "Games", "Live TV", "Search", "Profile", "Settings"],
+    "order": [
+      "brand",
+      "Home",
+      "Movies",
+      "Series",
+      "Games",
+      "Live TV",
+      "Search",
+      "Profile",
+      "Settings"
+    ],
     "rules": [
       "LEFT at the first stop stops there (or opens the rail on packs that own one); it never wraps.",
       "RIGHT at the last stop stops there.",
@@ -51,7 +106,7 @@
   },
   "evidence": {
     "catalog": "nav.top",
-    "status": "blocked: host-owned builder not yet extracted from BrowseActivity",
+    "status": "real: TopNav",
     "goldens": "goldens/android/nav.top/<state>/<theme>.png"
   }
 }
