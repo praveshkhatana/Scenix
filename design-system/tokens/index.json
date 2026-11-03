@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "source": "app/src/main/assets/themes.json",
+  "themes": [
+    {
+      "id": "scenix-dark",
+      "name": "Scenix Dark",
+      "file": "scenix-dark.json"
+    },
+    {
+      "id": "scenix-midnight",
+      "name": "Midnight",
+      "file": "scenix-midnight.json"
+    },
+    {
+      "id": "scenix-ember",
+      "name": "Ember",
+      "file": "scenix-ember.json"
+    },
+    {
+      "id": "scenix-apple",
+      "name": "Apple",
+      "file": "scenix-apple.json"
+    },
+    {
+      "id": "scenix-netflix",
+      "name": "Netflix",
+      "file": "scenix-netflix.json"
+    },
+    {
+      "id": "scenix-ps5",
+      "name": "PS5",
+      "file": "scenix-ps5.json"
+    },
+    {
+      "id": "scenix-kids",
+      "name": "Kids",
+      "file": "scenix-kids.json"
+    },
+    {
+      "id": "scenix-glass",
+      "name": "Glass",
+      "file": "scenix-glass.json"
+    }
+  ]
+}

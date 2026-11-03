@@ -1,0 +1,20 @@
+{
+  "id": "atoms.type",
+  "version": 1,
+  "kind": "atom",
+  "platforms": ["android-tv"],
+  "purpose": "The pack's type scale, read through theme tokens. Text is never sized by guesswork: every label names a token (h1/h2/h3/li/liMeta/sub/meta/badge/rowTitle) and a fallback for older packs.",
+  "source": { "android": "core/Views.text + Theme.type" },
+  "tokens": ["type.h1", "type.h2", "type.h3", "type.li", "type.liMeta", "type.sub", "type.meta", "type.badge", "type.rowTitle", "color.ink", "color.ink2", "color.ink3"],
+  "anatomy": [{ "part": "label", "note": "One line, ellipsis; includeFontPadding off so the baseline is the pack's." }],
+  "states": ["default"],
+  "copy": { "specimen": "The quick brown fox jumps over the lazy dog" },
+  "focus": { "rules": ["Labels are not focusable and never become D-pad stops."] },
+  "behaviour": ["Weight is bold/regular only; no synthetic styling.", "Text colour always comes from a colour token."],
+  "platformDeltas": {
+    "ios": "Map to UIFont with Dynamic Type where the pack allows it; keep the same relative scale.",
+    "windows": "Map to TextBlock styles with the same sizes and weights."
+  },
+  "a11y": { "contrast": "ink/ink2/ink3 each >= 4.5:1 against bg and surfaces" },
+  "evidence": { "catalog": "atoms.type", "status": "real: Views.text", "goldens": "goldens/android/atoms.type/default/<theme>.png" }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "glass.chips",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "Glass shelf-jump chips: frost plates that carry a section word and an optional glyph, sized by the pack's chip token.",
+  "source": { "android": "GlassKit.chip" },
+  "tokens": ["color.chipBg", "color.chipInk", "color.chipActive", "radius.chip", "space.chipHeight", "type.chip"],
+  "anatomy": [{ "part": "chip", "note": "Frost plate, 999dp radius, glyph + label, active = brighter plate." }],
+  "geometry": { "height": "space.chipHeight (104dp)", "gap": "16dp" },
+  "states": ["idle", "selected", "focused"],
+  "copy": { "chips": ["For you", "Movies", "Series", "Games", "Live"] },
+  "focus": { "rules": ["LEFT/RIGHT step chips; DOWN enters the first rail.", "A chip jumps to the rail it names; it never filters silently."] },
+  "behaviour": ["A chip exists only when its shelf exists — Games/Live follow the add-on gate."],
+  "platformDeltas": {
+    "ios": "A horizontally scrolling capsule row with the same copy.",
+    "windows": "Same chips; pointer hover adds a border, not a scale."
+  },
+  "a11y": { "role": "tab", "label": "{{label}}" },
+  "evidence": { "catalog": "glass.chips", "status": "real: GlassKit.chip", "goldens": "goldens/android/glass.chips/<state>/<theme>.png" }
+}

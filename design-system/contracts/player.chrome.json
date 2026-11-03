@@ -1,0 +1,63 @@
+{
+  "id": "player.chrome",
+  "version": 1,
+  "kind": "screen",
+  "platforms": ["android-tv"],
+  "purpose": "The cinema chrome PlayerActivity draws: a preloader while a copy is prepared, then no header at all — one bottom gradient with the title row, a full-width timeline and one transport line. Live drops the timeline, the elapsed pair, speed and rewind. Error, track-menu and up-next cards sit over the picture.",
+  "source": { "android": "PlayerActivity.buildTopBar / buildBottomBar / buildPreloader / showError / showNextCard / menus" },
+  "tokens": ["color.playerAccent", "color.playerInk", "color.live", "radius.badge", "space.gutter", "type.h3", "type.meta", "focus.color"],
+  "anatomy": [
+    { "part": "preloader", "note": "Backdrop art at 62% + top-to-bottom scrim, title mark, 360x4dp fill line, 'Preparing your copy'." },
+    { "part": "titleRow", "note": "Title, certificate badge, LIVE badge, meta note, running-quality pill at the far end." },
+    { "part": "timeline", "note": "54dp row: 4dp track (6dp focused), buffered/filled ranges, knob with focus glow, seek bubble. Hidden on live." },
+    { "part": "transport", "note": "Play/pause, Back 10s, divider, Subtitles, Audio, Speed, Quality, Picture size, divider, Next episode, Episodes, spacer, elapsed / total." },
+    { "part": "cards", "note": "Error card (720dp), track menu (centred, width by kind), up-next card (560dp, bottom-right), skip intro chip (bottom-right, 122dp up)." }
+  ],
+  "geometry": {
+    "bottomPadding": { "top": "64dp gradient lead-in", "sides": "space.gutter", "bottom": "28dp" },
+    "title": "34dp bold; certificate 15dp outlined; LIVE 16dp on color.live; quality 16dp on 30% white",
+    "timeline": "54dp high, bar sits 18dp up; knob 8dp idle / 12dp focused",
+    "transport": "56dp minimum height, 64dp minimum width per stop, 6dp gaps after the first",
+    "times": "18dp, elapsed white, total at 65% white"
+  },
+  "states": ["loading", "chrome", "playing", "paused", "focused", "buffering", "live", "menu", "next", "error", "live-error"],
+  "copy": {
+    "preloader": "Preparing your copy",
+    "buffering": "Buffering…",
+    "error": { "vod": "This copy could not be played", "live": "This channel is off the air" },
+    "actions": { "vod": ["Try again", "Next copy", "Quality", "Back"], "live": ["Try again", "Next channel", "Back"] },
+    "next": "UP NEXT · SxxEyy · title · Starting in Ns · Cancel to stay",
+    "skip": "Skip intro"
+  },
+  "focus": {
+    "rules": [
+      "Chrome appears paused with focus on Play; UP from the transport reaches the timeline, LEFT/RIGHT seek.",
+      "The transport is one line; LEFT/RIGHT visit the stops in visual order and stop at the ends.",
+      "Back from the transport exits the player; Back from a menu/card closes only that layer first.",
+      "A menu/error/up-next card pins the chrome and traps focus; the rows own LEFT/RIGHT.",
+      "Chrome auto-hides after a few seconds of playback; any key brings it back with the ring where it was."
+    ]
+  },
+  "behaviour": [
+    "The timeline fill and knob use the pack's playerAccent — Apple #F2F3F5, Glass #CFE3F5, Kids #FFD60A.",
+    "Live never shows a timeline, elapsed pair, speed, rewind or quality badge; it keeps play, subtitles, audio, quality menu, picture size, episodes.",
+    "The running-quality pill is the decoder's answer, not the menu's request; peers ride on it for P2P copies.",
+    "The preferred audio language selects the track; a donor mix names its source in the status line; a genuinely missing language is stated, not hidden.",
+    "Nothing is drawn over a running picture: a late failure at another copy goes to the status pill, not a card."
+  ],
+  "platformDeltas": {
+    "ios": "Same bottom layout; use safe-area bottom inset; system volume/brightness gestures are allowed; no D-pad hints.",
+    "windows": "Mouse hover on transport; Space/K play, arrows seek; same cards and copy.",
+    "apple-tv": "Focus lift on transport; swipe on the timeline; same gating and copy."
+  },
+  "a11y": {
+    "role": "group",
+    "label": "Player controls for {{title}}",
+    "rules": ["Every icon has a content description", "Elapsed/total are spoken as time", "Focus is always visible on the control, not only on the bar"]
+  },
+  "evidence": {
+    "catalog": "player.chrome",
+    "status": "real: PlayerActivity preview mode",
+    "goldens": "goldens/android/player.chrome/<state>/<theme>.png"
+  }
+}

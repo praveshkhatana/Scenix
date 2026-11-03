@@ -1,0 +1,43 @@
+{
+  "id": "nav.rail.left",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "The host overlay menu on the left edge: Profile, Search, Home, Movies, Series, then Games and Live TV only when installed, then Settings. It slides over the page and returns focus to the tile it was opened from.",
+  "source": { "android": "BrowseActivity.buildLeftRail / railRow" },
+  "tokens": ["color.bg", "color.railInk", "color.railInk2", "color.railFocusInk", "radius.listItem", "type.li"],
+  "anatomy": [
+    { "part": "panel", "note": "Opaque pack surface, 18dp elevation, slid in from the left; the page dims behind it." },
+    { "part": "brand", "note": "SCENIX lettering at the top, never a duplicate Home stop." },
+    { "part": "rows", "note": "Icon + label; 66dp high; 4dp gap; 16dp inset." },
+    { "part": "scrim", "note": "Click/Back closes; the scrim never takes focus." }
+  ],
+  "geometry": { "width": "340dp + 18dp right padding", "rowHeight": "66dp", "rowGap": "4dp", "icon": "24dp", "rowRadius": "12dp" },
+  "states": ["closed", "open", "focused", "selected"],
+  "copy": { "rows": ["Switch profile", "Search", "Home", "Movies", "Series", "Games", "Live TV", "Settings"] },
+  "focus": {
+    "order": "rows top to bottom",
+    "rules": [
+      "Opening the rail focuses the row for the section the viewer is standing in.",
+      "UP/DOWN stop at the first and last row; LEFT/RIGHT never leave the panel.",
+      "Back closes the rail and returns focus to the exact tile that opened it.",
+      "Choosing a destination closes the rail before the page changes."
+    ]
+  },
+  "behaviour": [
+    "The white focus pill is host-owned; a pack brand fill disappears on Kids and Glass.",
+    "Games and Live TV rows are omitted when the add-ons are absent.",
+    "The rail is an overlay: it never reflows the shelves."
+  ],
+  "platformDeltas": {
+    "ios": "A sheet or drawer rather than a TV overlay; same row order, safe-area inset, swipe-back.",
+    "windows": "Left rail can be persistent at >=1440px; keyboard focus order identical.",
+    "apple-tv": "Same overlay; focus lift on the row, same scrim."
+  },
+  "a11y": { "role": "navigation", "label": "Quick navigation", "minTarget": "48x48dp" },
+  "evidence": {
+    "catalog": "nav.rail.left",
+    "status": "blocked: host-owned builder not yet extracted from BrowseActivity",
+    "goldens": "goldens/android/nav.rail.left/<state>/<theme>.png"
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "device": { "width": 1920, "height": 1080, "density": 1 },
+  "themes": ["scenix-apple", "scenix-glass", "scenix-kids"],
+  "entries": [
+    {
+      "id": "atoms.type",
+      "contract": "atoms.type",
+      "title": "Type scale",
+      "kind": "widget",
+      "builder": "atoms.type",
+      "states": ["default"],
+      "status": "real"
+    },
+    {
+      "id": "atoms.focus",
+      "contract": "atoms.focus",
+      "title": "Focus ring / lift / glow",
+      "kind": "widget",
+      "builder": "atoms.focus",
+      "states": ["idle", "focused"],
+      "status": "real"
+    },
+    {
+      "id": "glass.nav",
+      "contract": "nav.top.glass",
+      "title": "Glass nav pill",
+      "kind": "widget",
+      "builder": "glass.nav",
+      "states": ["idle", "active"],
+      "themes": ["scenix-glass"],
+      "status": "real"
+    },
+    {
+      "id": "glass.chips",
+      "contract": "glass.chips",
+      "title": "Glass shelf chips",
+      "kind": "widget",
+      "builder": "glass.chips",
+      "states": ["idle", "selected"],
+      "themes": ["scenix-glass"],
+      "status": "real"
+    },
+    {
+      "id": "kids.chips",
+      "contract": "kids.chips",
+      "title": "Kids chips",
+      "kind": "widget",
+      "builder": "kids.chips",
+      "states": ["idle"],
+      "themes": ["scenix-kids"],
+      "status": "real"
+    },
+    {
+      "id": "settings.rows",
+      "contract": "settings.row",
+      "title": "Settings rows",
+      "kind": "widget",
+      "builder": "settings.rows",
+      "states": ["default", "focused"],
+      "status": "real"
+    },
+    {
+      "id": "screens.topbar",
+      "contract": "screens.topbar",
+      "title": "Screen top bar",
+      "kind": "widget",
+      "builder": "screens.topbar",
+      "states": ["default"],
+      "status": "real"
+    },
+    {
+      "id": "sheet.action",
+      "contract": "sheet.action",
+      "title": "Hold confirmation sheet",
+      "kind": "widget",
+      "builder": "sheet.action",
+      "states": ["open"],
+      "status": "real"
+    },
+    {
+      "id": "player.chrome",
+      "contract": "player.chrome",
+      "title": "Player chrome (real screen)",
+      "kind": "screen",
+      "builder": "player.preview",
+      "states": ["default", "live", "error"],
+      "status": "real"
+    },
+    {
+      "id": "nav.top",
+      "contract": "nav.top",
+      "title": "Top navigation (all packs)",
+      "kind": "widget",
+      "builder": "nav.top",
+      "states": ["idle", "active", "focused"],
+      "status": "blocked: host-owned builder inside BrowseActivity"
+    },
+    {
+      "id": "nav.rail.left",
+      "contract": "nav.rail.left",
+      "title": "Left overlay rail",
+      "kind": "widget",
+      "builder": "nav.rail.left",
+      "states": ["open", "focused"],
+      "status": "blocked: host-owned builder inside BrowseActivity"
+    },
+    {
+      "id": "card.tile",
+      "contract": "card.tile",
+      "title": "Title tile",
+      "kind": "widget",
+      "builder": "card.tile",
+      "states": ["idle", "focused", "held"],
+      "status": "blocked: host-owned builder inside BrowseActivity"
+    }
+  ]
+}

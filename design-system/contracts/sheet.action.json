@@ -1,0 +1,48 @@
+{
+  "id": "sheet.action",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "The confirmation behind a press-and-hold on a card or hero. It names the title, lists only the actions that card supports, and acts on a deliberate second OK.",
+  "source": { "android": "core/CardActionSheet.kt" },
+  "tokens": ["color.surface", "color.line", "color.ink", "color.ink3", "radius.panel", "radius.listItem", "type.panelTitle", "type.sub"],
+  "anatomy": [
+    { "part": "scrim", "note": "0xA6 black, clickable, focusable=false; click closes unchanged." },
+    { "part": "panel", "note": "560dp wide, pack surface, 1dp line, radius.panel, 22/18/22/16 padding." },
+    { "part": "title", "note": "The card's title, 24dp bold." },
+    { "part": "note", "note": "'Choose what to do with this title', 16dp ink3." },
+    { "part": "rows", "note": "One row per action: 20dp bold, 16/14 padding, 8dp gap, first row 18dp after the note." },
+    { "part": "footer", "note": "'Back closes without changing anything', 15dp ink3." }
+  ],
+  "geometry": { "panelWidth": "560dp", "rowRadius": "radius.listItem", "focus": "rows show a 0x2E white plate on focus" },
+  "states": ["open", "focused", "pressed", "closing"],
+  "copy": {
+    "note": "Choose what to do with this title",
+    "footer": "Back closes without changing anything",
+    "actions": ["Add to My List", "Remove from My List", "Remove from Continue watching"]
+  },
+  "focus": {
+    "rules": [
+      "Rows own LEFT/RIGHT (self-linked); UP/DOWN step and stop at the ends.",
+      "The sheet is a trap: focus cannot leave it while open.",
+      "Back closes without running any action and returns focus to the card it came from.",
+      "A second open is refused while one sheet is up."
+    ]
+  },
+  "behaviour": [
+    "Choosing a row closes the sheet first, then runs the action.",
+    "The action list is derived from the card's current state, never hard-coded to two entries.",
+    "The sheet is pack furniture (surface, radius, ink), not a system dialog."
+  ],
+  "platformDeltas": {
+    "ios": "Present as a context menu/action sheet with the same actions and copy; long-press opens it.",
+    "windows": "Right-click opens the same list; Escape closes unchanged.",
+    "apple-tv": "Same sheet; focus lift on rows."
+  },
+  "a11y": { "role": "dialog", "label": "{{title}}: choose an action" },
+  "evidence": {
+    "catalog": "sheet.action",
+    "status": "real: CardActionSheet",
+    "goldens": "goldens/android/sheet.action/open/<theme>.png"
+  }
+}

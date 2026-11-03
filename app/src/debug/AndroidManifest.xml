@@ -13,5 +13,10 @@
             android:name=".LiveChannelsActivity"
             android:exported="true"
             tools:replace="android:exported" />
+        <!-- The design-system catalogue is a debug tool: it renders the real components and is
+             drivable by the capture script. Release builds do not contain it. -->
+        <activity
+            android:name=".StudioActivity"
+            android:exported="true" />
     </application>
 </manifest>

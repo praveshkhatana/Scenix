@@ -1,0 +1,23 @@
+{
+  "id": "atoms.focus",
+  "version": 1,
+  "kind": "atom",
+  "platforms": ["android-tv"],
+  "purpose": "The pack's focus language applied to one control: ring, glow or lift, with one scale and one radius. Every focusable surface calls Focus.attach, so a plate, a row and a card cannot disagree.",
+  "source": { "android": "core/Focus.attach" },
+  "tokens": ["focus.style", "focus.ringWidth", "focus.scale", "focus.glowInset", "focus.color", "radius.card"],
+  "anatomy": [
+    { "part": "ring", "note": "Outset keyline in the pack's focus colour (ring style)." },
+    { "part": "glow", "note": "Soft accent bloom plus a keyline (glow style)." },
+    { "part": "lift", "note": "Scale and shadow, no outline (lift style)." }
+  ],
+  "states": ["idle", "focused", "pressed", "disabled"],
+  "focus": { "rules": ["Focus is always visible; never colour-only.", "The focused control is the only one that grows."] },
+  "behaviour": ["Scale and duration come from tokens; a pack cannot invent a new focus animation in a screen."],
+  "platformDeltas": {
+    "ios": "Use the platform focus effect on tvOS and a visible keyline on touch-first iOS.",
+    "windows": "Focus ring on keyboard focus only; hover is a separate state."
+  },
+  "a11y": { "rule": "Focus indicator >= 2px and >= 3:1 contrast against the surface behind it" },
+  "evidence": { "catalog": "atoms.focus", "status": "real: Focus.attach", "goldens": "goldens/android/atoms.focus/<state>/<theme>.png" }
+}

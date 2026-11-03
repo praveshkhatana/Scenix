@@ -1,0 +1,20 @@
+{
+  "id": "kids.chips",
+  "version": 1,
+  "kind": "widget",
+  "platforms": ["android-tv"],
+  "purpose": "Kids shortcut chips: solid black capsules with a white glyph and label, sized for small hands and far couches.",
+  "source": { "android": "KidsKit.chip" },
+  "tokens": ["color.plateInk", "color.inkOnWall", "radius.chip", "space.kidsChipHeight", "type.li"],
+  "anatomy": [{ "part": "chip", "note": "Solid dark plate; glyph is chosen from the label (play/star/arrow) by KidsKit." }],
+  "geometry": { "height": "space.kidsChipHeight", "gap": "16dp" },
+  "states": ["idle", "focused"],
+  "copy": { "chips": ["Kids videos", "Kids Movies", "Kids Series"] },
+  "focus": { "rules": ["LEFT/RIGHT step; DOWN enters the tile row."] },
+  "platformDeltas": {
+    "ios": "Larger touch targets (56dp) with the same look.",
+    "windows": "Same capsules; keyboard focus ring."
+  },
+  "a11y": { "role": "button", "label": "{{label}}" },
+  "evidence": { "catalog": "kids.chips", "status": "real: KidsKit.chip", "goldens": "goldens/android/kids.chips/idle/<theme>.png" }
+}
