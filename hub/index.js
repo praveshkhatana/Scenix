@@ -4804,7 +4804,11 @@ async function handle(req, res) {
         stream = readahead.statsFor(eng.hash ? eng : { url: held });
       }
       if (!stream) stream = readahead.live(); // a client that has not learned to name its copy yet
-      return send(res, 200, { ok: true, identity: body.identity, progress, stream });
+      // The engine's live peer count for the copy this screen named. It changes while a torrent
+      // warms, which is exactly the number a viewer wants beside the resolution.
+      let peers = null;
+      if (body.hash) peers = await gateway.peers(String(body.hash));
+      return send(res, 200, { ok: true, identity: body.identity, progress, stream, peers });
     }
 
     // "Remove from Continue watching" — the tile goes, the position stays (see core/store.js).

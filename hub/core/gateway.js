@@ -643,7 +643,21 @@ async function ready() {
   return engineSeen.ok === true;
 }
 
-/** Whether the ranking rules may treat torrents as play-ready HTTP. Cheap, cached, never throws. */
+/**
+ * The engine's live peer count for one info hash. /progress asks this every few seconds while a
+ * viewer watches, so the screen can show whether the swarm is actually carrying the copy. A dead
+ * engine or an idle torrent answers null: an unknown number is not zero.
+ */
+async function peers(hash) {
+  const h = String(hash || '').trim();
+  if (!h || MODE !== 'http') return null;
+  const r = await enginePost('/torrents', { action: 'get', hash: h }, 900);
+  if (!r || !r.json) return null;
+  const n = Number(r.json.total_peers);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Whether the ranking rules may treat torrents as play-ready HTTP. Cheaper, cached, never throws. */
 function available() {
   if (MODE !== 'http') return false;
   if (Date.now() - engineSeen.at > CHECK_TTL_MS) checkEngine().catch(() => {});
@@ -661,6 +675,7 @@ module.exports = {
   ready,
   prepare,
   prewarm,
+  peers,
   pump,
   resolve,
   gatewayUrl,
