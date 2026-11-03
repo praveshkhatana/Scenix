@@ -108,8 +108,8 @@ class BrowseActivity : Activity() {
     /** Ordered remote stops in the floating Apple-style navigation pill. */
     private var pillStops: List<View> = emptyList()
     private var shelfListId = View.NO_ID
-    // The left rail is the way to another screen from the middle of the page. Netflix, YouTube and
-    // Stremio all put navigation on the left edge for the same reason: asking a viewer to scroll
+    // The left rail is the way to another screen from the middle of the page. Netflix and YouTube
+    // put navigation on the left edge for the same reason: asking a viewer to scroll
     // back to a top bar to change tabs is a trap. It is an overlay, so the shelf keeps its place.
     private var railPanel: LinearLayout? = null
     private var railScrim: View? = null
@@ -2039,6 +2039,7 @@ class BrowseActivity : Activity() {
                 .putExtra(PlayerActivity.EXTRA_POSITION_MS, p?.positionMs ?: 0L)
                 .putExtra(PlayerActivity.EXTRA_MATURITY, item.maturity)
                 .putExtra(PlayerActivity.EXTRA_POSTER, item.poster.orEmpty())
+                .putExtra(PlayerActivity.EXTRA_BACKDROP, item.backdrop.orEmpty())
                 .putExtra(PlayerActivity.EXTRA_LOGO, item.logo.orEmpty())
         )
     }

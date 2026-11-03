@@ -266,7 +266,7 @@ class SettingsActivity : Activity() {
             // Accessibility, not taste: one multiplier over the whole theme so text, tiles, gaps and
             // the hero all grow together for far seats and weak eyes. No admin door on this one.
             // A slider reads as a size, not a secret cycle. The values mirror the way a desktop
-            // or Stremio presents interface zoom; 150% is the ceiling the TV layouts are tested at.
+            // player presents interface zoom; 150% is the ceiling the TV layouts are tested at.
             val zoomSteps = listOf(1f, 1.15f, 1.3f, 1.5f)
             val zoomNames = listOf("100%", "115%", "130%", "150%")
             val z = app.prefs.uiZoom()

@@ -172,6 +172,23 @@ class Prefs(context: Context) {
     fun uiZoom(): Float = sp.getFloat("ui_zoom", 1f)
     fun setUiZoom(f: Float) = sp.edit().putFloat("ui_zoom", f).apply()
 
+    // ---- subtitles ---------------------------------------------------------------------------
+    // A television is watched from a couch: the default caption size is comfortable at 100% but too
+    // small at 150% zoom, and a viewer with a bright wall may need yellow. These are device
+    // preferences (they describe this panel and this person's eyes), not hub profile data.
+    /** 0 small, 1 medium, 2 large. */
+    fun captionSize(): Int = sp.getInt(KEY_CAPTION_SIZE, 1).coerceIn(0, 2)
+    fun setCaptionSize(v: Int) = sp.edit().putInt(KEY_CAPTION_SIZE, v.coerceIn(0, 2)).apply()
+    /** white | yellow */
+    fun captionColour(): String = sp.getString(KEY_CAPTION_COLOUR, "white") ?: "white"
+    fun setCaptionColour(v: String) = sp.edit().putString(KEY_CAPTION_COLOUR, v).apply()
+    /** none | dim | black */
+    fun captionBackground(): String = sp.getString(KEY_CAPTION_BACKGROUND, "dim") ?: "dim"
+    fun setCaptionBackground(v: String) = sp.edit().putString(KEY_CAPTION_BACKGROUND, v).apply()
+    /** 0 = bottom, 1 = 5%, 2 = 10% up from the bottom edge. */
+    fun captionOffset(): Int = sp.getInt(KEY_CAPTION_OFFSET, 1).coerceIn(0, 2)
+    fun setCaptionOffset(v: Int) = sp.edit().putInt(KEY_CAPTION_OFFSET, v.coerceIn(0, 2)).apply()
+
     companion object {
         private const val TAG = "ScenixPrefs"
         private const val KEY_HUB = "hub_url"
@@ -189,5 +206,9 @@ class Prefs(context: Context) {
         const val BACKEND_HUB = "hub"
         const val BACKEND_STANDALONE = "standalone"
         private const val KEY_FIXTURE = "fixture"
+        private const val KEY_CAPTION_SIZE = "caption_size"
+        private const val KEY_CAPTION_COLOUR = "caption_colour"
+        private const val KEY_CAPTION_BACKGROUND = "caption_background"
+        private const val KEY_CAPTION_OFFSET = "caption_offset"
     }
 }

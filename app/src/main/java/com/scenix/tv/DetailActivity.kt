@@ -1167,6 +1167,7 @@ class DetailActivity : Activity() {
                 .putExtra(PlayerActivity.EXTRA_POSITION_MS, position)
                 .putExtra(PlayerActivity.EXTRA_MATURITY, s(record, "maturity", ""))
                 .putExtra(PlayerActivity.EXTRA_POSTER, s(record, "poster", ""))
+                .putExtra(PlayerActivity.EXTRA_BACKDROP, s(record, "backdrop", ""))
                 .putExtra(PlayerActivity.EXTRA_LOGO, s(record, "logo", ""))
                 .putStringArrayListExtra(PlayerActivity.EXTRA_ADVISORIES, advisories)
         )

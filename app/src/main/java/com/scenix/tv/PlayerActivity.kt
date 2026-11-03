@@ -1,5 +1,6 @@
 package com.scenix.tv
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.res.ColorStateList
 import android.graphics.Canvas
@@ -18,11 +19,13 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -44,6 +47,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.AppContext
@@ -80,6 +84,24 @@ class PlayerActivity : Activity() {
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private val handler = Handler(Looper.getMainLooper())
     private val theme get() = app.theme
+    /**
+     * The cinema chrome's accent comes from the pack, so the seeker and the preloader belong to the
+     * theme the viewer chose. A pack whose brand is almost black (Kids) would disappear on the black
+     * player page; those packs lend their bright kids/alert colour instead.
+     */
+    private val playerAccent: Int
+        get() {
+            val brand = theme.color("brand", "#2D8CFF")
+            val lum = (0.299f * Color.red(brand) + 0.587f * Color.green(brand)
+                + 0.114f * Color.blue(brand)) / 255f
+            return if (lum < 0.18f) theme.color("kids", "#FFD60A") else brand
+        }
+    // The player is a black room in every pack. Wall-pack inks (Kids is dark, Clean is light) belong
+    // to their shelves, not over a film, so the cinema chrome states its own palette once.
+    private val playerInk = Color.WHITE
+    private val playerInk2 = Color.argb(0xB9, 255, 255, 255)
+    private val playerInk3 = Color.argb(0x99, 255, 255, 255)
+    private val playerGold = Color.parseColor("#F2C33A")
 
     // ---- what is playing ------------------------------------------------------------------
     private data class PlaySpec(
@@ -139,6 +161,8 @@ class PlayerActivity : Activity() {
     private var pendingEpisodeFocus: EpisodeRowKey? = null
     private var selectedAudioId: String? = null
     private var selectedSubId: String? = null
+    /** The language column's current filter in the subtitle sheet. */
+    private var subLangFilter = ""
     private var audioChosen = false
     private var subChosen = false
     private var speed = 1f
@@ -232,6 +256,11 @@ class PlayerActivity : Activity() {
     private var player: ExoPlayer? = null
     private var http: DefaultHttpDataSource.Factory? = null
     private var playerView: PlayerView? = null
+    private var preloadOverlay: FrameLayout? = null
+    private var preloadLine: PreloadLine? = null
+    private var preloadFill: ValueAnimator? = null
+    private var preloadDismissing = false
+    private var preloadShownAt = 0L
 
     // ---- chrome ---------------------------------------------------------------------------
     private lateinit var root: FrameLayout
@@ -248,15 +277,17 @@ class PlayerActivity : Activity() {
     private lateinit var metaView: TextView
     private lateinit var statusView: TextView
     private lateinit var liveBadge: TextView
+    /** The resolution the decoder is actually showing, not the one the menu asked for. */
+    private lateinit var qualityBadge: TextView
     private lateinit var backButton: GlyphView
     private lateinit var playButton: GlyphView
     private lateinit var rewindButton: GlyphView
-    private lateinit var forwardButton: GlyphView
     private var nextButton: GlyphView? = null
     private lateinit var audioButton: GlyphView
     private lateinit var subButton: GlyphView
     private lateinit var speedButton: GlyphView
     private lateinit var qualityButton: GlyphView
+    private lateinit var aspectButton: GlyphView
     private lateinit var volumeButton: GlyphView
     private var episodesButton: GlyphView? = null
     private var volumeShowing = false
@@ -462,7 +493,7 @@ class PlayerActivity : Activity() {
         override fun onPlaybackStateChanged(state: Int) {
             when (state) {
                 Player.STATE_BUFFERING -> {
-                    if (!errorShowing) showCenter(if (live) "Tuning…" else "Buffering…", true)
+                    if (!errorShowing && !preloading()) showCenter(if (live) "Tuning…" else "Buffering…", true)
                     if (bufferingSince == 0L) {
                         bufferingSince = System.currentTimeMillis()
                         handler.removeCallbacks(stallCheck)
@@ -473,6 +504,7 @@ class PlayerActivity : Activity() {
                 Player.STATE_READY -> {
                     bufferingSince = 0L
                     handler.removeCallbacks(stallCheck)
+                    finishPreloader()
                     hideCenter()
                     durationMs = player?.duration?.takeIf { it > 0 }?.let { d ->
                         // A resume ladder's duration is only the part after the offset; the film's
@@ -485,6 +517,7 @@ class PlayerActivity : Activity() {
                     applyPendingTracks()
                 }
                 Player.STATE_ENDED -> {
+                    finishPreloader()
                     hideCenter()
                     updatePlayLabel()
                     onEnded()
@@ -513,6 +546,7 @@ class PlayerActivity : Activity() {
         override fun onTracksChanged(tracks: Tracks) {
             startOnHighRung(tracks)
             applyPendingTracks()
+            applySubtitleStyle()
             paintChips()
             refreshTrackMenus()
         }
@@ -630,6 +664,7 @@ class PlayerActivity : Activity() {
         skipChip?.visibility = View.GONE
         selectedAudioId = null
         selectedSubId = null
+        subLangFilter = ""
         audioChosen = false
         subChosen = false
         audioTracks = JSONArray()
@@ -638,6 +673,7 @@ class PlayerActivity : Activity() {
         nextEpisode = null
         epSeason = 0
         currentSourceLabel = ""
+        pendingSourceKey = ""
         durationMs = 0L
         timelineOffsetMs = 0L
         startRungPending = false
@@ -659,7 +695,7 @@ class PlayerActivity : Activity() {
         paintTransport(false)
         closeMenu(restore = false)
         showChrome(focus = true)
-        showCenter("Preparing this copy…", true)
+        if (preloading()) hideCenter() else showCenter("Preparing this copy…", true)
         requestSubs(spec.identity)
         resolvePlay(spec, positionMs, WARM_TRIES, null)
         if (live) prefetchLiveChannels()
@@ -989,7 +1025,19 @@ class PlayerActivity : Activity() {
     private fun applyPendingTracks() {
         val p = player ?: return
         if (!audioApplied) audioApplied = applyChoice(C.TRACK_TYPE_AUDIO, p, pendingAudio)
-        if (!subApplied) subApplied = applyChoice(C.TRACK_TYPE_TEXT, p, pendingSub)
+        if (!subApplied) {
+            subApplied = applyChoice(C.TRACK_TYPE_TEXT, p, pendingSub)
+            val textGroups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+            val detail = textGroups.joinToString(";") { g ->
+                (0 until g.length).joinToString(",") { i ->
+                    val f = g.getTrackFormat(i)
+                    val name = f.label ?: f.language ?: "?"
+                    name + (if (g.isTrackSelected(i)) "*" else "")
+                }
+            }
+            Log.i(TAG, "subtitles pending=" + pendingSub + " applied=" + subApplied
+                + " groups=" + textGroups.size + " " + detail)
+        }
         paintChips()
     }
 
@@ -1074,15 +1122,23 @@ class PlayerActivity : Activity() {
         if (id.startsWith("hub:")) {
             val index = id.removePrefix("hub:").toIntOrNull() ?: return null
             val sub = hubSubs.optJSONObject(index) ?: return null
-            val label = str(sub, "label").ifBlank { str(sub, "name") }
             val lang = str(sub, "lang").ifBlank { str(sub, "language") }
-            return groups.firstOrNull { g ->
+            // OpenSubtitles rows name no label of their own; buildItem gave the track the language
+            // name ("English"). Matching the raw blank label here is what left a chosen file applied
+            // to nothing — the badge lit up, the screen stayed silent.
+            val label = str(sub, "label").ifBlank { str(sub, "name") }
+                .ifBlank { langName(lang) }
+            val two = if (lang.length == 3) lang.take(2) else lang
+            val byName = groups.firstOrNull { g ->
                 (0 until g.length).any { i ->
                     val f = g.getTrackFormat(i)
                     f.id == id || (label.isNotBlank() && f.label == label) ||
-                        (label.isBlank() && lang.isNotBlank() && f.language == lang)
+                        (lang.isNotBlank() && (f.language == lang || f.language == two))
                 }
             }
+            // The side-loaded configurations are added in hubSubs order. If a provider omitted every
+            // label and language, the row's position is the last honest handle.
+            return byName ?: groups.getOrNull(index)
         }
         val want = id.substringAfter(':', id)
         val index = want.toIntOrNull()
@@ -1100,7 +1156,7 @@ class PlayerActivity : Activity() {
         closeMenu()
     }
 
-    private fun chooseSub(id: String?) {
+    private fun chooseSub(id: String?, keepOpen: Boolean = false) {
         subChosen = true
         selectedSubId = id
         if (id != null && id.startsWith("hub:")) {
@@ -1109,7 +1165,7 @@ class PlayerActivity : Activity() {
                 // This subtitle file arrived after the picture started. Adding it to a prepared item
                 // is not possible in media3, so reload the same copy at the same playhead once.
                 reloadWithSubs(id)
-                closeMenu()
+                if (keepOpen) rebuildMenu(MenuKind.SUBTITLES) else closeMenu()
                 return
             }
         }
@@ -1117,7 +1173,7 @@ class PlayerActivity : Activity() {
         subApplied = false
         applyPendingTracks()
         paintChips()
-        closeMenu()
+        if (keepOpen) rebuildMenu(MenuKind.SUBTITLES) else closeMenu()
     }
 
     private fun reloadWithSubs(subId: String) {
@@ -1140,7 +1196,18 @@ class PlayerActivity : Activity() {
         val gen = ++subsGen
         api.subs(identity, profileId, "") { subs, _ ->
             if (gen != subsGen || isFinishing || isDestroyed) return@subs
-            hubSubs = subs ?: JSONArray()
+            // Two subtitle addons routinely publish the same file, and the same English track then
+            // appears twice in the menu. Keep the first spelling of each URL; distinct files (even in
+            // one language) still get their numbered rows.
+            val seen = HashSet<String>()
+            val unique = JSONArray()
+            if (subs != null) for (i in 0 until subs.length()) {
+                val item = subs.optJSONObject(i) ?: continue
+                val key = str(item, "url").ifBlank { str(item, "src") }.ifBlank { str(item, "id") }
+                if (key.isBlank() || !seen.add(key)) continue
+                unique.put(item)
+            }
+            hubSubs = unique
             paintChips()
         }
     }
@@ -1321,16 +1388,35 @@ class PlayerActivity : Activity() {
                     }
                 } else {
                     val staying = currentSourceLabel.ifBlank { "the current copy" }
-                    setStatus("Couldn't switch to that copy — still playing " + staying, "warn")
+                    val why = humaniseError(str(reply, "error"))
+                        .ifBlank { transport ?: "that copy would not open" }
+                    pendingSourceKey = ""
+                    setStatus(why + " · still playing " + staying, "warn")
                     player?.playWhenReady = playWhenReady
                 }
                 return@switchSource
             }
             sameCopyRetries = 0
             recoveryScheduled = false
-            if (!automatic) chosenSourceKey = pendingSourceKey
-            start(reply!!, positionMs, playWhenReady)
-            if (!automatic) setStatus("Switched to ${currentSourceLabel.ifBlank { "another copy" }}")
+            val picked = reply!!.optJSONObject("picked")
+            val pickedKey = picked?.let { sourceKey(it) }.orEmpty()
+            val wantedKey = pendingSourceKey
+            pendingSourceKey = ""
+            start(reply, positionMs, playWhenReady)
+            if (automatic) {
+                // "Auto" means the hub owns the copy again; no manual checkmark should sit on the
+                // row it happened to choose this time.
+                chosenSourceKey = ""
+            } else {
+                // The checkmark belongs to the copy that is actually running. A hub substitution (or a
+                // stale pick that resolved to another copy) must move it, not leave Quality lying.
+                if (pickedKey.isNotBlank()) chosenSourceKey = pickedKey
+                if (wantedKey.isNotBlank() && pickedKey.isNotBlank() && wantedKey != pickedKey) {
+                    setStatus("That copy didn't start — playing " + currentSourceLabel.ifBlank { "another copy" }, "warn")
+                } else {
+                    setStatus("Switched to ${currentSourceLabel.ifBlank { "another copy" }}")
+                }
+            }
         }
     }
 
@@ -1370,6 +1456,7 @@ class PlayerActivity : Activity() {
         buildTopBar()
         buildBottomBar()
         buildCenter()
+        applySubtitleStyle()
 
         overlay.visibility = View.INVISIBLE
         // The intro prompt is the one control that lives outside the chrome: it must stay visible while
@@ -1384,178 +1471,289 @@ class PlayerActivity : Activity() {
             bottomMargin = theme.px(122f)
         })
         skipChip = skip
+        if (!liveIntent()) buildPreloader()
+    }
+
+    private fun liveIntent(): Boolean {
+        val t = intent?.getStringExtra(EXTRA_TYPE).orEmpty()
+        return t == "channel" || t == "live"
+    }
+
+    /**
+     * The cinema preloader: the title's own artwork behind, its logo (or the name set as a mark) in
+     * the middle, and a thin line filling while the hub prepares a copy. The film's first frame
+     * replaces it; nothing about it pretends the picture is already here.
+     */
+    private fun buildPreloader() {
+        val poster = intent?.getStringExtra(EXTRA_BACKDROP).orEmpty()
+            .ifBlank { intent?.getStringExtra(EXTRA_POSTER).orEmpty() }
+            .ifBlank { intent?.getStringExtra(EXTRA_LOGO).orEmpty() }
+        val logo = intent?.getStringExtra(EXTRA_LOGO).orEmpty()
+
+        val sheet = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); alpha = 0f }
+        val art = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            alpha = 0.62f
+        }
+        BrowseImages.load(art, poster, targetWidthPx = 1600)
+        sheet.addView(art, match())
+        val scrim = View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.argb(0x66, 0, 0, 0), Color.argb(0xD9, 0, 0, 0), Color.BLACK),
+            )
+        }
+        sheet.addView(scrim, match())
+
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        val mark = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            visibility = if (logo.isBlank()) View.GONE else View.INVISIBLE
+        }
+        if (logo.isNotBlank()) {
+            BrowseImages.load(mark, logo, targetWidthPx = 960) { ok ->
+                mark.visibility = if (ok) View.VISIBLE else View.GONE
+                if (!ok) markOf(column)?.visibility = View.VISIBLE
+            }
+        }
+        column.addView(mark, LinearLayout.LayoutParams(theme.px(820f), theme.px(250f)))
+        val typed = Views.text(app, "h1", 58f, Color.WHITE, displayTitle.uppercase(),
+            bold = true, gravity = Gravity.CENTER, maxLines = 2)
+        typed.letterSpacing = 0.04f
+        typed.visibility = if (logo.isBlank()) View.VISIBLE else View.GONE
+        typed.tag = "preload-mark"
+        column.addView(typed, LinearLayout.LayoutParams(
+            theme.px(980f), ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = if (logo.isBlank()) theme.px(10f) else theme.px(4f) })
+
+        val line = PreloadLine(this)
+        column.addView(line, LinearLayout.LayoutParams(
+            theme.px(360f), theme.px(4f)
+        ).apply { topMargin = theme.px(26f) })
+        column.addView(Views.text(app, "meta", 16f, Color.argb(0xA6, 255, 255, 255),
+            "Preparing your copy", maxLines = 1),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = theme.px(12f) })
+
+        sheet.addView(column, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        preloadOverlay = sheet
+        preloadLine = line
+        preloadShownAt = SystemClock.uptimeMillis()
+        root.addView(sheet, match())
+        sheet.animate().alpha(1f).setDuration(220L).start()
+
+        preloadFill = ValueAnimator.ofFloat(0f, 0.9f).apply {
+            duration = 14_000L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { line.progress = it.animatedValue as Float }
+            start()
+        }
+    }
+
+    /** The typed title mark inside the preloader's column, if the logo request failed. */
+    private fun markOf(column: LinearLayout): View? {
+        for (i in 0 until column.childCount) {
+            val v = column.getChildAt(i)
+            if (v.tag == "preload-mark") return v
+        }
+        return null
+    }
+
+    private fun preloading(): Boolean = preloadOverlay != null
+
+    private fun finishPreloader() {
+        val sheet = preloadOverlay ?: return
+        if (preloadDismissing) return
+        // A warm copy answers in a few hundred milliseconds. A preloader that flashes is worse than
+        // no preloader, so keep it on screen long enough to read the title mark, then leave.
+        val shownFor = SystemClock.uptimeMillis() - preloadShownAt
+        val wait = (900L - shownFor).coerceAtLeast(0L)
+        if (wait > 0L) {
+            preloadDismissing = true
+            handler.postDelayed({
+                preloadDismissing = false
+                if (preloadOverlay === sheet) finishPreloader()
+            }, wait)
+            return
+        }
+        preloadDismissing = true
+        preloadFill?.cancel()
+        preloadFill = null
+        val line = preloadLine
+        if (line != null) {
+            ValueAnimator.ofFloat(line.progress, 1f).apply {
+                duration = 260L
+                addUpdateListener { line.progress = it.animatedValue as Float }
+                start()
+            }
+        }
+        sheet.animate().alpha(0f).setStartDelay(170L).setDuration(360L).withEndAction {
+            if (sheet.parent === root) root.removeView(sheet)
+            preloadOverlay = null
+            preloadLine = null
+            preloadDismissing = false
+        }.start()
     }
 
     private fun buildTopBar() {
-        topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(theme.gutter, theme.px(26f), theme.gutter, theme.px(24f))
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(theme.color("scrimInk", "#EB141414"), Color.TRANSPARENT),
-            )
-        }
-        backButton = icon(GLYPH_BACK, "Back") { finishToDetail() }
-        topBar.addView(backButton, wrap())
-
-        val words = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(theme.px(24f), 0, 0, 0)
-        }
-        titleView = Views.text(app, "h3", 34f, theme.ink, displayTitle, bold = true, maxLines = 1)
-        metaView = Views.text(app, "sub", 22f, theme.ink2, "", maxLines = 1)
-        words.addView(titleView)
-        words.addView(metaView, LinearLayout.LayoutParams(
+        // The cinema chrome has no header. The title, running quality and time belong to the bottom
+        // bar, where the remote's eye already is; only a transient status pill floats at the top.
+        statusView = Views.text(app, "meta", 18f, Color.WHITE, "", maxLines = 2,
+            gravity = Gravity.CENTER)
+        statusView.setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
+        statusView.maxWidth = theme.px(1280f)
+        statusView.background = Views.rounded(Color.argb(0xD9, 0, 0, 0), theme.px(999f))
+        statusView.visibility = View.GONE
+        overlay.addView(statusView, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(4f) })
-        topBar.addView(words, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        liveBadge = Views.text(app, "badge", 16f, Color.WHITE, "LIVE", bold = true, gravity = Gravity.CENTER)
-        liveBadge.setPadding(theme.px(10f), theme.px(3f), theme.px(10f), theme.px(3f))
-        liveBadge.background = Views.rounded(theme.color("live", "#E50914"), theme.radius("badge", 4f))
-        liveBadge.visibility = View.GONE
-        topBar.addView(liveBadge, wrap())
-
-        statusView = Views.text(app, "meta", 18f, theme.ink2, "", maxLines = 1)
-        statusView.setPadding(theme.px(20f), 0, 0, 0)
-        topBar.addView(statusView, wrap())
-
-        overlay.addView(topBar, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { gravity = Gravity.TOP })
-        if (live) liveBadge.visibility = View.VISIBLE
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = theme.px(34f)
+        })
     }
 
     private fun buildBottomBar() {
         bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(theme.gutter, theme.px(40f), theme.gutter, theme.px(38f))
+            setPadding(theme.gutter, theme.px(64f), theme.gutter, theme.px(28f))
             background = GradientDrawable(
                 GradientDrawable.Orientation.BOTTOM_TOP,
-                intArrayOf(theme.color("scrimInk", "#EB141414"), Color.TRANSPARENT),
+                intArrayOf(Color.argb(0xF5, 0, 0, 0), Color.argb(0xC4, 0, 0, 0), Color.TRANSPARENT),
             )
         }
 
-        val lineRow = LinearLayout(this).apply {
+        // One line of identity above the timeline: title, a live badge, the episode/meta note and
+        // the resolution that is actually on screen. The running-quality pill is Scenix-specific;
+        // everything else is the standard cinema layout the remote expects.
+        val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        elapsed = Views.text(app, "meta", 18f, theme.ink2, "0:00", maxLines = 1)
-        remaining = Views.text(app, "meta", 18f, theme.ink2, "", maxLines = 1, gravity = Gravity.END)
+        titleView = Views.text(app, "h3", 34f, Color.WHITE, displayTitle, bold = true, maxLines = 1)
+        liveBadge = Views.text(app, "badge", 16f, Color.WHITE, "LIVE", bold = true, gravity = Gravity.CENTER)
+        liveBadge.setPadding(theme.px(10f), theme.px(3f), theme.px(10f), theme.px(3f))
+        liveBadge.background = Views.rounded(theme.color("live", "#E50914"), theme.radius("badge", 4f))
+        liveBadge.visibility = View.GONE
+        qualityBadge = Views.text(app, "badge", 16f, Color.WHITE, "", bold = true, gravity = Gravity.CENTER)
+        qualityBadge.setPadding(theme.px(12f), theme.px(4f), theme.px(12f), theme.px(4f))
+        qualityBadge.background = Views.rounded(Color.argb(0x4D, 255, 255, 255), theme.px(999f))
+        qualityBadge.visibility = View.GONE
+        metaView = Views.text(app, "sub", 19f, Color.argb(0xB9, 255, 255, 255), "", maxLines = 1)
+        titleRow.addView(titleView, wrap())
+        titleRow.addView(liveBadge, wrap().withStart(theme.px(12f)))
+        titleRow.addView(metaView, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        ).apply { marginStart = theme.px(14f) })
+        titleRow.addView(qualityBadge, wrap().withStart(theme.px(14f)))
+        bottomBar.addView(titleRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
         seekLine = SeekLine(this)
         seekLine.isFocusable = true
         seekLine.isClickable = true
         seekLine.setOnClickListener { togglePlay() }
-        Focus.attach(seekLine, seekLine, app, theme.radius("button", 6f), scale = false, elevate = false,
+        // A ring around a full-width timeline reads as a giant empty capsule. The timeline shows
+        // focus through its knob glow instead, so no outline view is attached here.
+        Focus.attach(seekLine, null, app, theme.radius("button", 6f), scale = false, elevate = false,
             onFocus = { focused -> showControlHint(if (focused) "Timeline · LEFT / RIGHT to seek" else null) })
-        // Taller than the bar itself so the seek target bubble has room above the playhead. The
-        // bar is drawn low in this view, keeping the elapsed/remaining labels visually centred.
-        val lineLp = LinearLayout.LayoutParams(0, theme.px(56f), 1f)
-        lineLp.marginStart = theme.px(18f)
-        lineLp.marginEnd = theme.px(18f)
-        lineRow.addView(elapsed, wrap())
-        lineRow.addView(seekLine, lineLp)
-        lineRow.addView(remaining, wrap())
-        bottomBar.addView(lineRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-        seekLine.visibility = View.GONE
-        elapsed.visibility = View.GONE
-        remaining.visibility = View.GONE
+        bottomBar.addView(seekLine, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(54f)
+        ).apply { topMargin = theme.px(6f) })
 
         buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, theme.px(4f), 0, 0)
         }
-        playButton = icon(GLYPH_PLAY, "Play") { togglePlay() }
-        rewindButton = icon(GLYPH_REWIND, "Back ${seekBackMs / 1000} seconds", hint = false,
-            seconds = (seekBackMs / 1000).toInt()) { seekBy(-seekBackMs) }
-        forwardButton = icon(GLYPH_FORWARD, "Forward ${seekForwardMs / 1000} seconds", hint = false,
-            seconds = (seekForwardMs / 1000).toInt()) { seekBy(seekForwardMs) }
-        // Stremio's player puts the next episode beside Play; the episode list already exists for
-        // jumping anywhere, but a series should not need a menu to continue the story.
-        nextButton = icon(GLYPH_NEXT, "Next episode", flat = false) { playNext() }.apply {
+        playButton = icon(GLYPH_PLAY, "Play", flat = true) { togglePlay() }
+        rewindButton = icon(GLYPH_REWIND, "Back ${seekBackMs / 1000} seconds", flat = true, seconds = 10) {
+            seekBy(-seekBackMs)
+        }
+        nextButton = icon(GLYPH_NEXT, "Next episode", flat = true) { playNext() }.apply {
             visibility = View.GONE
         }
-        volumeButton = icon(GLYPH_VOLUME, "Volume 100%", flat = true) { openVolume() }
         audioButton = icon(GLYPH_AUDIO, "Audio", flat = true) { openMenu(MenuKind.AUDIO, audioButton) }
         subButton = icon(GLYPH_SUBS, "Subtitles", flat = true) { openMenu(MenuKind.SUBTITLES, subButton) }
         speedButton = icon(GLYPH_SPEED, "Speed", flat = true) { openMenu(MenuKind.SPEED, speedButton) }
         qualityButton = icon(GLYPH_QUALITY, "Quality", flat = true) { openMenu(MenuKind.QUALITY, qualityButton) }
-        // A series gets a fifth affordance: the episode list, so a viewer mid-season can jump
-        // anywhere without leaving the player (the Apple TV way). Movies and live channels don't.
+        aspectButton = icon(GLYPH_EXPAND, "Picture size", flat = true) { cycleAspect() }
         if (intent?.getStringExtra(EXTRA_TYPE).orEmpty() == "series") {
             episodesButton = icon(GLYPH_EPISODES, "Episodes", flat = true) {
                 episodesButton?.let { openMenu(MenuKind.EPISODES, it) }
             }
         }
 
-        buttonRow.addView(playButton, wrap().withStart(theme.px(12f)))
-        nextButton?.let { buttonRow.addView(it, wrap().withStart(theme.px(10f))) }
-        buttonRow.addView(rewindButton, wrap().withStart(theme.px(10f)))
-        buttonRow.addView(forwardButton, wrap().withStart(theme.px(10f)))
-        buttonRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        // One translucent capsule for the settings icons, as on the reference remote UI: the four
-        // affordances read as one group, and each still takes the ring on its own.
-        val options = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.px(26f))
-            setPadding(theme.px(6f), theme.px(4f), theme.px(6f), theme.px(4f))
-        }
-        options.addView(volumeButton, wrap())
-        options.addView(audioButton, wrap().withStart(theme.px(4f)))
-        options.addView(subButton, wrap().withStart(theme.px(4f)))
-        options.addView(speedButton, wrap().withStart(theme.px(4f)))
-        options.addView(qualityButton, wrap().withStart(theme.px(4f)))
-        episodesButton?.let { options.addView(it, wrap().withStart(theme.px(4f))) }
-        buttonRow.addView(options, wrap())
+        elapsed = Views.text(app, "meta", 18f, Color.WHITE, "0:00", maxLines = 1)
+        remaining = Views.text(app, "meta", 18f, Color.argb(0xA6, 255, 255, 255), " / 0:00", maxLines = 1)
 
-        // Stremio's remote-first courtesy: the icon under the ring says what it will do, in words,
-        // so a viewer never has to guess a glyph. It sits inside the bar and disappears with it.
-        controlHint = Views.text(app, "meta", 16f, theme.ink2, "", maxLines = 1,
-            gravity = Gravity.START)
-        controlHint.visibility = View.GONE
-        bottomBar.addView(controlHint, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            topMargin = theme.px(12f)
-            bottomMargin = theme.px(2f)
-        })
+        buttonRow.addView(playButton, wrap().withStart(theme.px(2f)))
+        buttonRow.addView(rewindButton, wrap().withStart(theme.px(6f)))
+        buttonRow.addView(divider(), dividerParams(theme.px(14f)))
+        buttonRow.addView(subButton, wrap().withStart(theme.px(10f)))
+        buttonRow.addView(audioButton, wrap().withStart(theme.px(4f)))
+        buttonRow.addView(speedButton, wrap().withStart(theme.px(4f)))
+        buttonRow.addView(qualityButton, wrap().withStart(theme.px(4f)))
+        buttonRow.addView(aspectButton, wrap().withStart(theme.px(4f)))
+        buttonRow.addView(divider(), dividerParams(theme.px(14f)))
+        nextButton?.let { buttonRow.addView(it, wrap().withStart(theme.px(10f))) }
+        episodesButton?.let { buttonRow.addView(it, wrap().withStart(theme.px(4f))) }
+        buttonRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        buttonRow.addView(elapsed, wrap())
+        buttonRow.addView(remaining, wrap())
 
         bottomBar.addView(buttonRow, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(6f) })
+        ).apply { topMargin = theme.px(2f) })
 
         overlay.addView(bottomBar, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { gravity = Gravity.BOTTOM })
 
         barFocusable = listOf(
-            backButton, playButton, rewindButton, forwardButton,
-            volumeButton, audioButton, subButton, speedButton, qualityButton,
+            playButton, rewindButton, audioButton, subButton, speedButton, qualityButton, aspectButton,
         ) + listOfNotNull(nextButton, episodesButton) + listOf(seekLine)
         wireChromeFocus()
     }
 
+    /** The hairline group break used between transport and the track/settings cluster. */
+    private fun divider(): View {
+        val v = View(this)
+        v.setBackgroundColor(Color.argb(0x4D, 255, 255, 255))
+        return v
+    }
+
     /**
-     * The transport controls are visually separated by a large flexible spacer. Geometric focus
-     * search therefore preferred the scrubber over the Audio/Episodes cluster on some TV panels.
-     * Give the remote an intentional left/right route so every icon is reachable without a
-     * diagonal hunt; hidden controls are omitted whenever transport state changes.
+     * A plain View measures AT_MOST as "fill the parent", so a divider added with wrap_content
+     * became a full-height white slab and stretched the transport to the whole screen. State the
+     * hairline's size.
+     */
+    private fun dividerParams(start: Int) = LinearLayout.LayoutParams(
+        theme.px(1f), theme.px(26f)
+    ).apply { marginStart = start }
+
+    /**
+     * The transport is one line; geometric focus search is unreliable across a flexible spacer, so
+     * the remote's LEFT/RIGHT route is stated explicitly. Hidden controls are omitted every time
+     * transport state changes.
      */
     private fun wireChromeFocus() {
+        // Visual order, left to right: the remote's RIGHT must visit the same icons the eye does.
         val controls = listOfNotNull(
             playButton,
-            nextButton?.takeIf { it.visibility == View.VISIBLE },
-            rewindButton.takeIf { it.visibility == View.VISIBLE },
-            forwardButton.takeIf { it.visibility == View.VISIBLE },
-            volumeButton,
-            audioButton,
+            rewindButton,
             subButton,
+            audioButton,
             speedButton.takeIf { it.visibility == View.VISIBLE },
             qualityButton,
+            aspectButton,
+            nextButton?.takeIf { it.visibility == View.VISIBLE },
             episodesButton,
         )
         if (controls.isEmpty()) return
@@ -1565,8 +1763,6 @@ class PlayerActivity : Activity() {
             control.nextFocusRightId = controls[(index + 1).coerceAtMost(controls.lastIndex)].id
         }
         if (seekLine.id == View.NO_ID) seekLine.id = View.generateViewId()
-        // Down from the timeline returns to the transport rather than falling into an invisible
-        // player surface. Left/right remains the expected seek gesture.
         seekLine.nextFocusDownId = controls.first().id
     }
 
@@ -1577,10 +1773,10 @@ class PlayerActivity : Activity() {
             visibility = View.GONE
         }
         centerSpinner = ProgressBar(this).apply {
-            indeterminateTintList = ColorStateList.valueOf(theme.ink)
+            indeterminateTintList = ColorStateList.valueOf(playerInk)
         }
         centerBox.addView(centerSpinner, LinearLayout.LayoutParams(theme.px(56f), theme.px(56f)))
-        centerText = Views.text(app, "sub", 24f, theme.ink, "", gravity = Gravity.CENTER, maxLines = 2)
+        centerText = Views.text(app, "sub", 24f, playerInk, "", gravity = Gravity.CENTER, maxLines = 2)
         centerText.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), 0)
         // A wrap_content column measured before the first message took its width from the spinner
         // (56 px) and clipped every status to one letter. Give the line a real column.
@@ -1603,15 +1799,18 @@ class PlayerActivity : Activity() {
         v.contentDescription = desc
         if (!flat) {
             // Standalone transport buttons are soft pills; the menu group shares one wider pill.
-            v.background = Views.rounded(theme.color("btnGrey", "#1AFFFFFF"), theme.px(23f))
+            v.background = Views.rounded(Color.argb(0x1A, 255, 255, 255), theme.px(23f))
         }
-        v.minimumWidth = theme.px(if (flat) 50f else 56f)
-        v.minimumHeight = theme.px(46f)
+        v.minimumWidth = theme.px(if (flat) 64f else 60f)
+        v.minimumHeight = theme.px(56f)
         Focus.attach(
-            v, v, app, theme.px(if (flat) 20f else 23f),
+            v, null, app, theme.px(20f),
             scale = false, elevate = false, onClick = action,
-            // Read the live contentDescription: Play becomes Pause while the film runs.
-            onFocus = { focused -> if (hint) showControlHint(if (focused) v.contentDescription?.toString() else null) },
+            // The player's focus is an underline and a soft plate, not the app's blue capsule.
+            onFocus = { focused ->
+                v.focused = focused
+                if (hint) showControlHint(if (focused) v.contentDescription?.toString() else null)
+            },
         )
         return v
     }
@@ -1632,7 +1831,7 @@ class PlayerActivity : Activity() {
     ): TextView {
         val b = Views.text(
             app, "li", if (compact) 20f else 22f,
-            if (selected) theme.color("panelValue", "#F2C33A") else theme.ink,
+            if (selected) playerGold else playerInk,
             label, bold = true,
             gravity = Gravity.CENTER,
         )
@@ -1641,7 +1840,7 @@ class PlayerActivity : Activity() {
             theme.px(if (compact) 18f else 22f), theme.px(10f),
         )
         b.background = Views.rounded(
-            if (selected) theme.color("surface2", "#232323") else theme.color("btnGrey", "#1AFFFFFF"),
+            if (selected) Color.argb(0x26, 255, 255, 255) else Color.argb(0x1A, 255, 255, 255),
             theme.radius("button", 6f),
         )
         Focus.attach(
@@ -1692,18 +1891,19 @@ class PlayerActivity : Activity() {
         panel?.let { overlay.removeView(it) }  // replaced by the fresh sheet on the same frame
         panel = null
         panelRows = emptyList()
+        if (kind == MenuKind.SUBTITLES) {
+            buildSubtitleSheet(keepFocus, focused)
+            return
+        }
 
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(theme.space("panelPad", 28f), theme.space("panelPadV", 24f),
-                theme.space("panelPad", 28f), theme.space("panelPadV", 24f))
+            setPadding(theme.px(34f), theme.px(28f), theme.px(34f), theme.px(26f))
             background = Views.rounded(
-                theme.color("panelScrim", "#E6000000"),
-                theme.radius("panel", 10f),
-                theme.px(1f),
-                theme.color("line", "#262626"),
+                Color.argb(0xFF, 16, 17, 24), theme.px(18f), theme.px(1f),
+                Color.argb(0x33, 255, 255, 255),
             )
-            elevation = theme.px(12f).toFloat()
+            elevation = theme.px(16f).toFloat()
         }
         val heading = when (kind) {
             MenuKind.AUDIO -> "Audio"
@@ -1712,7 +1912,7 @@ class PlayerActivity : Activity() {
             MenuKind.QUALITY -> "Quality" + qualityWord(currentSourceLabel).let { if (it.isBlank()) "" else " · $it" }
             MenuKind.EPISODES -> "Episodes"
         }
-        box.addView(Views.text(app, "panelTitle", 26f, theme.ink, heading, bold = true),
+        box.addView(Views.text(app, "panelTitle", 28f, playerInk, heading, bold = true),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = theme.px(12f) })
@@ -1742,18 +1942,20 @@ class PlayerActivity : Activity() {
             ))
         }
 
-        // Episode rows carry a still and two lines of copy, so the sheet is wider than a track list.
-        val width = theme.px(if (kind == MenuKind.EPISODES) 700f else 560f)
+        // The player's sheets are centered cinema panels, not a corner popup: the same language
+        // the subtitle sheet speaks, so every option in the player feels like one system.
+        val width = theme.px(when (kind) {
+            MenuKind.AUDIO -> 760f
+            MenuKind.SPEED -> 440f
+            MenuKind.QUALITY -> 820f
+            MenuKind.EPISODES -> 900f
+            else -> 620f
+        })
         val container = FrameLayout(this)
         container.addView(box, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT))
-        val bottom = (bottomBar.height + theme.px(16f)).coerceAtLeast(theme.px(190f))
         overlay.addView(container, FrameLayout.LayoutParams(
             width, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.END
-            rightMargin = theme.gutter
-            bottomMargin = bottom
-        })
+        ).apply { gravity = Gravity.CENTER })
         panel = container
         Motion.sheetIn(container, theme)
 
@@ -1939,11 +2141,259 @@ class PlayerActivity : Activity() {
         resolvePlay(spec, pos, WARM_TRIES, source, extra)
     }
 
+    // ---- subtitle sheet: languages · files · style ----------------------------------------
+
+    /** One selectable subtitle file, whichever source it came from. */
+    private data class SubChoice(
+        val id: String,
+        val label: String,
+        val note: String,
+        val lang: String,
+    )
+
+    /** Every subtitle this copy can show, in a shape the three-column sheet can draw. */
+    private fun subChoices(): List<SubChoice> {
+        val out = ArrayList<SubChoice>()
+        val seen = HashSet<String>()
+        for (i in 0 until embeddedSubs.length()) {
+            val t = embeddedSubs.optJSONObject(i) ?: continue
+            val id = str(t, "id").ifBlank { "s:" + (i + 1) }
+            if (!seen.add(id)) continue
+            val lang = str(t, "language").ifBlank { str(t, "lang") }.ifBlank { "und" }
+            out.add(SubChoice(id, trackWords(t), "in this copy", lang))
+        }
+        for (i in 0 until hubSubs.length()) {
+            val h = hubSubs.optJSONObject(i) ?: continue
+            val id = "hub:$i"
+            if (!seen.add(id)) continue
+            val lang = str(h, "lang").ifBlank { str(h, "language") }.ifBlank { "und" }
+            var base = str(h, "label").ifBlank { str(h, "name") }.ifBlank { langName(lang) }
+                .replace(Regex("\\.(srt|vtt|ass|ssa|sub)$", RegexOption.IGNORE_CASE), "")
+            if (base.length <= 3 && base.equals(lang, true)) base = langName(lang)
+            val addon = str(h, "addon")
+            val format = str(h, "format").uppercase()
+            val note = listOf(addon, format).filter { it.isNotBlank() }.joinToString(" · ")
+                .ifBlank { "subtitle file" }
+            out.add(SubChoice(id, base, note, lang))
+        }
+        if (out.isEmpty()) {
+            for (t in actualTracks(C.TRACK_TYPE_TEXT, "s")) {
+                if (!seen.add(t.id)) continue
+                val lang = t.label.substringBefore(" · ").ifBlank { "und" }
+                out.add(SubChoice(t.id, t.label, "in this copy", lang))
+            }
+        }
+        return out
+    }
+
+    private fun selectedSubLang(choices: List<SubChoice>): String =
+        choices.firstOrNull { it.id == selectedSubId }?.lang.orEmpty()
+
+    private fun buildSubtitleSheet(keepFocus: Boolean, focused: View?) {
+        val choices = subChoices()
+        val langs = choices.map { it.lang }.distinct().sortedWith(
+            compareBy({ when (it) { "eng" -> 0; "hin" -> 1; else -> 2 } }, { langName(it) })
+        )
+        if (subLangFilter.isBlank() || langs.none { it == subLangFilter }) {
+            subLangFilter = selectedSubLang(choices).ifBlank { langs.firstOrNull().orEmpty() }
+        }
+        val files = choices.filter { it.lang == subLangFilter }
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(34f), theme.px(28f), theme.px(34f), theme.px(26f))
+            background = Views.rounded(
+                Color.argb(0xFF, 16, 17, 24), theme.px(18f), theme.px(1f),
+                Color.argb(0x33, 255, 255, 255),
+            )
+            elevation = theme.px(16f).toFloat()
+        }
+        box.addView(Views.text(app, "panelTitle", 30f, playerInk, "Subtitles", bold = true),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = theme.px(16f) })
+
+        val columns = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+        }
+        val (langCol, langRowsBox) = subtitleColumn("Language", theme.px(270f), null)
+        val (fileCol, fileRowsBox) = subtitleColumn("Subtitle", 0, 1f)
+        val (optCol, optRowsBox) = subtitleColumn("Options", theme.px(330f), null)
+        columns.addView(langCol)
+        columns.addView(fileCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { marginStart = theme.px(26f) })
+        columns.addView(optCol, LinearLayout.LayoutParams(theme.px(330f), ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { marginStart = theme.px(26f) })
+        box.addView(columns)
+
+        val langRows = ArrayList<View>()
+        var selectedLangRow: View? = null
+        for (lang in langs) {
+            val count = choices.count { it.lang == lang }
+            val row = menuRow(
+                langName(lang),
+                if (count == 1) "1 file" else "$count files",
+                lang == subLangFilter,
+            ) {
+                subLangFilter = lang
+                rebuildMenu(MenuKind.SUBTITLES, keepFocus = false)
+            }
+            langRows.add(row)
+            if (lang == subLangFilter) selectedLangRow = row
+            langRowsBox.addView(row)
+        }
+        if (langs.isEmpty()) langRowsBox.addView(noteRow("No subtitle languages"))
+
+        val fileRows = ArrayList<View>()
+        var selectedFileRow: View? = null
+        val off = menuRow("Off", "no subtitles", selectedSubId == null) {
+            chooseSub(null, keepOpen = true)
+        }
+        fileRows.add(off)
+        if (selectedSubId == null) selectedFileRow = off
+        fileRowsBox.addView(off)
+        val perLang = HashMap<String, Int>()
+        for (f in files) {
+            val n = (perLang[f.lang] ?: 0) + 1
+            perLang[f.lang] = n
+            val repeats = files.count { it.lang == f.lang } > 1
+            val label = if (repeats) "${f.label} $n" else f.label
+            val row = menuRow(label, f.note, selectedSubId == f.id) {
+                chooseSub(f.id, keepOpen = true)
+            }
+            fileRows.add(row)
+            if (selectedSubId == f.id) selectedFileRow = row
+            fileRowsBox.addView(row)
+        }
+        if (files.isEmpty()) fileRowsBox.addView(noteRow("No files in this language"))
+
+        val optRows = ArrayList<View>()
+        optRows.add(styleRow("Text size", captionSizeName()) {
+            app.prefs.setCaptionSize((app.prefs.captionSize() + 1) % 3)
+            applySubtitleStyle()
+            captionSizeName()
+        })
+        optRows.add(styleRow("Colour", captionColourName()) {
+            app.prefs.setCaptionColour(if (app.prefs.captionColour() == "yellow") "white" else "yellow")
+            applySubtitleStyle()
+            captionColourName()
+        })
+        optRows.add(styleRow("Background", captionBackgroundName()) {
+            app.prefs.setCaptionBackground(
+                when (app.prefs.captionBackground()) {
+                    "dim" -> "black"
+                    "black" -> "none"
+                    else -> "dim"
+                }
+            )
+            applySubtitleStyle()
+            captionBackgroundName()
+        })
+        optRows.add(styleRow("Vertical offset", captionOffsetName()) {
+            app.prefs.setCaptionOffset((app.prefs.captionOffset() + 1) % 3)
+            applySubtitleStyle()
+            captionOffsetName()
+        })
+        for (r in optRows) optRowsBox.addView(r)
+        optRowsBox.addView(noteRow("Saved on this TV"))
+
+        val container = FrameLayout(this)
+        container.addView(box, FrameLayout.LayoutParams(
+            theme.px(1240f), ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        overlay.addView(container, FrameLayout.LayoutParams(
+            theme.px(1240f), ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER })
+        panel = container
+        Motion.sheetIn(container, theme)
+
+        trapFocus()
+        val langAnchor = selectedLangRow ?: langRows.firstOrNull()
+        val fileAnchor = selectedFileRow ?: fileRows.firstOrNull()
+        val optAnchor = optRows.firstOrNull()
+        for (r in langRows) r.nextFocusRightId = (fileAnchor ?: r).id
+        for (r in fileRows) {
+            r.nextFocusLeftId = (langAnchor ?: r).id
+            r.nextFocusRightId = (optAnchor ?: r).id
+        }
+        for (r in optRows) r.nextFocusLeftId = (fileAnchor ?: r).id
+        // Each column traps its own ends so DOWN cannot fall out of the sheet.
+        for (col in listOf(langRows, fileRows, optRows)) {
+            if (col.isEmpty()) continue
+            col.first().nextFocusUpId = col.first().id
+            col.last().nextFocusDownId = col.last().id
+        }
+
+        val target = when {
+            keepFocus && focused != null && panelRows.contains(focused) -> focused
+            fileAnchor != null -> fileAnchor
+            langAnchor != null -> langAnchor
+            else -> panelRows.firstOrNull()
+        }
+        target?.post { focusMenuTarget(target, container) }
+    }
+
+    private fun subtitleColumn(
+        header: String,
+        width: Int,
+        weight: Float?,
+    ): Pair<LinearLayout, LinearLayout> {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val head = Views.text(app, "meta", 15f, playerInk3, header.uppercase(), bold = true, maxLines = 1)
+        head.letterSpacing = 0.08f
+        col.addView(head, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = theme.px(8f) })
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            isFocusable = false
+            isFocusableInTouchMode = false
+            clipToPadding = false
+        }
+        scroll.addView(content)
+        col.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(470f)
+        ))
+        if (weight != null) {
+            col.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight)
+        } else if (width > 0) {
+            col.layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        return col to content
+    }
+
     private fun subtitleRows(parent: LinearLayout) {
         if (timelineOffsetMs > 0L) {
             parent.addView(noteRow("Subtitles are off on a resumed ladder"))
             return
         }
+        // A television's captions need to be readable from the couch, and a bright wall may need
+        // yellow rather than white. These three rows apply immediately and persist on this device.
+        parent.addView(noteRow("Caption style"))
+        parent.addView(styleRow("Text size", captionSizeName()) {
+            app.prefs.setCaptionSize((app.prefs.captionSize() + 1) % 3)
+            applySubtitleStyle()
+            captionSizeName()
+        })
+        parent.addView(styleRow("Colour", captionColourName()) {
+            app.prefs.setCaptionColour(if (app.prefs.captionColour() == "yellow") "white" else "yellow")
+            applySubtitleStyle()
+            captionColourName()
+        })
+        parent.addView(styleRow("Background", captionBackgroundName()) {
+            app.prefs.setCaptionBackground(
+                when (app.prefs.captionBackground()) {
+                    "dim" -> "black"
+                    "black" -> "none"
+                    else -> "dim"
+                }
+            )
+            applySubtitleStyle()
+            captionBackgroundName()
+        })
+        parent.addView(noteRow("Tracks"))
         if (embeddedSubs.length() == 0 && hubSubs.length() == 0) {
             val actual = actualTracks(C.TRACK_TYPE_TEXT, "s")
             parent.addView(menuRow(
@@ -1980,6 +2430,100 @@ class PlayerActivity : Activity() {
             val label = if ((totals[lang] ?: 0) > 1) "$base $nth" else base
             parent.addView(menuRow(label, "subtitle file", selectedSubId == id) { chooseSub(id) })
         }
+    }
+
+    /**
+     * A row whose right-hand value cycles on OK. The row keeps focus while its value changes, so a
+     * viewer can tune size, colour and background without reopening the sheet.
+     */
+    private fun styleRow(label: String, initial: String, cycle: () -> String): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(theme.px(16f), 0, theme.px(16f), 0)
+            isFocusable = true
+            isClickable = true
+        }
+        val name = Views.text(app, "panelRow", 23f, playerInk, "   $label", maxLines = 1)
+        val value = Views.text(app, "panelNote", 18f, playerInk3, initial, maxLines = 1,
+            gravity = Gravity.END)
+        row.addView(name, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(value)
+        row.setOnClickListener {
+            value.text = cycle()
+            value.announceForAccessibility(value.text)
+        }
+        Focus.attach(row, null, app, theme.radius("listItem", 6f),
+            scale = false, elevate = false,
+            onFocus = { f ->
+                row.background = Views.rounded(
+                    if (f) Color.argb(0x30, 255, 255, 255) else Color.TRANSPARENT,
+                    theme.radius("listItem", 6f),
+                )
+            })
+        row.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)
+        ).apply { topMargin = theme.space("panelRowGap", 10f) }
+        panelRows = panelRows + row
+        return row
+    }
+
+    private fun captionSizeName(): String = when (app.prefs.captionSize()) {
+        0 -> "Small"
+        2 -> "Large"
+        else -> "Medium"
+    }
+
+    private fun captionColourName(): String =
+        if (app.prefs.captionColour() == "yellow") "Yellow" else "White"
+
+    private fun captionBackgroundName(): String = when (app.prefs.captionBackground()) {
+        "black" -> "Black"
+        "none" -> "None"
+        else -> "Dim"
+    }
+
+    private fun captionOffsetName(): String = when (app.prefs.captionOffset()) {
+        0 -> "Bottom"
+        2 -> "High"
+        else -> "Raised"
+    }
+
+    /** Apply the viewer's caption choice to the subtitle renderer, overriding author styling. */
+    private fun applySubtitleStyle() {
+        val view = playerView?.subtitleView ?: return
+        val zoom = app.prefs.uiZoom().coerceIn(1f, 1.5f)
+        val sizeSp = when (app.prefs.captionSize()) {
+            0 -> 18f
+            2 -> 30f
+            else -> 24f
+        } * zoom
+        val fg = if (app.prefs.captionColour() == "yellow") Color.YELLOW else Color.WHITE
+        val bg = when (app.prefs.captionBackground()) {
+            "black" -> Color.BLACK
+            "none" -> Color.TRANSPARENT
+            else -> Color.argb(0xB3, 0, 0, 0)
+        }
+        view.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+        view.setStyle(
+            CaptionStyleCompat(
+                fg, bg, Color.TRANSPARENT,
+                CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, Typeface.DEFAULT,
+            )
+        )
+        // Force the device's size/colour over an author's ASS tags. Embedded styles otherwise win
+        // and a "Large" choice visibly does nothing on exactly the files that need it most.
+        view.setApplyEmbeddedStyles(false)
+        view.setApplyEmbeddedFontSizes(false)
+        // Media3 exposes the same vertical lift the reference player calls "Vertical offset".
+        // The bottom chrome owns roughly the last quarter of this screen. Captions sit above it
+        // instead of crossing the title and transport; the viewer's offset shifts them further up.
+        val lift = when (app.prefs.captionOffset()) {
+            0 -> 0.24f
+            2 -> 0.34f
+            else -> 0.29f
+        }
+        view.setBottomPaddingFraction(lift)
     }
 
     private data class ActualTrack(val id: String, val label: String, val selected: Boolean)
@@ -2295,7 +2839,7 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(theme.px(10f), theme.px(9f), theme.px(14f), theme.px(9f))
             background = Views.rounded(
-                if (here) theme.color("surface2", "#232323") else Color.TRANSPARENT,
+                if (here) Color.argb(0x26, 255, 255, 255) else Color.TRANSPARENT,
                 theme.radius("listItem", 6f),
             )
             isFocusable = true
@@ -2321,13 +2865,13 @@ class PlayerActivity : Activity() {
             setPadding(theme.px(14f), 0, 0, 0)
         }
         copy.addView(Views.text(app, "panelRow", 22f,
-            if (here) theme.color("panelValue", "#F2C33A") else theme.ink,
+            if (here) playerGold else playerInk,
             (if (here) "✓  " else "") + "E%02d".format(number) +
                 if (title.isNotBlank()) " · $title" else "",
             bold = true, maxLines = 1))
         val synopsis = str(ep, "synopsis")
         if (synopsis.isNotBlank()) {
-            copy.addView(Views.text(app, "panelNote", 17f, theme.ink3, synopsis, maxLines = 1),
+            copy.addView(Views.text(app, "panelNote", 17f, playerInk3, synopsis, maxLines = 1),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply { topMargin = theme.px(5f) })
@@ -2368,11 +2912,12 @@ class PlayerActivity : Activity() {
             else -> 1 + indexOfTrack(audioTracks, selectedAudioId)
         }
         MenuKind.SUBTITLES -> when {
-            selectedSubId == null -> 0
-            embeddedSubs.length() == 0 && hubSubs.length() == 0 -> 1 + trackOrdinal(selectedSubId)
+            selectedSubId == null -> 3
+            embeddedSubs.length() == 0 && hubSubs.length() == 0 -> 3 + 1 + trackOrdinal(selectedSubId)
             else -> {
                 val emb = indexOfTrack(embeddedSubs, selectedSubId)
-                if (emb >= 0) 1 + emb else 1 + embeddedSubs.length() + subsIndex(selectedSubId)
+                if (emb >= 0) 3 + 1 + emb
+                else 3 + 1 + embeddedSubs.length() + subsIndex(selectedSubId)
             }
         }
         MenuKind.SPEED -> SPEEDS.indexOfFirst { kotlin.math.abs(speed - it) < 0.01f }.coerceAtLeast(0)
@@ -2408,31 +2953,32 @@ class PlayerActivity : Activity() {
     }
 
     private fun menuRow(label: String, value: String, selected: Boolean, action: () -> Unit): LinearLayout {
+        val radius = theme.radius("listItem", 6f)
+        val base = if (selected) Color.argb(0x1C, 255, 255, 255) else Color.TRANSPARENT
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(theme.px(16f), 0, theme.px(16f), 0)
-            background = Views.rounded(
-                if (selected) theme.color("surface2", "#232323") else Color.TRANSPARENT,
-                theme.radius("listItem", 6f),
-            )
+            background = Views.rounded(base, radius)
             isFocusable = true
             isClickable = true
             setOnClickListener { action() }
         }
         val tick = if (selected) "✓" else " "
         val l = Views.text(
-            app, "panelRow", 23f, if (selected) theme.color("panelValue", "#F2C33A") else theme.ink,
+            app, "panelRow", 23f, if (selected) playerAccent else playerInk,
             "$tick  $label", bold = selected, maxLines = 1,
         )
         row.addView(l, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (value.isNotBlank()) {
-            row.addView(Views.text(app, "panelNote", 18f, theme.ink3, value, maxLines = 1, gravity = Gravity.END))
+            row.addView(Views.text(app, "panelNote", 18f, playerInk3, value, maxLines = 1, gravity = Gravity.END))
         }
-        Focus.attach(row, row, app, theme.radius("listItem", 6f),
-            scale = theme.focusRowScale > 1f, scaleTo = theme.focusRowScale,
-            control = theme.focusRowScale > 1f,
-            elevate = false)
+        Focus.attach(row, null, app, radius, scale = false, elevate = false,
+            onFocus = { f ->
+                row.background = Views.rounded(
+                    if (f) Color.argb(0x30, 255, 255, 255) else base, radius,
+                )
+            })
         val lp = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(68f)
         ).apply { topMargin = theme.space("panelRowGap", 10f) }
@@ -2442,7 +2988,7 @@ class PlayerActivity : Activity() {
     }
 
     private fun noteRow(text: String): View {
-        val v = Views.text(app, "panelNote", 18f, theme.ink3, text, maxLines = 2)
+        val v = Views.text(app, "panelNote", 18f, playerInk3, text, maxLines = 2)
         v.setPadding(theme.px(16f), theme.px(12f), theme.px(16f), theme.px(12f))
         return v
     }
@@ -2477,6 +3023,23 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /** Fit / Fill / Zoom for a film whose aspect does not match the panel. */
+    private fun cycleAspect() {
+        val view = playerView ?: return
+        val next = when (view.resizeMode) {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+            AspectRatioFrameLayout.RESIZE_MODE_FILL -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+        view.resizeMode = next
+        val label = when (next) {
+            AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
+            else -> "Fit"
+        }
+        setStatus("Picture size · $label")
+    }
+
     private fun setSpeed(v: Float) {
         speed = v
         player?.setPlaybackSpeed(v)
@@ -2498,10 +3061,12 @@ class PlayerActivity : Activity() {
                 .put("label", str(it, "label"))
                 .put("provider", str(it, "provider"))
         }
-        showCenter("Switching copy…", true)
+        // A null source is the viewer asking the hub to choose again, not naming a copy.
+        val manualPick = src != null
+        showCenter(if (manualPick) "Switching copy…" else "Letting the hub choose…", true)
         askSwitch(
             bodyFor(spec, pos, source, exclude), pos,
-            playWhenReady = playing, warmTries = 5, automatic = false,
+            playWhenReady = playing, warmTries = 5, automatic = !manualPick,
         )
     }
 
@@ -2563,9 +3128,9 @@ class PlayerActivity : Activity() {
         }
         val icon = ImageView(this).apply {
             setImageResource(R.drawable.ic_player_volume)
-            imageTintList = ColorStateList.valueOf(theme.ink)
+            imageTintList = ColorStateList.valueOf(playerInk)
         }
-        val value = Views.text(app, "li", 22f, theme.ink, "100%", bold = true, maxLines = 1,
+        val value = Views.text(app, "li", 22f, playerInk, "100%", bold = true, maxLines = 1,
             gravity = Gravity.END)
         volumeIconView = icon
         volumeValue = value
@@ -2720,7 +3285,7 @@ class PlayerActivity : Activity() {
             seekLine.buffered = ((p.bufferedPosition + timelineOffsetMs).toFloat() / dur.toFloat())
                 .coerceIn(0f, 1f)
             elapsed.text = clock(pos)
-            remaining.text = "-" + clock((dur - pos).coerceAtLeast(0L))
+            remaining.text = " / " + clock(dur)
         }
         seekLine.invalidate()
     }
@@ -2791,6 +3356,12 @@ class PlayerActivity : Activity() {
             else -> currentSourceLabel.ifBlank { "Auto" }
         }
         qualityButton.contentDescription = "Quality · " + qualityValue
+        // The badge is the decoder's own answer, so the menu can never leave a 1080p checkmark over
+        // a 360p picture. Before tracks arrive it falls back to the copy's stated quality.
+        val running = runningQuality()
+        qualityBadge.text = running
+        qualityBadge.visibility =
+            if (!live && running.isNotBlank() && !running.equals("Auto", true)) View.VISIBLE else View.GONE
         val nextVisible = nextEpisode != null && !live
         if (nextButton?.visibility != (if (nextVisible) View.VISIBLE else View.GONE)) {
             nextButton?.visibility = if (nextVisible) View.VISIBLE else View.GONE
@@ -2804,6 +3375,20 @@ class PlayerActivity : Activity() {
         updatePlayLabel()
     }
 
+    /** The height the decoder is showing now, or the copy's own claim before tracks arrive. */
+    private fun runningQuality(): String {
+        if (live) return ""
+        val h = selectedVideoHeight().takeIf { it > 0 } ?: forcedRungHeight
+        if (h > 0) {
+            // A 1920x1040 master is sold as 1080p; a 1440x1080 one as 1080p too. Report the rung a
+            // viewer recognises, not the container's cropped pixel count.
+            val rungs = intArrayOf(2160, 1440, 1080, 720, 576, 480, 360, 240)
+            val nearest = rungs.minByOrNull { kotlin.math.abs(it - h) } ?: h
+            return "${nearest}p"
+        }
+        return qualityWord(currentSourceLabel)
+    }
+
     /** A live feed has no position and no rate; a film gets the line and the transport back. */
     private fun paintTransport(ready: Boolean) {
         val show = ready && !live
@@ -2812,7 +3397,6 @@ class PlayerActivity : Activity() {
         remaining.visibility = if (show) View.VISIBLE else View.GONE
         speedButton.visibility = if (show) View.VISIBLE else View.GONE
         rewindButton.visibility = if (show) View.VISIBLE else View.GONE
-        forwardButton.visibility = if (show) View.VISIBLE else View.GONE
         if (::qualityButton.isInitialized) wireChromeFocus()
     }
 
@@ -2939,16 +3523,18 @@ class PlayerActivity : Activity() {
         statusView.text = text
         statusView.setTextColor(
             when (tone) {
-                "bad" -> theme.color("brand", "#E50914")
-                "warn" -> theme.color("warn", "#F2C33A")
-                else -> theme.ink2
+                "bad" -> Color.parseColor("#FF6B6B")
+                "warn" -> Color.parseColor("#FFD60A")
+                else -> Color.WHITE
             }
         )
+        statusView.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
         statusClear?.let { handler.removeCallbacks(it) }
         if (text.isBlank()) return
         val clear = Runnable {
             statusView.text = ""
-            statusView.setTextColor(theme.ink2)
+            statusView.visibility = View.GONE
+            statusView.setTextColor(Color.WHITE)
         }
         statusClear = clear
         handler.postDelayed(clear, 6000L)
@@ -2999,6 +3585,7 @@ class PlayerActivity : Activity() {
             setStatus(message, "warn")
             return
         }
+        finishPreloader()
         hideCenter()
         hideNextCard()
         hideUndo()
@@ -3010,8 +3597,8 @@ class PlayerActivity : Activity() {
         val card = cardBox()
         // One heading language across the app: ink, never a coloured title — the pack's accent
         // already rides on the chips below.
-        card.addView(Views.text(app, "panelTitle", 28f, theme.ink, title, bold = true))
-        card.addView(Views.text(app, "sub", 21f, theme.ink2, message, maxLines = 3),
+        card.addView(Views.text(app, "panelTitle", 28f, playerInk, title, bold = true))
+        card.addView(Views.text(app, "sub", 21f, playerInk2, message, maxLines = 3),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = theme.px(10f) })
@@ -3112,13 +3699,13 @@ class PlayerActivity : Activity() {
         val epTitle = str(next, "title")
         val code = if (season > 0 && episode > 0) "S%02dE%02d".format(season, episode) else "Next"
         val card = cardBox()
-        card.addView(Views.text(app, "meta", 17f, theme.ink3, "UP NEXT"))
-        card.addView(Views.text(app, "li", 23f, theme.ink,
+        card.addView(Views.text(app, "meta", 17f, playerInk3, "UP NEXT"))
+        card.addView(Views.text(app, "li", 23f, playerInk,
             "$code" + (if (epTitle.isNotBlank()) "  ·  $epTitle" else ""), bold = true, maxLines = 2),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = theme.px(6f) })
-        val count = Views.text(app, "meta", 18f, theme.ink2, "", maxLines = 1)
+        val count = Views.text(app, "meta", 18f, playerInk2, "", maxLines = 1)
         card.addView(count, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = theme.px(8f) })
@@ -3209,7 +3796,7 @@ class PlayerActivity : Activity() {
             background = Views.rounded(theme.color("panelScrim", "#E6000000"),
                 theme.radius("modal", 10f), theme.px(1f), theme.color("line", "#262626"))
         }
-        card.addView(Views.text(app, "meta", 18f, theme.ink2, "Started the next episode"))
+        card.addView(Views.text(app, "meta", 18f, playerInk2, "Started the next episode"))
         val undo = chip("Undo", compact = true) {
             hideUndo()
             open(previous, undoPositionMs)
@@ -3727,6 +4314,13 @@ class PlayerActivity : Activity() {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
+        var focused = false
+            set(value) {
+                if (field != value) { field = value; invalidate() }
+            }
+        private val focusPlate = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(0x22, 255, 255, 255)
+        }
 
         // A plain View measures AT_MOST as "fill the parent"; without this a wrap_content icon
         // button became the whole bottom bar. The glyph box is the suggested minimum.
@@ -3740,8 +4334,20 @@ class PlayerActivity : Activity() {
         override fun onDraw(canvas: Canvas) {
             val cx = width / 2f
             val cy = height / 2f
-            val u = minOf(width, height).toFloat() / 34f
-            stroke.strokeWidth = theme2.px(2.3f) * (u.coerceAtMost(1.2f))
+            val u = minOf(width, height).toFloat() / 38f
+            stroke.strokeWidth = theme2.px(2.4f) * (u.coerceAtMost(1.3f))
+            if (focused) {
+                canvas.drawRoundRect(cx - 19 * u, cy - 15 * u, cx + 19 * u, cy + 15 * u,
+                    12 * u, 12 * u, focusPlate)
+                val accent = (context.applicationContext as ScenixApp).ctx.let {
+                    val b = it.theme.color("brand", "#2D8CFF")
+                    val lum = (0.299f * Color.red(b) + 0.587f * Color.green(b)
+                        + 0.114f * Color.blue(b)) / 255f
+                    if (lum < 0.18f) it.theme.color("kids", "#FFD60A") else b
+                }
+                canvas.drawRoundRect(cx - 13 * u, cy + 17 * u, cx + 13 * u, cy + 19.5f * u,
+                    1.5f * u, 1.5f * u, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
+            }
             when (glyph) {
                 GLYPH_PLAY -> if (playing) {
                     val w = 3.4f * u
@@ -3756,7 +4362,20 @@ class PlayerActivity : Activity() {
                     path.close()
                     canvas.drawPath(path, solid)
                 }
-                GLYPH_REWIND -> seekIcon(canvas, cx, cy, u, seconds.coerceAtLeast(1), back = true)
+                GLYPH_REWIND -> {
+                    // A bar and two left chevrons: the same rewind mark the reference row uses.
+                    // The number lived inside a circular arrow before and read as "replay".
+                    val y = 9 * u
+                    canvas.drawLine(cx - 11 * u, cy - y, cx - 11 * u, cy + y, stroke)
+                    for (k in 0..1) {
+                        val x = cx - 5 * u + k * 7.5f * u
+                        val p = Path()
+                        p.moveTo(x + 6 * u, cy - y)
+                        p.lineTo(x - 1 * u, cy)
+                        p.lineTo(x + 6 * u, cy + y)
+                        canvas.drawPath(p, stroke)
+                    }
+                }
                 GLYPH_FORWARD -> seekIcon(canvas, cx, cy, u, seconds.coerceAtLeast(1), back = false)
                 GLYPH_BACK -> {
                     val path = Path()
@@ -3837,6 +4456,17 @@ class PlayerActivity : Activity() {
                     canvas.drawLine(cx, cy + 5 * u, cx, cy + 9.5f * u, stroke)
                     canvas.drawLine(cx - 5 * u, cy + 9.5f * u, cx + 5 * u, cy + 9.5f * u, stroke)
                 }
+                GLYPH_EXPAND -> {
+                    // Two diagonal arrows, the standard "picture size" mark: top-right and
+                    // bottom-left point out from the frame.
+                    val d = 8.2f * u
+                    canvas.drawLine(cx - 1 * u, cy - 1 * u, cx - 1 * u + d, cy - 1 * u - d, stroke)
+                    canvas.drawLine(cx - 1 * u + d, cy - 1 * u - d, cx - 1 * u + d - 5 * u, cy - 1 * u - d, stroke)
+                    canvas.drawLine(cx - 1 * u + d, cy - 1 * u - d, cx - 1 * u + d, cy - 1 * u - d + 5 * u, stroke)
+                    canvas.drawLine(cx + 1 * u, cy + 1 * u, cx + 1 * u - d, cy + 1 * u + d, stroke)
+                    canvas.drawLine(cx + 1 * u - d, cy + 1 * u + d, cx + 1 * u - d + 5 * u, cy + 1 * u + d, stroke)
+                    canvas.drawLine(cx + 1 * u - d, cy + 1 * u + d, cx + 1 * u - d, cy + 1 * u + d - 5 * u, stroke)
+                }
                 GLYPH_NEXT -> {
                     // skip-forward: a solid triangle against a bar
                     val path = Path()
@@ -3894,21 +4524,44 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /** The thin line under the title mark that fills while a copy is prepared. */
+    private inner class PreloadLine(context: android.content.Context) : View(context) {
+        var progress = 0f
+            set(value) {
+                val v = value.coerceIn(0f, 1f)
+                if (field != v) { field = v; invalidate() }
+            }
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(0x4D, 255, 255, 255)
+        }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playerAccent }
+
+        override fun onDraw(canvas: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            val r = h / 2f
+            canvas.drawRoundRect(0f, 0f, w, h, r, r, track)
+            val fw = (w * progress).coerceAtLeast(if (progress > 0f) h else 0f)
+            if (fw > 0f) canvas.drawRoundRect(0f, 0f, fw, h, r, r, fill)
+        }
+    }
+
     private inner class SeekLine(context: android.content.Context) : View(context) {
         var fraction = 0f
         var buffered = 0f
         /** Film time being sought to; -1 hides the bubble. Set by showScrubTarget(). */
         var targetMs = -1L
         var targetFraction = 0f
-        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.color("track", "#2F2F2F") }
-        private val buf = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.color("lineStrong", "#8FFFFFFF") }
-        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.brand }
-        private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.ink }
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0x4D, 255, 255, 255) }
+        private val buf = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0x99, 255, 255, 255) }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playerAccent }
+        private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playerAccent }
         private val bubbleBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = theme.color("panelScrim", "#E6000000")
         }
         private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = theme.ink
+            color = playerInk
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
@@ -3922,10 +4575,10 @@ class PlayerActivity : Activity() {
             val h = height.toFloat()
             val w = width.toFloat()
             val focused = isFocused
-            val bar = theme.px(if (focused) 10f else 7f).toFloat()
+            val bar = theme.px(if (focused) 6f else 4f).toFloat()
             // The bar sits low in the view: the extra height above it is the seek bubble's room,
-            // so the row can keep a 56 px touch/focus box without moving the bottom bar.
-            val cy = (h - theme.px(22f)).coerceAtLeast(bar)
+            // so the row can keep a 54 px touch/focus box without moving the bottom bar.
+            val cy = (h - theme.px(18f)).coerceAtLeast(bar)
             // The timeline grows under the ring: on a 10-foot screen a 6 px bar is a hairline, and
             // the focused state is where a viewer actually reads it. Buffered and played ranges keep
             // their own colours so the three depths stay distinguishable at TV distance.
@@ -3937,11 +4590,18 @@ class PlayerActivity : Activity() {
             if (fraction > 0f) {
                 canvas.drawRoundRect(0f, cy - bar / 2f, w * fraction, cy + bar / 2f, r, r, fill)
             }
-            val knobR = theme.px(if (focused) 13f else 9f).toFloat()
+            val knobR = theme.px(if (focused) 12f else 8f).toFloat()
             if (w > knobR * 2f) {
-                // A dark cradle under the knob keeps it legible over the white played range.
-                canvas.drawCircle((w * fraction).coerceIn(knobR, w - knobR), cy, knobR + theme.px(2f), track)
-                canvas.drawCircle((w * fraction).coerceIn(knobR, w - knobR), cy, knobR, knob)
+                val kx = (w * fraction).coerceIn(knobR, w - knobR)
+                if (focused) {
+                    // The knob is the only focus decoration a full-width timeline needs.
+                    canvas.drawCircle(kx, cy, knobR + theme.px(9f),
+                        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0x55, 140, 123, 255) })
+                }
+                // A dark cradle under the knob keeps it legible over the light played range.
+                canvas.drawCircle(kx, cy, knobR + theme.px(3f),
+                    Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0xCC, 0, 0, 0) })
+                canvas.drawCircle(kx, cy, knobR, knob)
             }
             if (targetMs >= 0L) drawTarget(canvas, w, cy, bar / 2f)
         }
@@ -3983,9 +4643,9 @@ class PlayerActivity : Activity() {
             set(value) {
                 if (field != value) { field = value; invalidate() }
             }
-        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.color("track", "#2F2F2F") }
-        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.brand }
-        private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.ink }
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0x4D, 255, 255, 255) }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playerAccent }
+        private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playerAccent }
 
         override fun onDraw(canvas: Canvas) {
             val cy = height / 2f
@@ -4039,7 +4699,7 @@ class PlayerActivity : Activity() {
         // YouTube copy). Never print the same word twice on one row.
         val head = label.ifBlank { provider }.ifBlank { "Copy" }
         val parts = arrayListOf(head)
-        if (quality.isNotBlank() && parts.none { it.equals(quality, true) }) parts.add(quality)
+        if (quality.isNotBlank() && parts.none { it.contains(quality, true) }) parts.add(quality)
         return parts.joinToString(" · ")
     }
 
@@ -4110,6 +4770,7 @@ class PlayerActivity : Activity() {
         const val EXTRA_POSITION_MS = "positionMs"
         const val EXTRA_MATURITY = "maturity"
         const val EXTRA_POSTER = "poster"
+        const val EXTRA_BACKDROP = "backdrop"
         const val EXTRA_LOGO = "logo"
         const val EXTRA_ADVISORIES = "advisories"
 
@@ -4137,17 +4798,41 @@ class PlayerActivity : Activity() {
         private const val GLYPH_EPISODES = 8
         private const val GLYPH_NEXT = 9
         private const val GLYPH_VOLUME = 10
+        private const val GLYPH_EXPAND = 11
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
         private val LANG_NAMES = mapOf(
+            "en" to "English", "hi" to "Hindi", "ta" to "Tamil", "te" to "Telugu",
+            "es" to "Spanish", "fr" to "French", "de" to "German", "it" to "Italian",
+            "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "ru" to "Russian",
+            "ar" to "Arabic", "pt" to "Portuguese", "cs" to "Czech", "da" to "Danish",
+            "nl" to "Dutch", "fi" to "Finnish", "no" to "Norwegian", "pl" to "Polish",
+            "sv" to "Swedish", "tr" to "Turkish", "uk" to "Ukrainian", "he" to "Hebrew",
+            "el" to "Greek", "hu" to "Hungarian", "ro" to "Romanian", "sk" to "Slovak",
+            "sl" to "Slovenian", "hr" to "Croatian", "sr" to "Serbian", "bg" to "Bulgarian",
+            "ca" to "Catalan", "et" to "Estonian", "lv" to "Latvian", "lt" to "Lithuanian",
+            "ms" to "Malay", "tl" to "Tagalog", "fa" to "Persian", "id" to "Indonesian",
+            "th" to "Thai", "vi" to "Vietnamese",
+            "pob" to "Portuguese (BR)",
             "hin" to "Hindi", "eng" to "English", "tam" to "Tamil", "tel" to "Telugu",
             "pan" to "Punjabi", "ben" to "Bengali", "mar" to "Marathi", "guj" to "Gujarati",
             "kan" to "Kannada", "mal" to "Malayalam", "urd" to "Urdu", "spa" to "Spanish",
             "fre" to "French", "fra" to "French", "ger" to "German", "deu" to "German",
             "ita" to "Italian", "jpn" to "Japanese", "kor" to "Korean", "chi" to "Chinese",
             "zho" to "Chinese", "rus" to "Russian", "ara" to "Arabic", "por" to "Portuguese",
+            "cze" to "Czech", "ces" to "Czech", "dan" to "Danish", "dut" to "Dutch",
+            "nld" to "Dutch", "ell" to "Greek", "gre" to "Greek", "fin" to "Finnish",
+            "heb" to "Hebrew", "hun" to "Hungarian", "ice" to "Icelandic", "isl" to "Icelandic",
+            "ind" to "Indonesian", "nor" to "Norwegian", "pol" to "Polish", "rum" to "Romanian",
+            "ron" to "Romanian", "slo" to "Slovak", "slk" to "Slovak", "slv" to "Slovenian",
+            "swe" to "Swedish", "tha" to "Thai", "tur" to "Turkish", "ukr" to "Ukrainian",
+            "vie" to "Vietnamese", "hrv" to "Croatian", "srp" to "Serbian", "bul" to "Bulgarian",
+            "cat" to "Catalan", "est" to "Estonian", "lav" to "Latvian", "lit" to "Lithuanian",
+            "may" to "Malay", "msa" to "Malay", "fil" to "Filipino", "tgl" to "Tagalog",
+            "per" to "Persian", "fas" to "Persian", "bos" to "Bosnian",
+            "mac" to "Macedonian", "mkd" to "Macedonian", "alb" to "Albanian", "sqi" to "Albanian",
         )
 
         private fun str(o: JSONObject?, name: String, def: String = ""): String =
