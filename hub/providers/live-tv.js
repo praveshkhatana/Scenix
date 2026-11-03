@@ -88,6 +88,34 @@ function get(url, timeoutMs = 20000) {
   });
 }
 
+/** Does this feed answer at all? A HEAD is enough for most CDNs; range-GET covers the rest. */
+function feedAlive(url, headers, timeoutMs = 3500) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    try {
+      const mod = url.startsWith('https:') ? https : http;
+      const req = mod.get(url, {
+        headers: Object.assign({ Range: 'bytes=0-0' }, headers || {}),
+        timeout: timeoutMs,
+      }, (res) => {
+        const code = res.statusCode || 0;
+        res.resume();
+        if (code >= 300 && code < 400 && res.headers.location) {
+          finish(true); // a redirect that answers is a live feed
+          return;
+        }
+        finish(code === 200 || code === 206);
+      });
+      req.on('timeout', () => { req.destroy(); finish(false); });
+      req.on('error', () => finish(false));
+    } catch (e) { finish(false); }
+  });
+}
+
+const feedCache = new Map(); // identity -> { url, at }
+const FEED_CACHE_MS = 60 * 1000;
+
 function slug(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48);
 }
@@ -208,13 +236,13 @@ async function refresh(force = false) {
               c.langs = hit ? hit.names : [];
               c.langCodes = hit ? hit.codes : [];
             }
-            const kept = parsed.filter((c) => c.langs.length);
-            if (kept.length) {
-              console.log(new Date().toISOString(), 'language filter:', parsed.length, '->', kept.length);
-              parsed = kept;
-            } else {
-              console.error(new Date().toISOString(), 'language filter left 0 channels, keeping all');
-            }
+            // The language list annotates and ranks a channel; it must never make a channel on the
+            // household's own wall unplayable. Dropping the ones iptv-org's language playlists did
+            // not happen to list left 202 of 384 curated channels with no source at all — the wall
+            // showed them (the per-profile lineup is built from allChannels) and every press ended
+            // in "off the air". Keep them; `catalog` still filters when a screen asks for a language.
+            console.log(new Date().toISOString(), 'language annotated:',
+              parsed.filter((c) => (c.langs || []).length).length, 'of', parsed.length);
           }
         }
         allChannels = parsed;
@@ -449,6 +477,15 @@ function channelForSource(item, source) {
   return variants[0]; // lightest variant first (parseM3U sorted them that way)
 }
 
+function feedFor(c) {
+  return {
+    url: c.url,
+    headers: { 'User-Agent': UA, Referer: new URL(c.url).origin + '/' },
+    kind: /\.m3u8(\?|$)/i.test(c.url) ? 'hls' : 'http',
+    expiresAt: null, // iptv-org feeds are not signed; they die when the feed dies
+  };
+}
+
 function catalogMeta(c) {
   const langs = c.langs || [];
   return {
@@ -607,14 +644,33 @@ module.exports = {
   async play(identity, source) {
     const item = await this.meta(identity);
     if (!item) return null;
-    const c = channelForSource(item, source);
-    if (!c) return null;
-    return {
-      url: c.url,
-      headers: { 'User-Agent': UA, Referer: new URL(c.url).origin + '/' },
-      kind: /\.m3u8(\?|$)/i.test(c.url) ? 'hls' : 'http',
-      expiresAt: null, // iptv-org feeds are not signed; they die when the feed dies
-    };
+    // The saved health is a fact about the URL the prober watched, and a playlist refresh can replace
+    // that URL while the verdict survives. Try that variant first, then the other feeds, and hand the
+    // player one that answered — a channel with a dead first entry and a live second one used to be
+    // "off the air" even though the household could watch it.
+    const variants = channels.filter((c) => identityForName(c.name) === item.identity);
+    if (!variants.length) return null;
+    const cached = feedCache.get(identity);
+    if (cached && Date.now() - cached.at < FEED_CACHE_MS
+        && variants.some((c) => c.url === cached.url)) {
+      return feedFor(variants.find((c) => c.url === cached.url));
+    }
+    const h = liveHealth.get(identity);
+    const ordered = variants.slice().sort((a, b) => {
+      if (h && h.ok && h.url === a.url) return -1;
+      if (h && h.ok && h.url === b.url) return 1;
+      return 0;
+    });
+    for (const c of ordered.slice(0, 4)) {
+      const headers = { 'User-Agent': UA, Referer: new URL(c.url).origin + '/' };
+      if (await feedAlive(c.url, headers)) {
+        feedCache.set(identity, { url: c.url, at: Date.now() });
+        return feedFor(c);
+      }
+    }
+    // Nothing answered; return the first variant so the client gets the same honest failure it
+    // would have had without the probe, rather than "no source" for a channel that exists.
+    return feedFor(variants[0]);
   },
 
   stats() {
