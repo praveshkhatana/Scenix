@@ -822,6 +822,14 @@ class PlayerActivity : Activity() {
                 }
             }
         }
+        // The household asked for a language this copy does not carry and no donor could be mixed in.
+        // Say it instead of letting the packager's default pass for the viewer's choice; the Audio
+        // menu names every language the title can offer, and Quality lists the other copies.
+        val missingAudio = str(reply, "audioMissing")
+        if (mix == null && missingAudio.isNotBlank()) {
+            val name = str(reply, "audioMissingName").ifBlank { langName(missingAudio) }
+            setStatus("No $name audio in this copy — Audio lists other languages, Quality other copies", "warn")
+        }
         embeddedSubs = reply.optJSONArray("subtitleTracks") ?: JSONArray()
         val torrent = reply.optJSONObject("torrent")
         peerCount = when {
@@ -2087,6 +2095,19 @@ class PlayerActivity : Activity() {
         if (tries < 8) target.postDelayed({ focusMenuTarget(target, owner, tries + 1) }, 80L)
     }
 
+    /** The language Auto resolves to right now, for the Auto row's note. Blank when nothing chosen. */
+    private fun autoLanguageNote(): String {
+        val id = selectedAudioId ?: return ""
+        for (i in 0 until audioTracks.length()) {
+            val t = audioTracks.optJSONObject(i) ?: continue
+            if (str(t, "id") != id) continue
+            val name = if (str(t, "kind") == "audio-mix") langName(str(t, "language"))
+                else trackWords(t)
+            return if (name.isBlank()) "" else " · now $name"
+        }
+        return ""
+    }
+
     private fun audioRows(parent: LinearLayout) {
         if (audioOptions.length() > 0) {
             // "Default" told the viewer nothing. When the hub has replaced the picture's audio, the
@@ -2094,7 +2115,11 @@ class PlayerActivity : Activity() {
             // for "let the hub pick the best track for this profile's languages".
             val mixActive = mixHint != null && !mixDisabled
             if (!mixActive) parent.addView(menuRow(
-                "Auto", "best match for your languages", !audioChosen,
+                "Auto",
+                // The Auto row is a route back to the hub's choice, not a second selected track. Name
+                // the language it currently resolves to so the tick below is unambiguous.
+                "best match for your languages" + autoLanguageNote(),
+                false,
             ) { chooseAudio(null) })
             for (i in 0 until audioOptions.length()) {
                 val o = audioOptions.optJSONObject(i) ?: continue
@@ -2133,8 +2158,10 @@ class PlayerActivity : Activity() {
             addMixToggle(parent)
             return
         }
+        // Auto is a route, not a track: it names the language it resolves to, and the tick belongs
+        // to that language's row. Ticking both made the menu claim two selections at once.
         parent.addView(menuRow(
-            "Auto", "best match for your languages", !audioChosen,
+            "Auto", "best match for your languages" + autoLanguageNote(), false,
         ) { chooseAudio(null) })
         for (i in 0 until audioTracks.length()) {
             val t = audioTracks.optJSONObject(i) ?: continue
