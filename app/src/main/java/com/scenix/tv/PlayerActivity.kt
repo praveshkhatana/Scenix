@@ -1215,6 +1215,13 @@ class PlayerActivity : Activity() {
     }
 
     private fun chooseAudio(id: String?) {
+        // A mix id is not a container track: it needs the hub to build a new stream. Some paths
+        // (a stale menu row, a restored selection) can hand one to this method; never let it become
+        // a silent no-op on a track id that does not exist.
+        if (id != null && id.startsWith("mix:")) {
+            reloadAudio(mix = true, language = id.removePrefix("mix:"))
+            return
+        }
         audioChosen = id != null
         selectedAudioId = id
         pendingAudio = id
@@ -1679,8 +1686,8 @@ class PlayerActivity : Activity() {
                         "This copy is taking too long",
                     )
                 }
-            }, 30_000L)
-        }.also { handler.postDelayed(it, 25_000L) }
+            }, 22_000L)
+        }.also { handler.postDelayed(it, 12_000L) }
     }
 
     /** The typed title mark inside the preloader's column, if the logo request failed. */
@@ -2331,6 +2338,10 @@ class PlayerActivity : Activity() {
             // Ask for that same language as the selected track when the picture already carries it;
             // otherwise the hub would keep its profile-first track after doing the mix.
             if (!language.isNullOrBlank()) extra.put("audio", language)
+            // The picture is already running on this copy; do not make the viewer wait for the hub's
+            // read-ahead cushion to re-open a source it is already reading. The remux starts at the
+            // playhead; the player's own buffer covers the first seconds.
+            extra.put("fast", true)
         } else {
             extra.put("audioMix", JSONObject().put("enabled", false))
         }
@@ -3064,8 +3075,7 @@ class PlayerActivity : Activity() {
                     return@episodeRow
                 }
                 closeMenu(restore = false)
-                open(PlaySpec(s.identity, s.type, se, number,
-                    str(ep, "title").ifBlank { s.title }), 0L)
+                open(PlaySpec(s.identity, s.type, se, number, s.title), 0L)
             })
         }
         if (shown == 0) parent.addView(noteRow("The hub listed no episodes for this season"))
@@ -4108,8 +4118,10 @@ class PlayerActivity : Activity() {
         undoSpec = old
         undoPositionMs = maxPosition
         hideNextCard()
-        val title = str(next, "title").ifBlank { old.title }
-        open(PlaySpec(old.identity, old.type, season, episode, if (title.isBlank()) old.title else title), 0L)
+        // The spec's title is the SERIES title: the hub answers a show with the show's name, and the
+        // old guard compared that to the episode name and refused every next episode. The episode's
+        // own name belongs in the meta line, which the answer's `episode` already fills.
+        open(PlaySpec(old.identity, old.type, season, episode, old.title), 0L)
         showUndo()
     }
 
