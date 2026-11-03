@@ -103,7 +103,8 @@
       "keyGlass": "rgba(255,255,255,0.10)",
       "wallInk": "#101821",
       "wallInk2": "#41505C",
-      "wallLine": "rgba(16,24,32,0.50)"
+      "wallLine": "rgba(16,24,32,0.50)",
+      "playerAccent": "#CFE3F5"
     },
     "space": {
       "gutter": 57,

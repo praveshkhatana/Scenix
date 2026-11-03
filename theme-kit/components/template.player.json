@@ -1,18 +1,34 @@
 {
   "id": "template.player",
-  "version": 1,
+  "version": 2,
   "level": "template",
-  "summary": "The player chrome: title bar, timeline, transport, the translucent options capsule and the hint line that names the focused control.",
+  "summary": "The player as PlayerActivity draws it: a cinema preloader while a copy is prepared, then no header at all — one bottom gradient with the title row, a full-width timeline and a single transport line. Live drops the timeline, the elapsed pair, speed and rewind; the error, track-menu and up-next cards sit over the picture.",
   "props": {
     "title": {
       "type": "string",
       "required": true,
       "maxLength": 120
     },
-    "subtitle": {
+    "meta": {
       "type": "string",
-      "maxLength": 120,
-      "description": "Season and episode line under the title."
+      "maxLength": 160,
+      "description": "The note beside the title: year, genre and runtime, or the live programme and minutes left."
+    },
+    "certificate": {
+      "type": "string",
+      "maxLength": 8,
+      "description": "Age rating in an outlined badge. A live channel never shows one."
+    },
+    "quality": {
+      "type": "string",
+      "maxLength": 16,
+      "description": "The resolution the decoder is actually showing (e.g. 1080p), not the one the menu asked for."
+    },
+    "peers": {
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "description": "P2P peers feeding this copy; appended to the quality pill as '· 12 peers'."
     },
     "mode": {
       "type": "enum",
@@ -33,47 +49,57 @@
     },
     "duration": {
       "type": "number",
-      "default": 5400,
+      "default": 6740,
       "min": 0,
       "max": 86400,
-      "description": "Seconds; live uses the DVR window end."
+      "description": "Seconds. Live has no timeline and no elapsed pair."
     },
     "playing": {
       "type": "boolean",
       "default": true
     },
-    "options": {
-      "type": "array",
-      "description": "Audio, subtitles, speed, quality and episodes icons."
-    },
-    "hint": {
-      "type": "string",
-      "maxLength": 80,
-      "description": "The focused control named in words above the transport."
-    },
     "skipIntro": {
       "type": "boolean",
-      "default": false
-    },
-    "nextEpisode": {
-      "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "The one control outside the chrome: it stays while the transport is hidden."
     },
     "speed": {
       "type": "number",
       "default": 1,
       "min": 0.25,
       "max": 4
+    },
+    "series": {
+      "type": "boolean",
+      "default": false,
+      "description": "Shows the Next episode and Episodes stops; a film has neither."
+    },
+    "liveNow": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "The live note line: programme name and minutes left."
+    },
+    "next": {
+      "type": "object",
+      "description": "The up-next card: code, title and countdown."
+    },
+    "menu": {
+      "type": "object",
+      "description": "The centred track sheet: kind, current value and rows."
+    },
+    "error": {
+      "type": "object",
+      "description": "The centred failure card: heading, humanised message and the chips for this mode."
     }
   },
-  "states": ["default", "focus", "playing", "paused", "buffering", "live", "error"],
+  "states": ["default", "loading", "playing", "paused", "focus", "buffering", "live", "menu", "next", "error", "live-error"],
   "events": ["play", "pause", "seek", "seekStart", "seekEnd", "press", "focus", "blur", "close"],
   "slots": [
-    { "name": "title", "accepts": ["atom.label"], "optional": true },
-    { "name": "timeline", "accepts": ["molecule.seek-bar"], "optional": false },
-    { "name": "transport", "accepts": ["atom.button", "atom.icon"], "optional": false, "max": 6 },
-    { "name": "options", "accepts": ["atom.icon"], "optional": true, "max": 6 },
-    { "name": "hint", "accepts": ["atom.label"], "optional": true }
+    { "name": "title", "accepts": ["atom.label", "atom.chip"], "optional": true },
+    { "name": "timeline", "accepts": ["molecule.seek-bar"], "optional": true },
+    { "name": "transport", "accepts": ["atom.icon", "atom.button"], "optional": false, "max": 10 },
+    { "name": "cards", "accepts": ["atom.surface", "atom.label", "atom.button"], "optional": true, "max": 3 },
+    { "name": "skip", "accepts": ["atom.chip"], "optional": true }
   ],
   "a11y": {
     "role": "group",

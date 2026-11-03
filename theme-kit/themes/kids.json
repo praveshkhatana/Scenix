@@ -91,7 +91,8 @@
       "focusGlow": "#FDDB6F",
       "plateInk": "#050505",
       "heroPlateL": "#F2AE01",
-      "heroPlateR": "#FBC000"
+      "heroPlateR": "#FBC000",
+      "playerAccent": "#FFD60A"
     },
     "space": {
       "gutter": 60,
