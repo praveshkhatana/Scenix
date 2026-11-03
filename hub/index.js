@@ -2759,6 +2759,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // in RAM are dead weight — the answer hands the origin URL to the screen directly (out.live).
       // probePass is the only live check the picker needs; it already GETs the manifest.
       const directOn = readahead.cfg().direct && kept.type !== 'channel' && !o.live
+        && opts.fast !== true
         && cand._noCushion !== true
         && /^https?:\/\//i.test(String(o.url || ''));
       if (directOn) {
@@ -2809,25 +2810,28 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           o.cushioned = true;
           o.neededMbps = Number.isFinite(needDirect) ? Number(needDirect.toFixed(2)) : null;
           if (gotD != null) o.measuredMbps = Number(gotD.toFixed(2));
-        } else if (realD && needDirect && gotD < needDirect * speedBar) {
-          // Carried bytes, at a rate this file cannot live on. The bar is the same one the torrent path
-          // uses, and the answer is the same: keep the sharpest copy the host can feed, and step down.
+        } else if (realD && (gotD <= 0 || (needDirect && gotD < needDirect * speedBar))) {
+          // Carried bytes, at a rate this file cannot live on — or no bytes at all. The old test only
+          // stepped down when the file's bitrate was known: a 1080p release with no stated size that
+          // served 0 bytes therefore passed as "measured", and the player spent 25 s discovering it.
+          // Zero is zero whatever the estimate. The bar is the same one the torrent path uses.
+          const headroom = needDirect ? gotD / needDirect : 0;
           tried.push(labelOf(cand) + ': cushion carried ' + gotD.toFixed(1) + ' Mbps over ' + md.ms
-            + 'ms, this file needs ~' + needDirect.toFixed(1) + ' Mbps'
+            + 'ms' + (needDirect ? ' against ~' + needDirect.toFixed(1) + ' Mbps this file needs' : '')
             + (speedBar < ranking.HEADROOM ? ' (bar relaxed to ' + speedBar.toFixed(2)
               + 'x for a client that plays the copy itself)' : ''));
           o.checked = true;
           o.slow = true;
-          o.neededMbps = Number(needDirect.toFixed(2));
+          o.neededMbps = needDirect ? Number(needDirect.toFixed(2)) : null;
           o.measuredMbps = Number(gotD.toFixed(2));
           o.measuredBytes = md.bytes || 0;
-          const headroom = gotD / needDirect;
           if (explicit) {
             // The viewer chose the sharper copy. Report the measurement, but do not quietly play a
             // different one; the player's own buffer is allowed to prove the measurement wrong.
             extraWhy.push('you chose this copy; its first ' + (md.bytes || 0)
-              + ' bytes measured ' + gotD.toFixed(1) + ' Mbps against ~' + needDirect.toFixed(1)
-              + ' Mbps needed, but it is playing because you picked it');
+              + ' bytes measured ' + gotD.toFixed(1) + ' Mbps'
+              + (needDirect ? ' against ~' + needDirect.toFixed(1) + ' Mbps needed' : '')
+              + ', but it is playing because you picked it');
           } else {
             if (!tooSlow || headroom > tooSlow.headroom) tooSlow = { o, cand, headroom };
             continue;
@@ -4869,7 +4873,7 @@ async function handle(req, res) {
           positionMs: body.positionMs,
           // Which video codecs this device can draw. Not a preference and never inferred here: the client
           // states it, and it decides which copies are worth offering this screen at all.
-          codecs: body.codecs, ladder: body.ladder === true });
+          codecs: body.codecs, ladder: body.ladder === true, fast: body.fast === true });
       return send(res, picked.status, picked.body);
     }
 
