@@ -741,7 +741,7 @@ class PlayerActivity : Activity() {
         closeMenu(restore = false)
         showChrome(focus = true)
         if (preloading()) hideCenter() else showCenter("Preparing this copy…", true)
-        requestSubs(spec.identity)
+        requestSubs(spec)
         resolvePlay(spec, positionMs, WARM_TRIES, null)
         if (live) prefetchLiveChannels()
     }
@@ -1260,7 +1260,14 @@ class PlayerActivity : Activity() {
         showCenter("Loading subtitles…", true)
     }
 
-    private fun requestSubs(identity: String) {
+    private fun requestSubs(spec: PlaySpec) {
+        // A series' subtitles live under the EPISODE identity. Asking for the show (`imdb:tt…`)
+        // answered an empty list, so the menu said "no subtitles" on every episode even though the
+        // addon had them one level down at `imdb:tt…:1:1`.
+        val identity = if (spec.season > 0 && spec.episode > 0 &&
+            !spec.identity.matches(Regex(".*:\\d+:\\d+$"))) {
+            spec.identity + ":" + spec.season + ":" + spec.episode
+        } else spec.identity
         val gen = ++subsGen
         api.subs(identity, profileId, "") { subs, _ ->
             if (gen != subsGen || isFinishing || isDestroyed) return@subs
@@ -1330,6 +1337,16 @@ class PlayerActivity : Activity() {
         answer?.optJSONObject("picked")?.let {
             str(it, "id").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
             str(it, "label").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
+        }
+        // A copy the viewer picked by hand is never replaced behind their back — not even after a
+        // network error. The strict card below is the honest "this copy cannot" branch; its Next
+        // copy button clears the flag when they want the hub to choose.
+        if (strictSource && !live) {
+            showError(
+                "The copy you picked is not starting. Try again, pick another copy in Quality, or press Next copy to let the hub choose.",
+                "That copy isn't starting",
+            )
+            return
         }
         if (failovers >= MAX_FAILOVERS) {
             showError(if (live) "This channel is off the air. Try another channel."
@@ -4264,7 +4281,7 @@ class PlayerActivity : Activity() {
         updatePlayLabel()
         showChrome(focus = true)
         showCenter("Tuning…", true)
-        requestSubs(spec.identity)
+        requestSubs(spec)
         resolvePlay(spec, 0L, WARM_TRIES, null)
     }
 
