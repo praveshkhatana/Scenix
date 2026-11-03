@@ -127,6 +127,15 @@ class PlayerActivity : Activity() {
     private var live = false
     /** Debug catalogue: draw the real chrome on a sample title, without asking the hub for a copy. */
     private var previewMode = false
+    /** Whether the chrome is up; captions ride above it when it is, and drop to the safe area when not. */
+    private var chromeUp = true
+    private var captionFraction = 0.29f
+    /** One pending remux re-open per seek gesture; a held key must not spawn a stream per repeat. */
+    private var remuxSeek: Runnable? = null
+    /** The target of a seek still waiting for its remux; repeated presses accumulate from it. */
+    private var pendingSeekTarget = -1L
+    /** Why the last manual copy did not start; shown at the top of Quality until one does. */
+    private var sourceFailureNote = ""
     private var displayTitle = ""
     private var currentSourceLabel = ""
     /** The copy the viewer explicitly picked; empty means Auto (the hub's ranked pick). */
@@ -777,6 +786,7 @@ class PlayerActivity : Activity() {
 
     /** The answer is good: turn it into a MediaItem and start. Used for play, switch and retry. */
     private fun start(reply: JSONObject, positionMs: Long, playWhenReady: Boolean) {
+        pendingSeekTarget = -1L
         bufferingSince = 0L
         handler.removeCallbacks(stallCheck)
         // A hub answer must belong to the title this screen opened. If a provider or a stale route
@@ -824,8 +834,11 @@ class PlayerActivity : Activity() {
         if (introEndMs <= 0L) skipChip?.visibility = View.GONE
         // A resume ladder is transcoded from the saved playhead. Its playlist starts at zero, so the
         // player's own timeline is relative; `startMs` is the film time to add back everywhere.
-        timelineOffsetMs = (reply.optJSONObject("ladder")?.optLong("startMs", 0L) ?: 0L)
-            .coerceAtLeast(0L)
+        timelineOffsetMs = (
+            reply.optJSONObject("ladder")?.optLong("startMs", 0L)
+                ?: reply.optJSONObject("remux")?.optLong("startMs", 0L)
+                ?: 0L
+            ).coerceAtLeast(0L)
         startRungPending = reply.optJSONObject("ladder") != null &&
             isLocalHub(Uri.parse(HubEndpoint.base(this)).host)
         startRungLocked = false
@@ -1418,6 +1431,7 @@ class PlayerActivity : Activity() {
         playWhenReady: Boolean,
         warmTries: Int,
         automatic: Boolean,
+        quiet: Boolean = false,
     ) {
         val gen = ++requestGen
         api.switchSource(body) { reply, status, transport ->
@@ -1429,7 +1443,7 @@ class PlayerActivity : Activity() {
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 handler.postDelayed({
                     if (gen == requestGen && !isFinishing) {
-                        askSwitch(body, positionMs, playWhenReady, warmTries - 1, automatic)
+                        askSwitch(body, positionMs, playWhenReady, warmTries - 1, automatic, quiet)
                     }
                 }, wait)
                 return@switchSource
@@ -1455,6 +1469,7 @@ class PlayerActivity : Activity() {
                     val why = humaniseError(str(reply, "error"))
                         .ifBlank { transport ?: "that copy would not open" }
                     pendingSourceKey = ""
+                    sourceFailureNote = "That copy did not open — still playing $staying"
                     setStatus(why + " · still playing " + staying, "warn")
                     player?.playWhenReady = playWhenReady
                 }
@@ -1472,14 +1487,23 @@ class PlayerActivity : Activity() {
                 // row it happened to choose this time.
                 chosenSourceKey = ""
                 strictSource = false
+                sourceFailureNote = ""
             } else {
                 // The checkmark belongs to the copy that is actually running. A hub substitution (or a
                 // stale pick that resolved to another copy) must move it, not leave Quality lying.
                 if (pickedKey.isNotBlank()) chosenSourceKey = pickedKey
                 strictSource = wantedKey.isNotBlank() && pickedKey == wantedKey
-                if (wantedKey.isNotBlank() && pickedKey.isNotBlank() && wantedKey != pickedKey) {
+                if (quiet) {
+                    // The same copy re-opened at a new film time, not a source change.
+                } else if (wantedKey.isNotBlank() && pickedKey.isNotBlank() && wantedKey != pickedKey) {
+                    // A substitution is not the choice the viewer made. Uncheck the manual copy and
+                    // keep the reason visible in Quality instead of a six-second status they missed.
+                    chosenSourceKey = ""
+                    sourceFailureNote = "The copy you picked did not start — playing " +
+                        currentSourceLabel.ifBlank { "another copy" }
                     setStatus("That copy didn't start — playing " + currentSourceLabel.ifBlank { "another copy" }, "warn")
                 } else {
+                    sourceFailureNote = ""
                     setStatus("Switched to ${currentSourceLabel.ifBlank { "another copy" }}")
                 }
             }
@@ -2702,14 +2726,27 @@ class PlayerActivity : Activity() {
         view.setApplyEmbeddedStyles(false)
         view.setApplyEmbeddedFontSizes(false)
         // Media3 exposes the same vertical lift the reference player calls "Vertical offset".
-        // The bottom chrome owns roughly the last quarter of this screen. Captions sit above it
-        // instead of crossing the title and transport; the viewer's offset shifts them further up.
-        val lift = when (app.prefs.captionOffset()) {
+        // With the chrome up, captions sit above the title/transport. With it down there is nothing
+        // to clear, so they drop to the bottom safe area — a caption that stays mid-screen over a
+        // clean picture reads as a rendering fault. Animate the fraction so the move is a slide.
+        val target = if (chromeUp) when (app.prefs.captionOffset()) {
             0 -> 0.24f
             2 -> 0.34f
             else -> 0.29f
+        } else 0.06f
+        if (kotlin.math.abs(target - captionFraction) > 0.001f) {
+            val from = captionFraction
+            android.animation.ValueAnimator.ofFloat(from, target).apply {
+                duration = 180L
+                addUpdateListener {
+                    view.setBottomPaddingFraction(it.animatedValue as Float)
+                }
+                start()
+            }
+            captionFraction = target
+        } else {
+            view.setBottomPaddingFraction(target)
         }
-        view.setBottomPaddingFraction(lift)
     }
 
     private data class ActualTrack(val id: String, val label: String, val selected: Boolean)
@@ -2755,6 +2792,7 @@ class PlayerActivity : Activity() {
         // a ladder, the top rows are its own rungs and the copy list moves below a heading.
         val rungs = ladderRungs()
         val currentKey = answer?.optJSONObject("picked")?.let { sourceKey(it) }.orEmpty()
+        if (sourceFailureNote.isNotBlank()) parent.addView(noteRow(sourceFailureNote))
         val others = sourceCatalog.values.toList()
         val automatic = chosenSourceKey.isEmpty()
         if (rungs.isNotEmpty()) {
@@ -2779,8 +2817,10 @@ class PlayerActivity : Activity() {
         for (src in others) {
             val key = sourceKey(src)
             val picked = key.isNotBlank() && key == chosenSourceKey
-            val note = sourceNote(src) + if (key == currentKey) " · playing" else ""
-            parent.addView(menuRow(sourceWords(src), note, picked) {
+            val unsupported = src.optBoolean("unsupported", false)
+            val note = (if (unsupported) "not on this TV · " else "") + sourceNote(src) +
+                if (key == currentKey) " · playing" else ""
+            parent.addView(menuRow(sourceWords(src), note, picked, enabled = !unsupported) {
                 switchTo(src)
             })
         }
@@ -2840,6 +2880,7 @@ class PlayerActivity : Activity() {
                 .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(index)))
                 .build()
         }
+        sourceFailureNote = ""
         paintChips()
         closeMenu()
     }
@@ -3138,7 +3179,13 @@ class PlayerActivity : Activity() {
         return id.removePrefix("hub:").toIntOrNull() ?: 0
     }
 
-    private fun menuRow(label: String, value: String, selected: Boolean, action: () -> Unit): LinearLayout {
+    private fun menuRow(
+        label: String,
+        value: String,
+        selected: Boolean,
+        enabled: Boolean = true,
+        action: () -> Unit,
+    ): LinearLayout {
         val radius = theme.radius("listItem", 6f)
         val base = if (selected) Color.argb(0x1C, 255, 255, 255) else Color.TRANSPARENT
         val row = LinearLayout(this).apply {
@@ -3146,9 +3193,10 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(theme.px(16f), 0, theme.px(16f), 0)
             background = Views.rounded(base, radius)
-            isFocusable = true
-            isClickable = true
-            setOnClickListener { action() }
+            isFocusable = enabled
+            isClickable = enabled
+            alpha = if (enabled) 1f else 0.45f
+            if (enabled) setOnClickListener { action() }
         }
         val tick = if (selected) "✓" else " "
         val l = Views.text(
@@ -3248,9 +3296,9 @@ class PlayerActivity : Activity() {
         setStatus("Speed ${formatSpeed(v)}")
     }
 
-    private fun switchTo(src: JSONObject?) {
+    private fun switchTo(src: JSONObject?, atMs: Long = -1L, quiet: Boolean = false) {
         val spec = spec ?: return
-        val pos = player?.let { filmPosition(it) } ?: 0L
+        val pos = if (atMs >= 0L) atMs else player?.let { filmPosition(it) } ?: 0L
         val playing = player?.playWhenReady ?: true
         pendingSourceKey = src?.let { sourceKey(it) } ?: ""
         closeMenu()
@@ -3263,10 +3311,10 @@ class PlayerActivity : Activity() {
         }
         // A null source is the viewer asking the hub to choose again, not naming a copy.
         val manualPick = src != null
-        showCenter(if (manualPick) "Switching copy…" else "Letting the hub choose…", true)
+        if (!quiet) showCenter(if (manualPick) "Switching copy…" else "Letting the hub choose…", true)
         askSwitch(
             bodyFor(spec, pos, source, exclude), pos,
-            playWhenReady = playing, warmTries = 5, automatic = !manualPick,
+            playWhenReady = playing, warmTries = 5, automatic = !manualPick, quiet = quiet,
         )
     }
 
@@ -3429,11 +3477,38 @@ class PlayerActivity : Activity() {
         val p = player ?: return
         val lower = timelineOffsetMs
         val upper = if (durationMs > 0) maxOf(durationMs, lower) else Long.MAX_VALUE
-        val target = (filmPosition(p) + deltaMs).coerceIn(lower, upper)
+        val base = if (pendingSeekTarget >= 0L) pendingSeekTarget else filmPosition(p)
+        val target = (base + deltaMs).coerceIn(lower, upper)
+        // A progressive remux is generated as it runs: it has no seek index and no known total,
+        // so media3 can only restart it at the front. Ask the hub for a new remux at the target
+        // instead; the answer carries that start so the timeline stays in film time.
+        if (isRemuxed()) {
+            pendingSeekTarget = target
+            showScrubTarget(target)
+            remuxSeek?.let { handler.removeCallbacks(it) }
+            val run = Runnable {
+                remuxSeek = null
+                if (!isFinishing && !isDestroyed) {
+                    showCenter("Seeking…", true)
+                    switchTo(answer?.optJSONObject("picked"), atMs = target, quiet = true)
+                }
+            }
+            remuxSeek = run
+            handler.postDelayed(run, 320L)
+            armHide()
+            return
+        }
         p.seekTo(mediaPosition(target))
         updatePosition()
         showScrubTarget(target)
         armHide()
+    }
+
+    /** True when the running URL is the hub's ffmpeg remux, which cannot be seeked by byte range. */
+    private fun isRemuxed(): Boolean {
+        if (answer?.optBoolean("remuxed", false) == true) return true
+        val url = answer?.optString("proxiedUrl").orEmpty().ifBlank { answer?.optString("url").orEmpty() }
+        return url.contains("/app/v1/remux")
     }
 
     /**
@@ -3636,6 +3711,10 @@ class PlayerActivity : Activity() {
 
     /** Chrome comes back by fading in — never a hard visibility pop over the film. */
     private fun revealChrome() {
+        if (!chromeUp) {
+            chromeUp = true
+            applySubtitleStyle()
+        }
         overlay.visibility = View.VISIBLE
         Motion.inAlpha(overlay, theme,
             theme.token("anim", "navFadeMs", 180.0).toLong().coerceIn(60L, 400L))
@@ -3690,6 +3769,10 @@ class PlayerActivity : Activity() {
         if (p == null || !p.isPlaying) {
             armHide()
             return
+        }
+        if (chromeUp) {
+            chromeUp = false
+            applySubtitleStyle()
         }
         currentFocus?.clearFocus()
         Motion.outAlpha(overlay, theme,
@@ -4970,7 +5053,13 @@ class PlayerActivity : Activity() {
             .orEmpty()
         // The hub often uses the quality as both the label and the quality ("480p · 480p" on a
         // YouTube copy). Never print the same word twice on one row.
-        val name = label.ifBlank { provider }.ifBlank { "" }
+        // The label often opens with the same resolution ("480p · 155 MB"). Strip that prefix so the
+        // row reads "480P · 155 MB", not "480P · 480p · 155 MB"; the initials stay uppercase.
+        val name = label
+            .replaceFirst(Regex("(?i)^\\d{3,4}p\\s*[·|/\\-:]?\\s*"), "")
+            .ifBlank { label }
+            .ifBlank { provider }
+            .ifBlank { "" }
         val parts = arrayListOf<String>()
         if (resolution.isNotBlank()) parts.add(resolution)
         if (name.isNotBlank() && parts.none { it.equals(name, true) }) parts.add(name)

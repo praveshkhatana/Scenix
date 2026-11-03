@@ -2275,6 +2275,18 @@ function nameIsntTheTitle(label, title) {
 }
 
 /**
+ * The season/episode a file name states, or null. A season pack or an aggregator that answers the
+ * wrong episode is the other way a "play S01E01" turns into a different programme; unlike a release
+ * name, this is a fact about the copy, so it is never allowed to override the requested episode.
+ */
+function episodeInLabel(label, ep) {
+  if (!ep) return true;
+  const m = /(?:^|[^a-z0-9])s(\d{1,2})[\s._-]*e(\d{1,3})(?:[^0-9]|$)/i.exec(String(label || ''));
+  if (!m) return true;
+  return Number(m[1]) === Number(ep.season) && Number(m[2]) === Number(ep.episode);
+}
+
+/**
  * A parenthetical in a label is where providers put the real title: `(Citadel)`, `(2005)`, `(US)`.
  * Only trust it when the rest of the label also carries title-like words. `S01E01 (Pilot)` is an
  * episode reference, not a claim about a different show.
@@ -2314,8 +2326,15 @@ function resolutionOf(source) {
   return wide ? '2160P' : null;
 }
 
-function listAlternatives(candidates, source, title) {
-  const flagged = candidates.filter((s) => s !== source).map((s) => (
+function listAlternatives(candidates, source, title, ep = null) {
+  const others = candidates.filter((s) => s !== source);
+  // A copy whose parenthetical names a different title, or whose own SxxEyy is another episode,
+  // is not a quality choice — it is a different programme. Keep them out of Quality while any
+  // honest copy remains; if every copy is odd, keep the list (flagged) rather than empty it.
+  const honest = others.filter((s) => !labelNamesOtherTitle(labelOf(s), title)
+    && episodeInLabel(labelOf(s), ep));
+  const pool = honest.length ? honest : others;
+  const flagged = pool.map((s) => (
     nameIsntTheTitle(labelOf(s), title) ? Object.assign({}, s, { mislabeled: true }) : s
   ));
   flagged.sort((a, b) => (a.mislabeled === true ? 1 : 0) - (b.mislabeled === true ? 1 : 0));
@@ -2608,12 +2627,24 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
     // The two label tests. A copy whose own name is another release is the most common way a free
     // source turns out to be the wrong film, so the ladder will not pick one by itself.
+    const otherTitle = labelNamesOtherTitle(labelOf(cand), kept.title);
     const mislabeled = nameIsntTheTitle(labelOf(cand), kept.title);
-    // A person who named this copy in the Quality menu outranks that test: providers mislabel real
-    // copies, and the better-quality one is often exactly the odd-named file. Their choice plays, and
-    // the player prints what the source called it, so nothing is substituted quietly underneath them.
+    // A person who named this copy in the Quality menu outranks an odd release name: providers
+    // mislabel real copies, and the better-quality one is often exactly the odd-named file. That
+    // grace does NOT extend to a copy whose own name (or SxxEyy) is a different programme: an
+    // explicit pick must never put another title or another episode on screen.
     const named = wanted && ((wanted.id && String(cand.id) === String(wanted.id))
       || (wanted.label && labelOf(cand) === wanted.label));
+    if (otherTitle) {
+      tried.push(labelOf(cand) + ': its name is another title');
+      log('PLAY WRONG TITLE', identity, labelOf(cand), kept.title);
+      continue;
+    }
+    if (!episodeInLabel(labelOf(cand), ep)) {
+      tried.push(labelOf(cand) + ': its name is another episode');
+      log('PLAY WRONG EPISODE', identity, labelOf(cand), ep ? ('S' + ep.season + 'E' + ep.episode) : '?');
+      continue;
+    }
     if (mislabeled && !named) {
       tried.push(labelOf(cand) + ': its name is not ' + (kept.title || 'this title'));
       log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
@@ -3158,7 +3189,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         error: 'no copy of this is ready to stream from the hub yet',
         warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
         magnet: out.url,
-        alternatives: listAlternatives(candidates, source, kept.title),
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
       },
     };
   }
@@ -3198,7 +3229,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
             identity, title: kept.title || null, tried,
             error: 'this copy is still being prepared',
             warming: true, retryAfterMs: PLAY_RETRY_AFTER_MS,
-            alternatives: listAlternatives(candidates, source, kept.title),
+            alternatives: listAlternatives(candidates, source, kept.title, ep),
           },
         };
       }
@@ -3528,6 +3559,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       audioOrd,
       audioPlan: plan,
       tracks,
+      // For a direct copy there is no probe entry; carry the facts the remux needs to map a byte
+      // range to a time so seeking does not restart the film.
+      sizeBytes: (tracks && tracks.sizeBytes) || (source && source.sizeBytes) || 0,
+      durationMs: (tracks && tracks.durationMs) || Number(kept.durationMs) || 0,
+      // A remux is a fresh ffmpeg run from this film position. The client must add it back to its
+      // own timeline; without it a seek looks like the film restarted at zero.
+      startMs: Math.max(0, Number(opts.positionMs) || 0),
       headers: out.headers,
       audioHeaders: donor && donor.target.headers ? donor.target.headers : null,
     };
@@ -3545,6 +3583,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       audioCodec: donor ? null : (chosenAudio ? chosenAudio.codec : null),
       subtitle: out.selectedSub ? 'mov_text' : null,
       mixedAudio: !!donor,
+      startMs: Math.max(0, Number(opts.positionMs) || 0),
     };
     extraWhy.push(donor
       ? 'container: fragmented MP4, video copied, donor audio re-encoded into the film'
@@ -3668,7 +3707,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   if (out.picked && !out.picked.resolution) {
     out.picked = Object.assign({}, out.picked, { resolution: resolutionOf(source) });
   }
-  out.alternatives = listAlternatives(candidates, source, kept.title);
+  out.alternatives = listAlternatives(candidates, source, kept.title, ep);
+  // A copy this panel's decoder cannot draw is not a quality choice. Say so on the row instead of
+  // letting the viewer pick it and land back on the current picture with no explanation.
+  if (decodable.length) {
+    for (const alt of out.alternatives) {
+      const fam = alt.videoCodec ? ranking.codecFamily(alt.videoCodec) : null;
+      if (fam && !decodable.includes(fam)) alt.unsupported = true;
+    }
+  }
   if (labelOverride) out.labelMismatch = labelOverride;
   out.title = kept.title || null;
   // Which episode the Play button actually resolved, and the one after it, so the player can label its
