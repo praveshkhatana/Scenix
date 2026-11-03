@@ -231,7 +231,14 @@ class DetailActivity : Activity() {
             else theme.ink2
         val heroInk3 = if (copyOnArt) theme.color("inkOnWallMuted", "rgba(255,255,255,0.72)")
             else theme.ink3
-        val heroHeight = if (split) app.theme.heroHeightPx else theme.px(600f)
+        // Apple/PS5 heroes were forced to 600 px while their packs ask for 720/780; the reaction
+        // row (the last thing in the words column) was clipped off those two themes. Use the pack's
+        // own hero height with a 600 px floor, and give the Kids split room for the same row.
+        val heroHeight = when {
+            kids -> app.theme.heroHeightPx + theme.px(64f)
+            split -> app.theme.heroHeightPx
+            else -> maxOf(theme.px(600f), app.theme.heroHeightPx)
+        }
         val hero = FrameLayout(this).apply {
             setBackgroundColor(if (kids) Color.TRANSPARENT else theme.surface2)
         }
@@ -581,11 +588,9 @@ class DetailActivity : Activity() {
             clipToPadding = false
             addView(social)
         }
-        // Kids' reference detail carries Play / My List and then the cast and related titles;
-        // no second row of reaction pills. Reactions still exist on the other packs.
-        if (!kids) words.addView(socialScroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(12f) })
+        // Trailer, seen, like, love and dislike are standard on every pack — they feed the same
+        // hub taste record and mood board. The row lives just under the hero, outside the fixed
+        // hero height, so no pack can clip it when its title/logo/overview is tall.
         repaintReactions()
         hero.addView(words, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
@@ -594,6 +599,9 @@ class DetailActivity : Activity() {
             setPadding(theme.gutter, theme.px(12f), theme.gutter, 0)
         }
         body.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        content.addView(socialScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(6f); bottomMargin = theme.px(10f) })
         contentSlot = content
 
         val cast = record.optJSONArray("cast")

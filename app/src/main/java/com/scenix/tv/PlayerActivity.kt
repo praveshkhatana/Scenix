@@ -91,6 +91,8 @@ class PlayerActivity : Activity() {
      */
     private val playerAccent: Int
         get() {
+            val explicit = theme.colorOr("playerAccent", -1)
+            if (explicit != -1) return explicit
             val brand = theme.color("brand", "#2D8CFF")
             val lum = (0.299f * Color.red(brand) + 0.587f * Color.green(brand)
                 + 0.114f * Color.blue(brand)) / 255f
@@ -126,6 +128,8 @@ class PlayerActivity : Activity() {
     private var currentSourceLabel = ""
     /** The copy the viewer explicitly picked; empty means Auto (the hub's ranked pick). */
     private var chosenSourceKey = ""
+    /** The engine's live peer count for the copy being watched, or -1 when it is not P2P. */
+    private var peerCount = -1
     /** The viewer named this copy; a stall must be reported, never silently swapped for another. */
     private var strictSource = false
     /** Set while a manual switch is in flight, so success can record the choice. */
@@ -279,6 +283,7 @@ class PlayerActivity : Activity() {
     private lateinit var remaining: TextView
     private lateinit var titleView: TextView
     private lateinit var metaView: TextView
+    private lateinit var ratingBadge: TextView
     private lateinit var statusView: TextView
     private lateinit var liveBadge: TextView
     /** The resolution the decoder is actually showing, not the one the menu asked for. */
@@ -677,6 +682,7 @@ class PlayerActivity : Activity() {
         nextEpisode = null
         epSeason = 0
         currentSourceLabel = ""
+        peerCount = -1
         pendingSourceKey = ""
         strictSource = false
         durationMs = 0L
@@ -811,6 +817,12 @@ class PlayerActivity : Activity() {
             }
         }
         embeddedSubs = reply.optJSONArray("subtitleTracks") ?: JSONArray()
+        val torrent = reply.optJSONObject("torrent")
+        peerCount = when {
+            torrent != null && torrent.has("seeders") -> torrent.optInt("seeders", -1)
+            reply.has("seeders") -> reply.optInt("seeders", -1)
+            else -> -1
+        }
         val picked = reply.optJSONObject("picked")
         if (picked != null) {
             currentSourceLabel = sourceWords(picked)
@@ -1683,9 +1695,16 @@ class PlayerActivity : Activity() {
         qualityBadge.setPadding(theme.px(12f), theme.px(4f), theme.px(12f), theme.px(4f))
         qualityBadge.background = Views.rounded(Color.argb(0x4D, 255, 255, 255), theme.px(999f))
         qualityBadge.visibility = View.GONE
+        ratingBadge = Views.text(app, "badge", 15f, playerInk, "", bold = true, gravity = Gravity.CENTER)
+        ratingBadge.setPadding(theme.px(10f), theme.px(3f), theme.px(10f), theme.px(3f))
+        ratingBadge.background = Views.rounded(
+            Color.TRANSPARENT, theme.px(4f), theme.px(1f), Color.argb(0x99, 255, 255, 255)
+        )
+        ratingBadge.visibility = View.GONE
         metaView = Views.text(app, "sub", 19f, Color.argb(0xB9, 255, 255, 255), "", maxLines = 1)
         titleRow.addView(titleView, wrap())
         titleRow.addView(liveBadge, wrap().withStart(theme.px(12f)))
+        titleRow.addView(ratingBadge, wrap().withStart(theme.px(12f)))
         titleRow.addView(metaView, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
         ).apply { marginStart = theme.px(14f) })
@@ -3393,7 +3412,9 @@ class PlayerActivity : Activity() {
         val epTitle = answer?.optJSONObject("episode")?.let { str(it, "title") }.orEmpty()
         if (epTitle.isNotBlank()) bits.add(epTitle)
         val maturity = intent?.getStringExtra(EXTRA_MATURITY).orEmpty()
-        if (maturity.isNotBlank()) bits.add(maturity)
+        val cert = maturity.takeIf { it.isNotBlank() && !it.equals("null", true) && !live }
+        ratingBadge.text = cert.orEmpty()
+        ratingBadge.visibility = if (cert != null) View.VISIBLE else View.GONE
         val advisories = intent?.getStringArrayListExtra(EXTRA_ADVISORIES)?.filter { it.isNotBlank() }
         if (!advisories.isNullOrEmpty()) bits.add(advisories.joinToString(" · "))
         val mix = answer?.optJSONObject("audioMix")
@@ -3429,7 +3450,10 @@ class PlayerActivity : Activity() {
         // The badge is the decoder's own answer, so the menu can never leave a 1080p checkmark over
         // a 360p picture. Before tracks arrive it falls back to the copy's stated quality.
         val running = runningQuality()
-        qualityBadge.text = running
+        val peers = if (!live && peerCount >= 0) {
+            " · $peerCount " + (if (peerCount == 1) "peer" else "peers")
+        } else ""
+        qualityBadge.text = running + peers
         qualityBadge.visibility =
             if (!live && running.isNotBlank() && !running.equals("Auto", true)) View.VISIBLE else View.GONE
         val nextVisible = nextEpisode != null && !live
@@ -4189,6 +4213,8 @@ class PlayerActivity : Activity() {
         // handed this player (its proxy, its buffer, or the direct link it cushioned), so the hub can
         // look up THIS copy's numbers.
         loadedAnswer?.optString("url")?.takeIf { it.isNotBlank() }?.let { body.put("stream", it) }
+        loadedAnswer?.optJSONObject("torrent")?.optString("hash")
+            ?.takeIf { it.isNotBlank() }?.let { body.put("hash", it) }
         if (spec.season > 0 && spec.episode > 0) {
             body.put("season", spec.season).put("episode", spec.episode)
             body.put("episode", JSONObject()
@@ -4196,7 +4222,13 @@ class PlayerActivity : Activity() {
                 .put("episode", spec.episode)
                 .put("title", loadedAnswer?.optJSONObject("episode")?.let { str(it, "title") }.orEmpty()))
         }
-        api.progress(body)
+        api.progress(body) { answer, _ ->
+            val peers = answer?.optInt("peers", -1) ?: -1
+            if (peers >= 0 && peers != peerCount) {
+                peerCount = peers
+                runOnUiThread { paintChips() }
+            }
+        }
     }
 
     /**
@@ -4425,10 +4457,13 @@ class PlayerActivity : Activity() {
                 canvas.drawRoundRect(cx - 19 * u, cy - 15 * u, cx + 19 * u, cy + 15 * u,
                     12 * u, 12 * u, focusPlate)
                 val accent = (context.applicationContext as ScenixApp).ctx.let {
-                    val b = it.theme.color("brand", "#2D8CFF")
-                    val lum = (0.299f * Color.red(b) + 0.587f * Color.green(b)
-                        + 0.114f * Color.blue(b)) / 255f
-                    if (lum < 0.18f) it.theme.color("kids", "#FFD60A") else b
+                    val explicit = it.theme.colorOr("playerAccent", -1)
+                    if (explicit != -1) explicit else {
+                        val b = it.theme.color("brand", "#2D8CFF")
+                        val lum = (0.299f * Color.red(b) + 0.587f * Color.green(b)
+                            + 0.114f * Color.blue(b)) / 255f
+                        if (lum < 0.18f) it.theme.color("kids", "#FFD60A") else b
+                    }
                 }
                 canvas.drawRoundRect(cx - 13 * u, cy + 17 * u, cx + 13 * u, cy + 19.5f * u,
                     1.5f * u, 1.5f * u, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })

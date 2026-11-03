@@ -37,12 +37,6 @@
       "pack": "Console Scene"
     },
     {
-      "id": "scenix-clean",
-      "name": "Clean",
-      "asset": "theme-clean.json",
-      "pack": "clean"
-    },
-    {
       "id": "scenix-kids",
       "name": "Kids",
       "asset": "theme-kids.json",

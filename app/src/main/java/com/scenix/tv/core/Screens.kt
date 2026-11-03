@@ -103,7 +103,8 @@ object Screens {
             setOnClickListener { onClick() }
         }
         val texts = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        texts.addView(Views.text(app, "li", 24f, app.theme.ink, label, bold = true, maxLines = 1))
+        val labelView = Views.text(app, "li", 24f, app.theme.ink, label, bold = true, maxLines = 1)
+        texts.addView(labelView)
         if (note.isNotBlank()) {
             texts.addView(
                 Views.text(app, "meta", 16f, app.theme.ink3, note, maxLines = 1),
@@ -112,8 +113,10 @@ object Screens {
                 })
         }
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        var valueView: TextView? = null
         if (value.isNotBlank()) {
-            row.addView(Views.text(app, "liMeta", 20f, app.theme.ink2, value, maxLines = 1, gravity = Gravity.END),
+            valueView = Views.text(app, "liMeta", 20f, app.theme.ink2, value, maxLines = 1, gravity = Gravity.END)
+            row.addView(valueView,
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     leftMargin = app.theme.px(20f)
                 })
@@ -128,11 +131,29 @@ object Screens {
             Focus.attach(row, row, app, radius, scale = false, elevate = false)
             return row
         }
-        // A glow pack's row stands on its halo canvas, the rail tiles' pattern: the plate is often
-        // the same colour family as the glow, so a keyline drawn ON the plate had no state
-        // contrast at all. The canvas reaches past the row so the halo washes the page beside it
-        // and the keyline rings the plate from outside.
-        return haloRow(ctx, app, row, radius, onClick)
+        // A settings row is read at three metres while the viewer walks a long list. The artwork
+        // halo is deliberately soft, which left Glass/Apple rows with no visible state (owner:
+        // "only Kids has better visibility"). Every pack now gets the same unambiguous row focus:
+        // the pack's focused plate plus its ring colour, stated on the row itself.
+        val base = rowFill(app)
+        val ring = app.theme.focusRingColor
+        val focusedPlate = Views.rounded(
+            app.theme.colorOr("listFillFocused", app.theme.surface2),
+            radius,
+            maxOf(2, app.theme.px(2f)),
+            ring,
+        )
+        val focusInk = app.theme.colorOr("wallInk", app.theme.ink)
+        val focusInk2 = app.theme.colorOr("wallInk2", app.theme.ink2)
+        Focus.attach(row, row, app, radius, scale = false, elevate = false,
+            onFocus = { has ->
+                row.background = if (has) focusedPlate else base
+                // A wall pack's focused plate is light: keep its label and value dark enough to
+                // read while focus is on the row, then restore the resting inks on blur.
+                labelView.setTextColor(if (has) focusInk else app.theme.ink)
+                valueView?.setTextColor(if (has) focusInk2 else app.theme.ink2)
+            })
+        return row
     }
 
     /**

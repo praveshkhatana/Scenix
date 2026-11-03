@@ -269,7 +269,7 @@ class LocalHub private constructor(context: Context) {
             JSONObject(text).optJSONArray("themes") ?: JSONArray()
         } catch (t: Throwable) {
             JSONArray().put(JSONObject().put("id", "scenix-apple")
-                .put("name", "Clean").put("asset", "theme-apple.json").put("pack", "Scene"))
+                .put("name", "Apple").put("asset", "theme-apple.json").put("pack", "Scene"))
         }
     }
 
@@ -285,7 +285,7 @@ class LocalHub private constructor(context: Context) {
         // A saved theme this build no longer ships is not an error: the first shipped pack answers.
         if (choice == null && themes.length() > 0) choice = themes.optJSONObject(0)
         val id = choice?.optString("id") ?: "scenix-apple"
-        val name = choice?.optString("name") ?: "Clean"
+        val name = choice?.optString("name") ?: "Apple"
         val asset = choice?.optString("asset")?.takeIf { it.isNotBlank() } ?: "theme-apple.json"
         val tokens = try {
             JSONObject(assets.open(asset).bufferedReader().use { it.readText() })

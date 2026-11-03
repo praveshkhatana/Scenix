@@ -293,13 +293,16 @@ class Theme private constructor(
             } catch (t: Throwable) {
                 Log.w(TAG, "assets/themes.json missing or unreadable", t)
             }
-            if (out.isEmpty()) out.add(Choice(DEFAULT_ID, "Clean", "theme-apple.json", "Scene"))
+            if (out.isEmpty()) out.add(Choice(DEFAULT_ID, "Apple", "theme-apple.json", "Scene"))
             return out
         }
 
         /** A saved id whose pack this build no longer ships resolves to the default pack. */
         fun assetFor(assets: AssetManager, id: String): String {
             val all = catalog(assets)
+            // The Clean pack was retired in favour of Glass. A device still holding its id lands on
+            // the pack that replaced it instead of silently reverting to Apple.
+            if (id == "scenix-clean") all.firstOrNull { it.id == "scenix-glass" }?.let { return it.asset }
             return all.firstOrNull { it.id == id }?.asset
                 ?: all.firstOrNull { it.id == DEFAULT_ID }?.asset
                 ?: ASSET
@@ -334,8 +337,11 @@ class Theme private constructor(
             return out
         }
 
-        fun assetFor(context: android.content.Context, assets: AssetManager, id: String): String =
-            catalog(context, assets).firstOrNull { it.id == id }?.asset ?: ASSET
+        fun assetFor(context: android.content.Context, assets: AssetManager, id: String): String {
+            val all = catalog(context, assets)
+            if (id == "scenix-clean") all.firstOrNull { it.id == "scenix-glass" }?.let { return it.asset }
+            return all.firstOrNull { it.id == id }?.asset ?: ASSET
+        }
 
         fun load(
             context: android.content.Context,

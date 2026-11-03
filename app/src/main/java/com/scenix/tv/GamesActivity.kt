@@ -412,7 +412,9 @@ class GamesActivity : Activity() {
             })
             val glowPad = theme.focusGlowInset
             val ringOn = View(this@GamesActivity)
-            card.addView(ringOn, FrameLayout.LayoutParams(cardW, artH + glowPad * 2).apply {
+            // The halo canvas must sit BEHIND the art. Added last, its glow plates painted over the
+            // thumbnail and the focused card looked blank; index 0 keeps the art on top.
+            card.addView(ringOn, 0, FrameLayout.LayoutParams(cardW, artH + glowPad * 2).apply {
                 gravity = Gravity.TOP or Gravity.START
                 topMargin = -glowPad
             })
