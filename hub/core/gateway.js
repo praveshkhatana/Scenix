@@ -570,7 +570,19 @@ async function resolve(source, opts = {}) {
     return { url: null, reason: 'engine not answering at ' + ENGINE + (engineSeen.note ? ' (' + engineSeen.note + ')' : '') };
   }
   const info = await prepare(source, opts.budgetMs, opts.want);
-  if (!info) return { url: null, reason: 'no info hash to serve' };
+  if (!info) {
+    // `prepare` returns null only when an earlier attempt is still being honoured, so the honest reason
+    // is that earlier attempt: what the engine said, and when it may be asked again.
+    const miss = prepared.get('miss:' + hashOf(source));
+    const waited = miss ? Math.round((Date.now() - miss.at) / 1000) : 0;
+    return {
+      url: null,
+      reason: miss
+        ? 'engine already tried this copy' + (miss.error ? ' (' + miss.error + ')' : '')
+          + ', asked again in ' + Math.max(0, Math.ceil(((miss.ttl || MISS_DEAD_MS) - waited * 1000) / 1000)) + 's'
+        : 'no info hash to serve',
+    };
+  }
   if (info.error || info.fileId === undefined) {
     return { url: null, reason: 'engine has not read this copy (' + (info.error || 'no file list') + ')' };
   }

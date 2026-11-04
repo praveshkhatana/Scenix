@@ -2158,7 +2158,11 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
 async function mintedRefusal(o, deadline) {
   if (!probe.ENABLED || !probe.probeable(o && o.url)) return null;
   const headers = o.headers || {};
-  const coldHost = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|web\.app/i
+  // Cloudflare Workers relays are the other cold-start family: the mint hands over a
+  // `*.workers.dev/?origin=…` address, and the first request pays the worker's start-up plus the
+  // origin's own round trip. Measured on the play path: the same relay answered in 4.6 s once and
+  // missed a 1.2 s budget twice, which turned a real copy into "no answer in 1200ms".
+  const coldHost = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|web\.app|workers\.dev/i
     .test(String((o && o.url) || ''));
   const known = probe.peek(o.url, headers);
   // Already measured: a working link needs nothing from this check, and a failure we still believe is
@@ -2689,7 +2693,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (left <= 0) { tried.push('out of time after ' + queue.indexOf(cand) + ' tries'); break; }
     const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
-    if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
+    if (!o || !o.url) {
+      // The addon named this copy and then had no address for it. Saying which addon is the whole
+      // diagnosis: one aggregator whose mint endpoint is failing looks nothing like a dead internet.
+      tried.push(labelOf(cand) + ': no play target from ' + addon.id);
+      log('PLAY NO TARGET', identity, addon.id, labelOf(cand));
+      continue;
+    }
     // The two label tests. A copy whose own name is another release is the most common way a free
     // source turns out to be the wrong film, so the ladder will not pick one by itself.
     // A live channel's "label" is a quality ("576p stream"), not a release name. The film title
@@ -3231,6 +3241,18 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   if (!out || !out.url) {
     // The viewer sees "nothing played" either way; the difference is whether the log can say why.
     log('PLAY FAIL', identity, tried.join(' | '));
+    // "No play target" means the candidate list named copies that had no address behind them — the
+    // addon's stream answer was a shrug, or its mint failed at play time. Drop the cached answers for
+    // this identity and answer with the warming bargain: the retry the app already makes goes back to
+    // the addons instead of reading the same shrug off the cache.
+    if (tried.length > 0 && tried.some((t) => /no play target/i.test(t))
+      && tried.every((t) => /no play target|nothing better/i.test(t))) {
+      addons.forgetStreams(identity);
+      return { status: 503, body: {
+        error: 'warming', warming: true, retryAfterMs: 1500, identity, tried,
+        detail: 'the copies this hub was told about had no address behind them; asking the addons again',
+      } };
+    }
     // When every refusal was of the silence kind — timeouts, no bytes, dropped sockets — rather than
     // a refusal of the content (an HTML page, the wrong film's filename), the copies may simply be
     // sleeping hosts that have not woken yet. Answer the hub's warming bargain and the app waits and
