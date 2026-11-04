@@ -137,31 +137,51 @@ function diff(a, b) {
   }
 }
 
+// The goldens are a 1280x720 canvas. A television that renders at 1080p and is then scaled down does
+// not produce the same frame as one that renders at 720p: glyph rasterisation and every hairline move,
+// which tripped all 53 goldens at once. Ask the device for the canvas the goldens were made at, and put
+// its own setting back when the run is over.
+const CANVAS = '1280x720';
+function pinCanvas() {
+  try {
+    adb(['shell', 'wm', 'size', CANVAS]);
+    console.log(`canvas pinned to ${CANVAS} (the golden size)`);
+  } catch (e) { console.log('could not pin the capture canvas:', e.message); }
+}
+function releaseCanvas() {
+  try { adb(['shell', 'wm', 'size', 'reset']); } catch (e) { /* the TV keeps its own setting */ }
+}
+
 let failed = 0;
 let written = 0;
-for (const t of targets) {
-  const shot = capture(t);
-  const golden = goldenPath(t);
-  const label = `${t.entry.id.padEnd(18)} ${t.state.padEnd(10)} ${t.theme}`;
-  const normal = path.join(TMP, 'norm-' + path.basename(shot));
-  normalise(shot, normal);
-  if (write) {
-    fs.mkdirSync(path.dirname(golden), { recursive: true });
-    fs.copyFileSync(normal, golden);
-    written++;
-    console.log(`write  ${label}`);
-    continue;
+pinCanvas();
+try {
+  for (const t of targets) {
+    const shot = capture(t);
+    const golden = goldenPath(t);
+    const label = `${t.entry.id.padEnd(18)} ${t.state.padEnd(10)} ${t.theme}`;
+    const normal = path.join(TMP, 'norm-' + path.basename(shot));
+    normalise(shot, normal);
+    if (write) {
+      fs.mkdirSync(path.dirname(golden), { recursive: true });
+      fs.copyFileSync(normal, golden);
+      written++;
+      console.log(`write  ${label}`);
+      continue;
+    }
+    if (!fs.existsSync(golden)) {
+      failed++;
+      if (strict) console.log(`missing ${label}`);
+      continue;
+    }
+    process.stdout.write(`diff   ${label}  `);
+    if (!diff(golden, normal)) {
+      failed++;
+      console.log(`  (changed; new capture at ${shot})`);
+    }
   }
-  if (!fs.existsSync(golden)) {
-    failed++;
-    if (strict) console.log(`missing ${label}`);
-    continue;
-  }
-  process.stdout.write(`diff   ${label}  `);
-  if (!diff(golden, normal)) {
-    failed++;
-    console.log(`  (changed; new capture at ${shot})`);
-  }
+} finally {
+  releaseCanvas();
 }
 
 adb(['shell', 'am', 'force-stop', 'com.scenix.tv']);
