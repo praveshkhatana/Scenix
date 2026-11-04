@@ -24,8 +24,8 @@ const req = (headers, encrypted = false) => ({
 });
 
 ok('plain HTTP host',
-  origin(req({ host: '192.168.1.20:8788' })),
-  'http://192.168.1.20:8788');
+  origin(req({ host: '192.168.0.24:8788' })),
+  'http://192.168.0.24:8788');
 
 ok('direct TLS socket',
   origin(req({ host: 'tv.example' }, true)),

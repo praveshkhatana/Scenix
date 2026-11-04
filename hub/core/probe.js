@@ -78,7 +78,7 @@ const FAIL_TTL_MS = num(process.env.PROBE_FAIL_TTL_MS, 60 * 1000); // a dead lin
 // 1.2 s verdict calls that "dead", the play refuses the copy, and the viewer's second tap — which
 // woke the box — works. That gap is the "works on retry" bug. Ask these hosts for their wake-up
 // time once, up front.
-const COLD_HOST = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|\bweb\.app\b/i;
+const COLD_HOST = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|\bweb\.app\b|workers\.dev/i;
 const COLD_START_WAIT_MS = num(process.env.PROBE_COLD_START_MS, 6000);
 function coldAllowance(url, timeoutMs) {
   return COLD_HOST.test(String(url || '')) ? Math.max(timeoutMs, COLD_START_WAIT_MS) : timeoutMs;

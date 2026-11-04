@@ -38,6 +38,14 @@ const DEFAULT_ADDONS_FILE = process.env.DEFAULT_ADDONS_FILE || path.join(ROOT, '
 const CACHE_FILE = process.env.ADDON_CACHE_FILE || path.join(DATA_DIR, 'addon-cache.json');
 
 const TTL_MS = Number(process.env.ADDON_TTL_MS || 6 * 60 * 60 * 1000); // freshness rule, 6 h
+/**
+ * An addon answering `{"streams": []}` is not reporting a fact about the title; it is reporting that it
+ * had nothing at that moment. Measured on the play path: an episode's copy list was present on one
+ * request and empty on the next, and the 6 h rule held that empty answer for the rest of the evening —
+ * "1080p · 259 MB: no play target", with the good copy gone from the candidate list. An empty answer is
+ * kept short so the next press re-asks; a non-empty one still rides the long TTL.
+ */
+const EMPTY_TTL_MS = Number(process.env.ADDON_EMPTY_TTL_MS || 3 * 60 * 1000);
 const FETCH_TIMEOUT_MS = Number(process.env.ADDON_TIMEOUT_MS || 8000);
 const META_WAIT_MS = Number(process.env.ADDON_META_WAIT_MS || 6000); // a detail page may wait this long
 const MANIFEST_WAIT_MS = Number(process.env.ADDON_MANIFEST_WAIT_MS || 8000);
@@ -209,9 +217,50 @@ function get(url, timeoutMs = FETCH_TIMEOUT_MS, ok404 = false) {
  *  staleOk  - an expired copy answers now, the refresh happens in the background
  * Without either, a miss kicks the fetch and answers the stale copy or null: home never waits.
  */
+/**
+ * How long a cached answer is worth serving. An answer with nothing in it — no streams, no items, no
+ * meta — is a shrug, and a shrug is re-asked within minutes rather than obeyed for six hours.
+ */
+function answerIsShrug(body) {
+  if (!body || typeof body !== 'object') return true;
+  if (Array.isArray(body)) return body.length === 0;
+  for (const k of ['streams', 'items', 'sources']) {
+    if (Array.isArray(body[k])) return body[k].length === 0;
+  }
+  if ('meta' in body) return !body.meta;
+  return Object.keys(body).length === 0;
+}
+
+function ttlFor(body) {
+  return answerIsShrug(body) ? Math.min(TTL_MS, EMPTY_TTL_MS) : TTL_MS;
+}
+
+/**
+ * Drop the cached stream answers for one identity. The play ladder calls this when the copies it was
+ * told about had no address behind them: the answer is thrown away rather than re-asked for, so the
+ * next press goes to the addons instead of reading the same empty reply back for hours.
+ */
+function forgetStreams(identity) {
+  const raw = String(identity || '');
+  const bare = raw.replace(/^[a-z]+:/i, '');
+  const show = bare.replace(/:\d+(:\d+)?$/, '');
+  const ids = [...new Set([raw, bare, show].filter((s) => s && s.length >= 5))];
+  if (!ids.length) return 0;
+  let n = 0;
+  for (const key of cache.keys()) {
+    if (!/\/stream\//.test(key)) continue;
+    if (!ids.some((id) => key.includes(id))) continue;
+    cache.delete(key);
+    n++;
+  }
+  if (n) log('ADDON CACHE FORGOT', raw, n, 'stream answers');
+  scheduleCacheSave();
+  return n;
+}
+
 function getJson(url, { wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT_MS, tag = '', ok404 = false } = {}) {
   const hit = cache.get(url);
-  if (hit && Date.now() - hit.at < TTL_MS) return Promise.resolve(hit.body);
+  if (hit && Date.now() - hit.at < ttlFor(hit.body)) return Promise.resolve(hit.body);
   if (!inflight.has(url)) {
     const p = get(url, timeoutMs, ok404)
       .then((body) => {
@@ -924,9 +973,14 @@ class External {
     const hit = cache.get(this.streamPath(identity));
     if (!hit || !hit.body) return [];
     const parsed = sourcesFromStreams(this.id, hit.body);
-    this.streamSources.set(identity, parsed.sources);
-    this.streamIndex.set(identity, parsed.byLabel);
-    this.lastFetch = Date.now();
+    // An empty parse is not a fact worth remembering. Memoising it is how a play a minute later answers
+    // "no play target" for a copy the picker is still showing: the tile's sources came from one fetch,
+    // while this label lookup found the memoised nothing.
+    if (parsed.sources.length) {
+      this.streamSources.set(identity, parsed.sources);
+      this.streamIndex.set(identity, parsed.byLabel);
+      this.lastFetch = Date.now();
+    }
     return parsed.sources;
   }
 
@@ -998,9 +1052,19 @@ class External {
   async play(identity, source) {
     await this.ensureManifest();
     if (!this.has('stream')) return null;
-    const index = this.streamIndex.get(identity);
-    if (!index || !index.size) return null;
-    const entry = (source && source.label && index.get(source.label)) || [...index.values()][0];
+    let index = this.streamIndex.get(identity);
+    let entry = (source && source.label && index && index.get(source.label)) || null;
+    // The picker is showing this copy, and this addon's own index does not know it: the cached stream
+    // answer it was built from has since gone stale or empty. Ask that addon once, live, before calling
+    // the copy unplayable — "no play target" was otherwise a hub cache artefact, not a dead file.
+    if (!entry) {
+      await getJson(this.streamPath(identity),
+        { wait: true, staleOk: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
+      this.sources({ identity });
+      index = this.streamIndex.get(identity);
+      entry = (source && source.label && index && index.get(source.label))
+        || (index && [...index.values()][0]) || null;
+    }
     if (!entry) return null;
     if (entry.kind === 'torrent') {
       const magnet = entry.magnet
@@ -1472,7 +1536,7 @@ function byId(id) {
 
 module.exports = {
   init, list, add, remove, setEnabled, byId, entries, resyncSeeds, seedAddons, clearCache,
-  pendingFor, episodeAddress,
+  pendingFor, episodeAddress, forgetStreams,
   // Background cache fill for every genre each mounted addon declares. `installed` holds the live objects -
   // `entries()` is the saved config and has no methods to call, which is the kind of mistake that makes a
   // warm-up look like it ran while it fetched nothing at all. Native providers sit in the same map wrapped
@@ -1489,7 +1553,7 @@ module.exports = {
   // A getter, so a client reading its limits sees the owner's current choices rather than the values this
   // process happened to have when it started.
   get limits() {
-    return { TTL_MS, FETCH_TIMEOUT_MS, META_WAIT_MS,
+    return { TTL_MS, EMPTY_TTL_MS, FETCH_TIMEOUT_MS, META_WAIT_MS,
       MAX_SOURCES: maxSources(), MIN_SIZE_BYTES: minSizeBytes(), WARM_STREAMS };
   },
   util: { langCodes, humanSize, parseStream, sourcesFromStreams, identityFor, remoteIdFor, mapType },

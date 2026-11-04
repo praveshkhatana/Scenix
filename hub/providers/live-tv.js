@@ -88,30 +88,76 @@ function get(url, timeoutMs = 20000) {
   });
 }
 
-/** Does this feed answer at all? A HEAD is enough for most CDNs; range-GET covers the rest. */
+/**
+ * Is this feed real? Checking only the master manifest is not enough: several feeds in this box's
+ * playlist answer `200` for the master and then 404 every media playlist inside it, so the wall said
+ * "working", the app opened the channel, and ExoPlayer sat on a black screen. So: fetch the manifest,
+ * then reach one level deeper (a variant's playlist, or a media playlist's first segment) and require
+ * that to answer too. Redirects count; two round-trips is the budget a channel change can afford.
+ */
 function feedAlive(url, headers, timeoutMs = 3500) {
-  return new Promise((resolve) => {
+  const isM3U8 = /\.m3u8(\?|$)/i.test(url);
+  const probe = (target) => new Promise((res) => {
     let done = false;
-    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    const finish = (ok) => { if (!done) { done = true; res(ok); } };
     try {
-      const mod = url.startsWith('https:') ? https : http;
-      const req = mod.get(url, {
+      const mod = target.startsWith('https:') ? https : http;
+      const req = mod.get(target, {
         headers: Object.assign({ Range: 'bytes=0-0' }, headers || {}),
         timeout: timeoutMs,
-      }, (res) => {
-        const code = res.statusCode || 0;
-        res.resume();
-        if (code >= 300 && code < 400 && res.headers.location) {
-          finish(true); // a redirect that answers is a live feed
-          return;
-        }
+      }, (r) => {
+        const code = r.statusCode || 0;
+        r.resume();
+        if (code >= 300 && code < 400 && r.headers.location) return finish(true);
         finish(code === 200 || code === 206);
       });
       req.on('timeout', () => { req.destroy(); finish(false); });
       req.on('error', () => finish(false));
     } catch (e) { finish(false); }
   });
+  if (!isM3U8) return probe(url);
+  return new Promise((res) => {
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; res(ok); } };
+    try {
+      const mod = url.startsWith('https:') ? https : http;
+      const req = mod.get(url, { headers: headers || {}, timeout: timeoutMs }, (r) => {
+        const code = r.statusCode || 0;
+        if (code >= 300 && code < 400 && r.headers.location) {
+          r.resume();
+          return finish(probe(new URL(r.headers.location, url).toString()));
+        }
+        if (code !== 200) { r.resume(); return finish(false); }
+        let body = '';
+        r.setEncoding('utf8');
+        r.on('data', (c) => { body += c; if (body.length > 24000) r.destroy(); });
+        r.on('error', () => finish(true)); // manifest answered; deep check lost the race
+        r.on('end', () => {
+          const lines = body.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+          if (!lines.length) return finish(false);
+          finish(probe(new URL(lines[0], url).toString()));
+        });
+      });
+      req.on('timeout', () => { req.destroy(); finish(false); });
+      req.on('error', () => finish(false));
+    } catch (e) { finish(false); }
+  });
 }
+
+/**
+ * Same channel, different listing. Playlists carry "Sony Max HD" and "Sony MAX SD" as different
+ * names, so a dead HD entry has no sibling under that exact name even though the SD feed for the
+ * same channel is alive. Fold the quality/region words out of the name to find those siblings.
+ */
+function nameSiblings(name) {
+  const canon = (n) => slug(String(n || ''))
+    .replace(/(hd|sd|fhd|uhd|4k|full_?hd|india|hindi|english|telugu|tamil)/g, '')
+    .replace(/_+/g, '_').replace(/^_|_$/g, '');
+  const key = canon(name);
+  if (!key) return [];
+  return channels.filter((c) => c.name !== name && canon(c.name) === key);
+}
+
 
 const feedCache = new Map(); // identity -> { url, at }
 const FEED_CACHE_MS = 60 * 1000;
@@ -645,34 +691,50 @@ module.exports = {
     const item = await this.meta(identity);
     if (!item) return null;
     // The saved health is a fact about the URL the prober watched, and a playlist refresh can replace
-    // that URL while the verdict survives. Try that variant first, then the other feeds, and hand the
-    // player one that answered — a channel with a dead first entry and a live second one used to be
-    // "off the air" even though the household could watch it.
+    // that URL while the verdict survives. So try variants, not just the lightest: probe the feeds
+    // (health-matching first) and hand the player one that answered. A channel with a dead first
+    // entry and a live second one used to be "off the air" even though the household could watch it.
     const variants = channels.filter((c) => identityForName(c.name) === item.identity);
     if (!variants.length) return null;
-    const cached = feedCache.get(identity);
-    if (cached && Date.now() - cached.at < FEED_CACHE_MS
-        && variants.some((c) => c.url === cached.url)) {
-      return feedFor(variants.find((c) => c.url === cached.url));
-    }
+    const wanted = source && source.quality
+      ? variants.filter((c) => c.quality === source.quality) : variants;
     const h = liveHealth.get(identity);
-    const ordered = variants.slice().sort((a, b) => {
+    const ordered = wanted.slice().sort((a, b) => {
       if (h && h.ok && h.url === a.url) return -1;
       if (h && h.ok && h.url === b.url) return 1;
       return 0;
     });
-    for (const c of ordered.slice(0, 4)) {
+    const cached = feedCache.get(identity);
+    if (cached && Date.now() - cached.at < FEED_CACHE_MS
+        && ordered.some((c) => c.url === cached.url)) {
+      return feedFor(ordered.find((c) => c.url === cached.url));
+    }
+    const candidates = ordered.slice(0, 4);
+    const verdicts = await Promise.all(candidates.map(async (c) => {
+      const headers = { 'User-Agent': UA, Referer: new URL(c.url).origin + '/' };
+      return { c, ok: await feedAlive(c.url, headers) };
+    }));
+    const hit = verdicts.find((v) => v.ok);
+    if (hit) {
+      feedCache.set(identity, { url: hit.c.url, at: Date.now() });
+      liveHealth.report(identity, true, hit.c.url, null); // the wall's health reflects real viewers
+      return feedFor(hit.c);
+    }
+    // Same channel under a different listing (HD dead, SD alive) is still that channel; a real TV
+    // app downgrades quality rather than telling the viewer the channel does not exist.
+    for (const c of nameSiblings(item.title).slice(0, 4)) {
       const headers = { 'User-Agent': UA, Referer: new URL(c.url).origin + '/' };
       if (await feedAlive(c.url, headers)) {
         feedCache.set(identity, { url: c.url, at: Date.now() });
+        liveHealth.report(identity, true, c.url, null);
         return feedFor(c);
       }
     }
-    // Nothing answered; return the first variant so the client gets the same honest failure it
-    // would have had without the probe, rather than "no source" for a channel that exists.
+    // Nothing answered: say so, and hand back the first variant so the client gets the same honest
+    // failure it would have had without the probe, rather than "no source" for a channel that exists.
+    liveHealth.report(identity, false, candidates[0] ? candidates[0].url : null, 'no feed answered');
     return feedFor(variants[0]);
   },
-
   stats() {
     return {
       channels: channels.length,

@@ -726,7 +726,34 @@ function warmStreams(identities) {
  * dedupe -> record addedAt -> contribute sources from every addon -> rules in order (a rule returning
  * null drops the item) -> progress.
  */
-async function pipeline(items, ctx) {
+/**
+ * A title a rule hid is not a title that does not exist. The app shows these words, so naming the rule
+ * is the difference between "this profile can't watch this title" and a status code.
+ */
+function ruleDropBody(identity, drops) {
+  const by = (drops || [])[(drops || []).length - 1];
+  const rule = by && by.rule ? by.rule : true;
+  const words = {
+    'language-allowlist': 'this title is not in the languages this profile allows',
+    'maturity': 'this title is above the age this profile allows',
+    'kids-allowlist': 'this title is not on the kids list for this profile',
+    'size-cap': 'no copy of this title fits the file-size limit this profile uses',
+  }[by && by.rule];
+  // The household can fix a setting only if they can see what the hub believed.
+  const detail = words || 'a hub rule hides this title for this profile';
+  const named = by && by.because && by.because.claimed && by.because.claimed.length
+    ? detail + ' (it says ' + by.because.claimed.join(', ')
+      + '; this profile allows ' + (by.because.allowed || []).join(', ') + ')'
+    : detail;
+  return {
+    identity,
+    droppedByRule: rule,
+    error: 'dropped by rule',
+    detail: named,
+  };
+}
+
+async function pipeline(items, ctx, drops) {
   const deduped = merge.dedupe(items, registry.priorities);
   store.touchItems(deduped);
   for (const it of deduped) await contributeSources(it);
@@ -740,7 +767,21 @@ async function pipeline(items, ctx) {
       } catch (e) {
         log('RULE ERROR', rule.id, e.message); // a broken rule must not lose the item
       }
-      if (it === null || it === undefined) break;
+      if (it === null || it === undefined) {
+        // A title that vanishes with no name attached to it is the hardest thing in this product to
+        // debug, and the viewer deserves better than a 403: one rule said no, and which one it was is
+        // the whole answer. `drops` is how the route passes that to the app's message.
+        if (drops) drops.push({
+          identity: start && start.identity,
+          rule: rule.id,
+          because: start && start._langDroppedBecause,
+        });
+        log('DROP BY RULE', (start && start.identity) || '?', rule.id,
+          'tier', start && start.tier, 'minAge', start && start.minAge,
+          'langs', JSON.stringify((start && start.languages) || null),
+          'for profile', ctx.profile && ctx.profile.id);
+        break;
+      }
     }
     if (!it) continue;
     it.progress = ctx.store.progressFor(ctx.profile.id, it.identity);
@@ -1918,6 +1959,13 @@ function hasAudioLanguage(source, lang) {
   return e.fromClaims;
 }
 
+/** Does this source's MEASURED track list carry the language? A filename claim does not count. */
+function hasAudioTrack(source, lang) {
+  if (!lang) return false;
+  const list = source && Array.isArray(source.audioTracks) ? source.audioTracks : [];
+  return list.some((t) => t && media.langOf(t.language) === lang);
+}
+
 /** The donor track's container index, or null when the source only claims a language. */
 function audioOrdinal(source, lang) {
   return ordinalFromTracks(Array.isArray(source.audioTracks) ? source.audioTracks : [], lang);
@@ -2110,7 +2158,11 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
 async function mintedRefusal(o, deadline) {
   if (!probe.ENABLED || !probe.probeable(o && o.url)) return null;
   const headers = o.headers || {};
-  const coldHost = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|web\.app/i
+  // Cloudflare Workers relays are the other cold-start family: the mint hands over a
+  // `*.workers.dev/?origin=…` address, and the first request pays the worker's start-up plus the
+  // origin's own round trip. Measured on the play path: the same relay answered in 4.6 s once and
+  // missed a 1.2 s budget twice, which turned a real copy into "no answer in 1200ms".
+  const coldHost = /herokuapp\.com|onrender\.com|koyeb\.app|railway\.app|fly\.dev|web\.app|workers\.dev/i
     .test(String((o && o.url) || ''));
   const known = probe.peek(o.url, headers);
   // Already measured: a working link needs nothing from this check, and a failure we still believe is
@@ -2326,6 +2378,20 @@ function resolutionOf(source) {
   return wide ? '2160P' : null;
 }
 
+/**
+ * Does this label state the exact episode being asked for? `episodeInLabel` answers true for a label
+ * that states no episode at all, so this is the stronger test: the file names the episode itself.
+ * Aggregators name files after themselves ("Titan VII - S01E01 Direct MP4"), and the episode number is
+ * then the only identity claim the copy makes — and it is a correct one. Treating the unfamiliar
+ * house name as another film was refusing a copy of the right episode.
+ */
+function statesTheEpisode(label, ep) {
+  if (!ep || !ep.season || !ep.episode) return false;
+  const text = String(label || '');
+  if (!/(?:^|[^a-z0-9])s(\d{1,2})[\s._-]*e(\d{1,3})(?:[^0-9]|$)/i.test(text)) return false;
+  return episodeInLabel(text, ep);
+}
+
 function listAlternatives(candidates, source, title, ep = null) {
   const others = candidates.filter((s) => s !== source);
   // A copy whose parenthetical names a different title, or whose own SxxEyy is another episode,
@@ -2335,7 +2401,9 @@ function listAlternatives(candidates, source, title, ep = null) {
     && episodeInLabel(labelOf(s), ep));
   const pool = honest.length ? honest : others;
   const flagged = pool.map((s) => (
-    nameIsntTheTitle(labelOf(s), title) ? Object.assign({}, s, { mislabeled: true }) : s
+    // The episode number in the file's own name outranks an unfamiliar house name on it.
+    nameIsntTheTitle(labelOf(s), title) && !statesTheEpisode(labelOf(s), ep)
+      ? Object.assign({}, s, { mislabeled: true }) : s
   ));
   flagged.sort((a, b) => (a.mislabeled === true ? 1 : 0) - (b.mislabeled === true ? 1 : 0));
   return flagged.slice(0, ALT_MAX).map((s) => (
@@ -2382,8 +2450,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const introPromise = (type === 'series' && ep && ep.season > 0 && ep.episode > 0)
     ? introdb.introFor(identity, ep.season, ep.episode, { timeoutMs: 1200 })
     : Promise.resolve(null);
-  const [kept] = await pipeline([item], ctx); // rules rank sources and enforce the profile's scope
-  if (!kept) return { status: 403, body: { identity, droppedByRule: true } };
+  const drops = [];
+  const [kept] = await pipeline([item], ctx, drops); // rules rank sources and enforce the profile's scope
+  if (!kept) return { status: 403, body: ruleDropBody(identity, drops) };
   let sources = kept.sources || [];
   if (!sources.length) {
     // Same bargain as the missing item: if an addon is still fetching this title's streams, the
@@ -2624,7 +2693,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (left <= 0) { tried.push('out of time after ' + queue.indexOf(cand) + ' tries'); break; }
     const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
-    if (!o || !o.url) { tried.push(labelOf(cand) + ': no play target'); continue; }
+    if (!o || !o.url) {
+      // The addon named this copy and then had no address for it. Saying which addon is the whole
+      // diagnosis: one aggregator whose mint endpoint is failing looks nothing like a dead internet.
+      tried.push(labelOf(cand) + ': no play target from ' + addon.id);
+      log('PLAY NO TARGET', identity, addon.id, labelOf(cand));
+      continue;
+    }
     // The two label tests. A copy whose own name is another release is the most common way a free
     // source turns out to be the wrong film, so the ladder will not pick one by itself.
     // A live channel's "label" is a quality ("576p stream"), not a release name. The film title
@@ -2632,7 +2707,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // of the wall. Identity is the channel; the variants are its feeds.
     const liveChannel = kept.type === 'channel' || !!kept.live;
     const otherTitle = liveChannel ? false : labelNamesOtherTitle(labelOf(cand), kept.title);
-    const mislabeled = liveChannel ? false : nameIsntTheTitle(labelOf(cand), kept.title);
+    // The episode number the file states about itself is a fact about the copy, and it is the strongest
+    // one an aggregator's release name offers. "Titan VII - S01E01 Direct MP4" asked for as S01E01 is
+    // the right episode under a house name, so it is not treated as another film. A label that claims a
+    // different title in parentheses still is.
+    const rightEpisode = !liveChannel && statesTheEpisode(labelOf(cand), ep);
+    const mislabeled = liveChannel ? false
+      : (rightEpisode ? false : nameIsntTheTitle(labelOf(cand), kept.title));
     // A person who named this copy in the Quality menu outranks an odd release name: providers
     // mislabel real copies, and the better-quality one is often exactly the odd-named file. That
     // grace does NOT extend to a copy whose own name (or SxxEyy) is a different programme: an
@@ -3160,6 +3241,18 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   if (!out || !out.url) {
     // The viewer sees "nothing played" either way; the difference is whether the log can say why.
     log('PLAY FAIL', identity, tried.join(' | '));
+    // "No play target" means the candidate list named copies that had no address behind them — the
+    // addon's stream answer was a shrug, or its mint failed at play time. Drop the cached answers for
+    // this identity and answer with the warming bargain: the retry the app already makes goes back to
+    // the addons instead of reading the same shrug off the cache.
+    if (tried.length > 0 && tried.some((t) => /no play target/i.test(t))
+      && tried.every((t) => /no play target|nothing better/i.test(t))) {
+      addons.forgetStreams(identity);
+      return { status: 503, body: {
+        error: 'warming', warming: true, retryAfterMs: 1500, identity, tried,
+        detail: 'the copies this hub was told about had no address behind them; asking the addons again',
+      } };
+    }
     // When every refusal was of the silence kind — timeouts, no bytes, dropped sockets — rather than
     // a refusal of the content (an HTML page, the wrong film's filename), the copies may simply be
     // sleeping hosts that have not woken yet. Answer the hub's warming bargain and the app waits and
@@ -3347,7 +3440,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const byPref = prefAudio
     .map((lang) => out.audioTracks.find((t) => media.langOf(t.language) === lang))
     .find(Boolean) || null;
-  const chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
+  let chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
     // Nothing asked for: name the track the hub would recommend. The profile's own language order comes
     // first, and only then whatever flag the packager stamped on the file — measured on a torrent whose
     // Italian track carries the container's default bit while its English one sits second, and honouring
@@ -3380,10 +3473,87 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }
   const primaryHas = desiredLang ? hasAudioLanguage(source, desiredLang) : false;
   const forcedMix = !!(mixOpt && mixOpt.force === true);
+  // A hand pick says "give me this language even if the filename only claims it". It does not mean
+  // "replace the track this file already carries". So measure the picture before honouring it: several
+  // of this household's 1080p copies ship BOTH Hindi and English, and the old code re-muxed a donor
+  // over the file's own Hindi track — the viewer pressed "Hindi", ffmpeg started a fresh read of a
+  // 666 MB file, and the sound changed (if at all) many seconds later. A track in the picture is both
+  // the better answer and the instant one.
+  let pictureProbe = null;
+  // ffmpeg and the header probe should read the bytes this box is already paying for, not a fresh
+  // connection to a host that rationes them. On a direct internet copy that address is this hub's own
+  // cushion: several ranged reads, the head of the file in RAM, cut reads retried by the hub. The probe
+  // below and the remux further down both read it, so one fill serves both.
+  let engineUrl = out.url;
+  let engineHeadersIn = out.headers;
+  if (desiredLang && mixRequested && out.mode !== 'gateway' && readahead.cfg().direct
+      && /^https?:\/\//i.test(String(out.url || ''))) {
+    const buf = readahead.acquire({ url: out.url, headers: out.headers || {} });
+    if (buf) {
+      const tok = mintBuffer({ url: out.url, headers: out.headers, need: out.neededMbps });
+      const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
+      engineUrl = base + '/app/v1/buffer?t=' + tok
+        + (Number.isFinite(out.neededMbps) ? '&need=' + out.neededMbps : '');
+      // The cushion carries the origin's signed link and Referer on the hub side; nothing downstream
+      // should send its own copy of them back to the hub.
+      engineHeadersIn = {};
+      // Pull the bytes ffmpeg will read while the /play request is still open. It parses the container
+      // from byte 0 and then jumps to the playhead, so warm both ends: the head is always wanted, and
+      // the playhead is where the film is. ffmpeg would otherwise fetch each of them itself at the front
+      // of a 25 s first-byte budget, and on a host that rationes reads that wait is the difference
+      // between switching language in a second and the viewer giving up.
+      const head = await readahead.preBuffer(buf, {
+        bytes: 8, sec: readahead.cfg().preSec, budgetMs: Math.max(500, Math.min(1500, deadline - Date.now())),
+      });
+      const size = Number(source && source.sizeBytes) || 0;
+      const durMs = Number(kept.durationMs) || Number(out.probe && out.probe.durationMs) || 0;
+      const at = size && durMs
+        ? Math.floor(size * (Math.max(0, Number(opts.positionMs) || 0) / durMs)) : 0;
+      const warm = at > 0 ? await readahead.sustain(buf, {
+        at,
+        needMbps: Number.isFinite(out.neededMbps) ? out.neededMbps : 0,
+        budgetMs: Math.max(500, Math.min(2000, deadline - Date.now())),
+      }) : head;
+      log('REMUX INPUT CUSHIONED', identity, labelOf(source), 't=' + tok, 'at=' + at,
+        'headMB=' + (head && head.MB != null ? head.MB : '?'),
+        'mbps=' + (warm && Number.isFinite(warm.mbps) ? warm.mbps.toFixed(1) : '?'),
+        'heldMB=' + Math.round(buf.held() / 1048576));
+    }
+  }
+  if (desiredLang && mixRequested && !hasAudioTrack(source, desiredLang)
+      && /^https?:\/\//i.test(String(engineUrl || '')) && deadline - Date.now() > 1200) {
+    pictureProbe = await media.probeUrl(engineUrl, {
+      timeoutMs: Math.max(700, Math.min(2000, deadline - Date.now() - 400)),
+    });
+    if (!pictureProbe) {
+      log('AUDIO PICTURE PROBE FAIL', identity, labelOf(source), String(out.url).slice(0, 70));
+    }
+    if (pictureProbe && Array.isArray(pictureProbe.audioTracks) && pictureProbe.audioTracks.length) {
+      out.audioTracks = pictureProbe.audioTracks.map((t) => ({ ...t }));
+      out.probe = Object.assign({}, out.probe || {}, {
+        durationMs: pictureProbe.durationMs || null,
+        sizeBytes: pictureProbe.sizeBytes || null,
+      });
+      log('AUDIO PICTURE PROBED', identity, labelOf(source),
+        pictureProbe.audioTracks.map((t) => (t.language || '?') + '@' + t.id).join(','));
+    }
+  }
+  const pictureHasTrack = desiredLang ? hasAudioTrack(source, desiredLang)
+    || hasAudioTrack(pictureProbe, desiredLang) : false;
   let donor = null;
   // The picture's own runtime, needed again by the mix metadata after the donor block closes.
   let pictureMs = 0;
-  if (desiredLang && mixRequested && (forcedMix || !primaryHas)) {
+  if (pictureHasTrack) {
+    // Nothing to mix: the picture copy IS the language the viewer asked for. Select it as a track.
+    const own = (out.audioTracks || []).find((t) => media.langOf(t.language) === desiredLang);
+    if (own) {
+      out.selectedAudio = own.id;
+      chosenAudio = own;
+      extraWhy.push('audio: this copy carries ' + (ranking.LANG_NAMES[desiredLang] || desiredLang)
+        + ' itself, so its own track was selected — no donor, no re-mux');
+    }
+  }
+  if (desiredLang && mixRequested && !pictureHasTrack && (forcedMix || !primaryHas)) {
     const donorPool = (allExcluded ? sources : pool).filter((s) => s !== source && !isExcluded(s, skip));
     let list = donorPool.filter((s) =>
       audioEvidence(s, desiredLang).fromTracks || audioEvidence(s, desiredLang).fromClaims);
@@ -3552,9 +3722,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (donor && out.container === 'any') out.container = 'mp4';
     const engine = out.mode === 'gateway' && out.torrent
       ? gateway.enginePlayUrl(out.torrent.hash, out.torrent.fileId)
-      : out.url;
-    // With a donor, the container stream index is the donor track; without one, it is the chosen track
-    // inside the picture. The remux code maps `1:a:<ord>` for a donor and `0:a:<ord>` for the picture.
+      : engineUrl;
+    const engineHeaders = out.mode === 'gateway' ? out.headers : engineHeadersIn;
     const audioIdx = donor ? null
       : (wantAudio != null ? wantAudio
         : (chosenAudio ? Number(String(chosenAudio.id).slice(2)) : null));
@@ -3574,7 +3743,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // A remux is a fresh ffmpeg run from this film position. The client must add it back to its
       // own timeline; without it a seek looks like the film restarted at zero.
       startMs: Math.max(0, Number(opts.positionMs) || 0),
-      headers: out.headers,
+      headers: engineHeaders,
       audioHeaders: donor && donor.target.headers ? donor.target.headers : null,
     };
     const rel = out.container === 'mp4'
@@ -4539,7 +4708,8 @@ async function handle(req, res) {
         }
         return send(res, 404, { error: 'not found', identity });
       }
-      const [kept] = await pipeline([item], ctx);
+      const metaDrops = [];
+      const [kept] = await pipeline([item], ctx, metaDrops);
       // Anything already measured is free, so the detail page shows the same status the play path
       // will use. Nothing here waits on the network: the meta response is exactly as fast as it was.
       // Files first, and only from caches: the ranking rule reads the languages a copy states, and it can
@@ -4569,7 +4739,7 @@ async function handle(req, res) {
         kept.reaction = store.reactionFor(profile.id, identity) || null;
         kept.seen = store.seenFor(profile.id, identity);
       }
-      send(res, kept ? 200 : 403, kept || { identity, droppedByRule: true });
+      send(res, kept ? 200 : 403, kept || ruleDropBody(identity, metaDrops));
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,
       // and by the time they press play the answer is in the cache instead of costing 1.5 s.
       if (kept) {

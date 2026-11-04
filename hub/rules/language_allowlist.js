@@ -35,6 +35,24 @@ module.exports = {
     const langs = item.languages;
     if (!Array.isArray(langs) || !langs.length) return item; // unknown language: not classifiable
     if (langs.some((l) => allow.includes(l))) return item;
+    // An addon's one-word "language" field is a claim about a title; the copies are evidence about what
+    // can actually be watched. Cinemeta has been seen calling The Dark Knight Dutch. Before a title
+    // disappears from the shelf entirely, ask the files: if a copy states a language this profile
+    // allows, the viewer can watch it, and hiding the title would be the hub contradicting its own shelf.
+    const fromFiles = (item.sources || [])
+      .flatMap((s) => [s.language, ...(Array.isArray(s.languages) ? s.languages : [])])
+      .filter((l) => typeof l === 'string' && l);
+    if (fromFiles.some((l) => allow.includes(l))) return item;
+    // Deleting a title is the loudest thing a rule can do, so it needs more than one addon's single
+    // word: the files have to say the same thing, or the title has to name several languages and none
+    // of them be allowed. A one-word claim with nothing behind it is left on the shelf and logged —
+    // "this title has no copy right now" is an honest answer, "this profile can't watch it" based on a
+    // bad metadata word is not.
+    if (langs.length === 1 && !fromFiles.length) {
+      item._langUncorroborated = true;
+      return item;
+    }
+    item._langDroppedBecause = { claimed: langs, files: fromFiles, allowed: allow };
     return null;
   },
 };
