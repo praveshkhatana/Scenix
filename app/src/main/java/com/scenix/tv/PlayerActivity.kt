@@ -1483,9 +1483,10 @@ class PlayerActivity : Activity() {
                         )
                     } else {
                         showError(
-                            str(reply, "error").ifBlank {
-                                transport ?: "No other copy of this title would open"
-                            }
+                            explainFailure(
+                                reply,
+                                transport ?: "No other copy of this title would open",
+                            )
                         )
                     }
                 } else {
@@ -3889,6 +3890,24 @@ class PlayerActivity : Activity() {
             else -> t.replaceFirstChar { it.uppercaseChar() }
         }
         return if (said.endsWith(".") || said.endsWith("…")) said else "$said."
+    }
+
+    /**
+     * "No playable source" is the hub's shortest possible sentence. When it also lists what it ruled
+     * out — "1080p stream: HTTP 403", "576p stream: timeout" — those two facts turn a dead end into an
+     * explanation: the feed is blocked by the channel, not missing from the house. Fold the first two
+     * reasons into the card; three lines is the whole space the card has.
+     */
+    private fun explainFailure(reply: JSONObject?, fallback: String): String {
+        val base = humaniseError(str(reply, "error").ifBlank { fallback })
+        val list = reply?.optJSONArray("tried") ?: return base
+        val reasons = ArrayList<String>()
+        for (i in 0 until list.length()) {
+            val r = list.optString(i).trim()
+            if (r.isNotEmpty()) reasons.add(r)
+        }
+        if (reasons.isEmpty()) return base
+        return base + " " + reasons.take(2).joinToString("; ") + "."
     }
 
     private fun showError(rawMessage: String, title: String = "") {

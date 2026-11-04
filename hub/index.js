@@ -1918,6 +1918,13 @@ function hasAudioLanguage(source, lang) {
   return e.fromClaims;
 }
 
+/** Does this source's MEASURED track list carry the language? A filename claim does not count. */
+function hasAudioTrack(source, lang) {
+  if (!lang) return false;
+  const list = source && Array.isArray(source.audioTracks) ? source.audioTracks : [];
+  return list.some((t) => t && media.langOf(t.language) === lang);
+}
+
 /** The donor track's container index, or null when the source only claims a language. */
 function audioOrdinal(source, lang) {
   return ordinalFromTracks(Array.isArray(source.audioTracks) ? source.audioTracks : [], lang);
@@ -3347,7 +3354,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const byPref = prefAudio
     .map((lang) => out.audioTracks.find((t) => media.langOf(t.language) === lang))
     .find(Boolean) || null;
-  const chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
+  let chosenAudio = byIndex(out.audioTracks, 'a', wantAudio) || byLanguage(out.audioTracks, opts.audio)
     // Nothing asked for: name the track the hub would recommend. The profile's own language order comes
     // first, and only then whatever flag the packager stamped on the file — measured on a torrent whose
     // Italian track carries the container's default bit while its English one sits second, and honouring
@@ -3380,10 +3387,87 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }
   const primaryHas = desiredLang ? hasAudioLanguage(source, desiredLang) : false;
   const forcedMix = !!(mixOpt && mixOpt.force === true);
+  // A hand pick says "give me this language even if the filename only claims it". It does not mean
+  // "replace the track this file already carries". So measure the picture before honouring it: several
+  // of this household's 1080p copies ship BOTH Hindi and English, and the old code re-muxed a donor
+  // over the file's own Hindi track — the viewer pressed "Hindi", ffmpeg started a fresh read of a
+  // 666 MB file, and the sound changed (if at all) many seconds later. A track in the picture is both
+  // the better answer and the instant one.
+  let pictureProbe = null;
+  // ffmpeg and the header probe should read the bytes this box is already paying for, not a fresh
+  // connection to a host that rationes them. On a direct internet copy that address is this hub's own
+  // cushion: several ranged reads, the head of the file in RAM, cut reads retried by the hub. The probe
+  // below and the remux further down both read it, so one fill serves both.
+  let engineUrl = out.url;
+  let engineHeadersIn = out.headers;
+  if (desiredLang && mixRequested && out.mode !== 'gateway' && readahead.cfg().direct
+      && /^https?:\/\//i.test(String(out.url || ''))) {
+    const buf = readahead.acquire({ url: out.url, headers: out.headers || {} });
+    if (buf) {
+      const tok = mintBuffer({ url: out.url, headers: out.headers, need: out.neededMbps });
+      const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
+      engineUrl = base + '/app/v1/buffer?t=' + tok
+        + (Number.isFinite(out.neededMbps) ? '&need=' + out.neededMbps : '');
+      // The cushion carries the origin's signed link and Referer on the hub side; nothing downstream
+      // should send its own copy of them back to the hub.
+      engineHeadersIn = {};
+      // Pull the bytes ffmpeg will read while the /play request is still open. It parses the container
+      // from byte 0 and then jumps to the playhead, so warm both ends: the head is always wanted, and
+      // the playhead is where the film is. ffmpeg would otherwise fetch each of them itself at the front
+      // of a 25 s first-byte budget, and on a host that rationes reads that wait is the difference
+      // between switching language in a second and the viewer giving up.
+      const head = await readahead.preBuffer(buf, {
+        bytes: 8, sec: readahead.cfg().preSec, budgetMs: Math.max(500, Math.min(1500, deadline - Date.now())),
+      });
+      const size = Number(source && source.sizeBytes) || 0;
+      const durMs = Number(kept.durationMs) || Number(out.probe && out.probe.durationMs) || 0;
+      const at = size && durMs
+        ? Math.floor(size * (Math.max(0, Number(opts.positionMs) || 0) / durMs)) : 0;
+      const warm = at > 0 ? await readahead.sustain(buf, {
+        at,
+        needMbps: Number.isFinite(out.neededMbps) ? out.neededMbps : 0,
+        budgetMs: Math.max(500, Math.min(2000, deadline - Date.now())),
+      }) : head;
+      log('REMUX INPUT CUSHIONED', identity, labelOf(source), 't=' + tok, 'at=' + at,
+        'headMB=' + (head && head.MB != null ? head.MB : '?'),
+        'mbps=' + (warm && Number.isFinite(warm.mbps) ? warm.mbps.toFixed(1) : '?'),
+        'heldMB=' + Math.round(buf.held() / 1048576));
+    }
+  }
+  if (desiredLang && mixRequested && !hasAudioTrack(source, desiredLang)
+      && /^https?:\/\//i.test(String(engineUrl || '')) && deadline - Date.now() > 1200) {
+    pictureProbe = await media.probeUrl(engineUrl, {
+      timeoutMs: Math.max(700, Math.min(2000, deadline - Date.now() - 400)),
+    });
+    if (!pictureProbe) {
+      log('AUDIO PICTURE PROBE FAIL', identity, labelOf(source), String(out.url).slice(0, 70));
+    }
+    if (pictureProbe && Array.isArray(pictureProbe.audioTracks) && pictureProbe.audioTracks.length) {
+      out.audioTracks = pictureProbe.audioTracks.map((t) => ({ ...t }));
+      out.probe = Object.assign({}, out.probe || {}, {
+        durationMs: pictureProbe.durationMs || null,
+        sizeBytes: pictureProbe.sizeBytes || null,
+      });
+      log('AUDIO PICTURE PROBED', identity, labelOf(source),
+        pictureProbe.audioTracks.map((t) => (t.language || '?') + '@' + t.id).join(','));
+    }
+  }
+  const pictureHasTrack = desiredLang ? hasAudioTrack(source, desiredLang)
+    || hasAudioTrack(pictureProbe, desiredLang) : false;
   let donor = null;
   // The picture's own runtime, needed again by the mix metadata after the donor block closes.
   let pictureMs = 0;
-  if (desiredLang && mixRequested && (forcedMix || !primaryHas)) {
+  if (pictureHasTrack) {
+    // Nothing to mix: the picture copy IS the language the viewer asked for. Select it as a track.
+    const own = (out.audioTracks || []).find((t) => media.langOf(t.language) === desiredLang);
+    if (own) {
+      out.selectedAudio = own.id;
+      chosenAudio = own;
+      extraWhy.push('audio: this copy carries ' + (ranking.LANG_NAMES[desiredLang] || desiredLang)
+        + ' itself, so its own track was selected — no donor, no re-mux');
+    }
+  }
+  if (desiredLang && mixRequested && !pictureHasTrack && (forcedMix || !primaryHas)) {
     const donorPool = (allExcluded ? sources : pool).filter((s) => s !== source && !isExcluded(s, skip));
     let list = donorPool.filter((s) =>
       audioEvidence(s, desiredLang).fromTracks || audioEvidence(s, desiredLang).fromClaims);
@@ -3552,9 +3636,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (donor && out.container === 'any') out.container = 'mp4';
     const engine = out.mode === 'gateway' && out.torrent
       ? gateway.enginePlayUrl(out.torrent.hash, out.torrent.fileId)
-      : out.url;
-    // With a donor, the container stream index is the donor track; without one, it is the chosen track
-    // inside the picture. The remux code maps `1:a:<ord>` for a donor and `0:a:<ord>` for the picture.
+      : engineUrl;
+    const engineHeaders = out.mode === 'gateway' ? out.headers : engineHeadersIn;
     const audioIdx = donor ? null
       : (wantAudio != null ? wantAudio
         : (chosenAudio ? Number(String(chosenAudio.id).slice(2)) : null));
@@ -3574,7 +3657,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // A remux is a fresh ffmpeg run from this film position. The client must add it back to its
       // own timeline; without it a seek looks like the film restarted at zero.
       startMs: Math.max(0, Number(opts.positionMs) || 0),
-      headers: out.headers,
+      headers: engineHeaders,
       audioHeaders: donor && donor.target.headers ? donor.target.headers : null,
     };
     const rel = out.container === 'mp4'
