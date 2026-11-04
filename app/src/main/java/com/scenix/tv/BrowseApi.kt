@@ -340,9 +340,12 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                     return@request
                 }
                 // A kids profile tapping an adult title gets a real answer — "the rules of this
-                // profile say no" — and deserves those words, not a status code.
+                // profile say no" — and deserves those words, not a status code. The hub now names
+                // the rule and the evidence, so the screen can say which setting did it.
                 if (status == 403 && (root?.opt("droppedByRule") != null || root?.has("tier") == true)) {
-                    done(null, "this profile can't watch this title")
+                    val why = root?.optString("detail")?.takeIf { it.isNotBlank() }
+                        ?: "this profile can't watch this title"
+                    done(null, why)
                     return@request
                 }
                 done(item, error)

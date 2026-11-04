@@ -726,7 +726,34 @@ function warmStreams(identities) {
  * dedupe -> record addedAt -> contribute sources from every addon -> rules in order (a rule returning
  * null drops the item) -> progress.
  */
-async function pipeline(items, ctx) {
+/**
+ * A title a rule hid is not a title that does not exist. The app shows these words, so naming the rule
+ * is the difference between "this profile can't watch this title" and a status code.
+ */
+function ruleDropBody(identity, drops) {
+  const by = (drops || [])[(drops || []).length - 1];
+  const rule = by && by.rule ? by.rule : true;
+  const words = {
+    'language-allowlist': 'this title is not in the languages this profile allows',
+    'maturity': 'this title is above the age this profile allows',
+    'kids-allowlist': 'this title is not on the kids list for this profile',
+    'size-cap': 'no copy of this title fits the file-size limit this profile uses',
+  }[by && by.rule];
+  // The household can fix a setting only if they can see what the hub believed.
+  const detail = words || 'a hub rule hides this title for this profile';
+  const named = by && by.because && by.because.claimed && by.because.claimed.length
+    ? detail + ' (it says ' + by.because.claimed.join(', ')
+      + '; this profile allows ' + (by.because.allowed || []).join(', ') + ')'
+    : detail;
+  return {
+    identity,
+    droppedByRule: rule,
+    error: 'dropped by rule',
+    detail: named,
+  };
+}
+
+async function pipeline(items, ctx, drops) {
   const deduped = merge.dedupe(items, registry.priorities);
   store.touchItems(deduped);
   for (const it of deduped) await contributeSources(it);
@@ -740,7 +767,21 @@ async function pipeline(items, ctx) {
       } catch (e) {
         log('RULE ERROR', rule.id, e.message); // a broken rule must not lose the item
       }
-      if (it === null || it === undefined) break;
+      if (it === null || it === undefined) {
+        // A title that vanishes with no name attached to it is the hardest thing in this product to
+        // debug, and the viewer deserves better than a 403: one rule said no, and which one it was is
+        // the whole answer. `drops` is how the route passes that to the app's message.
+        if (drops) drops.push({
+          identity: start && start.identity,
+          rule: rule.id,
+          because: start && start._langDroppedBecause,
+        });
+        log('DROP BY RULE', (start && start.identity) || '?', rule.id,
+          'tier', start && start.tier, 'minAge', start && start.minAge,
+          'langs', JSON.stringify((start && start.languages) || null),
+          'for profile', ctx.profile && ctx.profile.id);
+        break;
+      }
     }
     if (!it) continue;
     it.progress = ctx.store.progressFor(ctx.profile.id, it.identity);
@@ -2333,6 +2374,20 @@ function resolutionOf(source) {
   return wide ? '2160P' : null;
 }
 
+/**
+ * Does this label state the exact episode being asked for? `episodeInLabel` answers true for a label
+ * that states no episode at all, so this is the stronger test: the file names the episode itself.
+ * Aggregators name files after themselves ("Titan VII - S01E01 Direct MP4"), and the episode number is
+ * then the only identity claim the copy makes — and it is a correct one. Treating the unfamiliar
+ * house name as another film was refusing a copy of the right episode.
+ */
+function statesTheEpisode(label, ep) {
+  if (!ep || !ep.season || !ep.episode) return false;
+  const text = String(label || '');
+  if (!/(?:^|[^a-z0-9])s(\d{1,2})[\s._-]*e(\d{1,3})(?:[^0-9]|$)/i.test(text)) return false;
+  return episodeInLabel(text, ep);
+}
+
 function listAlternatives(candidates, source, title, ep = null) {
   const others = candidates.filter((s) => s !== source);
   // A copy whose parenthetical names a different title, or whose own SxxEyy is another episode,
@@ -2342,7 +2397,9 @@ function listAlternatives(candidates, source, title, ep = null) {
     && episodeInLabel(labelOf(s), ep));
   const pool = honest.length ? honest : others;
   const flagged = pool.map((s) => (
-    nameIsntTheTitle(labelOf(s), title) ? Object.assign({}, s, { mislabeled: true }) : s
+    // The episode number in the file's own name outranks an unfamiliar house name on it.
+    nameIsntTheTitle(labelOf(s), title) && !statesTheEpisode(labelOf(s), ep)
+      ? Object.assign({}, s, { mislabeled: true }) : s
   ));
   flagged.sort((a, b) => (a.mislabeled === true ? 1 : 0) - (b.mislabeled === true ? 1 : 0));
   return flagged.slice(0, ALT_MAX).map((s) => (
@@ -2389,8 +2446,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const introPromise = (type === 'series' && ep && ep.season > 0 && ep.episode > 0)
     ? introdb.introFor(identity, ep.season, ep.episode, { timeoutMs: 1200 })
     : Promise.resolve(null);
-  const [kept] = await pipeline([item], ctx); // rules rank sources and enforce the profile's scope
-  if (!kept) return { status: 403, body: { identity, droppedByRule: true } };
+  const drops = [];
+  const [kept] = await pipeline([item], ctx, drops); // rules rank sources and enforce the profile's scope
+  if (!kept) return { status: 403, body: ruleDropBody(identity, drops) };
   let sources = kept.sources || [];
   if (!sources.length) {
     // Same bargain as the missing item: if an addon is still fetching this title's streams, the
@@ -2639,7 +2697,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // of the wall. Identity is the channel; the variants are its feeds.
     const liveChannel = kept.type === 'channel' || !!kept.live;
     const otherTitle = liveChannel ? false : labelNamesOtherTitle(labelOf(cand), kept.title);
-    const mislabeled = liveChannel ? false : nameIsntTheTitle(labelOf(cand), kept.title);
+    // The episode number the file states about itself is a fact about the copy, and it is the strongest
+    // one an aggregator's release name offers. "Titan VII - S01E01 Direct MP4" asked for as S01E01 is
+    // the right episode under a house name, so it is not treated as another film. A label that claims a
+    // different title in parentheses still is.
+    const rightEpisode = !liveChannel && statesTheEpisode(labelOf(cand), ep);
+    const mislabeled = liveChannel ? false
+      : (rightEpisode ? false : nameIsntTheTitle(labelOf(cand), kept.title));
     // A person who named this copy in the Quality menu outranks an odd release name: providers
     // mislabel real copies, and the better-quality one is often exactly the odd-named file. That
     // grace does NOT extend to a copy whose own name (or SxxEyy) is a different programme: an
@@ -4622,7 +4686,8 @@ async function handle(req, res) {
         }
         return send(res, 404, { error: 'not found', identity });
       }
-      const [kept] = await pipeline([item], ctx);
+      const metaDrops = [];
+      const [kept] = await pipeline([item], ctx, metaDrops);
       // Anything already measured is free, so the detail page shows the same status the play path
       // will use. Nothing here waits on the network: the meta response is exactly as fast as it was.
       // Files first, and only from caches: the ranking rule reads the languages a copy states, and it can
@@ -4652,7 +4717,7 @@ async function handle(req, res) {
         kept.reaction = store.reactionFor(profile.id, identity) || null;
         kept.seen = store.seenFor(profile.id, identity);
       }
-      send(res, kept ? 200 : 403, kept || { identity, droppedByRule: true });
+      send(res, kept ? 200 : 403, kept || ruleDropBody(identity, metaDrops));
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,
       // and by the time they press play the answer is in the cache instead of costing 1.5 s.
       if (kept) {

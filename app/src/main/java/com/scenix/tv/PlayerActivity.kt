@@ -1680,8 +1680,13 @@ class PlayerActivity : Activity() {
             preloadStatus?.text = "Still preparing — trying a lighter copy…"
             failoverToNext(preferLower = true)
             handler.postDelayed({
-                if (preloading() && !errorShowing) {
-                    finishPreloader()
+                // The preloader belongs to the attempt that started it. If the switch below already
+                // answered with a card, the card is what the viewer reads — the spinner's line must
+                // not sit under it saying "still preparing" forever. Measured on a 2026 title with
+                // dead sources: the card and the preloader shared the screen for the rest of the reel.
+                if (!preloading()) return@postDelayed
+                finishPreloader()
+                if (!errorShowing) {
                     showError(
                         "This copy is taking too long to start. Try again or pick another copy.",
                         "This copy is taking too long",
@@ -3887,6 +3892,9 @@ class PlayerActivity : Activity() {
             t.contains("warm", true) || t.contains("prepar", true) ->
                 "The hub is still preparing this copy — try again in a moment"
             t.contains("not found", true) -> "No source in this hub carries this title"
+            // The hub's own sentence for "a rule of this profile hides this title" arrives in `detail`,
+            // and `error` is the machine name. Prefer whichever reads as English.
+            t.contains("dropped by rule", true) -> "A rule of this profile hides this title"
             else -> t.replaceFirstChar { it.uppercaseChar() }
         }
         return if (said.endsWith(".") || said.endsWith("…")) said else "$said."
@@ -3899,6 +3907,10 @@ class PlayerActivity : Activity() {
      * reasons into the card; three lines is the whole space the card has.
      */
     private fun explainFailure(reply: JSONObject?, fallback: String): String {
+        // A rule's answer already names itself ("this title is not in the languages this profile
+        // allows"), and there is nothing in `tried` to add to it. Use those words rather than dressing
+        // up a machine label.
+        str(reply, "detail").takeIf { it.isNotBlank() }?.let { return humaniseError(it) }
         val base = humaniseError(str(reply, "error").ifBlank { fallback })
         val list = reply?.optJSONArray("tried") ?: return base
         val reasons = ArrayList<String>()
