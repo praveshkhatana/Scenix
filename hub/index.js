@@ -82,6 +82,10 @@ const taste = require('./core/taste');
 const prefs = require('./core/prefs');
 const gateway = require('./core/gateway');
 const liveHealth = require('./core/live-health');
+// The wall's own reader: /app/v1/live/channels and rows/live.js must hand out the same channels, so
+// they ask the same question of the same providers.
+const liveRow = require('./rows/live');
+const channelItems = liveRow.channelItems;
 // Optional: a paid resolver, off unless the owner configures a provider and a token. It is tried before
 // the gateway and is never a hard dependency of the play path.
 const debrid = require('./core/debrid');
@@ -567,6 +571,10 @@ function makeCtx(profile, metaBudget) {
     store,
     providers: registry.byId,
     rules: registry.rules,
+    // id -> priority, the order merge.dedupe keeps a channel or a title from when two providers
+    // publish the same identity. A row that reads one class of provider directly (rows/live.js)
+    // still has to dedupe like the whole-library walk does.
+    priorities: registry.priorities,
     prefs: prefs.resolve(profile),
     days: DAYS,
     now: Date.now(),
@@ -934,6 +942,12 @@ const HOME_ROW_MAX = Number(process.env.HOME_ROW_MAX || 18);
 // The section page a "See all" tile opens is the shelf itself, not the rail: deeper, but bounded,
 // so one page can never ask an addon for its entire catalogue.
 const SECTION_MAX = Number(process.env.SECTION_MAX || 120);
+// The live wall is a wall, not a shelf: one playlist publishes 350-400 channels and the remote's zap
+// ring has to be able to reach the last one. The budget is wider than a row's because this one is read
+// out of the live provider's memory, and the row that used to walk the entire catalogue blew its
+// 1200 ms here and answered empty — an empty Live TV tab and a remote that could not change channel.
+const LIVE_WALL_MAX = Number(process.env.LIVE_WALL_MAX || 700);
+const LIVE_WALL_BUDGET_MS = Number(process.env.LIVE_WALL_BUDGET_MS || 4000);
 function generalItems(rowId, items) {
   if (!Array.isArray(items)) return items;
   if (rowId === ADULT_ROW_ID) return items;
@@ -4581,7 +4595,11 @@ async function handle(req, res) {
         return send(res, 403, { error: 'row not for this profile', rowId: row.id, scope: row.scope });
       }
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
-      const items = generalItems(row.id, await buildRow(row, ctx, undefined, SECTION_MAX));
+      // A section page is the shelf itself, so it gets the deeper cap — but a row that says "I am a
+      // wall" (rows/live.js declares 700 channels) gets its own number. Capping a 358-channel wall at
+      // 120 is how the remote's zap ring ran out of channels it had never heard of.
+      const cap = Math.max(SECTION_MAX, Number(row.max) || 0);
+      const items = generalItems(row.id, await buildRow(row, ctx, undefined, cap));
       await taste.decorate(ctx, items);
       const title = typeof row.label === 'function'
         ? (await Promise.resolve(row.label(ctx)).catch(() => null)) || row.title
@@ -4589,6 +4607,77 @@ async function handle(req, res) {
       return send(res, 200, {
         id: row.id, title, card: row.card, order: row.order, scope: row.scope || 'all',
         items: shelfItems(items),
+      });
+    }
+
+    if (path === '/app/v1/live/channels') {
+      // The channel manager's list, and the zap ring's list, from one place: the live row itself, with
+      // the profile's rules and lineup already applied. `channels` is in zap order — the order the
+      // remote walks — and `unlisted` says how many channels the profile's lineup is holding back, so a
+      // screen can say "your lineup shows 12 of 358" instead of quietly hiding the rest.
+      const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
+      const row = registry.rows.find((r) => r.id === 'live');
+      const live = registry.byId['live-tv'];
+      if (!row) {
+        return send(res, 200, {
+          channels: [], lineup: { only: [], order: [], hidden: [] },
+          status: { playlist: null, channels: 0, lastError: 'this hub has no live row' },
+        });
+      }
+      if (!rowVisible(row, profile)) {
+        return send(res, 403, { error: 'live TV is not for this profile', scope: row.scope });
+      }
+      const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
+      const items = generalItems('live', await buildRow(row, ctx, LIVE_WALL_BUDGET_MS, LIVE_WALL_MAX));
+      const local = (profile.prefs && profile.prefs.live) || {};
+      const wall = await channelItems(ctx);
+      // The lineup vocabulary is the profile's channel ids. The provider's tvg id would be nicer for
+      // a person editing by hand, but the prefs editor, the live-health numbers and the zap ring all
+      // speak `norm:<slug>` today, so the wall's identity is the lineup key everywhere. `channel` is
+      // still published so a future editor can show the operator's name beside it.
+      const only = Array.isArray(local.only) ? local.only : [];
+      const order = Array.isArray(local.order) ? local.order : [];
+      const hiddenLocal = Array.isArray(local.hidden) ? local.hidden : [];
+      const channelOf = (it) => (it.live && it.live.channel) || it.identity;
+      // In the lineup = it is one of the profile's chosen channels: in the watch-only gate OR anywhere
+      // in the favourites order. Order alone still means "chosen" — the gate only decides whether the
+      // OTHER channels are hidden from Live TV, not whether these belong to the viewer.
+      const inLineup = (it) => only.includes(it.identity) || only.includes(channelOf(it))
+        || order.includes(it.identity) || order.includes(channelOf(it));
+      return send(res, 200, {
+        channels: items.map((it) => {
+          const lv = it.live || {};
+          return {
+            identity: it.identity,
+            channel: channelOf(it),
+            name: it.title,
+            group: (it.genres || [])[0] || '',
+            groups: it.genres || [],
+            logo: it.logo || it.poster || null,
+            number: lv.number || null,
+            quality: lv.quality || null,
+            health: lv.health || 'unknown',
+            error: lv.error || null,
+            checkedAt: lv.checkedAt || null,
+            now: lv.now || null,
+            next: lv.next || null,
+            inLineup: inLineup(it),
+            languages: it.languages || null,
+          };
+        }),
+        lineup: { only, order, hidden: hiddenLocal },
+        unlisted: Math.max(0, (wall?.length ?? 0) - items.length),
+        groups: (() => {
+          const set = new Set();
+          for (const it of items) for (const g of it.genres || []) set.add(g);
+          return [...set].sort((a, b) => a.localeCompare(b));
+        })(),
+        // Why the wall is what it is: the playlist address, how many channels it published, and the
+        // last thing that went wrong fetching it. A wall that came up empty after a DNS blip used to
+        // be indistinguishable from a hub with no live TV at all.
+        status: (live && typeof live.status === 'function')
+          ? live.status()
+          : { playlist: null, channels: 0, lastError: null },
       });
     }
 
@@ -4958,15 +5047,19 @@ async function handle(req, res) {
         : null;
       if (src.rows && typeof src.rows === 'object') {
         const rows = {};
-        const h = cleanIds(src.rows.hidden); if (h) rows.hidden = h;
-        const o = cleanIds(src.rows.order); if (o) rows.order = o;
+        // Same rule as the live lineup: an empty list says "nothing hidden" / "no order of my own", and
+        // dropping it left a profile unable to put a Home row back.
+        if (Array.isArray(src.rows.hidden)) rows.hidden = cleanIds(src.rows.hidden);
+        if (Array.isArray(src.rows.order)) rows.order = cleanIds(src.rows.order);
         if (Object.keys(rows).length) out.rows = rows;
       }
       if (src.live && typeof src.live === 'object') {
         const live = {};
         for (const k of ['hidden', 'order', 'only']) {
-          const a = cleanIds(src.live[k]);
-          if (a) live[k] = a;
+          // An absent key leaves the stored list alone; an EMPTY array is a decision — "this profile has
+          // no lineup" — and dropping it (the old behaviour) meant a lineup could never be switched off.
+          if (!Array.isArray(src.live[k])) continue;
+          live[k] = cleanIds(src.live[k]);
         }
         if (Object.keys(live).length) out.live = live;
       }

@@ -15,6 +15,8 @@
 
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const { URL } = require('url');
 
 const liveHealth = require('../core/live-health');
@@ -54,6 +56,13 @@ const LANG_NAMES = {
 };
 const ID_PREFIX = 'inlive___';
 const REFRESH_MS = 6 * 60 * 60 * 1000; // playlist re-fetch every 6 h
+// A playlist that failed to fetch used to wait six hours for its next try, and on a fresh start there
+// was nothing to fall back on: one DNS blip during boot (`getaddrinfo ENOTFOUND iptv-org.github.io`)
+// left the Live TV tab empty for the rest of the evening. So a failure retries on a short ladder, and
+// the last good playlist is kept on disk and parsed back if the network cannot produce a new one.
+const RETRY_STEPS_MS = [30000, 2 * 60000, 10 * 60000, 60 * 60000];
+const PLAYLIST_CACHE_FILE = process.env.LIVE_PLAYLIST_FILE
+  || path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'live-playlist.json');
 // A feed can go down inside an evening, so health is re-checked far more often than the playlist.
 const HEALTH_REFRESH_MS = Number(process.env.LIVE_HEALTH_REFRESH_MS || 30 * 60 * 1000);
 const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
@@ -63,7 +72,11 @@ let channels = []; // the selected list the rest of the hub sees: {id, name, gro
 let loading = null;
 let lastFetch = 0;
 let lastPlaylistUrl = ''; // what the last successful fetch actually pulled, so changing it takes effect
+let listFetchedAt = 0; // when the list now in memory was actually read from the playlist host
+let fromDisk = false; // true when that list came off this box's disk rather than over the network
 let lastError = null;
+let failureStreak = 0;
+let retryTimer = null;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 function get(url, timeoutMs = 20000) {
@@ -254,12 +267,79 @@ async function languageByStreamUrl(langs) {
   return map;
 }
 
+// The last good parse, on disk. A playlist is a text file someone else hosts; the wall the household
+// watches should not depend on that host answering the one time this box happens to boot.
+function readSavedPlaylist(url) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PLAYLIST_CACHE_FILE, 'utf8'));
+    if (!raw || !Array.isArray(raw.channels) || !raw.channels.length) return null;
+    // A different playlist URL is a different household decision: the old wall is not the one on screen.
+    if (raw.url !== url) return null;
+    return raw;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveSavedPlaylist(url, list) {
+  try {
+    fs.mkdirSync(path.dirname(PLAYLIST_CACHE_FILE), { recursive: true });
+    const tmp = PLAYLIST_CACHE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ url, fetchedAt: Date.now(), channels: list }));
+    fs.renameSync(tmp, PLAYLIST_CACHE_FILE);
+  } catch (e) {
+    log('playlist cache write failed:', e.message); // costs a re-fetch later, nothing else
+  }
+}
+
+function install(list, url, fetchedAt) {
+  allChannels = list;
+  channels = selected(list);
+  lastFetch = Date.now();
+  listFetchedAt = Number(fetchedAt) || Date.now();
+  lastPlaylistUrl = url;
+  lastError = null;
+  failureStreak = 0;
+}
+
+/** A failed fetch asks again on a short ladder, never six hours later. */
+function scheduleRetry() {
+  if (retryTimer) return;
+  const step = RETRY_STEPS_MS[Math.min(failureStreak, RETRY_STEPS_MS.length - 1)];
+  failureStreak++;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    refresh(true).catch(() => {});
+  }, step);
+  if (retryTimer.unref) retryTimer.unref();
+  log('playlist retry in', Math.round(step / 1000) + 's');
+}
+
+/**
+ * The network gave nothing. Keep whatever this process already has; if this process has nothing, put
+ * back the last parse this box read from disk; either way, ask again soon instead of at the next tick
+ * of the six-hour clock. An empty Live TV tab that lasts an evening was the whole cost of the old code.
+ */
+function fallBack(url, why) {
+  if (!allChannels.length) {
+    const saved = readSavedPlaylist(url);
+    if (saved) {
+      install(saved.channels, url, saved.fetchedAt);
+      fromDisk = true;
+      log('playlist restored from disk:', channels.length, 'channels, last fetched',
+        new Date(listFetchedAt).toISOString(), '· because', why);
+    }
+  }
+  scheduleRetry();
+}
+
 async function refresh(force = false) {
   if (loading) return loading;
   const url = playlistUrl();
   // No playlist is a decision, not a broken install: the owner has not chosen a live source, so there is
   // no live TV here to show. Say what is missing instead of fetching a default nobody asked for.
   if (!url) {
+    allChannels = [];
     channels = [];
     lastError = 'no live playlist configured (settings.live.playlist is empty)';
     lastFetch = Date.now();
@@ -291,21 +371,22 @@ async function refresh(force = false) {
               parsed.filter((c) => (c.langs || []).length).length, 'of', parsed.length);
           }
         }
-        allChannels = parsed;
-        channels = selected(parsed);
-        lastFetch = Date.now();
-        lastPlaylistUrl = url;
-        lastError = null;
+        install(parsed, url);
+        fromDisk = false;
+        saveSavedPlaylist(url, parsed);
         console.log(new Date().toISOString(), 'playlist ok:', channels.length, 'channels');
       } else {
         lastError = 'playlist parsed to 0 channels';
-        console.error(new Date().toISOString(), lastError);
+        console.error(new Date().toISOString(), lastError, '·', allChannels.length, 'channels kept');
+        fallBack(url, lastError);
       }
       return channels;
     })
     .catch((e) => {
       lastError = e.message;
-      console.error(new Date().toISOString(), 'playlist fetch failed:', e.message);
+      console.error(new Date().toISOString(), 'playlist fetch failed:', e.message, '·',
+        allChannels.length ? allChannels.length + ' channels already in memory' : 'nothing in memory yet');
+      fallBack(url, e.message);
       return channels;
     })
     .finally(() => {
@@ -483,13 +564,16 @@ function hubItems(list) {
 
   // Additive on the §1 `live` object: what the prober saw, the stable zap number, and — when the
   // owner pointed settings.live.xmltv at a guide — what is on this channel right now and what follows.
-  //   live.health   "working" | "dead" | "unknown"  (unknown = never checked, or the evidence is old)
+  //   live.health   "working" | "blocked" | "dead" | "unknown"
+  //                 blocked = the channel exists and the provider declined this request (country,
+  //                 token, hotlink rule) — different news from "nothing is answering".
   //   live.checkedAt / live.latencyMs / live.error   the probe record behind that verdict
   //   live.number   1, 2, 3 … assigned once and kept across restarts (core/live-health.js)
   //   live.now / live.next  { title, start, stop, minsLeft, progress } from core/guide.js, or null
   for (const item of byName.values()) {
     const h = liveHealth.get(item.identity);
-    item.live.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
+    item.live.health = !h || liveHealth.rank(item.identity) === 1 ? 'unknown'
+      : h.ok ? 'working' : h.status === 'blocked' ? 'blocked' : 'dead';
     item.live.checkedAt = h ? h.checkedAt : null;
     item.live.latencyMs = h ? h.latencyMs : null;
     item.live.error = h && !h.ok ? h.error : null;
@@ -598,6 +682,16 @@ module.exports = {
     // Playlist first, then the health pass behind it — both in the background, never awaited, so a
     // slow playlist or a wall of dead feeds cannot delay the hub coming up. The guide (if the owner
     // configured one) rides along: now/next is header polish and must never gate playback.
+    // Put the last good wall up before the network has said anything: a hub that boots with a dead
+    // DNS used to open Live TV as an empty room for six hours.
+    const url = playlistUrl();
+    const saved = url ? readSavedPlaylist(url) : null;
+    if (saved) {
+      install(saved.channels, url, saved.fetchedAt);
+      fromDisk = true;
+      log('playlist loaded from disk:', channels.length, 'channels, fetched',
+        new Date(listFetchedAt).toISOString());
+    }
     refresh(true).then(() => probePass('startup'));
     guide.refresh(true);
     const t = setInterval(() => refresh(true).then(() => probePass('playlist refresh')), REFRESH_MS);
@@ -638,6 +732,22 @@ module.exports = {
   reload() {
     loading = null;
     return refresh(true).catch((e) => console.log(new Date().toISOString(), 'live reload failed:', e.message));
+  },
+
+  /**
+   * Why the wall is the size it is, for the Live settings screen and the channel manager. A hub whose
+   * playlist host hiccuped used to look exactly like a hub with no live TV: an empty row, no words.
+   */
+  status() {
+    return {
+      playlist: playlistUrl() || null,
+      channels: channels.length, // what the household may watch, after the owner's hidden list
+      published: allChannels.length,
+      fetchedAt: listFetchedAt || null,
+      lookedAt: lastFetch || null,
+      fromDisk,
+      lastError,
+    };
   },
 
   /** The playlist did not change, only which channels the owner wants. No network, no re-probe. */

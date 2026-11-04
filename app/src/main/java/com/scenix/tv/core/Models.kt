@@ -15,6 +15,17 @@ internal fun s(o: JSONObject, name: String, def: String = ""): String =
 internal fun sa(a: JSONArray, i: Int, def: String = ""): String =
     if (a.isNull(i)) def else a.optString(i, def)
 
+/** A JSON array of strings, as a list, with JSON nulls and blanks left out. */
+internal fun stringList(a: JSONArray?): List<String> {
+    if (a == null) return emptyList()
+    val out = ArrayList<String>(a.length())
+    for (i in 0 until a.length()) {
+        val v = sa(a, i, "")
+        if (v.isNotBlank()) out.add(v)
+    }
+    return out
+}
+
 /**
  * The only shared data shape — every surface and every addon answer maps into it, field for field.
  *

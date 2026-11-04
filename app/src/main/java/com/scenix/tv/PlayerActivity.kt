@@ -264,6 +264,8 @@ class PlayerActivity : Activity() {
     /** True while Picture size is on Zoom; the surface stays scaled across retunes. */
     private var zoomSurface = false
     private var liveLoaded = false
+    /** How many times the live wall has been asked for after answering empty (see [prefetchLiveChannels]). */
+    private var liveRetries = 0
     private var pausedForBackground = false
     /** True while the viewer asked for the picture's own audio instead of the hub's language mix. */
     private var mixDisabled = false
@@ -1356,6 +1358,9 @@ class PlayerActivity : Activity() {
             return
         }
         if (failovers >= MAX_FAILOVERS) {
+            // Park it: the zap ring should not hand this channel back on the next press, and the
+            // viewer pressing CH DOWN is asking for a different channel, not this one again.
+            if (live) markChannelDead()
             showError(if (live) "This channel is off the air. Try another channel."
                 else "Nothing on this hub would play this title. ${sourceAdvice()}")
             return
@@ -1390,6 +1395,7 @@ class PlayerActivity : Activity() {
             str(it, "label").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
         }
         if (failovers >= MAX_FAILOVERS) {
+            if (live) markChannelDead()
             showError(if (live) "This channel is off the air. Try another channel."
                 else "Nothing on this hub would play this title. ${sourceAdvice()}")
             return
@@ -1486,7 +1492,8 @@ class PlayerActivity : Activity() {
                             explainFailure(
                                 reply,
                                 transport ?: "No other copy of this title would open",
-                            )
+                            ),
+                            reply = reply,
                         )
                     }
                 } else {
@@ -1777,9 +1784,28 @@ class PlayerActivity : Activity() {
         cancelHide()
         // The app's chrome opens with the ring on Play; the catalogue should show the same.
         focusSoon(playButton)
+        // The failure card quotes the hub's own verdicts, the copy it failed on and, on a channel, the
+        // number and name. A plate that shows none of those describes a card the app no longer draws.
+        if (state == "error" || state == "live-error") {
+            errorReply = JSONObject()
+                .put("tried", JSONArray()
+                    .put(if (live) "1080p stream: HTTP 403" else "1080p · 1.4 GB: no play target from framextv")
+                    .put(if (live) "576p stream: timeout" else "720p · 890 MB: HTTP 503 warming"))
+                .put("picked", JSONObject()
+                    .put("label", if (live) "576p stream" else "1080p · 1.4 GB"))
+            if (live) {
+                spec = PlaySpec("norm:and_tv", "channel", 0, 0, "&TV")
+                liveChannels = listOf(Item.from(JSONObject()
+                    .put("identity", "norm:and_tv")
+                    .put("title", "&TV")
+                    .put("type", "channel")
+                    .put("live", JSONObject().put("number", 12).put("health", "dead"))))
+            }
+        }
         if (state == "error") {
             showError("No source in this hub carries this title.")
         } else if (state == "live-error") {
+            markChannelDead()   // the card's footnote promises it, so the plate has to mean it
             showError("This channel is off the air. Try another channel.")
         }
     }
@@ -3865,6 +3891,8 @@ class PlayerActivity : Activity() {
 
     private var errorRetry: TextView? = null
     private var errorCard: View? = null
+    /** The hub reply this card is quoting, when the failure was a copy switch rather than the open. */
+    private var errorReply: JSONObject? = null
 
     /**
      * True once a picture from this session has actually reached the screen. The viewer's rule is
@@ -3901,30 +3929,26 @@ class PlayerActivity : Activity() {
     }
 
     /**
-     * "No playable source" is the hub's shortest possible sentence. When it also lists what it ruled
-     * out — "1080p stream: HTTP 403", "576p stream: timeout" — those two facts turn a dead end into an
-     * explanation: the feed is blocked by the channel, not missing from the house. Fold the first two
-     * reasons into the card; three lines is the whole space the card has.
+     * "No playable source" is the hub's shortest possible sentence. The card under this heading has the
+     * hub's own verdicts on separate lines ("1080p stream: HTTP 403", "576p stream: timeout" — see
+     * [failureReasons]), so this function's job is only the headline sentence: the feed is blocked by the
+     * channel, not missing from the house. It used to fold the first two verdicts into the paragraph,
+     * which left the same facts printed twice.
      */
     private fun explainFailure(reply: JSONObject?, fallback: String): String {
         // A rule's answer already names itself ("this title is not in the languages this profile
         // allows"), and there is nothing in `tried` to add to it. Use those words rather than dressing
         // up a machine label.
         str(reply, "detail").takeIf { it.isNotBlank() }?.let { return humaniseError(it) }
-        val base = humaniseError(str(reply, "error").ifBlank { fallback })
-        val list = reply?.optJSONArray("tried") ?: return base
-        val reasons = ArrayList<String>()
-        for (i in 0 until list.length()) {
-            val r = list.optString(i).trim()
-            if (r.isNotEmpty()) reasons.add(r)
-        }
-        if (reasons.isEmpty()) return base
-        return base + " " + reasons.take(2).joinToString("; ") + "."
+        return humaniseError(str(reply, "error").ifBlank { fallback })
     }
 
-    private fun showError(rawMessage: String, title: String = "") {
+    private fun showError(rawMessage: String, title: String = "", reply: JSONObject? = null) {
         val message = humaniseError(rawMessage)
         val heading = title.ifBlank { if (live) "This channel is off the air" else "This copy could not be played" }
+        // The answer this card is about. On a failed copy switch it is the SWITCH reply, not the answer
+        // still on screen, or the card would quote the verdicts of a copy the viewer never tried.
+        errorReply = reply
         // A card over a running picture is the bug the viewer reported: the old copy is fine, the
         // hub was merely late with another one. Say it in the status line and leave the picture be.
         if (pictureLive()) {
@@ -3941,19 +3965,34 @@ class PlayerActivity : Activity() {
         errorShowing = true
         cancelHide()
         revealChrome()
-        val card = cardBox()
+        val card = errorPanel()
         // One heading language across the app: ink, never a coloured title — the pack's accent
         // already rides on the chips below.
         card.addView(Views.text(app, "panelTitle", 28f, playerInk, heading, bold = true))
-        card.addView(Views.text(app, "sub", 21f, playerInk2, message, maxLines = 3),
+        // Which thing failed, in the player's quiet uppercase label, next to the identity of the thing
+        // on screen: on a live channel that is the number and name the viewer put into the remote.
+        card.addView(Views.text(app, "meta", 15f, playerInk3, failureTag(), bold = true).apply {
+            setLetterSpacing(0.16f)
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(8f) })
+        card.addView(Views.text(app, "sub", 21f, playerInk2, message, maxLines = 4),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = theme.px(10f) })
+            ).apply { topMargin = theme.px(12f) })
+        for (r in failureReasons()) {
+            card.addView(Views.text(app, "meta", 18f, playerInk3, r, maxLines = 2),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = theme.px(6f) })
+        }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val retry = chip("Try again") { retryCurrent() }
+        // The first chip is the answer this screen recommends, and the pack's accent marks it, so the
+        // card has one obvious press instead of four equal-looking ones.
+        val retry = chip("Try again", selected = true) { retryCurrent() }
         // A live feed has no shelf of copies to walk. The only honest next move is another channel,
         // and the dead one is parked so the zap ring will not hand it back on the next press.
         val other = if (live) chip("Next channel") {
@@ -3976,13 +4015,72 @@ class PlayerActivity : Activity() {
         row.addView(back, wrap().withStart(theme.px(12f)))
         card.addView(row, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(18f) })
+        ).apply { topMargin = theme.px(22f) })
+        // What the player already did about it, so the card is not the only place this failure was
+        // recorded: a parked channel is skipped by the zap ring, a tried copy is not asked for again.
+        card.addView(Views.text(app, "meta", 17f, playerInk3, failureFootnote(), maxLines = 2),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = theme.px(14f) })
         errorRetry = retry
         errorCard = card
         overlay.addView(card, FrameLayout.LayoutParams(
-            theme.px(720f), ViewGroup.LayoutParams.WRAP_CONTENT
+            theme.px(760f), ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { gravity = Gravity.CENTER })
         retry.post { retry.requestFocus() }
+    }
+
+    /** The plate: the player's own sheet fill, radius, hairline and elevation (see [rebuildMenu]). */
+    private fun errorPanel(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(theme.px(34f), theme.px(28f), theme.px(34f), theme.px(26f))
+        background = Views.rounded(
+            Color.argb(0xFF, 16, 17, 24), theme.px(18f), theme.px(1f),
+            Color.argb(0x33, 255, 255, 255),
+        )
+        elevation = theme.px(16f).toFloat()
+    }
+
+    /** `OFF THE AIR  ·  12  ·  &TV` / `CANNOT PLAY  ·  1080p stream`. */
+    private fun failureTag(): String {
+        val parts = ArrayList<String>()
+        parts.add(if (live) "OFF THE AIR" else "CANNOT PLAY")
+        if (live) {
+            val number = liveChannels.firstOrNull { it.identity == spec?.identity }?.live?.number ?: 0
+            if (number > 0) parts.add(number.toString())
+            spec?.title?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        } else {
+            evidence()?.optJSONObject("picked")?.let { str(it, "label") }
+                ?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        }
+        return parts.joinToString("  ·  ")
+    }
+
+    /** The answer this card quotes: the failed switch reply if there was one, else what is on screen. */
+    private fun evidence(): JSONObject? = errorReply ?: answer
+
+    /**
+     * What the hub ruled out, one line each. `tried` carries the hub's own short verdicts
+     * ("1080p stream: HTTP 403", "576p stream: timeout"); three is what this card has room for, and the
+     * number left out is stated rather than dropped.
+     */
+    private fun failureReasons(): List<String> {
+        val list = evidence()?.optJSONArray("tried") ?: return emptyList()
+        val reasons = ArrayList<String>()
+        for (i in 0 until list.length()) {
+            val r = list.optString(i).trim()
+            if (r.isNotEmpty()) reasons.add(r)
+        }
+        if (reasons.isEmpty()) return emptyList()
+        val shown = reasons.take(3).map { "· $it" }
+        return if (reasons.size > shown.size)
+            shown + "· and ${reasons.size - shown.size} more this hub tried" else shown
+    }
+
+    private fun failureFootnote(): String = when {
+        live -> "This channel is set aside for this evening: zapping walks the others first."
+        tried.size > 0 -> "${tried.size} ${if (tried.size == 1) "copy" else "copies"} already tried, and the hub is not asked for them again."
+        else -> "Try again, or let the hub pick another copy with Next copy."
     }
 
     private fun retryCurrent() {
@@ -4018,6 +4116,7 @@ class PlayerActivity : Activity() {
     private fun clearErrorCard() {
         errorCard?.let { overlay.removeView(it) }
         errorCard = null
+        errorReply = null
     }
 
     // ---- next episode ---------------------------------------------------------------------
@@ -4043,6 +4142,7 @@ class PlayerActivity : Activity() {
                 }, 800L)
                 return
             }
+            markChannelDead()
             showError("This channel is off the air. Try another channel.")
             return
         }
@@ -4216,18 +4316,45 @@ class PlayerActivity : Activity() {
 
     private fun prefetchLiveChannels() {
         if (liveLoaded) return
-        liveLoaded = true
         // The zap ring is the whole channel list, not the 18-channel home-row preview it used to be
         // taken from: zapping a channel that never made the home row used to "wrap" to channel 1.
-        // /app/v1/row/live is the full live shelf, ordered by health then zap number — the order the
-        // hub itself publishes numbers in.
-        api.row(profileId, "live") { _, items, _ ->
-            if (isFinishing) return@row
+        // `/app/v1/live/channels` is the channel manager's own list — every channel this profile may
+        // watch, in the order the remote walks it, with the lineup and the hub's numbers on it. The
+        // row route is capped at a shelf; the manager screen and the ring have to walk the same list.
+        api.liveChannels(profileId) { wall, _ ->
+            if (isFinishing) return@liveChannels
             val seen = LinkedHashMap<String, Item>()
-            for (item in items.orEmpty()) {
-                if (item.isLive() && item.identity.isNotBlank()) seen.putIfAbsent(item.identity, item)
+            for (ch in wall?.channels.orEmpty()) {
+                if (ch.identity.isNotBlank()) {
+                    seen.putIfAbsent(ch.identity, Item.from(JSONObject()
+                        .put("identity", ch.identity)
+                        .put("title", ch.name)
+                        .put("type", "channel")
+                        .put("poster", ch.logo)
+                        .put("live", JSONObject()
+                            .put("number", ch.number)
+                            .put("health", ch.health)
+                            .put("now", JSONObject().put("title", ch.now)))))
+                }
             }
-            if (seen.isEmpty()) return@row
+            if (seen.isEmpty()) {
+                // An empty wall is not an answer, it is the hub still reading its playlist (or a row
+                // that missed its budget on a cold start). Marking the ring loaded here left the remote
+                // with no channel to walk for the rest of the evening: CH UP/DOWN did nothing at all.
+                // Ask again, a few times, and say so when the asking stops.
+                liveRetries++
+                if (liveRetries <= LIVE_RING_TRIES) {
+                    setStatus("The hub is still reading its channels — zapping will work in a moment", "warn")
+                    handler.postDelayed({
+                        if (!isFinishing && !isDestroyed) prefetchLiveChannels()
+                    }, 3000L)
+                } else {
+                    setStatus("This hub has no channels to zap", "warn")
+                }
+                return@liveChannels
+            }
+            liveRetries = 0
+            liveLoaded = true
             liveChannels = seen.values.toList()
             // The number is only known once the live row arrives; the header may already be up.
             if (live) updateHeader()
@@ -4245,10 +4372,33 @@ class PlayerActivity : Activity() {
     }
 
     private fun zap(delta: Int) {
-        if (liveChannels.size < 2) return
         val here = spec ?: return
+        if (liveChannels.size < 2) {
+            // A single-channel ring is a state, not a silent key press: it means the hub has one
+            // channel, or this profile's lineup holds one channel.
+            setStatus(
+                if (liveChannels.isEmpty()) "The hub has no channels to zap yet"
+                else "Your lineup has one channel — open Live TV to add more",
+                "warn",
+            )
+            return
+        }
         val at = liveChannels.indexOfFirst { it.identity == here.identity }
-        var next = if (at < 0) 0 else (at + delta + liveChannels.size) % liveChannels.size
+        var next: Int
+        if (at < 0) {
+            // The channel on screen is not in the ring this profile walks: its lineup is switched on
+            // and this channel is not in it, or the wall changed under the player. Zapping still has
+            // to do something, so it enters the ring at the end the key points to, and says so.
+            next = if (delta > 0) 0 else liveChannels.size - 1
+            val number = liveChannels[next].live?.number ?: 0
+            setStatus(
+                if (number > 0) "Not in your lineup — zapping walks it from channel $number"
+                else "Not in your lineup — zapping walks it from the start",
+                "warn",
+            )
+        } else {
+            next = (at + delta + liveChannels.size) % liveChannels.size
+        }
         var skipped = 0
         while (skipped < liveChannels.size - 1 &&
             deadChannels.contains(liveChannels[next].identity) &&
@@ -4260,12 +4410,13 @@ class PlayerActivity : Activity() {
             // Every other channel has been parked this session. Zapping further would loop forever,
             // so clear the ledger and tell the viewer what they are about to walk into.
             deadChannels.clear()
-            showZapBadge(liveChannels[next])
+            showZapBadge(liveChannels[next], next)
             setStatus("Every other channel dropped this session — trying them again", "warn")
+        } else {
+            showZapBadge(liveChannels[next], next)
         }
         val item = liveChannels[next]
         if (item.identity == here.identity) return
-        showZapBadge(item)
         saveProgress(force = true)
         spectrum(PlaySpec(item.identity, "channel", 0, 0, item.title))
     }
@@ -4328,11 +4479,14 @@ class PlayerActivity : Activity() {
         resolvePlay(spec, 0L, WARM_TRIES, null)
     }
 
-    private fun showZapBadge(item: Item) {
+    private fun showZapBadge(item: Item, at: Int = -1) {
         val number = item.live?.number ?: 0
         val text = buildString {
             if (number > 0) append(number).append("  ·  ")
             append(item.title)
+            // "of 358" is the fact the viewer is missing while they press the key for the fourth time:
+            // how far the wall actually goes, and where this channel sits in it.
+            if (at >= 0 && liveChannels.size > 1) append("   ").append(at + 1).append(" of ").append(liveChannels.size)
         }
         setStatus(text)
     }
@@ -5231,6 +5385,8 @@ class PlayerActivity : Activity() {
         private const val GLYPH_EXPAND = 11
         private const val WARM_TRIES = 7
         private const val MAX_FAILOVERS = 3
+        /** How many times the live wall is asked for after it answers empty. */
+        private const val LIVE_RING_TRIES = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
         private val LANG_NAMES = mapOf(

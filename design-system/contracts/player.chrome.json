@@ -38,7 +38,7 @@
     },
     {
       "part": "cards",
-      "note": "Error card (720dp), track menu (centred, width by kind), up-next card (560dp, bottom-right), skip intro chip (bottom-right, 122dp up)."
+      "note": "Error card (760dp): heading, uppercase OFF THE AIR / CANNOT PLAY tag naming the channel number and name or the copy, the failure sentence, the hub's own verdicts one per line (max 3, remainder counted), one recommended Try again chip plus the other moves, and a footnote naming what the player already did. Track menu (centred, width by kind), up-next card (560dp, bottom-right), skip intro chip (bottom-right, 122dp up)."
     }
   ],
   "geometry": {

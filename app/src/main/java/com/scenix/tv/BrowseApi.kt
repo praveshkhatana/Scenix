@@ -9,6 +9,7 @@ import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.s
+import com.scenix.tv.core.stringList
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -48,6 +49,41 @@ data class ProfileInfo(
 data class AvatarChoice(val label: String, val image: String)
 
 /**
+ * One channel on the hub's live wall, in the zap order the remote walks. `number` is the hub's stable
+ * channel number (it survives a restart); `health` is what the hub's own probe last saw — `working`,
+ * `dead`, `unknown`, or `blocked` when the channel's host refused this house rather than being absent.
+ */
+data class LiveChannel(
+    val identity: String,
+    val name: String,
+    val group: String,
+    val groups: List<String>,
+    val logo: String,
+    val number: Int,
+    val quality: String,
+    val health: String,
+    val error: String,
+    val now: String,
+    val next: String,
+    val inLineup: Boolean,
+)
+
+/** The live wall as one profile may watch it: the channels, the lineup, and why the wall is its size. */
+data class LiveWall(
+    val channels: List<LiveChannel>,
+    /** The profile's lineup: the channels it switched on. Empty means "everything this profile may watch". */
+    val only: List<String>,
+    /** The lineup's order — the order the remote walks. */
+    val order: List<String>,
+    val hidden: List<String>,
+    val groups: List<String>,
+    /** Channels the lineup is holding back from this profile, stated rather than hidden. */
+    val unlisted: Int,
+    val playlist: String,
+    val wallError: String,
+)
+
+/**
  * The native read path: Home, Detail, the player and the progress writes that keep Continue Watching
  * alive. The hub is still the source of truth — this only speaks the same `/app/v1` contract the web
  * page does, with the same optional Basic token, and never ranks or re-shapes a source itself.
@@ -81,6 +117,60 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 if (status in 200..299 && body != null && body.has("live") && body.has("games")) {
                     FeatureCaps(body.optBoolean("live", false), body.optBoolean("games", false))
                 } else null
+            )
+        }
+    }
+
+    /**
+     * The live wall as this profile may watch it — the same list `/app/v1/row/live` builds, with the
+     * channel manager's extra facts (numbers, health, now/next, the lineup itself). One source for the
+     * wall and the zap ring is the point: a manager that offers channels the player cannot reach is how
+     * "channel 214" becomes a key press that does nothing.
+     */
+    fun liveChannels(profileId: String, done: (wall: LiveWall?, error: String?) -> Unit) {
+        request("/app/v1/live/channels", "profile=" + enc(profileId), "GET", null, 20000) { root, status, error ->
+            if (root == null) { done(null, error); return@request }
+            if (status == 404) { done(null, null); return@request }   // a hub too old to have this route
+            if (status == 403) {
+                done(null, error ?: "Live TV is not for this profile")
+                return@request
+            }
+            val channels = ArrayList<LiveChannel>()
+            root.optJSONArray("channels")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val c = arr.optJSONObject(i) ?: continue
+                    channels.add(
+                        LiveChannel(
+                            identity = s(c, "identity", ""),
+                            name = s(c, "name", ""),
+                            group = s(c, "group", ""),
+                            groups = stringList(c.optJSONArray("groups")),
+                            logo = s(c, "logo", ""),
+                            number = c.optInt("number", 0),
+                            quality = s(c, "quality", ""),
+                            health = s(c, "health", "unknown"),
+                            error = s(c, "error", ""),
+                            now = c.optJSONObject("now")?.let { s(it, "title", "") }.orEmpty(),
+                            next = c.optJSONObject("next")?.let { s(it, "title", "") }.orEmpty(),
+                            inLineup = c.optBoolean("inLineup", false),
+                        )
+                    )
+                }
+            }
+            val lineup = root.optJSONObject("lineup")
+            val status1 = root.optJSONObject("status")
+            done(
+                LiveWall(
+                    channels = channels,
+                    only = stringList(lineup?.optJSONArray("only")),
+                    order = stringList(lineup?.optJSONArray("order")),
+                    hidden = stringList(lineup?.optJSONArray("hidden")),
+                    groups = stringList(root.optJSONArray("groups")),
+                    unlisted = root.optInt("unlisted", 0),
+                    playlist = s(status1, "playlist", ""),
+                    wallError = s(status1, "lastError", ""),
+                ),
+                error,
             )
         }
     }
