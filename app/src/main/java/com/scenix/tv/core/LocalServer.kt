@@ -30,6 +30,16 @@ class LocalServer private constructor(
         // for "/" there silently renamed every path without a query string to the site root.
         val path = target.substringBefore('?')
         val query = queryOf(target)
+
+        // A TV paired to a hub keeps the page and hands the data questions to that hub, so
+        // `http://<this TV>:8787` and `http://<the hub>:8788` open the same household. The person on the
+        // sofa has one address in their phone, not two, and whichever one they typed has to work.
+        val upstream = pairedHub
+        if (!upstream.isNullOrBlank() && path != "/healthz") {
+            res.send(302, "text/html; charset=utf-8", ByteArray(0), mapOf("Location" to upstream + target))
+            return
+        }
+
         when {
             path == "/healthz" ->
                 res.json(200, JSONObject().put("ok", true).put("backend", "standalone"))
@@ -435,6 +445,14 @@ class LocalServer private constructor(
     companion object {
         private const val TORRENT_CHUNK = 256 * 1024
         private const val LOCAL_CHUNK = 128 * 1024
+
+        /**
+         * Set while the TV is paired to a hub: the address this TV hands every question about data to.
+         * It is what lets `http://<this TV>:8787` open the household's page while the TV is paired — one
+         * household, two addresses, so whichever one a person happens to have typed works.
+         */
+        @Volatile @JvmStatic var pairedHub: String? = null
+
         @Volatile private var instance: LocalServer? = null
 
         /**

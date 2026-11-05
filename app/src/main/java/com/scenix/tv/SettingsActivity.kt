@@ -342,11 +342,14 @@ class SettingsActivity : Activity() {
             // Typing an add-on manifest URL on a remote is the worst part of a television. The hub —
             // and a standalone TV, which now serves the same page on this LAN — answers the full web
             // settings page at an address; put it where the person who just fought a keyboard will see it.
-            val web = webAddress()
-            addRow("Manage from a computer", web.ifBlank { "not on this network" },
-                "Add-ons, playlists, rows and PINs are easier to type in a browser: open that address on a laptop or phone", chevron = true) {
-                if (web.isBlank()) status.text = "This TV has no network address to offer right now"
-                else showPicker("Open this on your computer", listOf(web to "Any browser on the same Wi-Fi"), "") { }
+            val web = webAddresses()
+            addRow("Manage from a computer", web.firstOrNull() ?: "not on this network",
+                if (web.size > 1)
+                    "Both addresses open the same page: this TV's and the hub's. Add-ons, playlists, rows and PINs are easier to type in a browser."
+                else "Add-ons, playlists, rows and PINs are easier to type in a browser: open that address on a laptop or phone", chevron = true) {
+                if (web.isEmpty()) status.text = "This TV has no network address to offer right now"
+                else showPicker("Open this on your computer",
+                    web.map { it to "Any browser on the same Wi-Fi" }, "") { }
             }
             if (profileKind != "kids") {
                 addRow("Settings lock", if (adminOn) "On" else "Off",
@@ -663,15 +666,21 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * The address of the web settings page for the backend this TV is using: the paired hub's own
-     * address, or this TV's LAN address when it is its own hub (standalone). Blank when neither has
-     * an address to offer.
+     * Every address that opens the web page for this household, in the order a person is likely to use
+     * it: the hub's, then this TV's own. A paired TV still holds the page and points it at its hub, so
+     * both addresses are the same household; a standalone TV is its own hub and offers exactly one.
+     * Blank entries are dropped — a TV with no LAN address has nothing to hand over.
      */
-    private fun webAddress(): String = try {
-        if (app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE)
-            com.scenix.tv.core.LocalServer.webBase(this)
-        else com.scenix.tv.core.HubEndpoint.base(this)
-    } catch (t: Throwable) { "" }
+    private fun webAddresses(): List<String> {
+        val out = LinkedHashSet<String>()
+        runCatching {
+            if (app.prefs.backendChoice() != Prefs.BACKEND_STANDALONE)
+                com.scenix.tv.core.HubEndpoint.base(this) else ""
+        }.getOrNull()?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        runCatching { com.scenix.tv.core.LocalServer.webBase(this) }.getOrNull()
+            ?.takeIf { it.isNotBlank() }?.let { out.add(it) }
+        return out.toList()
+    }
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, current: String, onPick: (String) -> Unit) {
         if (picker == null) pickerReturn = currentFocus

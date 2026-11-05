@@ -97,6 +97,13 @@ def copyHubUi = tasks.register('copyHubUi', Copy) {
     into hubUiDir
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     if (hubRoot != null) {
+        // The page this TV serves at :8787, carried in as a snapshot. `LoopbackServer` reads
+        // `assets/web/...`; without it the address the app prints has nothing behind it.
+        from(new File(hubRoot, 'web')) {
+            include '**'
+            exclude '**/prototypes/**'
+            into 'web'
+        }
         from(new File(hubRoot, 'characters.json')) { into 'characters' }
         from(new File(hubRoot, 'data/avatar-faces')) {
             include '**'

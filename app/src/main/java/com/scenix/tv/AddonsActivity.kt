@@ -124,11 +124,12 @@ class AddonsActivity : Activity() {
         // The remote's on-screen keyboard is the worst way to enter a manifest URL. The backend
         // already serves a complete settings page that any device on the Wi-Fi can open; say so,
         // with the exact address, right under the row that asks for the URL.
-        val web = try {
-            if (app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE)
-                com.scenix.tv.core.LocalServer.webBase(this)
-            else com.scenix.tv.core.HubEndpoint.base(this)
-        } catch (t: Throwable) { "" }
+        val web = runCatching {
+            java.util.LinkedHashSet<String>().apply {
+                if (app.prefs.backendChoice() != Prefs.BACKEND_STANDALONE) add(com.scenix.tv.core.HubEndpoint.base(this@AddonsActivity))
+                add(com.scenix.tv.core.LocalServer.webBase(this@AddonsActivity))
+            }.filter { it.isNotBlank() }
+        }.getOrDefault(emptyList()).joinToString(" or ")
         if (web.isNotBlank()) rows.addView(Views.text(app, "meta", 17f, app.theme.ink3,
             "Slow typing on the remote? Open $web in a browser on a phone or laptop and paste the address there.",
             maxLines = 3),
