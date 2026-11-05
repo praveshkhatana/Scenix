@@ -21,7 +21,7 @@
 :root[data-hero="full"] .billboard .scrim {
   background:
     linear-gradient(90deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.30) 44%, rgba(0,0,0,0) 72%),
-    linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,.55) 10%, rgba(20,20,20,0) 44%);
+    linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,.55) 10%, rgba(0, 0, 0, 0) 44%);
 }
 :root[data-hero="full"] .billboard .bb-art::after { display: none; }
 :root[data-hero="full"] .billboard .bb { left: var(--gutter); width: calc(900px * var(--s)); }
@@ -191,6 +191,49 @@
 :root[data-card="below"] .cards .card .art.has-logo + .ctitle { display: block; opacity: 1; }
 :root[data-card="below"] .cards .card.foc .ctitle { font-weight: 600; }
 :root[data-card="below"] .cards .card .art .clogo { left: calc(16px * var(--s)); right: calc(16px * var(--s)); bottom: calc(14px * var(--s)); }
+
+/* The television's hero is a plate, not a wall: the art is inset by the page's own gutter, carries the
+   same corner radius as every card below it, and the copy sits inside the plate rather than over a
+   full-bleed still. One plate instead of the television's two-up slider, but the same shape of page. */
+:root[data-hero="plate"] .billboard { background: none; }
+:root[data-hero="plate"] .billboard .bb-arts,
+:root[data-hero="plate"] .billboard .preview,
+:root[data-hero="plate"] .billboard .scrim {
+  left: var(--gutter); right: var(--gutter);
+  top: calc(26px * var(--s)); bottom: calc(56px * var(--s));
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+:root[data-hero="plate"] .billboard .scrim {
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, .88) 6%, rgba(0, 0, 0, .46) 36%, rgba(0, 0, 0, 0) 66%),
+    linear-gradient(0deg, rgba(0, 0, 0, .72) 6%, rgba(0, 0, 0, 0) 48%);
+}
+:root[data-hero="plate"] .bb {
+  left: calc(var(--gutter) + 64px * var(--s)); bottom: calc(92px * var(--s));
+  width: calc(820px * var(--s));
+}
+:root[data-hero="plate"] .bb h1 { font-size: calc(var(--t-h1) * .62); text-shadow: none; }
+:root[data-hero="plate"] .bb .mark { display: none; }
+:root[data-hero="plate"] .bb-thumbs,
+:root[data-hero="plate"] .bb-dots { left: calc(var(--gutter) + 64px * var(--s)); }
+
+/* Rail badges in the scene pack are dark glass pills, not slabs of brand: the brand is near-white here,
+   so a filled badge over near-white art reads as an empty box. The new flag is amber, the score white,
+   live is the pack's own red — the same three marks the television's rails carry. */
+:root[data-card="below"] .badge {
+  background: rgba(8, 10, 14, .72); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .16);
+  color: var(--ink1); font-weight: 600; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+:root[data-card="below"] .badge.new { color: var(--kids); }
+:root[data-card="below"] .badge.mt { color: var(--match); }
+:root[data-card="below"] .badge.rate { color: var(--ink); }
+:root[data-card="below"] .badge.live { color: var(--live); }
+:root[data-card="below"] .badge.live i { background: currentColor; }
+
+/* The rails hold art only; the name arrives with the focus, the way the television's do. */
+:root[data-card="below"] .cards .card .ctitle { opacity: 0; }
+:root[data-card="below"] .cards .card.foc .ctitle { opacity: 1; }
 
 /* The scene pack's focus is a hairline and a bloom, not a thick outline. */
 :root[data-theme="scenix-apple"][data-focus="glow"] .card.foc {

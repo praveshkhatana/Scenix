@@ -306,14 +306,14 @@
 .pbtn.play { width: calc(78px * var(--s)); height: calc(78px * var(--s)); background: none; border: 0; color: #fff; }
 .pbtn.play .ico { width: calc(42px * var(--s)); height: calc(42px * var(--s)); }
 /* The red fill is the answer to a key press, so it stays; the ring rides with it. */
-.pbtn.foc { background: rgba(229, 9, 20, .85); border-color: #fff; color: #fff;
+.pbtn.foc { background: color-mix(in srgb, var(--brand) 85%, transparent); border-color: #fff; color: #fff;
   transform: scale(1.08); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 
 .ply-right { gap: calc(4px * var(--s)); }
 .ply-bar .iconbtn { height: calc(52px * var(--s)); padding: 0 calc(16px * var(--s));
   border-radius: 999px; background: none; border: 0; font-size: var(--t-meta); color: var(--ink2); }
 .ply-bar .iconbtn .ico { width: calc(28px * var(--s)); height: calc(28px * var(--s)); }
-.ply-bar .iconbtn.foc { background: rgba(229, 9, 20, .85); color: #fff; }
+.ply-bar .iconbtn.foc { background: color-mix(in srgb, var(--brand) 85%, transparent); color: #fff; }
 /* A chip that is carrying a real choice — subtitles on, a track switched — keeps app.css's fill. With the
    chips otherwise flat, that fill is the entire difference between "this exists" and "this is what is
    playing right now", and my flat rule above would otherwise outrank it by arriving later in the cascade. */
@@ -325,7 +325,7 @@
 .pbtn.edge { width: calc(88px * var(--s)); height: calc(88px * var(--s));
   background: rgba(14, 16, 20, .66); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .18); }
 .pbtn.edge .ico { width: calc(38px * var(--s)); height: calc(38px * var(--s)); }
-.pbtn.edge.foc { background: rgba(229, 9, 20, .85); }
+.pbtn.edge.foc { background: color-mix(in srgb, var(--brand) 85%, transparent); }
 
 /* Which player this is, and the speed if it is not 1x: honest, small, under the bar rather than inside it. */
 .ply-bottom .ctl { margin-top: calc(12px * var(--s)); padding: 0 calc(4px * var(--s)); color: var(--ink3); }
@@ -338,7 +338,7 @@
   right: calc(80px * var(--s)); bottom: calc(268px * var(--s));
   background: rgba(14, 16, 20, .72); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .26);
 }
-.skip.foc { background: #fff; color: #141414; }
+.skip.foc { background: #fff; color: var(--on-brand); }
 
 /* The next-episode card keeps app.css's opaque panel — it covers the picture, and a card that is half
    transparent over a moving film is unreadable in a different way. */

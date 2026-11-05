@@ -1,7 +1,7 @@
 {
  "id": "scenix-apple",
  "brandMark": "A",
- "_read": "Apple: a complete pack. The pack block chooses layout, card, focus and nav; the tokens choose surface and type.",
+ "_read": "Scenix brand tokens for the web client, in the design system's default scenix-apple pack — the same look the television ships. Values are ported from design-system/tokens/themes/scenix-apple.json (pack, colours, radii, focus) and the geometry the web client needs (cards, rows, boot) is kept complete. theme-netflix.json is the older look, kept for anyone who wants it.",
  "canvas": {
   "width": 1920,
   "height": 1080
@@ -54,7 +54,7 @@
   "captionGap": 12,
   "metaGap": 6,
   "navHeight": 96,
-  "billboardHeight": 800,
+  "billboardHeight": 720,
   "chipTop": 746,
   "navGap": 40,
   "chipGap": 14,
@@ -132,28 +132,28 @@
  },
  "cards": {
   "poster": {
-   "width": 480,
-   "aspect": 0.5625,
+   "width": 268,
+   "aspect": 1.5,
    "caption": true,
    "fullBleed": false
   },
   "channel": {
    "width": 280,
-   "aspect": 1.5,
+   "aspect": 0.5625,
    "caption": false,
    "fullBleed": false
   },
   "continue": {
-   "width": 280,
-   "aspect": 1.5,
+   "width": 320,
+   "aspect": 0.5625,
    "caption": false,
    "fullBleed": false
   },
   "hero": {
    "width": 1920,
-   "aspect": 0.4385,
+   "aspect": 0.4375,
    "caption": false,
-   "fullBleed": true
+   "fullBleed": false
   },
   "_top10": "The giant numeral is sized off the art height, so it scales with whatever card size the row uses. Mockup: 210 px text on a 300 px tall art, -26 px overlap, 7 px outline.",
   "numeralTextRatio": 0.495,
@@ -162,7 +162,12 @@
   "numeralStrokePx": 8,
   "numeralTextPx": 208,
   "numeralOverlapPx": 96,
-  "numeralRed": 0
+  "numeralRed": 0,
+  "posterGap": 20,
+  "perRow": 6,
+  "peekPx": 96,
+  "firstRowUnderHeroPx": -60,
+  "railBadge": "rating"
  },
  "rows": {
   "exploreThreshold": 6,
@@ -228,10 +233,10 @@
  },
  "pack": {
   "name": "Scene",
-  "hero": "full",
+  "hero": "plate",
   "heroAlign": "left",
   "heroHeight": 720,
-  "rows": "landscape",
+  "rows": "poster",
   "card": "below",
   "focus": "glow",
   "focusColor": "#FFFFFF",

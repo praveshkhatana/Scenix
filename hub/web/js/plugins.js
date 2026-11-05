@@ -58,7 +58,15 @@ function badges(item, art) {
   const right = [];
   if (item.live) left.push(el('span', { class: 'badge live' }, 'Live'));
   else if (isNew(item)) left.push(el('span', { class: 'badge new' }, 'New'));
-  if (item.match) left.push(el('span', { class: 'badge mt' }, `${item.match}%`));
+  // Which deciding fact rides on the art is a token, not a code path: the Scene pack shows the score the
+  // critics gave it, the classic packs show how much of it this hub can play.
+  const rail = String(token('cards', 'railBadge', 'match')).toLowerCase();
+  const score = item.rating && (item.rating.value != null ? item.rating.value : item.rating);
+  if (rail === 'rating' && Number(score) > 0) {
+    right.push(el('span', { class: 'badge rate' }, `★ ${Number(score).toFixed(1)}`));
+  } else if (item.match) {
+    left.push(el('span', { class: 'badge mt' }, `${item.match}%`));
+  }
   if (isKids(session.profile)) right.push(el('span', { class: 'badge kids' }, 'Kids'));
   if (item.maturity) right.push(el('span', { class: 'badge mat' }, item.maturity));
   const tier = token('cards', 'hdBadge', null);

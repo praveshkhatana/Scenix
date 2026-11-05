@@ -162,7 +162,8 @@
   "numeralStrokePx": 8,
   "numeralTextPx": 208,
   "numeralOverlapPx": 96,
-  "numeralRed": 0
+  "numeralRed": 0,
+  "railBadge": "match"
  },
  "rows": {
   "exploreThreshold": 6,
