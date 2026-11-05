@@ -323,7 +323,7 @@ class PlayerActivity : Activity() {
     private var volumeValue: TextView? = null
     private var volumeIconView: ImageView? = null
     private lateinit var centerBox: LinearLayout
-    private lateinit var centerSpinner: ProgressBar
+    private lateinit var centerSpinner: android.view.View
     private lateinit var centerText: TextView
 
     private var panel: View? = null
@@ -1988,9 +1988,7 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER
             visibility = View.GONE
         }
-        centerSpinner = ProgressBar(this).apply {
-            indeterminateTintList = ColorStateList.valueOf(playerInk)
-        }
+        centerSpinner = Views.spinner(app, playerInk, theme.px(5f))
         centerBox.addView(centerSpinner, LinearLayout.LayoutParams(theme.px(56f), theme.px(56f)))
         centerText = Views.text(app, "sub", 24f, playerInk, "", gravity = Gravity.CENTER, maxLines = 2)
         centerText.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), 0)
@@ -2878,8 +2876,18 @@ class PlayerActivity : Activity() {
             val key = sourceKey(src)
             val picked = key.isNotBlank() && key == chosenSourceKey
             val unsupported = src.optBoolean("unsupported", false)
-            val note = (if (unsupported) "not on this TV · " else "") + sourceNote(src) +
-                if (key == currentKey) " · playing" else ""
+            // "· playing" on a copy and "576p" in the corner used to read as a contradiction. They are
+            // two true things — the copy in play, and the rung that copy's ladder is showing at this
+            // second — so the row now says both, and the sheet agrees with the corner.
+            val running = runningQuality()
+            val playNote = when {
+                key != currentKey -> ""
+                running.isNotBlank() && running != "Auto" &&
+                    !running.equals(qualityWord(sourceWords(src)), ignoreCase = true) ->
+                    " · playing · $running on screen right now"
+                else -> " · playing"
+            }
+            val note = (if (unsupported) "not on this TV · " else "") + sourceNote(src) + playNote
             parent.addView(menuRow(sourceWords(src), note, picked, enabled = !unsupported) {
                 switchTo(src)
             })

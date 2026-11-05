@@ -186,7 +186,11 @@ class ManageProfilesActivity : Activity() {
         // Glow packs ring the plate from outside on the halo canvas; ring packs keep the flat
         // keyline on the plate edge.
         val stop: View = if (app.theme.focusStyle == "glow")
-            Screens.haloRow(this, app, row, Screens.listRadius(app))
+            // The halo wrapper takes the focus and disables the inner row's own click handling, so the
+            // action has to be handed TO the wrapper - a listener on the inner row alone is dead weight
+            // under a glow pack, and the row then looked editable but never opened (owner report:
+            // "unable to edit any profile").
+            Screens.haloRow(this, app, row, Screens.listRadius(app), onClick = { showProfileActions(p) })
         else {
             Focus.attach(row, row, app, Screens.listRadius(app), scale = false, elevate = false)
             row
@@ -214,23 +218,61 @@ class ManageProfilesActivity : Activity() {
     // ---- one person ---------------------------------------------------------------------------
 
     private fun showProfileActions(p: ProfileInfo) {
-        val options = ArrayList<Pair<String, String>>()
-        options.add("avatar" to "Avatar — choose a picture")
-        options.add("name" to "Rename — ${p.name}")
-        options.add("kind" to "Kind — ${if (p.kids) "Kids" else "Adult"}")
-        options.add("age" to "Age — ${p.age.ifBlank { "not set" }}")
-        options.add("pin" to if (p.pinSet) "PIN — change or remove" else "PIN — set one")
-        options.add("langs" to "Languages — ${languageSummary(p.languages)}")
-        options.add("remove" to "Remove ${p.name}")
-        showPicker("Edit ${p.name}", options, "") { action ->
-            when (action) {
-                "avatar" -> chooseAvatar(p)
-                "name" -> rename(p)
-                "kind" -> showKindPicker(p)
-                "age" -> showAgePicker(p)
-                "pin" -> showPinActions(p)
-                "langs" -> showLanguageEditor(p)
-                "remove" -> confirmRemove(p)
+        // The late-night shelf is a per-adult switch on the hub (`xxxEnabled`), and until now the only
+        // place to turn it on was the web settings page. Read the current state so the sheet can say
+        // what it is, not just that it exists; a kids profile never sees the row at all, so it never
+        // sees the switch.
+        val build = { lateNight: Boolean ->
+            val options = ArrayList<Pair<String, String>>()
+            options.add("avatar" to "Avatar — choose a picture")
+            options.add("name" to "Rename — ${p.name}")
+            options.add("kind" to "Kind — ${if (p.kids) "Kids" else "Adult"}")
+            options.add("age" to "Age — ${p.age.ifBlank { "not set" }}")
+            options.add("pin" to if (p.pinSet) "PIN — change or remove" else "PIN — set one")
+            options.add("langs" to "Languages — ${languageSummary(p.languages)}")
+            if (!p.kids) options.add("latenight" to "Late-night shelf — ${if (lateNight) "On" else "Off"}")
+            options.add("remove" to "Remove ${p.name}")
+            showPicker("Edit ${p.name}", options, "") { action ->
+                when (action) {
+                    "avatar" -> chooseAvatar(p)
+                    "name" -> rename(p)
+                    "kind" -> showKindPicker(p)
+                    "age" -> showAgePicker(p)
+                    "pin" -> showPinActions(p)
+                    "langs" -> showLanguageEditor(p)
+                    "latenight" -> writeLateNight(p, !lateNight, null)
+                    "remove" -> confirmRemove(p)
+                }
+            }
+        }
+        if (p.kids) { build(false); return }
+        api.prefs(p.id) { cur, _ ->
+            if (isFinishing || isDestroyed) return@prefs
+            build(cur?.optBoolean("xxxEnabled", false) == true)
+        }
+    }
+
+    /**
+     * Turn the late-night shelf on or off for one profile. Turning it ON is an adult act on the hub:
+     * when the household has adult PINs, a wrong or missing number comes back as a refusal, and the
+     * same call carries `pinCurrent` the second time round.
+     */
+    private fun writeLateNight(p: ProfileInfo, want: Boolean, pin: String?) {
+        status.text = "Saving…"
+        val patch = org.json.JSONObject().put("xxxEnabled", want)
+        if (!pin.isNullOrBlank()) patch.put("pinCurrent", pin)
+        api.savePrefs(p.id, patch) { saved, error ->
+            if (isFinishing || isDestroyed) return@savePrefs
+            status.text = ""
+            when {
+                saved != null -> status.text = if (want)
+                    "Late-night shelf is on for ${p.name} — it sits at the end of the Home screen"
+                else "Late-night shelf is off for ${p.name}"
+                error != null && pin.isNullOrBlank() && error.contains("adult PIN", true) ->
+                    showPinPad("An adult PIN is needed", "Turning the late-night shelf on proves an adult owns this profile") { entered ->
+                        writeLateNight(p, want, entered)
+                    }
+                else -> status.text = error ?: "The hub would not take that change"
             }
         }
     }

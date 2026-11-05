@@ -1353,10 +1353,19 @@ class BrowseActivity : Activity() {
         val body = panel.getChildAt(1) as? TextView
         title?.text = if (standalone) "This TV is running on its own"
         else "This hub has no titles to show"
-        body?.text = if (standalone)
-            "Scenix becomes the backend on this TV. Add an add-on and films and series arrive straight from it — no second machine, no hub address."
+        body?.text = if (standalone) {
+            // A fresh standalone install now ships with the same keyless default sources a fresh hub
+            // seeds, so this card is only what's left when even those cannot answer — the wording
+            // should not lecture about setup the install already did.
+            "Scenix is the backend on this TV. If its shelves are still empty, the add-on list or the " +
+                "network needs a look — Settings → Add-ons, or open " +
+                "${com.scenix.tv.core.LocalServer.webBase(this).ifBlank { "this TV's address" }} " +
+                "in a browser on your phone and type there."
+        }
         else
-            "The hub is reachable, but its shelves are empty. Add an add-on to the hub in Settings, or check that its library has finished its first scan."
+            "The hub is reachable, but its shelves are empty. Add an add-on to the hub in Settings, or " +
+                "check that its library has finished its first scan — or open its address on a " +
+                "computer, where typing is not done with a remote."
         panel.visibility = View.VISIBLE
         panel.getChildAt(2)?.post { panel.getChildAt(2)?.requestFocus() }
     }

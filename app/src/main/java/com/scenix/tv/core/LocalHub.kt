@@ -50,13 +50,17 @@ class LocalHub private constructor(context: Context) {
 
     /**
      * `{ addons: [...], audioLanguages: [...], subtitleLanguages: [...], adult: false }` in one file.
-     * Shipped empty: no addon, no language and no channel is preselected by a build, because none of
-     * them is the same between two households.
+     * A brand-new install starts the same way a fresh hub does — with the handful of keyless, public
+     * sources the product ships as defaults (metadata, subtitle search, watch links) — so the home
+     * screen fills with content instead of an empty-state card. An owner who removes every addon keeps
+     * an empty list: the seed applies to a settings file that has never been written, never to one
+     * someone has edited.
      */
     fun settings(): JSONObject = synchronized(lock) {
         val o = readJson(settingsFile)
+        val seededAddons = if (!settingsFile.exists()) JSONArray(DEFAULT_STANDALONE_ADDONS.map { JSONObject(it) }) else null
         JSONObject()
-            .put("addons", o.optJSONArray("addons") ?: JSONArray())
+            .put("addons", o.optJSONArray("addons") ?: seededAddons ?: JSONArray())
             .put("audioLanguages", o.optJSONArray("audioLanguages") ?: JSONArray())
             .put("subtitleLanguages", o.optJSONArray("subtitleLanguages") ?: JSONArray())
             .put("adult", o.optBoolean("adult", false))
@@ -68,6 +72,23 @@ class LocalHub private constructor(context: Context) {
             // a normal state: there are no local files until someone picks a folder.
             .put("local", o.optJSONObject("local") ?: JSONObject())
     }
+
+    /**
+     * What a fresh standalone install has enabled, mirroring what a fresh hub seeds (addons.example.json):
+     * keyless public sources only — the title catalogue and metadata, the subtitle search, the watch-link
+     * service, and the household's own games shelf. No torrent index, no paid account, no credential.
+     */
+    private val DEFAULT_STANDALONE_ADDONS = listOf(
+        mapOf("id" to "cinemeta", "name" to "Cinemeta",
+            "url" to "https://v3-cinemeta.strem.io/manifest.json", "enabled" to true, "priority" to 40),
+        mapOf("id" to "opensubtitles", "name" to "OpenSubtitles v3",
+            "url" to "https://opensubtitles-v3.strem.io/manifest.json", "enabled" to true, "priority" to 41),
+        mapOf("id" to "watchhub", "name" to "WatchHub",
+            "url" to "https://watchhub.strem.io/manifest.json", "enabled" to true, "priority" to 42),
+        mapOf("id" to "scenix-games", "name" to "Scenix Games",
+            "url" to "https://praveshkhatana.github.io/scenix-games-addon/manifest.json",
+            "enabled" to true, "priority" to 43),
+    )
 
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
     fun setSettings(body: JSONObject): JSONObject = synchronized(lock) {
@@ -1605,10 +1626,17 @@ class LocalHub private constructor(context: Context) {
                     ?: continue
                 val items = itemsFromMetas(metas, am, type)
                 if (items.isEmpty()) continue
+                // Cinemeta's movie and series catalogs carry the same names ("Popular", "New"), and a
+                // fresh install with the default sources on showed two "Popular" shelves side by side.
+                // The second one says what it holds.
+                val plain = s(c, "name", am.spec.name)
+                val label = if (out.any { it.title == plain })
+                    "$plain ${if (type == "series") "series" else if (type == "movie") "movies" else type}"
+                else plain
                 out.add(
                     LocalRow(
                         id = rowIdFor(am, type, s(c, "id", "default")),
-                        title = s(c, "name", am.spec.name),
+                        title = label,
                         card = "poster",
                         order = 20 + out.size,
                         scope = "all",
@@ -2354,6 +2382,27 @@ class LocalHub private constructor(context: Context) {
     }
 
     private fun manifestsHaveSubs(): Boolean = addonManifests().any { it.has("subtitles") }
+
+    /**
+     * A brand-new standalone install ships with the default sources enabled AND their shelves warmed:
+     * the home path is cache-only, so seeding the list without warming it would show the empty-state
+     * card on the very screen the defaults exist to fill. This runs as the LAST field initialiser, not
+     * in `init` — `settings()` synchronises on a lock that does not exist yet when `init` runs.
+     */
+    private val firstBoot: Unit = run {
+        try {
+            if (!settingsFile.exists()) {
+                val seeded = settings().optJSONArray("addons")
+                if (seeded != null && seeded.length() > 0) {
+                    setSettings(JSONObject().put("addons", seeded))
+                    Thread { refreshAddons() }.apply { isDaemon = true; name = "scenix-warm" }.start()
+                }
+            }
+        } catch (t: Throwable) {
+            // A first-boot convenience must never break the hub this object serves.
+            android.util.Log.w("ScenixLocalHub", "first-boot seed skipped", t)
+        }
+    }
 
     companion object {
         private const val TAG = "ScenixLocal"

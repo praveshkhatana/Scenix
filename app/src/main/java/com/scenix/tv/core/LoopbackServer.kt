@@ -17,14 +17,27 @@ import java.util.concurrent.ThreadFactory
  *
  * Standalone mode and the fixture preview answer the same contract from the same APK, so the
  * socket handling, the bounded body reader, the static asset server and the response writer live
- * here once. A subclass only decides what `/app/v1` means; everything else — loopback binding,
+ * here once. A subclass only decides what `/app/v1` means; everything else — the binding,
  * `Connection: close`, cache policy, path traversal refusal — is identical.
- *
- * Loopback only, ephemeral port, no authentication. Nothing outside this TV can reach it.
  */
-abstract class LoopbackServer(protected val assets: AssetManager) {
+abstract class LoopbackServer(
+    protected val assets: AssetManager,
+    bindAddress: InetAddress = InetAddress.getByName("127.0.0.1"),
+    preferredPort: Int = 0,
+) {
 
-    private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
+    /**
+     * The listening socket. Standalone asks for every interface on a fixed port so a phone or laptop
+     * on the same Wi-Fi can open the same page the hub serves and type add-on addresses there; the
+     * fixture stays loopback-only. Any port the OS falls back to is still reported through [port].
+     */
+    private val server = try {
+        ServerSocket(preferredPort, 8, bindAddress)
+    } catch (t: Throwable) {
+        // The one predictable port this backend wanted is taken by something else; the address the
+        // screens show is read from `port`, so an ephemeral fallback stays honest everywhere.
+        ServerSocket(0, 8, bindAddress)
+    }
     private val pool = Executors.newFixedThreadPool(POOL_THREADS, ThreadFactory { r ->
         Thread(r, "scenix-server").apply { isDaemon = true }
     })

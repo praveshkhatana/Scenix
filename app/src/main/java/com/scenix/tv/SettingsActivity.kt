@@ -339,6 +339,15 @@ class SettingsActivity : Activity() {
                 requireAdmin { startActivity(Intent(this, DebridActivity::class.java)) }
             }
             Screens.section(this, app, rows, "Access")
+            // Typing an add-on manifest URL on a remote is the worst part of a television. The hub —
+            // and a standalone TV, which now serves the same page on this LAN — answers the full web
+            // settings page at an address; put it where the person who just fought a keyboard will see it.
+            val web = webAddress()
+            addRow("Manage from a computer", web.ifBlank { "not on this network" },
+                "Add-ons, playlists, rows and PINs are easier to type in a browser: open that address on a laptop or phone", chevron = true) {
+                if (web.isBlank()) status.text = "This TV has no network address to offer right now"
+                else showPicker("Open this on your computer", listOf(web to "Any browser on the same Wi-Fi"), "") { }
+            }
             if (profileKind != "kids") {
                 addRow("Settings lock", if (adminOn) "On" else "Off",
                     "A separate admin PIN for add-ons, packs and these common settings") {
@@ -652,6 +661,17 @@ class SettingsActivity : Activity() {
             write(JSONObject().put("qualityCap", v))
         }
     }
+
+    /**
+     * The address of the web settings page for the backend this TV is using: the paired hub's own
+     * address, or this TV's LAN address when it is its own hub (standalone). Blank when neither has
+     * an address to offer.
+     */
+    private fun webAddress(): String = try {
+        if (app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE)
+            com.scenix.tv.core.LocalServer.webBase(this)
+        else com.scenix.tv.core.HubEndpoint.base(this)
+    } catch (t: Throwable) { "" }
 
     private fun showPicker(title: String, options: List<Pair<String, String>>, current: String, onPick: (String) -> Unit) {
         if (picker == null) pickerReturn = currentFocus

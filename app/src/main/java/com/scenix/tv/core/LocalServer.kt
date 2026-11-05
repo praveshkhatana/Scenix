@@ -17,7 +17,13 @@ import org.json.JSONObject
 class LocalServer private constructor(
     private val hub: LocalHub,
     assets: AssetManager,
-) : LoopbackServer(assets) {
+) : LoopbackServer(
+    assets,
+    // Every interface, on a fixed port: a standalone TV is a hub for this house too, and typing
+    // `http://<this TV>:8787` on a laptop must be possible, not a promise the loopback bind broke.
+    java.net.InetAddress.getByName("0.0.0.0"),
+    8787,
+) {
 
     override fun route(method: String, target: String, body: String, res: Res) {
         // substringBefore's second argument is the value returned when the delimiter is ABSENT, so asking
@@ -440,11 +446,35 @@ class LocalServer private constructor(
             instance?.let { return it.port }
             synchronized(this) {
                 instance?.let { return it.port }
-                val s = LocalServer(LocalHub.get(context), context.assets)
+                val s = try {
+                    LocalServer(LocalHub.get(context), context.assets)
+                } catch (t: Throwable) {
+                    // The screens fall back to the paired hub when this answers 0; leave a record of
+                    // why the TV's own server did not start, or the fallback looks like a config bug.
+                    android.util.Log.w("ScenixLocalServer", "own server not started", t)
+                    return 0
+                }
                 s.start()
                 instance = s
                 return s.port
             }
+        }
+
+        /**
+         * The address a phone or laptop types to manage this TV: this machine's LAN address and the
+         * port the server actually holds. Blank only when the TV has no LAN address to offer.
+         */
+        fun webBase(context: Context): String {
+            val port = portFor(context)
+            val ip = runCatching {
+                java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+                    .asSequence()
+                    .filter { it.isUp && !it.isLoopback }
+                    .flatMap { n -> java.util.Collections.list(n.inetAddresses).asSequence() }
+                    .firstOrNull { a -> a is java.net.Inet4Address && !a.isLoopbackAddress && a.isSiteLocalAddress }
+                    ?.hostAddress
+            }.getOrNull()
+            return if (ip.isNullOrBlank()) "" else "http://$ip:$port"
         }
     }
 }

@@ -61,4 +61,44 @@ object Views {
         d.setStroke(strokePx, color)
         return d
     }
+
+    /**
+     * The indeterminate spinner, drawn rather than borrowed. The framework `ProgressBar` is a green
+     * circular ARROW — a "replay" glyph that happens to rotate — and on a television it reads as a
+     * transport control, not as waiting. This is the same language the rest of the chrome speaks: a
+     * single rounded arc, the viewer's own ink, turning at a calm constant speed.
+     */
+    fun spinner(app: AppContext, ink: Int, strokePx: Int): android.view.View =
+        object : android.view.View(app.app) {
+            private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeCap = android.graphics.Paint.Cap.ROUND
+                color = ink
+                strokeWidth = strokePx.toFloat()
+            }
+            private var angle = 0f
+            private var last = 0L
+
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (last != 0L) {
+                    // A constant 240°/s. Faster spins look nervous on a 10-foot screen; slower ones
+                    // read as stalled.
+                    angle = (angle + (now - last) * SPINNER_DEGREES_PER_MS) % 360f
+                }
+                last = now
+                val half = Math.min(width, height) / 2f
+                val r = half - strokePx / 2f - 1f
+                if (r <= 0f) return
+                canvas.save()
+                canvas.rotate(angle, width / 2f, height / 2f)
+                canvas.drawArc(width / 2f - r, height / 2f - r, width / 2f + r, height / 2f + r,
+                    0f, SPINNER_ARC_SWEEP, false, paint)
+                canvas.restore()
+                postInvalidateOnAnimation()
+            }
+        }
+
+    private const val SPINNER_DEGREES_PER_MS = 240f / 1000f
+    private const val SPINNER_ARC_SWEEP = 280f
 }
