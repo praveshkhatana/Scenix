@@ -420,6 +420,15 @@ const QUALITY_RANK = { '2160p': 5, '1080p': 4, '720p': 3, '480p': 2, '360p': 1 }
 // does not match is a page the viewer has to open, not a stream the player can read.
 const MEDIA_EXT = /\.(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(\?|#|$)/i;
 
+/**
+ * An addon that proxies through itself hides the file inside its own query string:
+ * `…/api/stream?url=https%3A%2F%2Fhost%2Ffilm.m3u8&headers=…`. The path ends in nothing, but the
+ * thing it fetches for you is a media file — verified against DesiFlix: that endpoint answers a real
+ * 206 m3u8 with the headers baked in, while its raw host links 404. Classified as a page, the picker
+ * refuses the only working copy the addon had (`a service page, not a stream`).
+ */
+const MEDIA_IN_QUERY = /[?&](?:url|src|link|file|u|v)=(https?(?:%3A%2F%2F|:\/\/)[^&]*\.(?:mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(?:%3F|%23|\?|#|&|%26|$))/i;
+
 /** One upstream stream entry -> a source plus everything play() needs to resolve it later. */
 function parseStream(entry) {
   const nameLines = String(entry.name || '').split('\n');
@@ -450,7 +459,7 @@ function parseStream(entry) {
   // `url`; some addons put the same landing page straight in `url`. Either way it stays in the list -
   // the app can offer "watch it on <service>" - but it is marked, so the ranking rule keeps it below a
   // real file and play() never hands the TV a web page.
-  const looksLikeMedia = MEDIA_EXT.test(String(direct || ''));
+  const looksLikeMedia = MEDIA_EXT.test(String(direct || '')) || MEDIA_IN_QUERY.test(String(direct || ''));
   const link = !torrent && Boolean(direct) && (!looksLikeMedia || (!entry.url && Boolean(entry.externalUrl)));
 
   const firstLine = (nameLines[0] || '').trim();

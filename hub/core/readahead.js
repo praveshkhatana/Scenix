@@ -53,6 +53,14 @@ const { URL } = require('url');
 
 const settings = require('./settings');
 
+/**
+ * The identity every origin read carries when the copy itself states no headers. Free hosts have
+ * learned to answer bare script UAs with 403s and fake 404s; an ordinary browser line and a same-host
+ * Referer cost nothing and are what a person's own browser would have sent.
+ */
+const ORIGIN_UA = 'Mozilla/5.0 (Linux; Android 11; Smart TV) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 /** Where this hub answers HTTP on its own box; the router sets it at listen so ffmpeg can read through it. */
@@ -251,7 +259,15 @@ class Copy {
     // reopens readers against it all evening. http.get on an https URL doesn't fail politely — it
     // throws and takes the whole hub with it, so the library is chosen from the URL, not the habit.
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { headers: { Range: 'bytes=' + at + '-' }, agent: false, timeout: 120000 }, (got) => {
+    const req = lib.get(u, { headers: {
+      // A browser-less client is the cheapest bot fingerprint there is; hosts that die on a bare
+      // Java/curl UA are a common enough free-host habit that every read asks as a browser first.
+      // Copy-specific headers can still override these; the seek's own Range outranks all of them.
+      'User-Agent': ORIGIN_UA,
+      Referer: u.protocol + '//' + u.host + '/',
+      ...this.originHeaders,
+      Range: 'bytes=' + at + '-',
+    }, agent: false, timeout: 120000 }, (got) => {
       const cr = got.headers && got.headers['content-range'];
       if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) this.fileSize = Number(m[1]); }
       if (got.statusCode === 416 || got.statusCode >= 400) {
@@ -336,7 +352,14 @@ class Copy {
     const ent = { start, end, got: 0, req: null, res: null, dead: false };
     this.inflight.set(start, ent);
     const req = mod.get(u, {
-      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...this.originHeaders, Range: 'bytes=' + start + '-' + end },
+      headers: {
+        Accept: '*/*',
+        'Accept-Encoding': 'identity',
+        'User-Agent': ORIGIN_UA,
+        Referer: u.protocol + '//' + u.host + '/',
+        ...this.originHeaders,
+        Range: 'bytes=' + start + '-' + end,
+      },
       agent: false,
       timeout: 60000,
     }, (res) => {
@@ -713,6 +736,44 @@ function clearSlow(hash) { slow.delete(String(hash || '')); }
 /** The same bookkeeping for a copy named by url rather than by hash. */
 function slowFor(who) { const k = keyOf(who); return k ? isSlow(k) : null; }
 function clearSlowFor(who) { const k = keyOf(who); if (k) clearSlow(k); }
+
+/**
+ * Hosts that answered a real byte request with "not there" — a 4xx out of the origin itself, not our
+ * slowness bookkeeping — and how long they stay out of favour. This matters because one addon's links
+ * share a host: measured on the live cache, 309 DesiFlix copies sat on a Heroku app that had been
+ * deleted, each answering 404 for every path, and the picker offered them one after another because
+ * each URL is signed and unique so every copy looked freshly measured-and-fine until it was opened.
+ * One host refusing bytes is a fact about the host, so the ranking rule is allowed to say so.
+ */
+const deadHost = new Map(); // host -> { until, status }
+function hostOf(who) {
+  try { return new URL(String(who && who.url ? who.url : who)).host; } catch (e) { return ''; }
+}
+function markDeadHost(who, status) {
+  const h = hostOf(who);
+  if (h) deadHost.set(h, { until: Date.now() + 30 * 60 * 1000, status: Number(status) || 404 });
+}
+function deadHostFor(who) {
+  const h = hostOf(who);
+  if (!h) return null;
+  const s = deadHost.get(h);
+  if (!s) return null;
+  if (s.until < Date.now()) { deadHost.delete(h); return null; }
+  return s;
+}
+
+/**
+ * The HTTP status a read failure names ("HTTP 404"), when the host actually spoke — as opposed to our
+ * own silence ("no bytes yet", timeouts), which is warming and stays warming.
+ */
+function originRefusal(err) {
+  const m = /HTTP (\d{3})/.exec(String(err || ''));
+  if (!m) return 0;
+  const n = Number(m[1]);
+  if (n >= 400 && n < 500 && n !== 416) return n;
+  if (n >= 500) return 502; // the hub's own word for "my upstream failed"
+  return 0;
+}
 
 /** The engine's own address for a copy — the only thing this hub reads a torrent through. */
 function engineUrlOf(who) {
@@ -1180,6 +1241,27 @@ async function serve(req, res, who, opts = {}) {
       String(copy.error || (copy.req ? 'no bytes yet' : 'engine not answering')).slice(0, 120));
     if (typeof opts.onCold === 'function') opts.onCold(waited, copy.error);
     if (res.headersSent) { try { res.end(); } catch (e) { /* gone */ } return true; }
+    // The host refused with a status, not with slowness. Every chunk came back HTTP 404 (or 403, or
+    // 410) and the copy gave up on it — "warming, try again in 2 s" is then a lie that costs the
+    // player a minute of retries and hides the failover it should be making. Answer with the origin's
+    // own verdict, and remember it against the host: its other copies are in the same cold water.
+    const refusal = originRefusal(copy.givenUp && !copy.everBytes ? copy.error : '');
+    if (refusal) {
+      markDeadHost(copy.url, refusal);
+      log('PROXY ORIGIN REFUSED', tag, 'http=' + refusal,
+        'host=' + hostOf(copy.url), 'the host answered that when the hub asked for bytes');
+      res.writeHead(refusal >= 400 && refusal < 500 ? refusal : 502, {
+        'content-type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        error: 'gone',
+        originStatus: refusal,
+        detail: 'the host holding this copy answered HTTP ' + refusal + ' when the hub asked it for bytes',
+        hash: copy.hash,
+        fileId: copy.fileId,
+      }));
+      return true;
+    }
     res.writeHead(503, {
       'content-type': 'application/json',
       'retry-after': String(Math.ceil(((opts.retryAfterMs || 5000)) / 1000)),
@@ -1468,6 +1550,7 @@ async function cushionUrl(url, headers, opts = {}) {
 
 module.exports = {
   cfg, acquire, get, drop, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
+  markDeadHost, deadHostFor, originRefusal,
   sustain, preBuffer, prime, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
   statsFor, cushionUrl,
 };

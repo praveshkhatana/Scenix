@@ -33,6 +33,7 @@
 const { resolve } = require('../core/prefs');
 const liveHealth = require('../core/live-health');
 const probe = require('../core/probe');
+const readahead = require('../core/readahead');
 const settings = require('../core/settings');
 
 /** Weights live here, in one block, so "make quality matter more" is a two-character change. */
@@ -547,6 +548,22 @@ module.exports = {
           why.push(s.kind === 'torrent' ? 'not measured: a torrent is a promise about a swarm, not a URL to open'
             : s.link ? 'not measured: a page to open, not a stream'
             : 'not measured: this addon mints its URL at play time');
+        }
+        // 9b. What the hub learned about this copy's HOST, not just this copy. Free-addon links are
+        // signed and unique per press, so each copy on a host that answers 404 for every path keeps
+        // looking unmeasured-and-fine right up to the moment the player tries to open it — measured
+        // on the live cache: 309 copies on one deleted Heroku app, offered one after another. Once a
+        // real byte request is refused with a status, the host carries that fact for a while, and
+        // copies riding it are ranked as down instead of newly minted.
+        if (status !== 'down' && /^https?:\/\//i.test(String(s.url || ''))) {
+          const host = readahead.deadHostFor(s.url);
+          if (host) {
+            score += W.probeDead;
+            status = 'down';
+            why.push('measured just now: another copy on ' + String(s.url).split('/')[2]
+              + ' answered HTTP ' + host.status + ' when the hub asked it for bytes'
+              + ' - every link on that host is in the same cold water');
+          }
         }
         s.status = status;
         s.tagline = taglineFor(s, item, langs, prefs, s.kind === 'torrent' && s.seeders === 0);

@@ -1872,6 +1872,7 @@ async function fetchEpisodeSources(item) {
  * a sibling has what this tile lacks, adopt its episode list onto this tile — the identity stays the
  * one rows, progress and Continue are built on. Returns the addressed episode, or null.
  */
+const adoptingSiblings = new Set(); // identities whose episode-sibling lookup is already running
 async function adoptEpisodeSibling(item, ctx, opts) {
   const title = String(item.title || '').trim();
   if (!title || item.type !== 'series') return null;
@@ -1889,13 +1890,20 @@ async function adoptEpisodeSibling(item, ctx, opts) {
         && norm(h.title) === want
         && (!Number.isFinite(year) || !Number.isFinite(Number(h.year)) || Number(h.year) === year));
       if (!sib) continue;
-      const full = await ctx.metaOnly(sib.identity, 'series', 1500);
+      const full = await ctx.metaOnly(sib.identity, 'series', opts.metaBudget || 1500);
       if (!full || !Array.isArray(full.episodes) || !full.episodes.length) continue;
       // Union, never replace. DesiFlix knowing 20 of Breaking Bad's 62 episodes must not erase the
       // 62 — the tile lost seasons 1-3 that way, and with the full list the copies indexed by the
       // show's shared ids.
       item.episodes = merge.unionEpisodes(item.episodes, full.episodes);
       log('EPISODE SIBLING', item.identity, '->', sib.identity, 'episodes=' + item.episodes.length);
+      if (opts.fetchSources === false) {
+        // The detail page only wants the episode list — the seasons and numbers it will print. An
+        // Indian soap whose global tile carries one episode sits complete under the catalogue addon's
+        // own id (4,922 of them for Taarak Mehta); the next press of that show lists them from cache.
+        rememberItems([item]);
+        return episodeOf(item, opts.season, opts.episode) || true;
+      }
       const ep = episodeOf(item, opts.season, opts.episode);
       if (!ep) continue;
       // Ask both addresses for the episode: the sibling's (the reason to adopt is that its addon
@@ -2447,9 +2455,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       item.sources = [];
     }
     if (!(item.sources || []).length) await fetchEpisodeSources(item); // cheap when resolve already asked
-    if (!(item.sources || []).length && type === 'series' && await adoptEpisodeSibling(item, ctx, opts)) {
+    // "Sources answered, but not one of them is this title" — the walk below would reject every copy
+    // with `its name is not <title>` — is the same dead end as silence, and must not block the join
+    // that exists for it: an aggregator that replies to an episode address with some other show's
+    // releases (measured live: "Grand Warden I" for a Taarak Mehta episode) is answering, wrongly.
+    const nothingRight = (item.sources || []).length > 0 && type === 'series'
+      && (item.sources || []).every((s) => labelNamesOtherTitle(labelOf(s), item.title));
+    if ((!(item.sources || []).length || nothingRight) && type === 'series'
+        && await adoptEpisodeSibling(item, ctx, opts)) {
       // The sibling carried the episode the show itself could not. Sources are on the item now.
-    } else if (!(item.sources || []).length) {
+    } else if (!(item.sources || []).length || nothingRight) {
       // Episode addressing is the right question, but some addons only list a show as a whole (a season
       // pack, or a catalog with no episode ids). An empty answer must not cost the title: fall back to
       // the show address the hub used before this existed.
@@ -2700,6 +2715,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   };
 
   let labelOverride = null; // set when a named pick plays despite its own release name
+  let reminted = false; // one throw-away of the cached stream answer per play press
   for (const cand of queue) {
     const addon = addonOf(cand);
     if (!addon || typeof addon.play !== 'function') continue;
@@ -2776,8 +2792,22 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         continue;
       }
       if (rankDown(cand) && queue.length > 1) {
-        tried.push(labelOf(cand) + ': measured down (' + ((cand.probe && cand.probe.error) || 'no bytes') + ')');
+        const down = (cand.probe && cand.probe.error) || 'no bytes';
+        tried.push(labelOf(cand) + ': measured down (' + down + ')');
         lastResort = lastResort || { o, cand };
+        // A measured 4xx proves the link the hub cached is dead, not that the title is — and the
+        // cached answer is exactly what the next press reads back for six hours. Once per press,
+        // drop the addon's stream answer for this title and give this copy one fresh mint at the
+        // addon itself; the unprobed clone walks the normal validation road, so a new link gets a
+        // real chance and a re-minted death stops here.
+        const refused = readahead.originRefusal(down);
+        if (!reminted && refused >= 400 && refused < 500) {
+          reminted = true;
+          addons.forgetStreams(kept.streamId || identity);
+          log('PLAY REMINT', identity, labelOf(cand),
+            'measured ' + down + ': asking ' + addon.id + ' for a fresh link');
+          queue.push(Object.assign({}, cand, { probe: null, checked: false }));
+        }
         continue;
       }
       // A link the addon minted inside play() has no probe result of its own, so nothing has asked what
@@ -4842,6 +4872,23 @@ async function handle(req, res) {
           const magnet = magnetOf(kept.streamId || identity, s);
           return magnet ? { ...s, url: magnet } : s;
         }), wantFromStreamId(kept.streamId || identity));
+        // A series whose tile is thin is usually complete somewhere else under its own title. The
+        // detail page must not wait on that search (a sibling's full meta is 3.8 MB and 7-22 s on a
+        // Indian soap's own addon), so it runs after the response is out: this press already showed
+        // what the cache had, the next press of this show lists the real thing. The play path has
+        // always done this join when an episode came up empty; this is the same join for the eyes.
+        if (kept.type === 'series' && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)
+            && !adoptingSiblings.has(kept.identity)) {
+          adoptingSiblings.add(kept.identity);
+          adoptEpisodeSibling(kept, makeCtx(profile, 10000),
+            { fetchSources: false, metaBudget: 12000 })
+            .then((got) => {
+              if (got) log('META EPISODES ADOPTED', kept.identity,
+                'episodes=' + ((kept.episodes || []).length));
+            })
+            .catch((e) => log('META EPISODES ADOPT FAIL', kept.identity, e.message))
+            .finally(() => adoptingSiblings.delete(kept.identity));
+        }
       }
       // Must not fall through: the next matcher would answer this same request a second time, and a
       // second send on a finished response takes the whole hub down (ERR_HTTP_HEADERS_SENT).
