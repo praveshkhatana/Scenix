@@ -258,6 +258,51 @@ class SettingsActivity : Activity() {
                     )
                 }
             }
+            // The hub follows this television's builds: its checkout is the same repository the
+            // APK is built from, and it pulls and restarts itself (hub core/update.js). The app
+            // nudges that quietly whenever it finds a hub behind; this row asks right now and says
+            // what the hub answered — including the honest "I will not pull over your edits".
+            if (backend != Prefs.BACKEND_STANDALONE) {
+                addRow("Update hub", "Check the hub's build",
+                    "The hub pulls the newest Scenix code for itself and restarts for a moment",
+                    chevron = false) {
+                    requireAdmin {
+                        android.widget.Toast.makeText(this, "Asking the hub…",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                        val base = com.scenix.tv.core.HubEndpoint.base(this)
+                        val token = app.prefs.hubToken()
+                        Thread {
+                            val answer = when {
+                                base.isBlank() -> "This television has no hub to ask"
+                                else -> {
+                                    val s = com.scenix.tv.core.HubUpdate.status(base, token)
+                                    when {
+                                        s == null -> "This hub is too old to update itself — pull its folder by hand"
+                                        !s.git -> s.blocked ?: "This hub is not a git checkout"
+                                        s.behind == 0 -> "The hub is already on the newest build (${s.commit})"
+                                        !s.canUpdate -> "The hub is ${s.behind} commits behind but will not pull over: ${s.blocked}"
+                                        else -> {
+                                            val r = com.scenix.tv.core.HubUpdate.updateNow(base, token)
+                                            if (r?.optBoolean("updated") == true) {
+                                                "The hub moved ${r.optString("from")} → ${r.optString("to")}; " +
+                                                    "it restarts in a moment"
+                                            } else {
+                                                "The hub declined: ${r?.optString("reason") ?: "no answer"}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    android.widget.Toast.makeText(this, answer,
+                                        android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }.start()
+                    }
+                }
+            }
             val picked = Theme.catalog(this, assets).firstOrNull { it.id == app.prefs.theme() }
             val themeName = when {
                 picked == null -> app.prefs.theme()

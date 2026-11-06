@@ -992,6 +992,25 @@ export function screen(ctx) {
             catch (e) { ctx.toast('The hub would not clear the cache'); }
           }, { valueText: null });
       }
+      if (caps.hubUpdate) {
+        openRow(g, 'Update the hub',
+          'The hub pulls the newest Scenix code for itself and restarts for a moment — updating the app updates the hub too.',
+          async () => {
+            ctx.toast('Checking the hub’s build…');
+            try {
+              const s = await api.hubUpdate();
+              if (!s.git) { ctx.toast(s.blocked || 'This hub is not a git checkout'); return; }
+              if (!s.behind) { ctx.toast(`The hub is already on the newest build (${s.commit})`); return; }
+              if (!s.canUpdate) { ctx.toast(`${s.behind} commits behind, but: ${s.blocked}`); return; }
+              ctx.toast('Pulling — the hub restarts in a moment…');
+              const r = await api.hubUpdateNow();
+              ctx.toast(r.updated ? `The hub moved ${r.from} → ${r.to}; reload this page in a few seconds`
+                : `The hub declined: ${r.reason}`);
+            } catch (e) {
+              ctx.toast('The hub would not update: ' + e.message);
+            }
+          }, { valueText: null });
+      }
       parent.appendChild(g);
     }
 

@@ -76,6 +76,7 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         unpaired = false
         running = true
         online = false
+        HubUpdate.reset() // the new backend deserves the same "follow the app" nudge
         start(onReady)
     }
 
@@ -133,6 +134,9 @@ class HubWatch(context: Context, private val ctx: AppContext) {
                 ctx.prefs.setHubLastWorking(url)
                 if (url != ctx.prefs.hubUrl("")) ctx.prefs.setHubUrl(url)
                 Log.i(TAG, "hub answering at $url")
+                // And follow the hub: if this backend sits behind its own newest build, pull it
+                // now (hub core/update.js), so installing a new APK here never leaves an old hub.
+                HubUpdate.followIfNeeded(app, url, ctx.prefs.hubToken())
                 main.post {
                     apply(true)
                     done?.invoke(true)

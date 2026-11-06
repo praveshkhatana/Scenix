@@ -106,6 +106,9 @@ const introdb = require('./core/introdb');
 // The hub's own read-ahead: one bounded cushion of torrent bytes per copy, shared by the player, the
 // remuxer and the Play press that measures the copy before promising it. See core/readahead.js.
 const readahead = require('./core/readahead');
+// The hub keeping itself current: this checkout is the repo, so a fast-forward pull is its release
+// channel and one route lets the TV, the browser and the hub's own timer all ask for it. See core/update.js.
+const hubupdate = require('./core/update');
 // What the owner chose (core/settings.js) and what this hub says about itself on the LAN
 // (core/discovery.js). Both are read when a request asks, so a change made in the hub's own UI lands on
 // the next request: a setting that needs a restart to take effect is a setting nobody really made.
@@ -272,6 +275,8 @@ function capabilities() {
     profileEdit: true, // profiles are created, renamed and removed over HTTP,
     cacheAdmin: true, // the answers this backend cached can be thrown away on purpose,
     avatarFaces: true, // profile faces are offered and served by this backend
+    hubUpdate: true, // this backend can pull its own newest build (core/update.js); a copied
+                     // folder with no git still reports itself honestly through that route
   };
   // A flag only when the resolver can actually do something. Off, unconfigured or missing a token means
   // the capability is absent, exactly like an uninstalled addon: the clients need no "debrid is off" state.
@@ -4218,6 +4223,23 @@ async function handle(req, res) {
       return send(res, 200, await navCaps());
     }
 
+    // ---- the hub's own build ----
+    // The household updates its television from GitHub Releases; this route is how the hub follows
+    // on the same day instead of becoming the one stale piece. GET answers the git facts (current
+    // commit, how far behind, and the honest reason when a self-pull is not allowed); POST pulls and
+    // restarts the process — which is why any client may press it: the TV after installing a new
+    // APK, the browser's Settings, or the hub's own six-hourly pass.
+    if (path === '/app/v1/hub/update') {
+      if (req.method === 'POST') {
+        const r = await hubupdate.update();
+        if (r.updated && hubupdate.selfRestart()) {
+          log('HUB SELF UPDATE', r.from + ' -> ' + r.to, 'restarting for the new code');
+        }
+        return send(res, 200, r);
+      }
+      return send(res, 200, await hubupdate.status(u.searchParams.has('check')));
+    }
+
     if (path === '/app/v1/manifest') {
       return send(res, 200, {
         id: HUB_ID,
@@ -5342,6 +5364,9 @@ server.listen(PORT, '0.0.0.0', () => {
   // ffmpeg reads a torrent through this hub's own proxy so the cushion sits in front of it too; it needs
   // to know the address to loop back to.
   readahead.setSelfOrigin(SCHEME + '://127.0.0.1:' + PORT);
+  // The hub follows its own origin on a slow timer, so "update the app" never leaves an old hub
+  // behind — and a hub that cannot self-pull (dirty checkout, no git) logs why once per pass.
+  hubupdate.start(log);
   log('addons:', registry.providers.map((p) => p.id + (p.native ? '' : '@' + p.priority)).join(', '));
   log('rows:', registry.rows.map((r) => r.id + '/' + (r.scope || 'all') + '@' + r.order).join(', '));
   log('rules:', registry.rules.map((r) => r.id + '@' + r.order).join(', '));

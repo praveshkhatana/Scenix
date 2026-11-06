@@ -149,6 +149,11 @@ export const api = {
   // browser without the number travelling in a URL that gets logged. No body, no PIN: an unlocked profile.
   deleteProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'DELETE', body, timeout: 6000 }),
   clearCache: () => request('/app/v1/cache/clear', { method: 'POST', body: {}, timeout: 9000 }),
+  // The hub's own build: GET states which commit this hub runs, how far behind its origin it is, and
+  // why it would not pull if it would not; POST pulls and restarts the hub process. The gap is a
+  // second long — the same gap any hub restart makes.
+  hubUpdate: () => request('/app/v1/hub/update', { timeout: 20000 }),
+  hubUpdateNow: () => request('/app/v1/hub/update', { method: 'POST', body: {}, timeout: 120000 }),
   characters: (seed, limit = 40, refresh = false) => request(
     `/app/v1/avatars/characters?limit=${Number(limit) || 40}&seed=${encodeURIComponent(String(seed || 'scenix'))}${refresh ? '&refresh=1' : ''}`,
     { timeout: 9000 }),
