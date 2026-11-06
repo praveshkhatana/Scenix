@@ -163,11 +163,14 @@ function parseHash() {
 }
 
 function hashFor(route) {
-  return `#/${route.name}${route.arg != null ? `/${encodeURIComponent(route.arg)}` : ''}`;
+  /* The episode window a native Detail page hands over lives in the route's query, so the hash has to carry
+     it or a reload puts the viewer back at the start of the series. */
+  const q = route.query ? (route.query.toString ? route.query.toString() : String(route.query)) : '';
+  return `#/${route.name}${route.arg != null ? `/${encodeURIComponent(route.arg)}` : ''}${q ? `?${q}` : ''}`;
 }
 
-function navigate(name, arg) {
-  const route = { name, arg: arg == null ? null : arg };
+function navigate(name, arg, query) {
+  const route = { name, arg: arg == null ? null : arg, query: query || null };
   const top = routeStack[routeStack.length - 1];
   if (top && top.name === route.name && top.arg === route.arg) return mount(route, false);
   routeStack.push(route);
@@ -923,7 +926,7 @@ async function boot() {
     return;
   }
   document.body.classList.toggle('kids', state.isKids(state.session.profile));
-  navigate(route.name, route.arg);
+  navigate(route.name, route.arg, route.query);
 }
 
 boot().catch((e) => {

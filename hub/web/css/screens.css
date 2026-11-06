@@ -255,24 +255,35 @@
 .ply-top .pbtn .ico { width: calc(30px * var(--s)); height: calc(30px * var(--s)); }
 
 /* The name steps past the button and stops being a second headline over the picture: one line, cut short
-   rather than wrapped down the film. */
-.ply-hud { top: calc(50px * var(--s)); left: calc(164px * var(--s)); align-items: center; }
-.ply-hud > div:first-child { flex: 0 1 auto; min-width: 0; }
-.ply-hud .pt { font-size: calc(26px * var(--s)); font-weight: 600;
+   rather than wrapped down the film. It now sits above the timeline with the certificate and the LIVE pill,
+   which is where the television's player puts it — the name of the thing belongs with the thing you are
+   watching, not with the way out. */
+.ply-hud { top: calc(50px * var(--s)); left: calc(80px * var(--s)); right: calc(80px * var(--s)); align-items: center; }
+.ply-title { align-items: baseline; gap: calc(12px * var(--s)); margin: 0 0 calc(18px * var(--s)); }
+.ply-title .pt { font-size: calc(28px * var(--s)); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ply-hud .ps { font-size: calc(18px * var(--s)); margin-top: calc(4px * var(--s));
+.ply-title .ps { font-size: calc(18px * var(--s));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Elapsed at one end, what is left at the other, and a hairline between them — that whole line is the
-   position. Tabular figures so the row does not shuffle as the numbers change. */
+/* The position is the line itself, end to end. The two numbers used to sit at its ends, which meant a long
+   title and a long timeline competed for the same room; they ride the end of the control row now, as they
+   do on the television. Tabular figures so the row does not shuffle as the numbers change. */
 .ply-bar .times {
   display: flex; align-items: center; gap: calc(20px * var(--s));
   justify-content: flex-start; margin: 0 0 calc(20px * var(--s));
   font-size: var(--t-readout); color: var(--ink2); font-variant-numeric: tabular-nums;
 }
-.ply-bar .times span { flex: none; min-width: calc(92px * var(--s)); }
-.ply-bar .times span:last-child { text-align: right; }
 .ply-bar .trk { flex: 1 1 auto; height: calc(6px * var(--s)); }
+/* `0:00 · 1:37:20` at the end of the control row, where the eye finishes the line. */
+.ptimes {
+  display: flex; align-items: baseline; gap: calc(8px * var(--s)); margin-left: calc(14px * var(--s));
+  font-size: var(--t-readout); color: var(--ink1); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ptimes span { flex: none; }
+.ptimes span:last-child { color: var(--ink3); }
+/* The break between transport and tracks: two kinds of thing in one row, read as two kinds of thing. */
+.ply-div { width: calc(1px * var(--s)); height: calc(26px * var(--s)); background: rgba(255, 255, 255, .22);
+  margin: 0 calc(12px * var(--s)); flex: none; }
 .trk .kn { width: calc(16px * var(--s)); height: calc(16px * var(--s)); box-shadow: none;
   transition: transform var(--focus-ms) ease-out; }
 /* The knob is the only part of the line that answers a key, so the ring on the line grows the knob. Scaling
@@ -319,6 +330,13 @@
    playing right now", and my flat rule above would otherwise outrank it by arriving later in the cascade. */
 .ply-bar .iconbtn.on { background: rgba(255, 255, 255, .16); color: #fff; }
 
+/* One quiet line above the transport naming whichever control the ring is standing on. The words under the
+   buttons were dropped because they fit three huge circles and nothing else, so without this a focused glyph
+   is anonymous. The height is reserved whether or not there is a word, so focusing a button never moves the
+   row it is describing — and the television's player says it the same way, one line over the transport. */
+.ply-hint { min-height: calc(26px * var(--s)); margin: calc(4px * var(--s)) 0 calc(2px * var(--s));
+  color: var(--ink3); font-size: var(--t-meta); letter-spacing: .06em; text-transform: uppercase; }
+
 /* The next episode waits at the right edge of the picture, a tab half out of frame, so it can be seen coming
    without covering the episode that is still playing. Only a series ever has one. */
 .ply-edge { position: absolute; right: calc(-24px * var(--s)); top: calc(50% - 44px * var(--s)); z-index: 7; }
@@ -331,6 +349,34 @@
 .ply-bottom .ctl { margin-top: calc(12px * var(--s)); padding: 0 calc(4px * var(--s)); color: var(--ink3); }
 .ply-bottom .ctl .iconbtn { background: none; border: 0; padding: 0 calc(6px * var(--s)); height: auto;
   font-size: var(--t-meta); }
+
+/*
+  A copy that would not open is a card with a decision on it, not a caption over the film. This is the
+  television's failure panel: the heading, then in its quiet uppercase label which thing failed and what it
+  was being watched in, then why, then the ways out as chips — the one this screen recommends carrying the
+  pack's accent so the card has one obvious press instead of four equal-looking ones. Left-aligned, because
+  four sentences centred under each other read as an poster and not as a report.
+*/
+.ply-panel {
+  display: grid; gap: calc(6px * var(--s)); max-width: calc(940px * var(--s)); text-align: left;
+  background: rgba(14, 16, 20, .86); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .20);
+  border-radius: var(--r-panel); padding: calc(30px * var(--s)) calc(34px * var(--s));
+  box-shadow: 0 calc(20px * var(--s)) calc(52px * var(--s)) rgba(0, 0, 0, .7);
+}
+.ply-panel .big { font-size: var(--t-h3); font-weight: 700; color: var(--ink1); }
+.ply-panel .kick { font-size: var(--t-meta); font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink3); margin-bottom: calc(6px * var(--s)); }
+.ply-panel .small { font-size: calc(21px * var(--s)); color: var(--ink2); max-width: none; }
+.ply-panel .why { font-size: var(--t-meta); color: var(--ink3); }
+.ply-panel .btns { display: flex; flex-wrap: wrap; gap: calc(12px * var(--s)); justify-content: flex-start;
+  margin-top: calc(18px * var(--s)); }
+.ply-panel .note { font-size: var(--t-meta); color: var(--ink3); margin-top: calc(10px * var(--s)); }
+.ply-chip {
+  padding: calc(11px * var(--s)) calc(22px * var(--s)); border-radius: var(--r-button); border: 0;
+  background: rgba(255, 255, 255, .10); color: #fff; font-size: calc(21px * var(--s)); font-weight: 700;
+}
+.ply-chip.go { background: rgba(255, 255, 255, .16); color: var(--match); }
+.ply-chip.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); background: rgba(255, 255, 255, .22); }
 
 /* Skip intro rides above the bar. Both this and the next-episode card are measured against the bar's top,
    which is now a hairline and one row of flat buttons rather than a padded panel. */

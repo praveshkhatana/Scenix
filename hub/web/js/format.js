@@ -71,6 +71,16 @@ export function episodeLabel(season, episode) {
   return `S${String(season).padStart(2, '0')} E${String(episode).padStart(2, '0')}`;
 }
 
+/*
+ * The certificate, in the hub's own word — "PG-13", or "13+" when it only carries an age. The detail screen
+ * and the player's identity line both show it, and two spellings of the same rating across the two is the
+ * kind of thing that makes a viewer doubt the number.
+ */
+export function maturityLabel(item) {
+  if (!item) return '';
+  return item.maturity || (item.minAge ? `${item.minAge}+` : '');
+}
+
 /** Quality words the hub uses in source labels, normalised for menu rows. */
 export function qualityWord(q) {
   const s = String(q || '').toLowerCase();
