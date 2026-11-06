@@ -20,6 +20,9 @@ export const session = {
   profile: null,
   manifest: null,
   prefs: null,
+  // What this hub can fill: `{ live, games }` from `/app/v1/caps`, or null until it answers. The nav bar's
+  // two optional doors open on this, the same fact the television's bar reads.
+  caps: null,
   home: null,            // last /app/v1/home payload, keyed by profile id
   homeKey: null,
   search: '',            // last query, so returning to search keeps your typing

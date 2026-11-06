@@ -29,6 +29,7 @@ const SCREENS = {
   play:     () => import('/ui/js/screens/player.js'),
   search:   () => import('/ui/js/screens/search.js'),
   browse:   () => import('/ui/js/screens/browse.js'),
+  games:    () => import('/ui/js/screens/games.js'),
   list:     () => import('/ui/js/screens/list.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
@@ -365,6 +366,7 @@ function buildNav() {
       item('home', 'Home', 'home'),
       item('movies', 'Movies', 'browse', 'movies'),
       item('series', 'Series', 'browse', 'series'),
+      item('games', 'Games', 'games'),
       item('live', 'Live TV', 'channels'),
       item('list', 'My list', 'list'),
       item('search', 'Search', 'search'),
@@ -402,7 +404,16 @@ function syncSectionTabs() {
   const home = state.session.home;
   const liveFilled = home && Array.isArray(home.rows)
     && home.rows.some((r) => r.id === 'live' && (r.items || []).length);
-  const on = { movies: hasRow('movies'), series: hasRow('series'), live: !!liveFilled };
+  // Live TV and Games open onto optional add-ons, so the hub's own answer about what is installed decides
+  // them. Until that answer exists, Live TV waits for the proof of a filled live wall on Home, and Games
+  // keeps its door open — the same pair of fallbacks the television's bar uses.
+  const caps = state.session.caps;
+  const on = {
+    movies: hasRow('movies'),
+    series: hasRow('series'),
+    live: (caps ? !!caps.live : false) || !!liveFilled,
+    games: caps ? caps.games !== false : true,
+  };
   for (const [tab, show] of Object.entries(on)) {
     const b = nav.querySelector(`.nav-item[data-tab="${tab}"]`);
     if (b) b.hidden = !show;
@@ -864,6 +875,15 @@ async function boot() {
     const m = await api.manifest();
     state.session.manifest = m;
     syncSectionTabs();
+    // Movies and Series are gated by the manifest just above; Live TV and Games are doors into optional
+    // add-ons, so the hub is asked which of them this household has installed. The answer is small and it
+    // runs beside the profile fetch rather than in front of it. Until it arrives the Games door stays open —
+    // the same rule the television's bar follows — because a tab that leaves is easier to understand than
+    // one that never appeared for a household that does have games.
+    api.caps().then((c) => {
+      state.session.caps = c || null;
+      syncSectionTabs();
+    }).catch(() => { /* no answer: the doors stay as they were painted */ });
     const p = await api.profiles();
     state.setProfiles(p.profiles);
     state.loadMyList();

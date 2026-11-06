@@ -276,3 +276,27 @@
   filter: brightness(.55) saturate(.8);
 }
 :root[data-stage="focus"] .screen.home .card { transition: filter 280ms ease, transform var(--focus-ms) ease-out; }
+
+/* ==========================================================================
+   The wall packs — Liquid Glass, Kids.
+
+   These themes are not a background colour with cards on top of them: the television lights the
+   page with a field of soft blobs and a grain over it, and `pack.wallBlobs` / `pack.wallGrain` carry
+   that field as numbers (js/theme.js turns the list into gradients). The screens go transparent so the
+   light reads *behind* the shelves rather than being painted over by the page.
+   ========================================================================== */
+
+:root[data-wall="pack"]::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-color: var(--bg);
+  background-image: var(--wall);
+}
+/* The grain is one small tiled noise, fixed and never animated: on a panel this is a single
+   composited layer rather than a filter over the page. */
+:root[data-wall="pack"]::after {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  opacity: var(--wall-grain, 0);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+:root[data-wall="pack"] .screen { background: transparent; }
+:root[data-wall="pack"] .billboard { background: none; }

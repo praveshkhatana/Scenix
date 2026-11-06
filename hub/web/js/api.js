@@ -91,6 +91,13 @@ async function request(path, { method = 'GET', body, timeout = 12000, headers = 
 export const api = {
   manifest: () => request('/app/v1/manifest', { timeout: 8000 }),
   profiles: () => request('/app/v1/profiles', { timeout: 8000 }),
+  // What the navigation may offer, in one small answer. The bar asks this at start-up rather than
+  // guessing: a hub without a games add-on (or without a live playlist) must not offer a tab it
+  // cannot fill. The native client gates its doors on the same two facts.
+  caps: () => request('/app/v1/caps', { timeout: 6000 }),
+  // Game mode shelves. A game is not a title — it carries `playUrl`, `fallbackUrl` and a controller
+  // flag instead of sources — so this stays its own endpoint, the same one the TV reads.
+  games: () => request('/app/v1/games', { timeout: 12000 }),
   home: (profile) => request(`/app/v1/home?profile=${encodeURIComponent(profile)}`, { timeout: 10000 }),
   row: (rowId, profile) => request(`/app/v1/row/${encodeURIComponent(rowId)}?profile=${encodeURIComponent(profile)}`, { timeout: 8000 }),
   search: (q, profile) => request(`/app/v1/search?q=${encodeURIComponent(q)}&profile=${encodeURIComponent(profile)}`, { timeout: 8000 }),

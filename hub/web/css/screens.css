@@ -853,3 +853,72 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 .list-empty p { color: var(--ink2); font-size: var(--t-sub); max-width: calc(560px * var(--s)); }
 .list-empty .btn { margin-top: calc(18px * var(--s)); }
 .list-empty[hidden] { display: none; }
+
+/* ==========================================================================
+   Game mode (js/screens/games.js)
+
+   The shelves and the hero are the shared shapes — a `.billboard` and `.row`s — so the
+   household's pack drives them like it drives Home. What is new here is the frame a game is
+   played in: a full-bleed surface, a bar that carries the title and the only way out, and a
+   line of escapes underneath. It is deliberately not a player HUD: a browser title has no
+   timeline, no subtitles and no resume point, so drawing those controls would be a lie.
+   ========================================================================== */
+
+/* The one fact that decides whether a game plays from the couch is drawn like the other
+   corner facts, in the pack's own console colour rather than a second brand. */
+.badge.gamepad {
+  background: rgba(8, 10, 14, .74); border: calc(1px * var(--s)) solid var(--border);
+  color: var(--ink1); font-weight: 800; letter-spacing: .06em;
+}
+.card.foc .badge.gamepad { background: var(--brand); border-color: transparent; color: var(--on-brand); }
+
+/* Games own the whole screen while they run. The launcher rides in #layer, above the nav and
+   the ring, and it is a flat black surface: a translucent scrim over a game that has not
+   painted yet reads as a broken image. */
+.modal.game-launch-wrap { display: block; background: #000; }
+.game-launch {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  background: #000;
+}
+.gl-bar {
+  display: flex; align-items: center; gap: calc(20px * var(--s));
+  padding: calc(22px * var(--s)) var(--gutter);
+  background: linear-gradient(180deg, rgba(0, 0, 0, .88) 0%, rgba(0, 0, 0, .55) 60%, rgba(0, 0, 0, 0) 100%);
+}
+.gl-title { font-size: var(--t-h3); font-weight: 800; }
+.gl-pad {
+  font-size: var(--t-badge); font-weight: 700; color: var(--ink1);
+  border: 1px solid var(--border); border-radius: var(--r-badge);
+  padding: calc(4px * var(--s)) calc(10px * var(--s));
+}
+.gl-status { flex: 1 1 auto; color: var(--ink2); font-size: var(--t-meta); }
+.gl-exit {
+  display: inline-flex; align-items: center; gap: calc(10px * var(--s));
+  border: calc(2px * var(--s)) solid rgba(255, 255, 255, .55); border-radius: var(--r-button);
+  background: rgba(20, 20, 20, .55); color: #fff;
+  padding: calc(10px * var(--s)) calc(20px * var(--s));
+  font-size: var(--t-button); font-weight: 700;
+}
+.gl-exit .ico { width: calc(26px * var(--s)); height: calc(26px * var(--s)); }
+.game-frame { flex: 1 1 auto; width: 100%; border: 0; background: #000; }
+.game-frame:focus { outline: none; }
+.gl-hint {
+  display: flex; align-items: center; gap: calc(18px * var(--s));
+  padding: calc(16px * var(--s)) var(--gutter) calc(22px * var(--s));
+  background: linear-gradient(0deg, rgba(0, 0, 0, .9) 0%, rgba(0, 0, 0, .55) 55%, rgba(0, 0, 0, 0) 100%);
+}
+.gl-out {
+  border: 0; border-radius: var(--r-chip); background: rgba(255, 255, 255, .10); color: #fff;
+  padding: calc(9px * var(--s)) calc(18px * var(--s)); font-size: var(--t-chip); font-weight: 700;
+}
+.gl-note { color: var(--warn); font-size: var(--t-meta); }
+.gl-keys { margin-left: auto; color: var(--ink3); font-size: var(--t-meta); }
+
+/* A phone or laptop opens a game in a window tall enough to scroll: the frame keeps its
+   aspect and the escapes stay reachable without zooming the page. */
+@media (max-width: 760px) {
+  .gl-bar { padding: calc(14px * var(--s)) var(--gutter); }
+  .gl-hint { flex-wrap: wrap; }
+  .gl-keys { margin-left: 0; flex-basis: 100%; }
+}

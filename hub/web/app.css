@@ -486,12 +486,23 @@ ul { list-style: none; }
   contain: paint layout style;
   align-items: flex-start;
 }
-/* Card geometry is chosen by the row plugin, never by the screen: 5 landscape cards + a 120 px peek
-   of the sixth at 1920 (spec B), and 280x420 posters with a 28 px gap on a poster rail. */
-.cards.landscape { --card-w: calc(320px * var(--s)); --card-h: calc(180px * var(--s)); --gap: calc(20px * var(--s)); }
-.cards.poster    { --card-w: calc(280px * var(--s)); --card-h: calc(420px * var(--s)); --gap: calc(28px * var(--s)); }
-.cards.rank      { --card-w: calc(280px * var(--s)); --card-h: calc(420px * var(--s)); --gap: calc(28px * var(--s)); }
-.cards.channel   { --card-w: calc(320px * var(--s)); --card-h: calc(180px * var(--s)); --gap: calc(20px * var(--s)); }
+/*
+  Card geometry is chosen by the row plugin, and its size by the theme's own card block: the Scene pack
+  ships 480x270 tiles and the browser drew 320x180, the same pack looking like two different products.
+  So each rail shape reads the token the television reads - `cards.poster` for a poster rail, `cards.continue`
+  for a wide shelf, `cards.channel` for the live wall - and the old pixel pair is only the fallback for a hub
+  that ships no such block. The gap stays ours: a mouse and a D-pad need more air between tiles than a panel.
+*/
+.cards.landscape { --card-w: var(--card-cont-w, calc(320px * var(--s))); --card-h: var(--card-cont-h, calc(180px * var(--s))); --gap: calc(20px * var(--s)); }
+.cards.poster    { --card-w: var(--card-poster-w, calc(280px * var(--s))); --card-h: var(--card-poster-h, calc(420px * var(--s))); --gap: calc(28px * var(--s)); }
+.cards.rank      { --card-w: var(--card-poster-w, calc(280px * var(--s))); --card-h: var(--card-poster-h, calc(420px * var(--s))); --gap: calc(28px * var(--s)); }
+.cards.channel   { --card-w: var(--card-chan-w, calc(320px * var(--s))); --card-h: var(--card-chan-h, calc(180px * var(--s))); --gap: calc(20px * var(--s)); }
+/*
+  The arcade's tiles are 480x270 on both clients: the television's Games screen draws its shelf at that
+  size whatever the pack says, because a browser game's art is a 16:9 box, not a poster. So this rail takes
+  the same numbers rather than the pack's card block, and stays scaled like everything else here.
+*/
+.cards.game      { --card-w: calc(480px * var(--s)); --card-h: calc(270px * var(--s)); --gap: calc(20px * var(--s)); }
 .card {
   position: relative; flex: none; width: var(--card-w);
   /* transform only. A box-shadow transition repaints the whole area around a card on every frame, and a

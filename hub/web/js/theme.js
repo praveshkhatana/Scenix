@@ -75,6 +75,28 @@ function setNum(name, n) { if (n !== undefined && n !== null) setVar(name, Strin
  * focus language, motion and detail layout this theme uses. The DOM carries it as data attributes so
  * packs.css can write real layout rules instead of pretending every theme is the same grid repainted.
  */
+/**
+ * `wallBlobs` is the television's wall: `x,y,r:#RRGGBB:alpha` for each blob of light, every number a
+ * percentage of the stage. CSS draws the same field as stacked radial gradients, so the page the browser
+ * shows and the page the television shows are lit by the same list of numbers.
+ */
+function wallImage(raw) {
+  const specs = String(raw || '').split(';').map((s) => s.trim()).filter(Boolean);
+  const layers = [];
+  for (const spec of specs) {
+    const bits = spec.split(':');
+    const at = (bits[0] || '').split(',').map((n) => Number(n));
+    const hex = String(bits[1] || '').trim();
+    const alpha = Math.max(0, Math.min(1, Number(bits[2])));
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+    if (at.length < 3 || !at.every(Number.isFinite) || !m || !alpha) continue;
+    const rgb = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)).join(', ');
+    const r = Math.max(2, Math.min(100, at[2]));
+    layers.push(`radial-gradient(${r}% ${r}% at ${at[0]}% ${at[1]}%, rgba(${rgb}, ${alpha}) 0%, rgba(${rgb}, 0) 100%)`);
+  }
+  return layers.join(', ');
+}
+
 function applyPack() {
   const p = T.pack || {};
   const attr = (key, fallback) => {
@@ -91,6 +113,18 @@ function applyPack() {
   attr('detail', 'backdrop');
   attr('nav', 'classic');
   attr('stage', 'off');
+  /*
+   * The wall packs — Liquid Glass, Kids — are not a colour with cards on top of it. The television paints a
+   * slow field of soft light behind the whole page, and the token file carries that field as a list of
+   * blobs: `x,y:hex:alpha`. Without it the browser shows a flat rectangle where the television shows a room,
+   * which is most of why one pack looked like two different products.
+   */
+  const wall = wallImage(p.wallBlobs);
+  if (wall) {
+    root.setAttribute('data-wall', 'pack');
+    setVar('--wall', wall);
+    setNum('--wall-grain', Math.max(0, Math.min(6, Number(p.wallGrain) || 0)) / 100);
+  }
   root.setAttribute('data-theme', String(T.id || 'scenix-dark'));
   root.style.setProperty('--focus-color',
     p.focusColor ? cssColor(p.focusColor) : 'var(--focus-ring)');
@@ -132,16 +166,39 @@ function applyTokens() {
   const cards = T.cards || {};
   const poster = cards.poster || {};
   if (poster.width) {
+    setLen('--card-poster-w', poster.width);
+    setLen('--card-poster-h', Math.round(poster.width * (poster.aspect || 420 / 280)));
     setLen('--card-w', poster.width);
     if (poster.aspect) setLen('--card-h', Math.round(poster.width * poster.aspect));
   }
-  // The rank numerals are ratios of the art height, so they scale with whatever card size is configured.
-  if (cards.rankWidthRatio) setVar('--rank-w', `calc(var(--card-h) * ${cards.rankWidthRatio})`);
-  if (cards.rankOverlapRatio) setVar('--rank-overlap', `calc(var(--card-h) * ${cards.rankOverlapRatio})`);
-  if (cards.rankWidthRatio && cards.rankOverlapRatio) {
-    setVar('--rank-extra', `calc(var(--card-h) * ${cards.rankWidthRatio - cards.rankOverlapRatio})`);
+  /*
+   * A rail's tile is a token, not a CSS constant. The web used to draw 320x180 wide rails and 280x420
+   * poster rails whatever the pack said, while the television drew the 480x270 tiles the Scene pack ships —
+   * the same pack, two different pages. So the two other rail shapes read their own card block, exactly as
+   * the poster shape already did: `cards.continue` for a wide shelf, `cards.channel` for the live wall.
+   * The fallback is the shape this client had before, so a hub that ships no such block is drawn as before.
+   */
+  const ratioOf = (c) => (c && c.aspect) || (poster.aspect || 420 / 280);
+  if (cards.continue && cards.continue.width) {
+    setLen('--card-cont-w', cards.continue.width);
+    setLen('--card-cont-h', Math.round(cards.continue.width * ratioOf(cards.continue)));
   }
-  setLen('--cards-rank-stroke', cards.rankStrokePx);
+  if (cards.channel && cards.channel.width) {
+    setLen('--card-chan-w', cards.channel.width);
+    setLen('--card-chan-h', Math.round(cards.channel.width * ratioOf(cards.channel)));
+  }
+  // The rank numerals are ratios of the art height, so they scale with whatever card size is configured.
+  // The television spells the same three numbers `numeral*` (its Top 10 numeral is a view, not a card
+  // treatment); both spellings are read so one token file drives both clients.
+  const rankW = cards.rankWidthRatio !== undefined ? cards.rankWidthRatio : cards.numeralWidthRatio;
+  const rankOv = cards.rankOverlapRatio !== undefined ? cards.rankOverlapRatio : cards.numeralOverlapRatio;
+  const rankStroke = cards.rankStrokePx !== undefined ? cards.rankStrokePx : cards.numeralStrokePx;
+  if (rankW) setVar('--rank-w', `calc(var(--card-h) * ${rankW})`);
+  if (rankOv) setVar('--rank-overlap', `calc(var(--card-h) * ${rankOv})`);
+  if (rankW && rankOv) {
+    setVar('--rank-extra', `calc(var(--card-h) * ${rankW - rankOv})`);
+  }
+  setLen('--cards-rank-stroke', rankStroke);
 
   const p = T.panel || {};
   setLen('--panel-w', p.width);

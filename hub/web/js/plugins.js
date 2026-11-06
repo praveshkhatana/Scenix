@@ -211,6 +211,32 @@ registerCard('poster', (item, ctx) => card(item, ctx, { art: item.poster || item
    broken 1920 px card. */
 registerCard('hero', (item, ctx) => card(item, ctx, { art: item.backdrop || item.poster }));
 
+/*
+ * Game mode tile (`/app/v1/games` sends `card: "game"`). A game is not a title: it has no sources to match
+ * against, no episodes and no progress, so the usual match figure and resume bar have nothing to say here.
+ * The one fact that decides whether this plays from the couch is whether the port answers a game controller,
+ * and that rides on the art, where every other deciding fact already rides.
+ */
+registerCard('game', (item, ctx) => {
+  const node = card(item, ctx, {
+    art: item.poster || item.backdrop,
+    extra: item.pad
+      ? el('span', { class: 'badge right gamepad', title: 'This port answers a game controller' }, 'GAMEPAD')
+      : null,
+  });
+  // A game has no sources to match, no episode to resume, no My list entry and no detail record, so the
+  // three verbs an ordinary tile carries are two dead keys and one real one. This tile says Play.
+  const exp = node.querySelector('.exp');
+  if (exp) {
+    clear(exp);
+    exp.appendChild(el('button', {
+      class: 'r w', type: 'button', title: 'Play', 'aria-label': `Play ${item.title}`,
+      onclick: (e) => { e.stopPropagation(); const go = ctx.play || ctx.open; if (go) go(item); },
+    }, icon('play', { solid: true })));
+  }
+  return node;
+});
+
 /* A category the library actually has: the name is the tile, the count is the promise. */
 registerCard('genre', (item, ctx) => {
   const node = el('div', {
@@ -329,6 +355,11 @@ registerRow('continue', (row, ctx) => rail(row, ctx, { size: 'landscape' }));
 
 /* Channel rail: same footprint as landscape, its own sizing hook. */
 registerRow('channel', (row, ctx) => rail(row, ctx, { size: 'channel' }));
+
+/* Game mode rail. Same wide shelf shape the console pack already draws, so the tiles come from the theme's
+   own card block rather than a second set of numbers; "Explore all" is off because the hub has already put
+   this section's whole catalogue on the page. */
+registerRow('game', (row, ctx) => rail(row, ctx, { size: 'game', explore: false }));
 
 /* Category rail: the library's own genres. */
 registerRow('genre', (row, ctx) => rail(row, ctx, { size: 'poster' }));
