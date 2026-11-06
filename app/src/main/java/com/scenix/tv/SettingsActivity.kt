@@ -785,7 +785,10 @@ class SettingsActivity : Activity() {
                         return true
                     }
                     KeyEvent.KEYCODE_DEL -> { backspacePin(); return true }
-                    KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { submitPin(); return true }
+                    KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                        if (event.repeatCount == 0) submitPin()
+                        return true
+                    }
                     in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> {
                         addPinDigit(event.keyCode - KeyEvent.KEYCODE_0)
                         return true
@@ -804,10 +807,14 @@ class SettingsActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_UP -> return movePicker(-1)
                 KeyEvent.KEYCODE_DPAD_DOWN -> return movePicker(1)
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                    val focused = pickerRows.firstOrNull { it.isFocused }
-                    if (focused != null) {
-                        focused.performClick()
-                        return true
+                    // One press, one choice. The picker answers on DOWN, and a held OK repeats: read
+                    // literally, it would walk through the list choosing as it goes.
+                    if (event.repeatCount == 0) {
+                        val focused = pickerRows.firstOrNull { it.isFocused }
+                        if (focused != null) {
+                            focused.performClick()
+                            return true
+                        }
                     }
                 }
             }

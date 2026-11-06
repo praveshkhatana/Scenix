@@ -224,7 +224,12 @@ class PinActivity : Activity() {
                 return true
             }
             KeyEvent.KEYCODE_DEL -> { if (pin.isNotEmpty()) { pin.deleteCharAt(pin.length - 1); show() }; return true }
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { submit(); return true }
+            // Digits may repeat — a held key typing is what a keypad is for. Submitting may not: a held OK
+            // would ask the hub to check the PIN several times over.
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                if (event.repeatCount == 0) submit()
+                return true
+            }
             KeyEvent.KEYCODE_BACK -> { finish(); return true }
         }
         return super.onKeyDown(keyCode, event)

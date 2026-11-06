@@ -177,7 +177,9 @@ class BrowseActivity : Activity() {
                     android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                     android.view.KeyEvent.KEYCODE_ENTER,
                     android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                        rail.focusedRow()?.performClick()
+                        // One press, one section. A held OK repeats, and a rail that moves on every repeat
+                        // walks straight past the section the viewer was aiming at.
+                        if (event.repeatCount == 0) rail.focusedRow()?.performClick()
                         return true
                     }
                 }

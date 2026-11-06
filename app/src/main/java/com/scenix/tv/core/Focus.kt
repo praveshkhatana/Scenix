@@ -179,6 +179,27 @@ object Focus {
             holdTimer = null
         }
         focusable.setOnKeyListener { _, code, ev ->
+            traceInput(focusable, ev, if (PressGate.spent(ev)) "seen, press already answered" else "seen")
+            /*
+             * One physical press answers exactly one action.
+             *
+             * A hold opens something — the manage sheet, a channel picker — and then hands the rest of its own
+             * press to whatever view takes focus next: the repeats the remote keeps sending while the button is
+             * down, and finally the release. That view is brand new. Its hold clock has not fired, its option is
+             * already under the ring, and it answers the press that only *opened* the menu. This is the "hold OK
+             * and the option is selected for me" bug, and it is not a sheet bug: it belongs to every surface a
+             * hold opens, which is why it is settled here, in the one place every focusable view's keys pass
+             * through, rather than screen by screen.
+             *
+             * Every event of one press shares that press's `downTime`, so the press that has already spent its
+             * answer is remembered by exactly that, and the rest of it is swallowed.
+             */
+            if (PressGate.spent(ev)) {
+                // The press is finished. This view's own clock goes with it, or a card that once answered a
+                // hold would never answer the next press.
+                if (ev.action == KeyEvent.ACTION_UP) { cancelHold(); holdFired = false }
+                return@setOnKeyListener true
+            }
             // Activation is deliberately performed on DOWN for responsive TV feedback. Consume the
             // matching UP too: if a click starts another Activity on DOWN, letting UP fall through
             // can be delivered to the freshly created screen and invoke its newly focused Play
@@ -190,17 +211,38 @@ object Focus {
                 )) {
                 val act = actionable(focusable)
                 if (ev.isLongPress || ev.repeatCount > 0) {
-                    // The input stack timed the press itself and says so on the release — the
-                    // long-press flag, or repeats that arrived while the button was down. Answer it
-                    // as the hold it is. Read as an ordinary press instead, this is exactly the card
-                    // that "never shows its menu on a long press": the title opens and the sheet
-                    // never gets a chance, because our own clock was the only one consulted.
+                    // The input stack timed the press itself and says so on the release — the long-press flag,
+                    // or repeats that arrived while the button was down. Answer it as the hold it is. Read as
+                    // an ordinary press instead, this is exactly the card that "never shows its menu on a long
+                    // press": the title opens and the sheet never gets a chance, because our own clock was the
+                    // only one consulted.
+                    //
+                    // Mark the press spent while answering it, or the sheet the hold just opened treats the
+                    // same release as a fresh press on its own first option.
                     cancelHold()
-                    if (!holdFired && act != null && act.isLongClickable) act.performLongClick()
+                    if (!holdFired && act != null && act.isLongClickable) {
+                        PressGate.mark(ev)
+                        traceInput(focusable, ev, "up: the press was a hold -> long-click ${nameOf(act)}")
+                        if (!act.performLongClick()) {
+                            traceInput(focusable, ev, "up: nothing here answers a hold -> click ${nameOf(act)}")
+                            act.performClick()
+                        }
+                    } else {
+                        traceInput(focusable, ev,
+                            "up: hold answered=${holdFired} longClickable=${act?.isLongClickable} -> nothing")
+                    }
                 } else if (holdTimer != null) {
-                    // Released before the hold clock ran out: an ordinary press, decided now.
+                    // Released before the hold clock ran out: an ordinary press, decided now. The press is
+                    // spent with the click — its repeats and its release must not be read as a second press
+                    // by whatever screen the click just opened.
                     cancelHold()
-                    act?.performClick()
+                    if (act != null) {
+                        PressGate.mark(ev)
+                        traceInput(focusable, ev, "up: released inside the hold window -> click ${nameOf(act)}")
+                        act.performClick()
+                    }
+                } else {
+                    traceInput(focusable, ev, "up: no press of ours is open on this view -> nothing")
                 }
                 holdFired = false
                 true
@@ -216,10 +258,23 @@ object Focus {
                         val act = actionable(focusable) ?: return@setOnKeyListener false
                         if (holdFired) return@setOnKeyListener true   // the hold already answered this press
                         if (act.isLongClickable && holdTimer == null && ev.repeatCount == 0 && !ev.isLongPress) {
+                            val downTime = ev.downTime
+                            traceInput(focusable, ev,
+                                "down: holding for ${holdMs}ms before deciding, on ${nameOf(act)}")
                             holdTimer = Runnable {
                                 holdTimer = null
                                 holdFired = true
-                                act.performLongClick()
+                                // Spent: the repeats still arriving for this press, and its release, must not
+                                // be read as a second decision by whatever the hold just opened.
+                                PressGate.markAt(downTime)
+                                traceLine(focusable, "clock: the press has been down ${holdMs}ms -> hold on ${nameOf(act)}")
+                                // A view that carries no hold action — a sheet option, most controls — still
+                                // owes the press an answer: holding OK on it chooses it rather than doing
+                                // nothing. `performLongClick` says whether anything at all answered.
+                                if (!act.performLongClick()) {
+                                    traceLine(focusable, "clock: nothing here answers a hold -> click ${nameOf(act)}")
+                                    act.performClick()
+                                }
                             }.also { holdHandler.postDelayed(it, holdMs) }
                         } else if (act.isLongClickable && (ev.repeatCount > 0 || ev.isLongPress)) {
                             // Some remotes and input stacks report the hold themselves (a repeat, or the
@@ -228,8 +283,18 @@ object Focus {
                             // same decision the clock makes — reached by a different road.
                             cancelHold()
                             holdFired = true
-                            act.performLongClick()
+                            PressGate.mark(ev)
+                            traceInput(focusable, ev, "down: the input stack says hold -> long-click ${nameOf(act)}")
+                            if (!act.performLongClick()) {
+                                traceInput(focusable, ev, "down: nothing here answers a hold -> click ${nameOf(act)}")
+                                act.performClick()
+                            }
                         } else if (holdTimer == null) {
+                            // Not a hold: an ordinary press, answered where it started, and spent with the
+                            // answer. Its repeats and its release belong to the same decision.
+                            PressGate.mark(ev)
+                            traceInput(focusable, ev,
+                                "down: no hold here (longClickable=${act.isLongClickable}) -> click ${nameOf(act)}")
                             act.performClick()
                         }
                         true
@@ -243,6 +308,7 @@ object Focus {
                         if (act != null && act.isLongClickable) {
                             cancelHold()
                             holdFired = true
+                            PressGate.mark(ev)
                             act.performLongClick()
                             true
                         } else false
@@ -346,4 +412,59 @@ object Focus {
         }
         return false
     }
+}
+
+/**
+ * Which road a press took, printed on debug builds only.
+ *
+ * Whether a hold is decided by the input stack (a repeat, the long-press flag) or by this file's own clock, and
+ * which view ends up answering the release, depends on the remote and the box. When a viewer says "the menu
+ * opened and it chose something for me", the events this television actually sent are the whole answer, and
+ * without printing them it is guesswork.
+ */
+private fun traceInput(v: View, ev: KeyEvent, note: String) {
+    if (!traceKeys(v)) return
+    android.util.Log.d(
+        "ScenixInput", "%s %s code=%d rep=%d lp=%s dt=%d et=%d | %s".format(
+            nameOf(v),
+            if (ev.action == KeyEvent.ACTION_DOWN) "DOWN" else "UP",
+            ev.keyCode, ev.repeatCount, ev.isLongPress, ev.downTime, ev.eventTime, note,
+        )
+    )
+}
+
+internal fun traceLine(v: View, note: String) {
+    if (!traceKeys(v)) return
+    android.util.Log.d("ScenixInput", "%s | %s".format(nameOf(v), note))
+}
+
+private fun traceKeys(v: View): Boolean =
+    (v.context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+private fun nameOf(v: View): String =
+    "${v.javaClass.simpleName}#${System.identityHashCode(v) and 0xffff}"
+
+/**
+ * Which physical key press has already spent its answer.
+ *
+ * `KeyEvent.downTime` is the moment the button first went down, and every event of that press — the repeats
+ * the remote sends while it stays down and the release that ends it — carries the same value. So a press that
+ * fired a hold can be recognised anywhere in the app, by whichever view happens to hold focus when the rest
+ * of the press arrives, and refused a second decision.
+ *
+ * This is deliberately global. The hold opens a sheet, a picker, a menu; the view that takes focus next is
+ * somebody else's, and each screen wiring its own "ignore the next OK" timer is how this bug came back a
+ * third time.
+ */
+private object PressGate {
+
+    private var spentDownTime = -1L
+
+    /** True when this event belongs to a press that has already answered. */
+    fun spent(ev: KeyEvent): Boolean = spentDownTime != -1L && ev.downTime == spentDownTime
+
+    fun mark(ev: KeyEvent) { spentDownTime = ev.downTime }
+
+    /** For a hold decided by a clock rather than by an event: the press is the one that started at `downTime`. */
+    fun markAt(downTime: Long) { spentDownTime = downTime }
 }

@@ -798,7 +798,8 @@ class ManageProfilesActivity : Activity() {
                     KeyEvent.KEYCODE_SPACE,
                 )
             ) {
-                row.performClick()
+                // Held OK repeats, and these rows delete and rename people: one press, one action.
+                if (event.repeatCount == 0) row.performClick()
                 true
             } else false
         }
