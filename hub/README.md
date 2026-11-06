@@ -103,7 +103,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | | |
 |---|---|
 | `GET /healthz`, `GET /` | per-provider and per-row counts, loaded and **failed** plugins |
-| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`, `search`, `subtitles`, `debrid` when a token is set), which is the only thing a client UI may branch on |
+| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`, `search`, `subtitles`, `hubUpdate`, `debrid` when a token is set), which is the only thing a client UI may branch on |
 | `GET /app/v1/profiles` | profiles and the rows each one sees, with **both** preference views: `prefs` (what the owner typed, untouched, the thing a settings screen writes back) and `effectivePrefs` (what it resolves to once household defaults fill the gaps — the language order a player needs) |
 | `GET /app/v1/home?profile=<id>` | `{ rows: [{ id, title, card, items: […] }] }` |
 | `GET /app/v1/row/<id>?profile=<id>` | one row, for the app's "see all" |
