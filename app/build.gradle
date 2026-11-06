@@ -146,4 +146,12 @@ dependencies {
     implementation 'org.libtorrent4j:libtorrent4j-android-arm:2.1.0-35'
     // The same engine for 64-bit ARM, so the APK also installs on an arm64 TV emulator.
     implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-35'
+
+    // The glass of the Liquid Glass pack. Our own frost was a blurred bitmap: it had no lens, so the
+    // edge of a glass surface never bent the artwork behind it and the material read as flat grey
+    // frosting. This library is the View-system equivalent of the iOS 26 material — a rounded-rect
+    // SDF that bends the backdrop at the rim (API 33+), with a NEON blur + chromatic-aberration
+    // pipeline underneath, which is the tier this Android 11 television actually runs.
+    // MIT; `LiquidGlassKit.kt` is the only file that imports it, so the pack's numbers stay in tokens.
+    implementation 'com.github.QWEA0:liquidglass:v2.0.11'
 }

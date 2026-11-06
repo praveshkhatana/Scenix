@@ -24,8 +24,9 @@ import com.scenix.tv.core.Views
  * A remote-first PIN keypad. The code is checked by the hub; this screen only collects it.
  *
  * Screen pass 2026-11-03 (splash → profile → PIN → home): the gate stands on the pack's wall with
- * its keypad and dots on one frost plate — the same liquid-glass material as the Home chrome,
- * sampled from what actually sits behind it (LiquidFrost) over a translucent fallback. Input has
+ * its keypad and dots on one frost plate — the same liquid-glass material as the Home chrome, a real
+ * lens that bends the wall behind it (LiquidGlassKit) rather than a wash that only claims to. Input
+ * has
  * motion: the dots pop on every digit, a wrong PIN shakes the whole plate, keys dip under the
  * press, and the plate rises into the gate rather than snapping in.
  */
@@ -37,7 +38,6 @@ class PinActivity : Activity() {
     private lateinit var hint: TextView
     private lateinit var keys: LinearLayout
     private lateinit var panel: View
-    private var frost: LiquidFrost? = null
     private var pin = StringBuilder()
     private var busy = false
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
@@ -63,7 +63,7 @@ class PinActivity : Activity() {
             // The gate wears the pack's deep glass — the nav pill's own ink at plate weight — so
             // its white type carries full contrast and the rim reads as one edge, not a smudge
             // (the 59% wash over the frost sample had muddy two-tone edges on the light wall).
-            // Fallback plate first; the sampled frost layers over it once the capture lands.
+            // The lens pack paints this away; a pack without the lens wears it as the plate.
             background = Views.rounded(
                 theme.color(if (glass) "gatePlate" else "glassSurface",
                     if (glass) "rgba(8,16,28,0.88)" else "rgba(8,10,14,0.59)"),
@@ -139,20 +139,22 @@ class PinActivity : Activity() {
         root.addView(keys, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = theme.px(8f)
         })
-        frame.addView(root, FrameLayout.LayoutParams(
+        // The gate is one sheet of the pack's glass: the wall behind it bends along the plate's rim
+        // instead of showing a flat wash with a hairline on it. The pad's keys keep their own fills —
+        // twelve lenses on a 2 GB panel buy nothing a small control can show with a rim.
+        val gate = if (glass) LiquidGlassKit.lens(this, app, plateR).apply {
+            root.background = null
+            elevation = root.elevation
+            root.elevation = 0f
+            addView(root)
+        } else root
+        frame.addView(gate, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER
         ))
         setContentView(frame)
-        Motion.enter(theme, frame, listOf(root))
+        Motion.enter(theme, frame, listOf(gate))
         val firstRow = keys.getChildAt(0) as? ViewGroup
         (firstRow?.getChildAt(0) ?: keys)?.requestFocus()
-        // Real frost on the plate: sample the wall behind it — but only once the plate has finished
-        // rising. Capturing mid-entry sampled the animating plate itself and left a lighter inner
-        // rectangle with its own edges inside the plate (the muddy double-frame the owner saw).
-        root.postDelayed({
-            if (!isFinishing) frost = LiquidFrost.install(root, app, plateR, root.background)
-        }, if (theme.motionEnabled)
-            (theme.token("anim", "fadeUpMs", 600.0) + 250).toLong() else 0L)
     }
 
     private fun press(label: String) {

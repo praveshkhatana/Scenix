@@ -87,8 +87,6 @@ internal class GlassHomeLayout(
     /** The chip row scrolls when the pack asks for larger type: equal widths cannot hold 150% zoom. */
     private val chipScroll: HorizontalScrollView
     private lateinit var pill: LinearLayout
-    /** Chrome surfaces wearing the real sampled frost (LiquidFrost). */
-    private val frostSurfaces = ArrayList<LiquidFrost>()
     private val pillStops = ArrayList<View>()
     private var chipIds: List<String> = emptyList()
     private val profile: GlassKit.ProfilePill
@@ -128,7 +126,10 @@ internal class GlassHomeLayout(
         pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = Views.rounded(theme.color("pill", "rgba(8,16,28,0.86)"), theme.px(999f))
+            // The pill's own glass is the lens the host fits around it; a flat wash under the lens
+            // would hide the wall bending through it.
+            if (!LiquidGlassKit.isGlass(app)) background =
+                Views.rounded(theme.color("pill", "rgba(8,16,28,0.86)"), theme.px(999f))
             setPadding(theme.px(6f), theme.px(6f), theme.px(6f), theme.px(6f))
         }
         // Measured: the pill carries FOUR section words (Home lit on the reference) plus the knob
@@ -150,7 +151,11 @@ internal class GlassHomeLayout(
         pill.addView(searchStop, LinearLayout.LayoutParams(theme.px(48f), theme.px(48f)).apply {
             marginStart = theme.px(6f)
         })
-        header.addView(pill, LayoutParams(
+        // The nav pill wears the pack's lens: the wall behind it bends at the pill's rim, which is
+        // the difference between this pill and a dark rounded rectangle.
+        val pillSurface = if (LiquidGlassKit.isGlass(app))
+            LiquidGlassKit.wrap(app, pill, navBandH / 2) else pill
+        header.addView(pillSurface, LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, navBandH,
         ).apply { gravity = Gravity.CENTER })
 
@@ -249,15 +254,6 @@ internal class GlassHomeLayout(
 
         cardA.nextFocusUpId = pillStops.first().id
         cardB.nextFocusUpId = pillStops.first().id
-
-        // Real liquid glass on the chrome (ported from QWEA0/Liquid-Glass-Android, MIT): after the
-        // first layout each surface snapshots what stands behind it, blurs it and refracts its
-        // edges — instead of wearing a flat wash that merely claims to be translucent.
-        post {
-            frostInto(pill, navBandH / 2)
-            frostInto(profile.root, navBandH / 2)
-            frostInto(gearStop, theme.px(52f) / 2)
-        }
     }
 
     /**
@@ -280,11 +276,6 @@ internal class GlassHomeLayout(
             }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-    }
-
-    /** Wrap the host's current fallback background under a sampled frost layer. */
-    private fun frostInto(host: View, radiusPx: Int) {
-        LiquidFrost.install(host, app, radiusPx, host.background)?.let { frostSurfaces += it }
     }
 
     /**
@@ -441,9 +432,6 @@ internal class GlassHomeLayout(
         bindCard(cardA, artA, titleA, logoA, a)
         bindCard(cardB, artB, titleB, logoB, b)
         cardB.visibility = if (b == null) View.GONE else View.VISIBLE
-        // The hero band grew taller behind the pill and plates with this slide — re-sample what
-        // the chrome is really standing over.
-        frostSurfaces.forEach { it.refresh() }
     }
 
     private fun bindCard(card: FrameLayout, art: ImageView, title: TextView, logo: ImageView, item: Item?) {

@@ -68,6 +68,13 @@ class SectionActivity : Activity() {
             clipChildren = false
             setPadding(theme.gutter, theme.px(112f), theme.gutter, theme.px(56f))
             setBackgroundColor(Color.TRANSPARENT)
+            // The focused tile's glass slab steps out while the grid moves and returns when it
+            // settles (GlassKit.slabScrolling).
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                    GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
+                }
+            })
         }
         root.addView(grid, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
@@ -298,6 +305,7 @@ class SectionActivity : Activity() {
             })
             Focus.attach(card, ringOn, app, radius, animateScale = false, elevate = false,
                 glowInset = glowPad)
+            GlassKit.onGlassFocus(card, art, app, radius)
             return CardHolder(card, art, name, sub, logo, badge)
         }
 

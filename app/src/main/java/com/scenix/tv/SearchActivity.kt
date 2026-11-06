@@ -158,6 +158,13 @@ class SearchActivity : Activity() {
             clipToPadding = false
             clipChildren = false
             visibility = View.INVISIBLE
+            // The focused tile's glass slab steps out while the grid moves and returns when it
+            // settles (GlassKit.slabScrolling).
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                    GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
+                }
+            })
             // The pane is narrower than four fixed 230 px cards plus their halo gaps, and the cards
             // then drew over their neighbours — the overlapping rows in the audit shots. Count the
             // columns from the width actually measured, and let each card fill its own column.
@@ -378,6 +385,7 @@ class SearchActivity : Activity() {
             })
             Focus.attach(card, ringOn, app, theme.radius("card", 6f), animateScale = false,
                 elevate = false, glowInset = glowPad)
+            GlassKit.onGlassFocus(card, art, app, theme.radius("card", 6f))
             return ResultHolder(card, art, name, logo, badge)
         }
 

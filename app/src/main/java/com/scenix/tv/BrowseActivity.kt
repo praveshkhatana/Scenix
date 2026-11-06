@@ -757,6 +757,10 @@ class BrowseActivity : Activity() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 updateBrandFade()
             }
+
+            override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
+            }
         })
         // A focus change without a scroll — UP from the first row lands on the bar itself — must
         // bring the bar back too, or the ring sits on an invisible stop.
@@ -1799,6 +1803,15 @@ class BrowseActivity : Activity() {
                     setPadding(theme.gutter, theme.space("railGlowPad", 44f), theme.gutter, theme.space("railGlowPad", 44f))
                     clipToPadding = false
                     clipChildren = false
+                    // The focused tile's glass slab steps out while this rail is moving and comes
+                    // back to the tile holding focus when it settles (GlassKit.slabScrolling): a
+                    // lens re-bends the poster under it every frame, which the panel cannot pay for
+                    // a tile that is on its way past.
+                    addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                        override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                            GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
+                        }
+                    })
                 }
                 box.addView(rail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 ShelfHolder(box, head, rail)

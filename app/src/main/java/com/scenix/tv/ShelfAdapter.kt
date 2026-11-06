@@ -401,6 +401,10 @@ internal class ShelfAdapter(
                 if (featured) host.onSlideFocused(holder.bindingAdapterPosition)
                 else holder.item?.let { host.onCardFocused(card, it) }
             })
+        // The focused tile wears a slab of the pack's glass over its own artwork: the poster bends,
+        // splits colour and lights its rim while the card holds focus. The slab is invisible on every
+        // unfocused tile, so only one lens is ever compositing.
+        GlassKit.onGlassFocus(card, art, app, radius)
         return holder
     }
 
