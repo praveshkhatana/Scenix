@@ -40,6 +40,11 @@ internal interface ShelfHost {
     fun openDetail(item: Item)
     fun openLive(item: Item)
     fun openRowFull(row: BrowseRow)
+    /** Home offers to take a whole shelf off the page; a section or a search grid shows titles that
+     *  belong to many shelves, so it offers only the title's own actions. */
+    fun managesRows(): Boolean = false
+    /** The shelf is gone from the hub's Home record; the page drops it too. */
+    fun onRowHidden(rowId: String) {}
 }
 
 internal class ShelfAdapter(
@@ -435,6 +440,8 @@ internal class ShelfAdapter(
             CardActions.holdSheet(
                 activity, app, api, profileId, item,
                 canDismissContinue = dismissible,
+                rowId = if (host.managesRows()) row.id else null,
+                rowTitle = row.title,
                 afterList = { onList ->
                     val now = holder.bindingAdapterPosition
                     if (!onList && myListRow && now in shown.indices) {
@@ -454,6 +461,7 @@ internal class ShelfAdapter(
                         notifyItemRangeChanged(now, shown.size - now)
                     }
                 },
+                afterHideRow = { host.onRowHidden(row.id) },
             )
             true
         }

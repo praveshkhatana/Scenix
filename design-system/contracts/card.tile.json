@@ -5,7 +5,7 @@
   "platforms": [
     "android-tv"
   ],
-  "purpose": "One title in a shelf or grid: poster or landscape art, facts on the art (rating, NEW/HOT, certificate, progress), and a caption below or over the art. Hold opens the confirmation sheet; OK opens the title or resumes it.",
+  "purpose": "One title in a shelf or grid: poster or landscape art, facts on the art (rating, NEW/HOT, certificate, progress), and a caption below or over the art. Hold (or the menu key) opens the confirmation sheet; OK opens the title or resumes it.",
   "source": {
     "android": "BrowseActivity CardHolder / poster card builders; SearchActivity and SectionActivity reuse the same cards"
   },

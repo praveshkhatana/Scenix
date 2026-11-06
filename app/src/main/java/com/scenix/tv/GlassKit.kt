@@ -482,7 +482,6 @@ internal object GlassKit {
         val theme = app.theme
         if (art.width <= 0 || art.height <= 0) return
         val inset = theme.packInt("focusGlassInset", 0)
-        val w = art.width - inset * 2
         val h = art.height - inset * 2
         // A lens costs a capture of the region it covers plus an effect pass over it, and on the
         // Android 11 panel that was measured at ~120 ms for a poster and far more for the billboard's
@@ -507,21 +506,46 @@ internal object GlassKit {
         held[page] = art to radiusPx
         glass.cornerRadius = radiusPx.toFloat()
         LiquidGlassKit.rebind(glass, art)
-        // The slab covers the ARTWORK, not the card: a poster's name sits under the tile and stays
-        // bare text on the wall, exactly as the pack draws every unfocused tile.
-        val a = IntArray(2); art.getLocationInWindow(a)
-        val p = IntArray(2); page.getLocationInWindow(p)
-        (glass.layoutParams as android.view.ViewGroup.MarginLayoutParams).let { lp ->
-            lp.width = w
-            lp.height = h
-            lp.leftMargin = a[0] - p[0] + inset
-            lp.topMargin = a[1] - p[1] + inset
-            glass.layoutParams = lp
+        placeSlab(page, glass, art, inset)
+        // The slab stands where the tile was when focus landed on it. When the page moves that tile —
+        // a shelf leaving the page, a row re-laying out — the glass must come with it, or it stays
+        // painted over the wall where the poster used to be.
+        val past = slabMovers[page]
+        if (past == null || past.first !== art) {
+            past?.second?.let { m -> past.first.removeOnLayoutChangeListener(m) }
+            val mover = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                if (held[page]?.first === art) placeSlab(page, glass, art, inset)
+            }
+            art.addOnLayoutChangeListener(mover)
+            slabMovers[page] = art to mover
         }
         glass.visibility = View.VISIBLE
         if (fadeSlab(app)) glass.animate().alpha(1f).setDuration(120L).start()
         else { glass.animate().cancel(); glass.alpha = 1f }
     }
+
+    /** The slab over the artwork, not over the card: a poster's name sits under the tile and stays
+     *  bare text on the wall, exactly as the pack draws every unfocused tile. */
+    private fun placeSlab(
+        page: ViewGroup,
+        glass: LiquidGlassView,
+        art: View,
+        inset: Int,
+    ) {
+        val a = IntArray(2); art.getLocationInWindow(a)
+        val p = IntArray(2); page.getLocationInWindow(p)
+        (glass.layoutParams as android.view.ViewGroup.MarginLayoutParams).let { lp ->
+            lp.width = art.width - inset * 2
+            lp.height = art.height - inset * 2
+            lp.leftMargin = a[0] - p[0] + inset
+            lp.topMargin = a[1] - p[1] + inset
+            glass.layoutParams = lp
+        }
+    }
+
+    /** Each page's slab is glued to the tile it belongs to; this is the glue, and the tile. */
+    private val slabMovers =
+        java.util.WeakHashMap<ViewGroup, Pair<View, View.OnLayoutChangeListener>>()
 
     /**
      * The fade is free on the shader tier and expensive on the CPU tier, where every frame of it
@@ -549,6 +573,13 @@ internal object GlassKit {
 
     /** The tile each page's slab was last standing on, so it can come back to it. */
     private val held = java.util.WeakHashMap<ViewGroup, Pair<View, Int>>()
+
+    /**
+     * The page re-laid itself out under the slab — a shelf left the page and every row below it came
+     * up — so the glass is standing on bare wall where the tile used to be. Put it back on the tile
+     * that holds focus.
+     */
+    fun reseatSlab(view: View, app: AppContext) = slabScrolling(view, app, false)
 
     private fun hideGlassSlab(app: AppContext) {
         for ((_, glass) in slabs) {

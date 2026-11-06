@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import com.scenix.tv.BrowseApi
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * What holding OK on a card does, identically on every pack and every screen.
@@ -68,8 +70,9 @@ object CardActions {
      * The hold opens a choice sheet instead of acting, so a long button press on a remote can never
      * move a title behind the viewer's back. The rows are only the actions this card actually has,
      * worded from the current state: a tile already in My List offers to take it out, a Continue
-     * tile also offers to leave the row. [afterList] runs when a My List choice settles, which is
-     * how a row drops the tile it just lost.
+     * tile also offers to leave the row, and a tile that stands in a Home shelf offers to take that
+     * shelf off the page. [afterList] runs when a My List choice settles, which is how a row drops
+     * the tile it just lost.
      */
     fun holdSheet(
         activity: android.app.Activity,
@@ -78,11 +81,14 @@ object CardActions {
         profileId: String,
         item: Item,
         canDismissContinue: Boolean,
+        rowId: String? = null,
+        rowTitle: String? = null,
         afterList: (Boolean) -> Unit = {},
         afterDismiss: () -> Unit = {},
+        afterHideRow: () -> Unit = {},
     ): Boolean {
         val inList = inList(app, profileId, item)
-        val choices = ArrayList<CardActionSheet.Choice>(2)
+        val choices = ArrayList<CardActionSheet.Choice>(3)
         choices.add(CardActionSheet.Choice(
             if (inList) "Remove from My List" else "Add to My List",
         ) { toggleMyList(activity, app, api, profileId, item, afterList) })
@@ -92,7 +98,60 @@ object CardActions {
                 afterDismiss()
             })
         }
+        if (rowId != null) {
+            choices.add(CardActionSheet.Choice(
+                "Hide \u201C${rowTitle ?: rowId}\u201D from Home",
+            ) { hideRow(activity, api, profileId, rowId, rowTitle, afterHideRow) })
+        }
         return CardActionSheet.open(activity, app, item.title, choices)
+    }
+
+    /**
+     * Takes a whole shelf off the Home page. The rows a profile sees are the hub's setting, shared
+     * with every screen in the house, so this is a read-merge-write of the same record the Settings
+     * screen edits — never a local guess that the next load would contradict. The row is not
+     * deleted: it stays in the catalogue and in Settings › Home rows, where it can be shown again.
+     */
+    fun hideRow(
+        ctx: Context,
+        api: BrowseApi,
+        profileId: String,
+        rowId: String,
+        rowTitle: String?,
+        done: () -> Unit = {},
+    ) {
+        api.prefs(profileId) { prefs, error ->
+            if (error != null) {
+                speak(ctx, "The hub would not open this profile's rows · $error")
+                return@prefs
+            }
+            val rows = prefs?.optJSONObject("rows")
+            val hidden = stringList(rows?.optJSONArray("hidden"))
+            if (rowId !in hidden) hidden.add(rowId)
+            val cfg = JSONObject().put("hidden", JSONArray(hidden))
+            // The order is only rewritten when the hub already keeps one, so hiding a row can never
+            // reorder the rest of the page.
+            rows?.optJSONArray("order")?.let { cfg.put("order", JSONArray(it.toString())) }
+            api.savePrefs(profileId, JSONObject().put("rows", cfg)) { _, saveError ->
+                if (saveError != null) {
+                    speak(ctx, "Could not hide this row · $saveError")
+                    return@savePrefs
+                }
+                speak(ctx, "Hidden from Home · ${rowTitle ?: rowId} · show it again in Settings")
+                main.post(done)
+            }
+        }
+    }
+
+    private fun stringList(array: JSONArray?): MutableList<String> {
+        val out = ArrayList<String>()
+        array?.let {
+            for (i in 0 until it.length()) {
+                val v = it.optString(i, "")
+                if (v.isNotBlank() && v !in out) out.add(v)
+            }
+        }
+        return out
     }
 
     /**

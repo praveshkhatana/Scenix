@@ -1438,7 +1438,7 @@ class BrowseActivity : Activity() {
         heroItem = slides.firstOrNull()
         stage?.show(heroItem?.backdrop ?: heroItem?.poster
             ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
-        val adapter = BrowseAdapter(heroItem, shelves)
+        val adapter = BrowseAdapter(heroItem, ArrayList(shelves))
         browseAdapter = adapter
         list.adapter = adapter
         list.post { updateBrandFade() }
@@ -1576,6 +1576,26 @@ class BrowseActivity : Activity() {
     }
 
     /** A full-list page for one shelf: the hub's row by id, or a search for a derived shelf's tag. */
+    /**
+     * The hub has taken a shelf off this profile's Home. The page drops it where it stands and hands
+     * focus to the shelf that took its place, so the remote is never left holding a view that has
+     * just left the page.
+     */
+    private fun rowHidden(rowId: String) {
+        val adapter = browseAdapter ?: return
+        val pos = adapter.dropShelf(rowId)
+        if (pos < 0) return
+        list.post {
+            val holder = list.findViewHolderForAdapterPosition(pos) as? ShelfHolder
+            val stop = holder?.rail?.takeIf { it.childCount > 0 }?.getChildAt(0)
+            (stop ?: list).requestFocus()
+            // The row that left re-laid the whole page out, and the tile that took its place slid up
+            // while the glass was already standing where that tile used to be. Once the page settles,
+            // the slab goes back onto the tile that holds focus.
+            list.postDelayed({ GlassKit.reseatSlab(list, app) }, 340)
+        }
+    }
+
     private fun openRowFull(row: BrowseRow) {
         val id = row.id
         // Derived section shelves (trending, new, top-rated) are orderings of the whole section —
@@ -1662,7 +1682,7 @@ class BrowseActivity : Activity() {
 
     private inner class BrowseAdapter(
         private val hero: Item?,
-        private val shelves: List<BrowseRow>,
+        private val shelves: MutableList<BrowseRow>,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         var heroPlay: View? = null
@@ -1687,6 +1707,22 @@ class BrowseActivity : Activity() {
             heroHolder?.let { renderHero(it) }
         }
 
+        /**
+         * Takes a shelf off Home once the hub has agreed to hide it. The page is edited in place
+         * rather than reloaded: a rebuild would throw away the viewer's place on the page because
+         * one row left it. Answers with the adapter position that now holds the next row, so the
+         * caller can move focus to something that still exists, or -1 when this page has no such row.
+         */
+        fun dropShelf(rowId: String): Int {
+            val at = shelves.indexOfFirst { it.id == rowId }
+            if (at < 0) return -1
+            shelves.removeAt(at)
+            val first = if (hero != null) 1 else 0
+            notifyItemRemoved(at + first)
+            notifyItemRangeChanged(first, shelves.size)
+            return (at + first).coerceAtMost(itemCount - 1)
+        }
+
         override fun getItemCount(): Int = (if (hero != null) 1 else 0) + shelves.size
 
         override fun getItemViewType(position: Int): Int =
@@ -1707,16 +1743,12 @@ class BrowseActivity : Activity() {
                         onFavourite = { item ->
                             // The hero answers a hold with the same sheet as a shelf card, so the
                             // confirmation is identical wherever the ring happens to be standing.
-                            CardActionSheet.open(
-                                this@BrowseActivity, app, item.title,
-                                listOf(CardActionSheet.Choice(
-                                    if (CardActions.inList(app, profileId, item))
-                                        "Remove from My List" else "Add to My List",
-                                ) {
-                                    CardActions.toggleMyList(
-                                        this@BrowseActivity, app, api, profileId, item,
-                                    )
-                                }),
+                            // Its own Continue row is left to the shelves: the billboard is built
+                            // from the featured titles, and a slide that left watching would sit
+                            // under the viewer's eye until the page reloaded.
+                            CardActions.holdSheet(
+                                this@BrowseActivity, app, api, profileId, item,
+                                canDismissContinue = false,
                             )
                         },
                         onSelected = ::onSlideFocused,
@@ -1847,6 +1879,10 @@ class BrowseActivity : Activity() {
                     override fun openDetail(item: Item) = this@BrowseActivity.openDetail(item)
                     override fun openLive(item: Item) = this@BrowseActivity.openLive(item)
                     override fun openRowFull(row: BrowseRow) = this@BrowseActivity.openRowFull(row)
+                    // Only Home offers to hide a row: a section tab's shelves are this app's own
+                    // groupings of one pool of titles, and their ids are not the hub's row ids.
+                    override fun managesRows() = section.isEmpty()
+                    override fun onRowHidden(rowId: String) = this@BrowseActivity.rowHidden(rowId)
                 }, row)
                 holder.rail.adapter = cards
             }

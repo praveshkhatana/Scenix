@@ -188,14 +188,19 @@ object Focus {
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
                     KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE,
                 )) {
-                if (code in setOf(
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
-                        KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_SPACE,
-                    ) && holdTimer != null
-                ) {
+                val act = actionable(focusable)
+                if (ev.isLongPress || ev.repeatCount > 0) {
+                    // The input stack timed the press itself and says so on the release — the
+                    // long-press flag, or repeats that arrived while the button was down. Answer it
+                    // as the hold it is. Read as an ordinary press instead, this is exactly the card
+                    // that "never shows its menu on a long press": the title opens and the sheet
+                    // never gets a chance, because our own clock was the only one consulted.
+                    cancelHold()
+                    if (!holdFired && act != null && act.isLongClickable) act.performLongClick()
+                } else if (holdTimer != null) {
                     // Released before the hold clock ran out: an ordinary press, decided now.
                     cancelHold()
-                    actionable(focusable)?.performClick()
+                    act?.performClick()
                 }
                 holdFired = false
                 true
@@ -228,6 +233,19 @@ object Focus {
                             act.performClick()
                         }
                         true
+                    }
+                    KeyEvent.KEYCODE_MENU -> {
+                        // The ⋮ key opens the same sheet the hold does. Not every viewer knows the
+                        // gesture, and not every remote times a hold the same way, but nearly every
+                        // TV remote carries the key — this is the door to managing a title that a
+                        // viewer can find by looking at the remote.
+                        val act = actionable(focusable)
+                        if (act != null && act.isLongClickable) {
+                            cancelHold()
+                            holdFired = true
+                            act.performLongClick()
+                            true
+                        } else false
                     }
                     else -> false
                 }

@@ -324,6 +324,7 @@ internal object StudioCatalog {
         com.scenix.tv.core.CardActionSheet.open(activity, app, "Breaking Bad", listOf(
             com.scenix.tv.core.CardActionSheet.Choice("Add to My List") {},
             com.scenix.tv.core.CardActionSheet.Choice("Remove from Continue watching") {},
+            com.scenix.tv.core.CardActionSheet.Choice("Hide \u201CTrending now\u201D from Home") {},
         ))
     }
 
