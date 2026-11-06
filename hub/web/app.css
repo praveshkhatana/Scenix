@@ -362,7 +362,10 @@ ul { list-style: none; }
 .billboard .bb-art img { width: 100%; height: 100%; object-fit: cover; object-position: center 22%; }
 .billboard .bb-art.on { opacity: 1; }
 /* The trailer preview sits in the same frame as the still, and cross-fades into it. */
-#video-host video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* The film is letterboxed, not cropped: a 2.39:1 copy keeps its bars exactly as the television shows them,
+   and Picture size is the one control that trades the bars for filling the window. */
+#video-host video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#video-host.fill video { object-fit: cover; }
 .billboard .preview { position: absolute; inset: 0; opacity: 0; transition: opacity 320ms ease; z-index: 2; }
 .billboard .preview.on { opacity: 1; }
 /* Spec scrim stops: the horizontal wash ends at 55%, the vertical at 60%, and the bottom band is 8%. */
@@ -639,6 +642,21 @@ body.native-live, html.native-live { background: transparent; }
 .ply-hud .pt { font-size: calc(34px * var(--s)); font-weight: 700; }
 .ply-hud .ps { color: var(--ink2); font-size: calc(20px * var(--s)); margin-top: calc(8px * var(--s)); }
 .ply-hud .right { margin-left: auto; display: flex; gap: calc(12px * var(--s)); align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+/*
+  What the picture is, on one line above the timeline: its name, the channel's LIVE pill, the certificate,
+  the advisories. The television's player carries this line at the bottom of the film, directly over the
+  seek bar, and so does this one - the name of the thing you are watching belongs with the thing you are
+  watching, not with the way out.
+*/
+.ply-title {
+  display: flex; align-items: baseline; gap: calc(14px * var(--s)); flex-wrap: wrap;
+  margin-bottom: calc(16px * var(--s));
+}
+.ply-title .pt { font-size: calc(30px * var(--s)); font-weight: 700; }
+.ply-title .ps { color: var(--ink2); font-size: calc(19px * var(--s)); }
+.ply-title .pcontent { margin-top: 0; }
+/* The group break in the control row: transport on one side, tracks and picture on the other. */
+.ply-div { width: calc(1px * var(--s)); height: calc(26px * var(--s)); background: rgba(255,255,255,.30); }
 .ply-status {
   display: flex; align-items: center; gap: calc(14px * var(--s));
   font-size: calc(20px * var(--s)); color: var(--ink1);

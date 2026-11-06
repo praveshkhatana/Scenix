@@ -25,6 +25,9 @@ const ICONS = {
   fwd: '<path d="M4 6l7 6-7 6z" fill="currentColor" stroke="none"/><path d="M13 6l7 6-7 6z" fill="currentColor" stroke="none"/>',
   next: '<path d="M5 5l9 7-9 7z" fill="currentColor" stroke="none"/><path d="M18 5v14"/>',
   speed: '<path d="M12 20a8 8 0 1 1 8-8"/><path d="M12 12l4.5-2.5"/>',
+  // The television's player carries a picture-size glyph beside Quality; this is the same mark, so the
+  // row of icons reads the same on both clients.
+  expand: '<path d="M9 4H4v5M15 20h5v-5"/><path d="M4 20l7-7M20 4l-7 7"/>',
   sliders: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
   lock: '<rect x="4.5" y="10.5" width="15" height="9.5" rx="2.2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
   kids: '<circle cx="12" cy="8.5" r="4.2"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>',

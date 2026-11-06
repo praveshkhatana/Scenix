@@ -79,9 +79,13 @@ export function screen(ctx, identity) {
     el('span', { class: 'pccert', text: cert || 'Not rated' }),
     advisories.length ? el('span', { class: 'pcadv', text: advisories.join(' · ') }) : null);
   const status = el('div', { class: 'ply-status' });
+  /* The status line keeps the top of the picture: it has to be able to say "stalled", "playing the copy you
+     picked" or "subtitles are off" without moving the transport out from under anyone's ring. What the
+     picture *is* — its name, the channel's LIVE pill, the certificate — rides the bottom bar above the
+     timeline instead, which is where the television's player puts that line. Two clients, one line-up. */
   const hud = el('div', { class: 'ply-hud ply-fade' },
-    el('div', {}, title, subtitle, content),
     el('div', { class: 'right' }, status));
+  const titleRow = el('div', { class: 'ply-title ply-fade' }, title, subtitle, content);
   const top = el('div', { class: 'ply-top ply-fade' });
 
   // The theme owns how far a seek jumps; a label that promises ten seconds while the token says thirty
@@ -120,6 +124,28 @@ export function screen(ctx, identity) {
   const btnAudio = tool('audio', 'Audio', () => openMenu('audio', btnAudio));
   const btnSpeed = tool('speed', 'Speed', () => openMenu('speed', btnSpeed));
   const btnQuality = tool('globe', 'Quality', () => openMenu('quality', btnQuality));
+
+  /*
+   * The film arrives with its own shape, and the television letters it into the black rather than cropping
+   * the top and bottom of the picture away. That is the default here too, and the one control that changes
+   * it is the one the television has: Picture size, cycling letterboxed to full-screen. A native surface
+   * draws its own picture, so the button is not offered where pressing it would do nothing.
+   */
+  const ASPECTS = [['', 'Fit'], ['fill', 'Fill']];
+  let aspectAt = 0;
+  const btnAspect = native ? null : tool('expand', 'Picture size', () => {
+    aspectAt = (aspectAt + 1) % ASPECTS.length;
+    const [cls, label] = ASPECTS[aspectAt];
+    const host = document.getElementById('video-host');
+    if (host) host.classList.toggle('fill', cls === 'fill');
+    const v = btnAspect.querySelector('.val');
+    if (v) v.textContent = label;
+    setStatus(`Picture size · ${label}`, null);
+  });
+  if (btnAspect) {
+    const v = btnAspect.querySelector('.val');
+    if (v) v.textContent = ASPECTS[0][1];
+  }
   const rate = el('span', { class: 'rate' });
 
   /* Two rows and no panel: where the programme is (elapsed, the line, what is left) and what you can do to it
@@ -149,10 +175,14 @@ export function screen(ctx, identity) {
   // A channel has no position to move along, so the line that shows one is replaced by the only fact that
   // stream supports: it is happening now.
   const liveMark = el('div', { class: 'live-mark' }, el('i', { class: 'dot' }), el('span', { text: 'Live' }));
+  // The hairline is the group break the television's row uses: transport on one side, the tracks and the
+  // picture on the other. Without it the row reads as eight equal things rather than two kinds of thing.
   const bar = el('div', { class: 'ply-bar' },
     isLiveFeed ? liveMark : times,
     el('div', { class: 'pbtns' }, btnPlay, ...(isLiveFeed ? [] : [btnRew, btnFwd]),
-      el('div', { class: 'ply-right' }, btnSub, btnAudio, ...(isLiveFeed ? [] : [btnSpeed]), btnQuality)));
+      el('span', { class: 'ply-div', 'aria-hidden': 'true' }),
+      el('div', { class: 'ply-right' }, btnSub, btnAudio, ...(isLiveFeed ? [] : [btnSpeed]), btnQuality,
+        ...(btnAspect ? [btnAspect] : []))));
 
   // Shown only when there is a next episode to go to, so a film and a channel are not offered a button that
   // does nothing.
@@ -169,7 +199,7 @@ export function screen(ctx, identity) {
     el('span', { class: 'iconbtn dim' }, icon(player.backend === 'native' ? 'tv' : 'external'),
       el('span', { text: player.backend === 'native' ? 'TV player' : 'Browser player' })),
     rate);
-  const bottom = el('div', { class: 'ply-bottom ply-fade' }, bar, ctl);
+  const bottom = el('div', { class: 'ply-bottom ply-fade' }, titleRow, bar, ctl);
 
   /* An intro is a thing the hub marks on an episode, and the first frame of a film has not been watched long
      enough for anyone to want out of it. So the button starts put away — `gone` is opacity 0, which is also
