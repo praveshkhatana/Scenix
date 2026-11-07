@@ -2516,6 +2516,10 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const [kept] = await pipeline([item], ctx, drops); // rules rank sources and enforce the profile's scope
   if (!kept) return { status: 403, body: ruleDropBody(identity, drops) };
   let sources = kept.sources || [];
+  if (process.env.PLAY_DEBUG) {
+    log('PLAY SOURCES', identity, kept.type + ' x' + sources.length,
+      sources.map((s) => (s._addon || '?') + ':' + String(s.label || s.name || '').slice(0, 28)).join(' | ').slice(0, 600));
+  }
   if (!sources.length) {
     // Same bargain as the missing item: if an addon is still fetching this title's streams, the
     // copies are in transit. The app's warming path retries; a bare 404 sends it to an error card.
