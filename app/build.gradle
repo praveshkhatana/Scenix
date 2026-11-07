@@ -49,8 +49,8 @@ android {
         applicationId 'com.scenix.tv'
         minSdk 26          // the TV is Android 11 (SDK 30); 26 keeps the floor honest
         targetSdk 34
-        versionCode 1
-        versionName '0.1-p1'
+        versionCode 2
+        versionName '0.2-p2'
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }  // GeckoView's x86_64 is dead weight on TVs
     }
 
