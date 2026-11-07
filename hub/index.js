@@ -2678,12 +2678,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
     + (decodable.length && s && s.videoCodec
       && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0)
-    // A copy whose own label names a different programme cannot pass the walk's label test — it is a
-    // certain rejection wearing a seat. Measured live: two such copies occupied the only two seats for
-    // a film that had five working torrent copies further down the same ranking. Same guard the walk
-    // itself applies (channels exempt, their labels are qualities, not release names).
+    // A copy whose own release name states another programme cannot pass the walk's name test — it
+    // is a certain rejection wearing a seat. Measured live: three such copies occupied the front of
+    // a 10-copy title while five working torrent copies waited behind a 5-second budget. Same
+    // predicates the walk applies (channels exempt, their labels are qualities, not release names;
+    // a copy that states the wanted episode is not treated as another film).
     + (s && kept.type !== 'channel' && !kept.live
-      && labelNamesOtherTitle(labelOf(s), kept.title) ? 4 : 0);
+      && !statesTheEpisode(labelOf(s), ep)
+      && nameIsntTheTitle(labelOf(s), kept.title) ? 4 : 0);
   // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
   // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
   // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
@@ -2796,6 +2798,32 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (!addon || typeof addon.play !== 'function') continue;
     const left = deadline - Date.now();
     if (left <= 0) { tried.push('out of time after ' + queue.indexOf(cand) + ' tries'); break; }
+    // The label tests, run BEFORE paying for the mint. Asking an aggregator for an address costs
+    // ~3 s per copy on this hub, and the copy it mints is the one its label already named: when the
+    // label states another programme the mint is spent and the rejection is certain. Measured live:
+    // three aggregator junk copies spent nine of a press's eight seconds minting answers the walk
+    // then threw away. An explicit Quality-menu pick still pays the mint first (it may play despite
+    // an odd release name), and every test below is re-applied to the minted copy unchanged.
+    const liveChannel = kept.type === 'channel' || !!kept.live;
+    const named = wanted && ((wanted.id && String(cand.id) === String(wanted.id))
+      || (wanted.label && labelOf(cand) === wanted.label));
+    if (!named && !liveChannel) {
+      if (labelNamesOtherTitle(labelOf(cand), kept.title)) {
+        tried.push(labelOf(cand) + ': its name is another title');
+        log('PLAY WRONG TITLE', identity, labelOf(cand), kept.title);
+        continue;
+      }
+      if (!episodeInLabel(labelOf(cand), ep)) {
+        tried.push(labelOf(cand) + ': its name is another episode');
+        log('PLAY WRONG EPISODE', identity, labelOf(cand), ep ? ('S' + ep.season + 'E' + ep.episode) : '?');
+        continue;
+      }
+      if (!statesTheEpisode(labelOf(cand), ep) && nameIsntTheTitle(labelOf(cand), kept.title)) {
+        tried.push(labelOf(cand) + ': its name is not ' + (kept.title || 'this title'));
+        log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
+        continue;
+      }
+    }
     const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
     if (!o || !o.url) {
@@ -2810,7 +2838,6 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // A live channel's "label" is a quality ("576p stream"), not a release name. The film title
     // guard does not apply: it rejected every channel whose label was not its name, which was most
     // of the wall. Identity is the channel; the variants are its feeds.
-    const liveChannel = kept.type === 'channel' || !!kept.live;
     const otherTitle = liveChannel ? false : labelNamesOtherTitle(labelOf(cand), kept.title);
     // The episode number the file states about itself is a fact about the copy, and it is the strongest
     // one an aggregator's release name offers. "Titan VII - S01E01 Direct MP4" asked for as S01E01 is
@@ -2822,9 +2849,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // A person who named this copy in the Quality menu outranks an odd release name: providers
     // mislabel real copies, and the better-quality one is often exactly the odd-named file. That
     // grace does NOT extend to a copy whose own name (or SxxEyy) is a different programme: an
-    // explicit pick must never put another title or another episode on screen.
-    const named = wanted && ((wanted.id && String(cand.id) === String(wanted.id))
-      || (wanted.label && labelOf(cand) === wanted.label));
+    // explicit pick must never put another title or another episode on screen. (`named` was settled
+    // before the mint above.)
     if (otherTitle) {
       tried.push(labelOf(cand) + ': its name is another title');
       log('PLAY WRONG TITLE', identity, labelOf(cand), kept.title);
