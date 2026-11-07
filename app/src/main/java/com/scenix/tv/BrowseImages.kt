@@ -83,6 +83,10 @@ object BrowseImages {
         cache.get(requestKey)?.let {
             // Do not clear a cached bitmap first. That produces a black flash and a second
             // invalidation during a hero LEFT/RIGHT step even though the image is ready now.
+            // Ask the RenderThread to upload the texture NOW: without this the upload happens
+            // inside the next draw — measured on the 2 GB panel as 50 slow bitmap uploads and
+            // thirteen GPU frames of 4.9 seconds, every one of them a stall the viewer felt.
+            it.prepareToDraw()
             view.setImageBitmap(it)
             onResult?.invoke(true)
             return
@@ -97,6 +101,7 @@ object BrowseImages {
                 val tinyKey = "$small@tiny"
                 val ready = cache.get(tinyKey)
                 if (ready != null) {
+                    ready.prepareToDraw()
                     view.setImageBitmap(ready)
                 } else {
                     tinyPool.execute {
@@ -105,7 +110,12 @@ object BrowseImages {
                             ?: if (small != clean) decode(clean, 200) else null
                         if (bmp != null) {
                             cache.put(tinyKey, bmp)
-                            main.post { if (view.tag == requestKey) view.setImageBitmap(bmp) }
+                            main.post {
+                                if (view.tag == requestKey) {
+                                    bmp.prepareToDraw()
+                                    view.setImageBitmap(bmp)
+                                }
+                            }
                         }
                     }
                 }
@@ -133,6 +143,7 @@ object BrowseImages {
                         // Art that arrives after the placeholder was placed should fade up into it
                         // (opacity only, entry family), not pop into existence mid-scroll.
                         val wasEmpty = view.drawable == null
+                        bitmap.prepareToDraw()
                         view.setImageBitmap(bitmap)
                         if (wasEmpty) {
                             view.alpha = 0f

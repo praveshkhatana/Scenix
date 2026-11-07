@@ -92,6 +92,17 @@ internal class ShelfAdapter(
         else theme.radius("card", 6f)
     // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
     private val seeAll = !featured && row.total > row.items.size
+    // A tile's geometry is part of its identity. The recycled pool hands holders to whoever asks
+    // next - a rail rebound to a new row, tiles surviving from the last one - and a ranked tile
+    // with numerals or a landscape 16:9 still must not come back as a portrait poster. Encoding
+    // the shape in the viewType keeps every tile the pool holds a tile built for this row's
+    // exact shape, which is also what lets the rails keep a deeper pool without visual bugs.
+    private val tileType: Int = (if (poster) 1 else 0) or (if (landscape) 2 else 0) or
+        (if (ranked) 4 else 0) or (if (frame) 8 else 0) or (if (below) 16 else 0) or
+        (if (tileSquare) 32 else 0) or (if (glass) 64 else 0) or (if (featured) 128 else 0) or
+        (if (seeAll) 256 else 0)
+
+    override fun getItemViewType(position: Int): Int = tileType
     // Continue is the one shelf a viewer can clean up in place: long-press removes the tile and
     // the hub marks the record dismissed (the position survives; pressing the title re-arms it).
     // The mutable copy exists so the removal animates without re-reading Home.

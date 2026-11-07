@@ -1887,6 +1887,10 @@ class BrowseActivity : Activity() {
                     override fun onRowHidden(rowId: String) = this@BrowseActivity.rowHidden(rowId)
                 }, row)
                 holder.rail.adapter = cards
+                // The default recycling depth keeps five tiles of a shape, while one row of this
+                // pack shows seven: every tile past the fifth in a fling was being built - six
+                // views, two drawables, an outline - inside a frame. Keep a row and a half deep.
+                holder.rail.recycledViewPool.setMaxRecycledViews(cards.getItemViewType(0), 24)
             }
         }
 
