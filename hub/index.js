@@ -157,7 +157,13 @@ const ALT_MAX = Number(process.env.ALT_MAX || 9);
 // that starts and keeps going beats a link that "succeeds" in 0.3s and dies in the player. The total
 // stays inside the 12s read timeout the TV app puts on this call, so the last candidate tried is one
 // that has actually been measured rather than one the app gave up waiting for.
-const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 2);
+// How many copies one press is allowed to check, in ranked order, before it gives up. This used to
+// be 2 "to bound the walk", but the walk is already bounded by PLAY_TOTAL_BUDGET_MS (the deadline
+// check inside it stops trying when the press is out of time). Two seats let a title with 13 copies
+// fail on two junk links: an aggregator's wrong-title answer and one dead hoster link occupied both
+// seats while five working torrent copies waited untried below. Seats only decide how far down the
+// ranking a press may reach; the clock still decides how many it can actually afford.
+const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 6);
 const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 5000);
 // How long a warming title asks the player to wait before pressing again. The hub says it rather than
 // the client guessing, because only the hub knows whether it is talking to an engine that is awake.
@@ -2668,7 +2674,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }
   const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
     + (decodable.length && s && s.videoCodec
-      && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0);
+      && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0)
+    // A copy whose own label names a different programme cannot pass the walk's label test — it is a
+    // certain rejection wearing a seat. Measured live: two such copies occupied the only two seats for
+    // a film that had five working torrent copies further down the same ranking. Same guard the walk
+    // itself applies (channels exempt, their labels are qualities, not release names).
+    + (s && kept.type !== 'channel' && !kept.live
+      && labelNamesOtherTitle(labelOf(s), kept.title) ? 4 : 0);
   // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
   // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
   // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
