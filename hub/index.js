@@ -556,6 +556,13 @@ function rememberItems(items) {
   let changed = false;
   for (const it of items) {
     if (!it || !it.identity) continue;
+    // A row re-resolving a show from its thin catalog tile knows less than the detail page that
+    // already adopted the sibling's 4,862 episodes. Replacing every other field is right; the
+    // episode list never shrinks. Measured live: this overwrite is how a restart restored the thin
+    // record and the first open after it said "Season 1 - 1 episode" again.
+    const old = itemCache.get(it.identity);
+    if (old && Array.isArray(old.episodes) && old.episodes.length > (it.episodes || []).length)
+      it.episodes = merge.unionEpisodes(it.episodes, old.episodes);
     itemCache.delete(it.identity);
     itemCache.set(it.identity, it);
     changed = true;
@@ -4976,6 +4983,34 @@ async function handle(req, res) {
         kept.reaction = store.reactionFor(profile.id, identity) || null;
         kept.seen = store.seenFor(profile.id, identity);
       }
+      // A series whose tile is thin is usually complete somewhere else under its own title. Run
+      // that join BEFORE the answer goes out: a sibling that answers inside the window is listed on
+      // THIS open - the first open of a thin soap no longer shows "one episode" while the family
+      // waits for a second tap to list the 4,862. A sibling that is slower ships the thin record
+      // and lands in the store for the next open, exactly as the old post-send behaviour did.
+      if (kept && kept.type === 'series' && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)
+          && !adoptingSiblings.has(kept.identity)) {
+        adoptingSiblings.add(kept.identity);
+        const job = adoptEpisodeSibling(kept, makeCtx(profile, 9000),
+          { fetchSources: false, metaBudget: 9000 })
+          .then((got) => {
+            if (got) log('META EPISODES ADOPTED', kept.identity,
+              'episodes=' + ((kept.episodes || []).length));
+            return !!got;
+          })
+          .catch((e) => { log('META EPISODES ADOPT FAIL', kept.identity, e.message); return false; })
+          .finally(() => adoptingSiblings.delete(kept.identity));
+        // The job is not cancelled by the race: a late sibling still lands in the store for the
+        // next open - the old post-send behaviour is the floor, not the plan.
+        const late = await Promise.race([
+          job.then(() => false),
+          new Promise((r) => setTimeout(() => r(true), 9000)),
+        ]);
+        if (late && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)) {
+          log('META EPISODES ADOPT LATE', kept.identity,
+            'this open carries the cached list; the full one lands when the sibling answers');
+        }
+      }
       if (process.env.PLAY_DEBUG) {
         log('META SEND', identity, 'type=' + (kept && kept.type) +
           ' eps=' + (kept && Array.isArray(kept.episodes) ? kept.episodes.length : 'none'));
@@ -4994,35 +5029,6 @@ async function handle(req, res) {
           const magnet = magnetOf(kept.streamId || identity, s);
           return magnet ? { ...s, url: magnet } : s;
         }), wantFromStreamId(kept.streamId || identity));
-        // A series whose tile is thin is usually complete somewhere else under its own title. The
-        // detail page used to run that search only after the response was out, so the first open of
-        // a thin soap showed \"one episode\" and only the second open listed the 4,862 - the family
-        // read that as the episodes not working. Now the first open waits for the join, bounded:
-        // a sibling that answers inside the window is shown on THIS open; one that is slower ships
-        // the cached record and lands for the next open, exactly as before.
-        if (kept.type === 'series' && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)
-            && !adoptingSiblings.has(kept.identity)) {
-          adoptingSiblings.add(kept.identity);
-          const job = adoptEpisodeSibling(kept, makeCtx(profile, 9000),
-            { fetchSources: false, metaBudget: 9000 })
-            .then((got) => {
-              if (got) log('META EPISODES ADOPTED', kept.identity,
-                'episodes=' + ((kept.episodes || []).length));
-              return !!got;
-            })
-            .catch((e) => { log('META EPISODES ADOPT FAIL', kept.identity, e.message); return false; })
-            .finally(() => adoptingSiblings.delete(kept.identity));
-          // The job is not cancelled by the race: a late sibling still lands in the store for the
-          // next open - the old post-send behaviour is the floor, not the plan.
-          const late = await Promise.race([
-            job.then(() => false),
-            new Promise((r) => setTimeout(() => r(true), 9000)),
-          ]);
-          if (late && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)) {
-            log('META EPISODES ADOPT LATE', kept.identity,
-              'this open carries the cached list; the full one lands when the sibling answers');
-          }
-        }
       }
       // Must not fall through: the next matcher would answer this same request a second time, and a
       // second send on a finished response takes the whole hub down (ERR_HTTP_HEADERS_SENT).
