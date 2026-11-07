@@ -1061,7 +1061,71 @@ class DetailActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ))
             episodeRail = rail
-            current.forEach { addEpisode(it, season, railItems) }
+            // A daily soap carries more episodes than this TV can hold as Views. Every lockup is a
+            // dozen Views and an image request, so painting all 4,862 of a season froze the page in
+            // layout and GC on the 2 GB set (measured: 93 MB heap, GC pause 1.4 s, the remote's key
+            // presses queued behind it). A season paints sixty at a time and the rail grows when
+            // the viewer asks for more; the summary line has already told them how many exist.
+            var shown = 0
+            fun addMore(remaining: Int, railItems: LinearLayout, onLoad: () -> Unit) {
+                val cardW = theme.px(432f)
+                val cardH = theme.px(243f) + theme.px(104f)
+                val haloPad = if (theme.focusStyle == "glow") theme.focusGlowInset else theme.px(5f)
+                val tile = FrameLayout(this).apply {
+                    id = View.generateViewId()
+                    isFocusable = true
+                    isClickable = true
+                    clipChildren = false
+                    clipToPadding = false
+                    contentDescription = "load $remaining more episodes"
+                }
+                val focusPlate = View(this)
+                tile.addView(focusPlate, FrameLayout.LayoutParams(
+                    cardW + haloPad * 2, cardH + haloPad * 2
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    leftMargin = -haloPad
+                    topMargin = -haloPad
+                })
+                tile.addView(View(this).apply {
+                    background = Views.rounded(theme.surface2, theme.radius("card", 6f))
+                }, FrameLayout.LayoutParams(cardW, cardH))
+                tile.addView(Views.text(app, "button", 22f, wallInk(theme),
+                    "Load $remaining more", bold = true, gravity = Gravity.CENTER),
+                    FrameLayout.LayoutParams(cardW, cardH))
+                val tileIndex = episodeTiles.size
+                Focus.attach(tile, focusPlate, app, theme.radius("card", 6f), animateScale = false,
+                    elevate = false, glowInset = haloPad,
+                    arrow = { code ->
+                        when (code) {
+                            android.view.KeyEvent.KEYCODE_DPAD_LEFT ->
+                                if (tileIndex == 0) true else focusEpisode(tileIndex - 1)
+                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT ->
+                                if (tileIndex == episodeTiles.lastIndex) true else focusEpisode(tileIndex + 1)
+                            android.view.KeyEvent.KEYCODE_DPAD_UP ->
+                                selectedTab?.requestFocus() == true
+                            else -> false
+                        }
+                    })
+                tile.setOnClickListener {
+                    episodeTiles.remove(tile)
+                    railItems.removeView(tile)
+                    onLoad()
+                    // Focus the first of the freshly added episodes, not the replacement button.
+                    focusEpisode(tileIndex)
+                }
+                episodeTiles.add(tile)
+                railItems.addView(tile, LinearLayout.LayoutParams(cardW, cardH).apply {
+                    marginEnd = theme.px(28f)
+                })
+            }
+            fun appendPage() {
+                val until = (shown + 60).coerceAtMost(current.size)
+                for (i in shown until until) addEpisode(current[i], season, railItems)
+                shown = until
+                if (shown < current.size) addMore(current.size - shown, railItems) { appendPage() }
+            }
+            appendPage()
             episodeHost.addView(rail, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, cardH + haloPad * 2
             ).apply { topMargin = theme.px(2f) })
