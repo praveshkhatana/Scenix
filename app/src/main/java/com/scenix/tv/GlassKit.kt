@@ -563,7 +563,12 @@ internal object GlassKit {
      * settles, the slab comes back to the tile that holds focus.
      */
     fun slabScrolling(view: View, app: AppContext, scrolling: Boolean) {
-        if (!LiquidGlassKit.isGlass(app) || app.theme.packInt("focusGlass", 1) == 0) return
+        if (!LiquidGlassKit.isGlass(app)) return
+        // Same rule as the slab, one tier out: while the page is moving, every lens on it replays
+        // its last honest frame instead of recapturing and refracting the page each frame. When the
+        // page settles, the lenses come back — full glass on the frame after.
+        LiquidGlassKit.scrollFreeze(scrolling)
+        if (app.theme.packInt("focusGlass", 1) == 0) return
         val page = pageOf(view) ?: return
         if (scrolling) hideGlassSlab(app)
         else held[page]?.let { (art, radius) ->

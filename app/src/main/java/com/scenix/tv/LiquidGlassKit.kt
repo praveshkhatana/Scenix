@@ -41,7 +41,65 @@ internal object LiquidGlassKit {
 
     /** An empty glass container, sized by whatever is put inside it. */
     fun lens(context: Context, app: AppContext, radiusPx: Int): LiquidGlassView =
-        LiquidGlassView(context).apply { tune(app, this, radiusPx) }
+        GlassLens(context).registered().apply { tune(app, this, radiusPx) }
+
+    /**
+     * A lens that can stand still. While a page is scrolling, every lens on it would otherwise
+     * recapture and refract its backdrop every frame — on the 2 GB Android 11 panel a shelf chip's
+     * lens costs 30-40 ms per frame, and seven chips plus the nav pill is most of the frame budget
+     * spent on refraction nobody is looking at mid-fling. [frozen] takes the current pixels once and
+     * replays them until the page settles, exactly the rule the focused tile's slab already follows.
+     */
+    internal class GlassLens(context: Context) : LiquidGlassView(context) {
+        var frozen: android.graphics.Bitmap? = null
+
+        override fun draw(canvas: android.graphics.Canvas) {
+            val f = frozen
+            if (f != null && !f.isRecycled && f.width == width && f.height == height) {
+                canvas.drawBitmap(f, 0f, 0f, null)
+                return
+            }
+            super.draw(canvas)
+        }
+
+        fun registered(): GlassLens {
+            synchronized(live) {
+                live.removeAll { e -> e.get() == null }
+                live.add(java.lang.ref.WeakReference(this))
+            }
+            return this
+        }
+    }
+
+    private val live = mutableListOf<java.lang.ref.WeakReference<GlassLens>>()
+
+    /**
+     * Hold every lens at its current pixels while the page moves ([on] true), and let them refract
+     * again the moment it settles. The freeze costs one honest render per lens at the start of the
+     * gesture and nothing per frame after; unfreezing redraws each lens once, so a page that stops
+     * mid-fling shows full glass on the next frame. CPU tier only — the API 33 shader tier renders
+     * its lenses on the GPU and can afford to keep refracting.
+     */
+    fun scrollFreeze(on: Boolean) {
+        if (Build.VERSION.SDK_INT >= 33) return
+        synchronized(live) {
+            for (ref in live) {
+                val g = ref.get() ?: continue
+                if (on) {
+                    if (g.width > 0 && g.height > 0) {
+                        val b = android.graphics.Bitmap.createBitmap(
+                            g.width, g.height, android.graphics.Bitmap.Config.ARGB_8888,
+                        )
+                        g.draw(android.graphics.Canvas(b))
+                        g.frozen = b
+                    }
+                } else if (g.frozen != null) {
+                    g.frozen = null
+                    g.invalidate()
+                }
+            }
+        }
+    }
 
     /**
      * Puts [content] inside the pack's glass and hands back the glass. The content keeps its own
@@ -86,7 +144,7 @@ internal object LiquidGlassKit {
         token: String,
         behind: Boolean = true,
     ): LiquidGlassView {
-        val glass = LiquidGlassView(host.context)
+        val glass = GlassLens(host.context).registered()
         tune(app, glass, radiusPx, token, behind)
         apps[glass] = app
         return glass
