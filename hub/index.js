@@ -164,7 +164,10 @@ const ALT_MAX = Number(process.env.ALT_MAX || 9);
 // seats while five working torrent copies waited untried below. Seats only decide how far down the
 // ranking a press may reach; the clock still decides how many it can actually afford.
 const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 6);
-const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 5000);
+// Wall-clock the whole picker walk may spend before it answers. The walk is also what gives a torrent
+// its first 256 KB, so on a title whose HTTP copies are all dead this is the time it takes the engine
+// to prove a swarm works - 5 s was measured too tight for one engine mint plus proof.
+const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 8000);
 // How long a warming title asks the player to wait before pressing again. The hub says it rather than
 // the client guessing, because only the hub knows whether it is talking to an engine that is awake.
 const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 2000);
@@ -2705,11 +2708,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (!need) return -1; // an adaptive ladder has no fixed bitrate; it adjusts itself
     return need <= swarmMbps * fitCeiling ? 0 : need;
   };
-  queue.sort((a, b) => fitRank(a) - fitRank(b));
+  // The seats keep their known-bad order under the fit pass: fitRank reorders WITHIN a rankDown tier,
+  // it may not promote past one. Reordering by fit alone let a dead hoster link and an aggregator's
+  // wrong-title answer keep the two front seats of a 13-copy title - they are HTTP (fit -1) so they
+  // led every time, while five working torrent copies waited below the 5-second budget.
+  queue.sort((a, b) => (rankDown(a) - rankDown(b)) || (fitRank(a) - fitRank(b)));
   // An explicit copy is the only copy this press may start: "try this copy" is a person's decision,
   // and the answer is either that copy or an honest refusal. Copies past the first seats are only
   // woken by an automatic walk.
-  const spare = explicit ? [] : ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
+  const spare = explicit ? [] : ranked.slice(PLAY_MAX_TRIES)
+    .sort((a, b) => (rankDown(a) - rankDown(b)) || (fitRank(a) - fitRank(b)));
 
   const deadline = Date.now() + PLAY_TOTAL_BUDGET_MS;
   const tried = [];
