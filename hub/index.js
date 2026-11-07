@@ -1884,6 +1884,24 @@ async function adoptEpisodeSibling(item, ctx, opts) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const want = norm(title);
   const year = Number(item.year);
+  // The hub has often already completed this exact show under another id — the same soap under
+  // its imdb tile while the aggregator tile stays thin. Re-learning it from a throttled upstream
+  // is how \"one episode\" came back for a show the hub knew had 4,862: take what is already in
+  // the store before asking anyone.
+  for (const [, rec] of itemCache) {
+    if (!rec || rec.identity === item.identity || rec.type !== 'series') continue;
+    if (norm(rec.title) !== norm(title)) continue;
+    const have = (item.episodes || []).length;
+    if (Array.isArray(rec.episodes) && rec.episodes.length > have) {
+      item.episodes = merge.unionEpisodes(item.episodes, rec.episodes);
+      log('EPISODE SIBLING', item.identity, '<- remembered', rec.identity,
+        'episodes=' + item.episodes.length);
+    }
+  }
+  if ((item.episodes || []).length >= 5 && opts.fetchSources === false) {
+    rememberItems([item]);
+    return episodeOf(item, opts.season, opts.episode) || true;
+  }
   for (const p of registry.providers) {
     if (typeof p.catalog !== 'function') continue;
     let cats = [];
@@ -1906,8 +1924,11 @@ async function adoptEpisodeSibling(item, ctx, opts) {
         // The detail page only wants the episode list — the seasons and numbers it will print. An
         // Indian soap whose global tile carries one episode sits complete under the catalogue addon's
         // own id (4,922 of them for Taarak Mehta); the next press of that show lists them from cache.
+        // A thin sibling is not that: only a list with real depth ends the hunt, so a sibling that
+        // knows four episodes does not stop the search for the one that knows four thousand.
         rememberItems([item]);
-        return episodeOf(item, opts.season, opts.episode) || true;
+        if ((item.episodes || []).length >= 5) return episodeOf(item, opts.season, opts.episode) || true;
+        continue;
       }
       const ep = episodeOf(item, opts.season, opts.episode);
       if (!ep) continue;
