@@ -2713,6 +2713,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // wrong-title answer keep the two front seats of a 13-copy title - they are HTTP (fit -1) so they
   // led every time, while five working torrent copies waited below the 5-second budget.
   queue.sort((a, b) => (rankDown(a) - rankDown(b)) || (fitRank(a) - fitRank(b)));
+  if (process.env.PLAY_DEBUG) {
+    log('PLAY QUEUE', identity, queue.length + ' seats: '
+      + queue.map((s) => (s._addon || '?') + '/' + rankDown(s) + '/' + fitRank(s)
+        + ':' + String(labelOf(s)).slice(0, 22)).join(' | ').slice(0, 700));
+  }
   // An explicit copy is the only copy this press may start: "try this copy" is a person's decision,
   // and the answer is either that copy or an honest refusal. Copies past the first seats are only
   // woken by an automatic walk.
