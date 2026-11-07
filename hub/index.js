@@ -4976,6 +4976,10 @@ async function handle(req, res) {
         kept.reaction = store.reactionFor(profile.id, identity) || null;
         kept.seen = store.seenFor(profile.id, identity);
       }
+      if (process.env.PLAY_DEBUG) {
+        log('META SEND', identity, 'type=' + (kept && kept.type) +
+          ' eps=' + (kept && Array.isArray(kept.episodes) ? kept.episodes.length : 'none'));
+      }
       send(res, kept ? 200 : 403, kept || ruleDropBody(identity, metaDrops));
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,
       // and by the time they press play the answer is in the cache instead of costing 1.5 s.
