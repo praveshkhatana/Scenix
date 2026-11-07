@@ -1247,7 +1247,11 @@ async function serve(req, res, who, opts = {}) {
     // own verdict, and remember it against the host: its other copies are in the same cold water.
     const refusal = originRefusal(copy.givenUp && !copy.everBytes ? copy.error : '');
     if (refusal) {
-      markDeadHost(copy.url, refusal);
+      // Only "this is not here" (404/410) is a fact about the HOST. A 403 or a 429 is the host
+      // throttling THIS request: the same host happily serves the next one, and marking it dead
+      // for half an hour took down working copies of other titles — the throttle we answer with
+      // became an outage we caused. 5xx is the host's bad day, not its verdict.
+      if (refusal === 404 || refusal === 410) markDeadHost(copy.url, refusal);
       log('PROXY ORIGIN REFUSED', tag, 'http=' + refusal,
         'host=' + hostOf(copy.url), 'the host answered that when the hub asked for bytes');
       res.writeHead(refusal >= 400 && refusal < 500 ? refusal : 502, {

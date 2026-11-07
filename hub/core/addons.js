@@ -258,10 +258,36 @@ function forgetStreams(identity) {
   return n;
 }
 
+/**
+ * Public aggregators (the desitvhub-style manifest hosts, torrentio) answer HTTP 429 when a hub
+ * calls them too often, and a 429 is the one failure retrying makes WORSE: the hub used to hammer
+ * through its whole warm-up and every keypress, and the log carried a thousand refusals a day while
+ * every title that lives behind that aggregator looked broken to the family. A refusal now buys the
+ * host silence: live calls to it pause for a few minutes and stale cache answers for it instead;
+ * a host that keeps refusing waits longer. When the window passes, one call probes it again.
+ */
+const rateLimited = new Map(); // host -> until (ms). Set on 429; probed again after.
+function rateLimitedHost(url) {
+  let h = '';
+  try { h = new URL(String(url)).host; } catch (e) { return ''; }
+  const until = rateLimited.get(h);
+  if (until == null) return '';
+  if (until <= Date.now()) { rateLimited.delete(h); return ''; }
+  return h;
+}
+function noteRateLimited(url) {
+  let h = '';
+  try { h = new URL(String(url)).host; } catch (e) { return; }
+  const was = rateLimited.get(h);
+  const calm = was && was > Date.now() ? 10 * 60 * 1000 : 3 * 60 * 1000;
+  rateLimited.set(h, Date.now() + calm);
+  if (!was || was <= Date.now()) log('ADDON RATE LIMITED', h, 'refused with 429 - waiting ' + Math.round(calm / 60000) + ' min before asking again');
+}
+
 function getJson(url, { wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT_MS, tag = '', ok404 = false } = {}) {
   const hit = cache.get(url);
   if (hit && Date.now() - hit.at < ttlFor(hit.body)) return Promise.resolve(hit.body);
-  if (!inflight.has(url)) {
+  if (!inflight.has(url) && !rateLimitedHost(url)) {
     const p = get(url, timeoutMs, ok404)
       .then((body) => {
         const parsed = JSON.parse(body);
@@ -272,7 +298,9 @@ function getJson(url, { wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT
       .catch((e) => {
         // A connect failure often arrives as an AggregateError with no message at all; a blank log line
         // is exactly how one of these hunts went blind, so name the failure by whatever it does carry.
-        if (tag) log('ADDON UPSTREAM FAIL', tag, url, e.message || e.code || e.name || String(e));
+        const msg = e.message || e.code || e.name || String(e);
+        if (tag) log('ADDON UPSTREAM FAIL', tag, url, msg);
+        if (/HTTP 429/.test(msg)) noteRateLimited(url);
         return hit ? hit.body : null;
       })
       .finally(() => inflight.delete(url));

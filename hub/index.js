@@ -2453,6 +2453,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // Address the episode before anything ranks or filters sources, so the rules and the picker all see
   // the streams for the episode the viewer is about to watch.
   let ep = episodeOf(item, opts.season, opts.episode);
+  if (!ep && type === 'series' && Number(opts.episode) > 0) {
+    // The wanted number is not in the list this tile carries — typical of a thin cached tile
+    // ("one episode, numbered 4863") that predates the full-list adoption. A sibling that indexes
+    // the complete run may hold this very number: adopt before treating the episode as absent.
+    await adoptEpisodeSibling(item, ctx, opts);
+    ep = episodeOf(item, opts.season, opts.episode);
+  }
   const epAddr = ep ? episodeStreamId(item, ep) : null;
   if (ep) {
     if (item.streamId !== epAddr) {
@@ -2498,6 +2505,19 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       } };
     }
     return { status: 404, body: { error: 'no sources', identity } };
+  }
+  if (kept.type !== 'channel' && sources.length
+      && sources.every((s) => labelNamesOtherTitle(labelOf(s), kept.title))) {
+    // Every saved copy for this id carries some OTHER title's name (measured live: "Grand Warden I"
+    // answers for Taarak Mehta and for The Housemaid) — the aggregator's stored answer is for the
+    // wrong show, and the walk below would reject each copy with `its name is not`. Once per press,
+    // throw the saved answer away and let the addons mint a fresh one.
+    addons.forgetStreams(kept.streamId || identity);
+    log('PLAY REMINT', identity, sources.length + ' saved copies all named another title',
+      'asking the addons for fresh ones');
+    await contributeSources(kept);
+    sources = kept.sources || [];
+    if (!sources.length) return { status: 404, body: { error: 'no sources', identity } };
   }
   for (const s of sources) s.id = probe.sourceId(s); // the handle `exclude` names, assigned before filtering
 
