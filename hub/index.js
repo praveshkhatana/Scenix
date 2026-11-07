@@ -4915,21 +4915,33 @@ async function handle(req, res) {
           return magnet ? { ...s, url: magnet } : s;
         }), wantFromStreamId(kept.streamId || identity));
         // A series whose tile is thin is usually complete somewhere else under its own title. The
-        // detail page must not wait on that search (a sibling's full meta is 3.8 MB and 7-22 s on a
-        // Indian soap's own addon), so it runs after the response is out: this press already showed
-        // what the cache had, the next press of this show lists the real thing. The play path has
-        // always done this join when an episode came up empty; this is the same join for the eyes.
+        // detail page used to run that search only after the response was out, so the first open of
+        // a thin soap showed \"one episode\" and only the second open listed the 4,862 - the family
+        // read that as the episodes not working. Now the first open waits for the join, bounded:
+        // a sibling that answers inside the window is shown on THIS open; one that is slower ships
+        // the cached record and lands for the next open, exactly as before.
         if (kept.type === 'series' && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)
             && !adoptingSiblings.has(kept.identity)) {
           adoptingSiblings.add(kept.identity);
-          adoptEpisodeSibling(kept, makeCtx(profile, 10000),
-            { fetchSources: false, metaBudget: 12000 })
+          const job = adoptEpisodeSibling(kept, makeCtx(profile, 9000),
+            { fetchSources: false, metaBudget: 9000 })
             .then((got) => {
               if (got) log('META EPISODES ADOPTED', kept.identity,
                 'episodes=' + ((kept.episodes || []).length));
+              return !!got;
             })
-            .catch((e) => log('META EPISODES ADOPT FAIL', kept.identity, e.message))
+            .catch((e) => { log('META EPISODES ADOPT FAIL', kept.identity, e.message); return false; })
             .finally(() => adoptingSiblings.delete(kept.identity));
+          // The job is not cancelled by the race: a late sibling still lands in the store for the
+          // next open - the old post-send behaviour is the floor, not the plan.
+          const late = await Promise.race([
+            job.then(() => false),
+            new Promise((r) => setTimeout(() => r(true), 9000)),
+          ]);
+          if (late && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)) {
+            log('META EPISODES ADOPT LATE', kept.identity,
+              'this open carries the cached list; the full one lands when the sibling answers');
+          }
         }
       }
       // Must not fall through: the next matcher would answer this same request a second time, and a
