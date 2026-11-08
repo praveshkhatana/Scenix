@@ -216,6 +216,14 @@ class PlayerActivity : Activity() {
     private var liveWatchMs = 0L
     private var liveWatchBaseAt = 0L
     private var requestGen = 0
+
+    /**
+     * The hub said "this copy is preparing, ask again" and a retry is already scheduled. While that
+     * is true the preloader must not fail over on its own clock: a cold P2P engine on a television
+     * legitimately spends 30 s on its first peer lookup, and a failover walk racing the warming
+     * retry only splits the engine between two copies.
+     */
+    private var warmingPending = false
     private var subsGen = 0
     private var failovers = 0
     private var sameCopyRetries = 0
@@ -285,8 +293,16 @@ class PlayerActivity : Activity() {
     private var preloadFill: ValueAnimator? = null
     private var preloadDismissing = false
     private var preloadShownAt = 0L
+    /** The playhead-buffer mark taken when the preloader appears; growth past it means bytes are flowing. */
+    private var preloadBufferMarkMs = -1_500L
     private var preloadStatus: TextView? = null
     private var preloadFallback: Runnable? = null
+
+    /** How far the player has buffered, in ms from the media start (0 when nothing is buffered yet). */
+    private fun bufferedMs(): Long = player?.let { p ->
+        if (p.playbackState == Player.STATE_IDLE) return 0L
+        maxOf(0L, p.bufferedPosition)
+    } ?: 0L
 
     // ---- chrome ---------------------------------------------------------------------------
     private lateinit var root: FrameLayout
@@ -765,6 +781,7 @@ class PlayerActivity : Activity() {
             val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
                 str(reply, "error").contains("prepar", ignoreCase = true)
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
+                warmingPending = true
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 showCenter("The hub is preparing this copy…", true)
                 handler.postDelayed({
@@ -774,6 +791,7 @@ class PlayerActivity : Activity() {
                 }, wait)
                 return@play
             }
+            warmingPending = false
             if (status !in 200..299 || url.isBlank() || !isPlayable(url)) {
                 val why = str(reply, "error")
                     .ifBlank { transport ?: "The hub could not open this title" }
@@ -1470,6 +1488,7 @@ class PlayerActivity : Activity() {
             val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
                 str(reply, "error").contains("prepar", ignoreCase = true)
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
+                warmingPending = true
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
                 handler.postDelayed({
                     if (gen == requestGen && !isFinishing) {
@@ -1478,6 +1497,7 @@ class PlayerActivity : Activity() {
                 }, wait)
                 return@switchSource
             }
+            warmingPending = false
             if (status !in 200..299 || url.isBlank() || !isPlayable(url)) {
                 hideCenter()
                 if (automatic) {
@@ -1669,6 +1689,7 @@ class PlayerActivity : Activity() {
         preloadOverlay = sheet
         preloadLine = line
         preloadShownAt = SystemClock.uptimeMillis()
+        preloadBufferMarkMs = bufferedMs()
         root.addView(sheet, match())
         sheet.animate().alpha(1f).setDuration(220L).start()
 
@@ -1684,6 +1705,13 @@ class PlayerActivity : Activity() {
         preloadFallback = Runnable {
             if (!preloading() || errorShowing || preloadDismissing) return@Runnable
             if (pendingSourceKey.isNotBlank() || chosenSourceKey.isNotBlank()) return@Runnable
+            // The hub said "preparing, ask again" — the retry chain is the one steering now. A second
+            // walk racing it would split a television's P2P engine between two copies at once.
+            if (warmingPending) return@Runnable
+            // Late is not dead: a peer-to-peer copy whose buffer is growing needs patience, not a
+            // switch. Failing over a copy that WAS filling starves the download mid-probe and the
+            // viewer watches a 1.3 MB buffer get thrown away (measured on a cold 1080p, 8th Nov).
+            if (bufferedMs() > preloadBufferMarkMs + 1_500L) return@Runnable
             preloadStatus?.text = "Still preparing — trying a lighter copy…"
             failoverToNext(preferLower = true)
             handler.postDelayed({
@@ -1693,7 +1721,7 @@ class PlayerActivity : Activity() {
                 // dead sources: the card and the preloader shared the screen for the rest of the reel.
                 if (!preloading()) return@postDelayed
                 finishPreloader()
-                if (!errorShowing) {
+                if (!errorShowing && !warmingPending && bufferedMs() <= preloadBufferMarkMs + 1_500L) {
                     showError(
                         "This copy is taking too long to start. Try again or pick another copy.",
                         "This copy is taking too long",

@@ -210,6 +210,12 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             ctx.prefs.setFixture("")
             Log.i(TAG, "standalone override")
         }
+        // A standalone TV is its own backend, so a manifest URL can arrive the same way a hub's can:
+        // one switch, no on-screen keyboard. `--es addon_url https://…/manifest.json`
+        i.getStringExtra("addon_url")?.takeIf { it.isNotBlank() }?.let {
+            val out = com.scenix.tv.core.LocalHub.get(this).addAddon(it.trim())
+            Log.i(TAG, "addon_url override ${it.trim()}: ${if (out.has("error")) out.optString("error") else "added"}")
+        }
     }
 
     /** `tv://setup` and `--ez setup true` both mean "show me the hub/standalone front door". */
