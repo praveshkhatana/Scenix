@@ -445,22 +445,49 @@ async function subtitles(identity, langs) {
   const got = await streamForKey(identity, false);
   if (!got || !got.raw) return [];
   const want = (Array.isArray(langs) ? langs : []).map((l) => media.langOf(l));
-  const out = [];
+  // Lazy require: this provider must not pull the addon host's boot (files, registries) in at load.
+  let sniffFn = null;
+  let normalizeFn = null;
+  try {
+    const addonsCore = require('../core/addons');
+    sniffFn = addonsCore && addonsCore.util && addonsCore.util.sniffSubtitleFormats;
+    normalizeFn = addonsCore && addonsCore.util && addonsCore.util.normalizeSubtitleFormat;
+  } catch (e) {
+    sniffFn = null;
+    normalizeFn = null;
+  }
+  const raw = [];
   for (const s of (Array.isArray(got.raw.subtitles) ? got.raw.subtitles : [])) {
     if (!s || !s.url) continue;
     const code = media.langOf(s.lang || s.language);
     if (want.length && !want.includes(code)) continue;
-    const format = String(s.format || 'vtt').toLowerCase();
-    out.push({
-      id: PROVIDER_ID + ':' + got.key + ':' + (s.label || code),
-      addon: PROVIDER_ID,
-      lang: code,
-      name: (s.label || 'Subtitles') + '.' + format,
-      url: s.url,
-      format,
-    });
+    const declared = normalizeFn ? normalizeFn(s.format) : null;
+    raw.push({ s, code, declared });
   }
-  return out;
+  if (!raw.length) return [];
+  // The upstream `format` (or the missing one) is another addon's claim — the "Subtitles • English.vtt"
+  // that serves SRT bytes. Sniff the file's opening bytes through the hub's pinned transport and let
+  // that be the truth; when sniffing is undeterminable the honest upstream claim stands, and when
+  // there is none the name carries no false extension and `format` stays absent.
+  let sniffed = raw.map(() => null);
+  try {
+    if (typeof sniffFn === 'function') sniffed = await sniffFn(raw.map((e) => e.s.url));
+  } catch (e) {
+    sniffed = raw.map(() => null);
+  }
+  return raw.map((entry, i) => {
+    const truth = sniffed[i] || entry.declared || null;
+    const label = entry.s.label || 'Subtitles';
+    const out = {
+      id: PROVIDER_ID + ':' + got.key + ':' + (entry.s.label || entry.code),
+      addon: PROVIDER_ID,
+      lang: entry.code,
+      name: truth ? label + '.' + truth : label,
+      url: entry.s.url,
+    };
+    if (truth) out.format = truth;
+    return out;
+  });
 }
 
 module.exports = {

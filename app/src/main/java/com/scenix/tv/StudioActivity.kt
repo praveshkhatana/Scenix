@@ -135,7 +135,11 @@ class StudioActivity : Activity() {
     private fun applyTheme(id: String) {
         val asset = Theme.assetFor(assets, id)
         val dm = resources.displayMetrics
-        app.theme = Theme.load(this, assets, dm.widthPixels, dm.heightPixels, asset, app.prefs.uiZoom())
+        // A golden is a comparison of the product's default visual treatment, not an accidental
+        // snapshot of the last tester's accessibility preference. Capture mode deliberately uses
+        // the baseline scale while ordinary Studio use continues to honour this household's zoom.
+        val zoom = if (capture) CAPTURE_ZOOM else app.prefs.uiZoom()
+        app.theme = Theme.load(this, assets, dm.widthPixels, dm.heightPixels, asset, zoom)
         themeId = id
     }
 
@@ -439,6 +443,8 @@ class StudioActivity : Activity() {
     }
 
     companion object {
+        /** Stable baseline for emulator screenshots; never overwrites a household preference. */
+        private const val CAPTURE_ZOOM = 1f
         const val EXTRA_CAPTURE = "capture"
         const val EXTRA_ENTRY = "entry"
         const val EXTRA_STATE = "state"

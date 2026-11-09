@@ -38,15 +38,15 @@ function writeJsonAtomic(file, value) {
 }
 
 class Store {
-  constructor(root) {
+  constructor(root, options = {}) {
     this.root = root;
-    this.dataDir = path.join(root, 'data');
+    this.dataDir = options.dataDir || path.join(root, 'data');
     this.libraryFile = path.join(this.dataDir, 'library.json');
     this.progressFile = path.join(this.dataDir, 'progress.json');
     this.listFile = path.join(this.dataDir, 'list.json');
     this.reactionsFile = path.join(this.dataDir, 'reactions.json');
-    this.profilesSeedFile = path.join(root, 'profiles.json');
-    this.profilesExampleFile = path.join(root, 'profiles.example.json');
+    this.profilesSeedFile = options.profilesSeedFile || process.env.PROFILES_SEED_FILE || path.join(root, 'profiles.json');
+    this.profilesExampleFile = options.profilesExampleFile || path.join(root, 'profiles.example.json');
     this.profilesFile = path.join(this.dataDir, 'profiles.json');
     fs.mkdirSync(this.dataDir, { recursive: true });
 
@@ -442,8 +442,8 @@ class Store {
   }
 }
 
-function create(root) {
-  const store = new Store(root);
+function create(root, options) {
+  const store = new Store(root, options);
   const bye = () => {
     try {
       store.flush();

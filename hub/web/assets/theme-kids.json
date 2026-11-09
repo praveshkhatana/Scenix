@@ -1,7 +1,7 @@
 {
   "id": "scenix-kids",
   "brandMark": "S",
-  "_read": "Kids stage FULL-BLEED flat sheet (owner's corrected reference, 2026-11-01, and the contract in design-contracts/kids.md): the whole screen is one flat #FBD364 yellow page; black brand disc + black tab capsule with a yellow search knob at its end at left; household avatar disc + black name pill + settings gear at right; two oversized feature cards — full-art with printed title, and a deep→bright gradient plate with key art bleeding from the outer edge; uniform black chip capsules with white icon+label; square #F9C406 captioned tiles 270 with gap 62. Focus is the reference's own language: solid #FDDB6F bands out to 40 with a soft skirt, closed by a 4px warm-dark keyline #A88200, and tiles scale to 1.11. No marks or characters copied from any reference.",
+  "_read": "Kids stage FULL-BLEED flat sheet (owner's corrected reference, 2026-11-01, and the contract in design-contracts/kids.md): the whole screen is one flat #FBD364 yellow page; black brand disc + black tab capsule with a yellow search knob at its end at left; household avatar disc + black name pill + settings gear at right; two oversized feature cards \u2014 full-art with printed title, and a deep\u2192bright gradient plate with key art bleeding from the outer edge; uniform black chip capsules with white icon+label; square #F9C406 captioned tiles 270 with gap 62. Focus is the reference's own language: solid #FDDB6F bands out to 40 with a soft skirt, closed by a 4px warm-dark keyline #A88200, and tiles scale to 1.11. No marks or characters copied from any reference.",
   "canvas": {
     "width": 1920,
     "height": 1080
@@ -281,12 +281,12 @@
     "dimAmount": 0.58
   },
   "detail": {
-    "maxSources": 6,
+    "maxSources": 6.0,
     "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
   },
   "preview": {
-    "enabled": 1,
-    "delayMs": 1500,
+    "enabled": 0.0,
+    "delayMs": 1500.0,
     "_note": "Apple pack keeps the hero artwork-led until Hub previews are title-scoped and reliable; this avoids a live video surface competing with remote navigation"
   },
   "hero": {
@@ -324,6 +324,5 @@
     "kidsHomeHeight": 682,
     "focusColor": "#FDDB6F",
     "tileSquare": 1
-  },
-  "_from": "generated from app/src/main/assets/theme-kids.json by scripts/webthemes.mjs — edit the TV's file"
+  }
 }

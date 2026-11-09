@@ -24,7 +24,9 @@
 
 const http = require('http');
 const https = require('https');
+const dns = require('dns');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
@@ -37,6 +39,12 @@ const ADDONS_FILE = process.env.ADDONS_FILE || path.join(DATA_DIR, 'addons.json'
 const DEFAULT_ADDONS_FILE = process.env.DEFAULT_ADDONS_FILE || path.join(ROOT, 'addons.example.json');
 const CACHE_FILE = process.env.ADDON_CACHE_FILE || path.join(DATA_DIR, 'addon-cache.json');
 
+function boundedInteger(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
 const TTL_MS = Number(process.env.ADDON_TTL_MS || 6 * 60 * 60 * 1000); // freshness rule, 6 h
 /**
  * An addon answering `{"streams": []}` is not reporting a fact about the title; it is reporting that it
@@ -46,9 +54,24 @@ const TTL_MS = Number(process.env.ADDON_TTL_MS || 6 * 60 * 60 * 1000); // freshn
  * kept short so the next press re-asks; a non-empty one still rides the long TTL.
  */
 const EMPTY_TTL_MS = Number(process.env.ADDON_EMPTY_TTL_MS || 3 * 60 * 1000);
-const FETCH_TIMEOUT_MS = Number(process.env.ADDON_TIMEOUT_MS || 8000);
-const META_WAIT_MS = Number(process.env.ADDON_META_WAIT_MS || 6000); // a detail page may wait this long
-const MANIFEST_WAIT_MS = Number(process.env.ADDON_MANIFEST_WAIT_MS || 8000);
+// Remote add-ons are untrusted network peers. Keep every wait bounded even when a deployment has a
+// malformed environment value, and leave enough headroom for a slow but otherwise healthy TV network.
+const FETCH_TIMEOUT_MS = boundedInteger(process.env.ADDON_TIMEOUT_MS, 8000, 250, 30000);
+const META_WAIT_MS = boundedInteger(process.env.ADDON_META_WAIT_MS, 6000, 250, 30000); // a detail page may wait this long
+const MANIFEST_WAIT_MS = boundedInteger(process.env.ADDON_MANIFEST_WAIT_MS, 8000, 250, 30000);
+const MAX_BODY_BYTES = boundedInteger(process.env.ADDON_MAX_BODY_BYTES, 2 * 1024 * 1024, 16 * 1024, 8 * 1024 * 1024);
+const MAX_REDIRECTS = boundedInteger(process.env.ADDON_MAX_REDIRECTS, 4, 0, 8);
+// Subtitle format lies: some addons serve SRT bytes from a URL/name that says ".vtt", and the app's
+// subtitleMime(format, url) trusts the hub's format first. sniffing the first bytes of the file itself
+// (range GET) is the only honest signal. Keep those probes small, short-lived and via the pinned
+// transport below, so a sniff can never break the subtitle listing it serves.
+const SUB_SNIFF_BYTES = boundedInteger(process.env.SUB_SNIFF_BYTES, 512, 128, 2048);
+const SUB_SNIFF_TIMEOUT_MS = boundedInteger(process.env.SUB_SNIFF_TIMEOUT_MS, 2500, 250, 8000);
+const SUB_SNIFF_BUDGET_MS = boundedInteger(process.env.SUB_SNIFF_BUDGET_MS, 2000, 250, 8000);
+const SUB_SNIFF_CONCURRENCY = boundedInteger(process.env.SUB_SNIFF_CONCURRENCY, 24, 1, 48);
+const SUB_SNIFF_CACHE_MAX = 2000;
+const SUB_SNIFF_TTL_MS = TTL_MS; // a sniffed truth rides the addon TTL
+const SUB_SNIFF_UNKNOWN_TTL_MS = boundedInteger(process.env.SUB_SNIFF_UNKNOWN_TTL_MS, 5 * 60 * 1000, 10000, 6 * 60 * 60 * 1000);
 /** How soon after a failed manifest another ask may try again. A floor so a dead upstream is not hammered. */
 const MANIFEST_RETRY_MS = Number(process.env.ADDON_MANIFEST_RETRY_MS || 30000);
 // How many copies a picker shows, and how small a file has to be before it stops looking like a film.
@@ -151,10 +174,341 @@ function sameAddress(a, b) {
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// ---- remote boundary -------------------------------------------------------------------------------
+
+// Add-ons are configured by URL, which makes this the trust boundary for every external catalogue.
+// Keep the policy here rather than at a single install route: persisted legacy entries, seed entries and
+// every redirect must all receive the same protection.
+const DEFAULT_REDIRECT_POLICY = 'public';
+const SAME_ORIGIN_REDIRECT_POLICY = 'same-origin';
+const CACHE_KEY_SEPARATOR = '\u0000';
+
+function blockedAddonUrl(message) {
+  const error = new Error(message || 'addon address is not a public HTTP(S) endpoint');
+  error.code = 'ADDON_URL_BLOCKED';
+  return error;
+}
+
+function normalizeRedirectPolicy(value) {
+  if (value === SAME_ORIGIN_REDIRECT_POLICY || value === true
+    || (value && typeof value === 'object' && value.sameOrigin === true)) {
+    return SAME_ORIGIN_REDIRECT_POLICY;
+  }
+  return DEFAULT_REDIRECT_POLICY;
+}
+
+/**
+ * Provenance is deliberately stored on the entry instead of inferred from its address. A source that a
+ * person entered stays manual even if a later reviewed catalogue happens to contain the same URL.
+ */
+function normalizeProvenance(value) {
+  const reviewed = value === 'reviewed' || (value && typeof value === 'object'
+    && (value.kind === 'reviewed' || value.source === 'reviewed' || value.type === 'reviewed'
+      || value.reviewed === true));
+  const community = value === 'community' || (value && typeof value === 'object'
+    && (value.kind === 'community' || value.source === 'community' || value.type === 'community'
+      || value.community === true));
+  const details = value && typeof value === 'object' ? value : {};
+  if (community && !reviewed) {
+    // Community descriptors are deliberately a third provenance class. They are neither promoted to
+    // reviewed nor folded into an arbitrary manual URL, so every client can keep the consent model
+    // visible after an install and a future registry update cannot silently endorse one.
+    const result = { kind: 'community' };
+    const directoryId = String(details.directoryId || details.communityId || '').trim().slice(0, 120);
+    const revision = String(details.revision || details.communityRevision || '').trim().slice(0, 120);
+    if (directoryId) result.directoryId = directoryId;
+    if (revision) result.revision = revision;
+    return result;
+  }
+  if (!reviewed) {
+    return { kind: 'manual' };
+  }
+  const result = { kind: 'reviewed' };
+  const registryId = String(details.registryId || details.reviewedId || details.id || '').trim().slice(0, 120);
+  const revision = String(details.revision || details.reviewedRevision || '').trim().slice(0, 120);
+  if (registryId) result.registryId = registryId;
+  if (revision) result.revision = revision;
+  return result;
+}
+
+function redirectPolicyFor(provenance, requested) {
+  // Reviewed installs are fail-closed. The later reviewed-registry integration only needs to pass the
+  // provenance object; it cannot accidentally loosen redirects for a reviewed source.
+  return normalizeProvenance(provenance).kind === 'reviewed'
+    ? SAME_ORIGIN_REDIRECT_POLICY : normalizeRedirectPolicy(requested);
+}
+
+function addonCacheKey(url, redirectPolicy) {
+  return normalizeRedirectPolicy(redirectPolicy) + CACHE_KEY_SEPARATOR + String(url);
+}
+
+function manifestUrlFor(value) {
+  const raw = String(value || '').trim();
+  if (!raw) throw blockedAddonUrl('addon URL is required');
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (e) {
+    throw blockedAddonUrl('addon URL must be HTTP(S)');
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) {
+    throw blockedAddonUrl('addon URL must be HTTP(S)');
+  }
+  if (parsed.username || parsed.password) {
+    throw blockedAddonUrl('addon URL credentials are not allowed');
+  }
+  // Fragments are never sent in an HTTP request and should not create duplicate configured addresses.
+  parsed.hash = '';
+  if (/\/$/.test(parsed.pathname)) parsed.pathname += 'manifest.json';
+  else if (!/\/manifest\.json$/i.test(parsed.pathname)) {
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') + '/manifest.json';
+  }
+  return parsed;
+}
+
+function httpUrlFor(value) {
+  let parsed;
+  try {
+    parsed = value instanceof URL ? new URL(value.toString()) : new URL(String(value));
+  } catch (e) {
+    throw blockedAddonUrl('addon URL must be HTTP(S)');
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) {
+    throw blockedAddonUrl('addon URL must be HTTP(S)');
+  }
+  if (parsed.username || parsed.password) {
+    throw blockedAddonUrl('addon URL credentials are not allowed');
+  }
+  parsed.hash = '';
+  return parsed;
+}
+
+function ipv4Octets(address) {
+  const parts = String(address || '').split('.');
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  return octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) ? octets : null;
+}
+
+function isPublicIpv4(address) {
+  const octets = ipv4Octets(address);
+  if (!octets) return false;
+  const [a, b] = octets;
+  // RFC 1918, loopback, link-local, CGNAT, documentation/testing and every non-unicast range are not
+  // remote add-on endpoints. Blocking documentation ranges also keeps test/development addresses from
+  // becoming a surprising route to a private network.
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && (b === 0 || b === 2 || b === 168)) return false;
+  if (a === 198 && (b === 18 || b === 19 || b === 51)) return false;
+  if (a === 203 && b === 0) return false;
+  return true;
+}
+
+function expandIpv6(address) {
+  let value = String(address || '').toLowerCase();
+  const zone = value.indexOf('%');
+  if (zone >= 0) value = value.slice(0, zone);
+  if (net.isIP(value) !== 6) return null;
+  if (value.includes('.')) {
+    const pivot = value.lastIndexOf(':');
+    const octets = ipv4Octets(value.slice(pivot + 1));
+    if (!octets) return null;
+    value = value.slice(0, pivot) + ':' + ((octets[0] << 8) | octets[1]).toString(16)
+      + ':' + ((octets[2] << 8) | octets[3]).toString(16);
+  }
+  const halves = value.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return null;
+  const groups = left.concat(Array(missing).fill('0'), right).map((part) => Number.parseInt(part, 16));
+  return groups.length === 8 && groups.every((part) => Number.isInteger(part) && part >= 0 && part <= 0xffff)
+    ? groups : null;
+}
+
+function embeddedIpv4(groups) {
+  if (!groups || groups.length !== 8) return null;
+  // IPv4-compatible, IPv4-mapped and IPv4-translated forms can otherwise smuggle a loopback/private
+  // v4 address. The translated prefix is less common but is still meaningful to dual-stack stacks.
+  const compatible = groups.slice(0, 6).every((part) => part === 0);
+  const mapped = groups.slice(0, 5).every((part) => part === 0) && groups[5] === 0xffff;
+  const translated = groups.slice(0, 4).every((part) => part === 0)
+    && groups[4] === 0xffff && groups[5] === 0;
+  if (!compatible && !mapped && !translated) return null;
+  return [groups[6] >>> 8, groups[6] & 0xff, groups[7] >>> 8, groups[7] & 0xff].join('.');
+}
+
+function isPublicIpv6(address) {
+  const groups = expandIpv6(address);
+  if (!groups) return false;
+  const v4 = embeddedIpv4(groups);
+  if (v4) return isPublicIpv4(v4);
+  const first = groups[0];
+  if (groups.every((part) => part === 0)) return false; // ::
+  if (groups.slice(0, 7).every((part) => part === 0) && groups[7] === 1) return false; // ::1
+  if ((first & 0xfe00) === 0xfc00) return false; // unique local fc00::/7
+  if ((first & 0xffc0) === 0xfe80 || (first & 0xffc0) === 0xfec0) return false; // link/site local
+  if ((first & 0xff00) === 0xff00) return false; // multicast
+  if (first === 0x2001 && (groups[1] === 0 || groups[1] === 0x0002 || groups[1] === 0x0db8)) return false;
+  if (first === 0x2002) return false; // 6to4 can tunnel an embedded private v4 endpoint
+  // The well-known NAT64 prefix embeds a v4 destination. Treat an embedded private address exactly as
+  // its direct v4 form rather than trusting the publicly-routable-looking IPv6 prefix.
+  if (first === 0x0064 && groups[1] === 0xff9b && groups.slice(2, 6).every((part) => part === 0)) {
+    const mapped = [groups[6] >>> 8, groups[6] & 0xff, groups[7] >>> 8, groups[7] & 0xff].join('.');
+    if (!isPublicIpv4(mapped)) return false;
+  }
+  return true;
+}
+
+function isPublicAddress(address) {
+  const ip = String(address || '').replace(/^\[|\]$/g, '');
+  const family = net.isIP(ip);
+  return family === 4 ? isPublicIpv4(ip) : family === 6 ? isPublicIpv6(ip) : false;
+}
+
+function withinTimeout(promise, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    if (timer.unref) timer.unref();
+    Promise.resolve(promise).then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
+async function resolvePublicAddresses(value, timeoutMs = FETCH_TIMEOUT_MS) {
+  const parsed = httpUrlFor(value);
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  if (!host || host === 'localhost' || /\.(localhost|local|internal|home|lan)$/.test(host)) {
+    throw blockedAddonUrl('addon host is not public');
+  }
+  if (net.isIP(host)) {
+    if (!isPublicAddress(host)) throw blockedAddonUrl('addon host is not public');
+    return [{ address: host, family: net.isIP(host) }];
+  }
+  let answers;
+  try {
+    answers = await withinTimeout(dns.promises.lookup(host, { all: true, verbatim: true }),
+      boundedInteger(timeoutMs, FETCH_TIMEOUT_MS, 1, 30000), 'addon DNS lookup timed out');
+  } catch (e) {
+    throw blockedAddonUrl('addon host did not resolve to a public address');
+  }
+  if (!Array.isArray(answers) || !answers.length || answers.some((answer) => !isPublicAddress(answer.address))) {
+    throw blockedAddonUrl('addon host did not resolve to a public address');
+  }
+  return answers.map((answer) => ({ address: answer.address, family: answer.family }));
+}
+
+function pinnedLookup(addresses) {
+  return (_host, options, callback) => {
+    let lookupOptions = options;
+    let done = callback;
+    if (typeof options === 'function') {
+      done = options;
+      lookupOptions = {};
+    }
+    const family = Number((lookupOptions || {}).family) || 0;
+    const candidates = family ? addresses.filter((entry) => entry.family === family) : addresses;
+    if (!candidates.length) return done(blockedAddonUrl('addon host has no usable public address'));
+    if (lookupOptions && lookupOptions.all) return done(null, candidates.map((entry) => ({ ...entry })));
+    return done(null, candidates[0].address, candidates[0].family);
+  };
+}
+
+function redirectAllowed(initialUrl, redirectedUrl, redirectPolicy) {
+  if (normalizeRedirectPolicy(redirectPolicy) !== SAME_ORIGIN_REDIRECT_POLICY) return true;
+  try {
+    return httpUrlFor(initialUrl).origin === httpUrlFor(redirectedUrl).origin;
+  } catch (e) {
+    return false;
+  }
+}
+
+function publicEndpoint(value) {
+  try {
+    const parsed = new URL(String(value));
+    return parsed.protocol + '//' + parsed.host;
+  } catch (e) {
+    return 'remote addon';
+  }
+}
+
+function publicAddonError(value) {
+  if (!value) return null;
+  const message = String(value);
+  if (/tim(?:e)?d out/i.test(message)) return 'remote addon timed out';
+  if (/size limit|too large/i.test(message)) return 'remote addon response was too large';
+  if (/redirect/i.test(message)) return 'remote addon redirect was blocked';
+  if (/HTTP\s+\d{3}/i.test(message)) return 'remote addon returned an error';
+  if (/URL|address|resolve|lookup|credentials|ENOTFOUND|ECONN|EAI_/i.test(message)) return 'remote addon unavailable';
+  // Do not turn an upstream error into a configuration leak. Internal logs retain the operational detail.
+  return 'remote addon unavailable';
+}
+
+function publicLabel(value, fallback = 'External add-on') {
+  const text = String(value || '').trim();
+  if (!text || /\b(?:https?|magnet):/i.test(text)
+    || /\b(?:token|secret|password|api[_-]?key|config)=/i.test(text)) return fallback;
+  return text.slice(0, 120);
+}
+
+const PUBLIC_PRIVATE_KEYS = new Set([
+  'url', 'manifesturl', 'config', 'configuration', 'headers', 'proxyheaders', 'authorization',
+  'cookie', 'cookies', 'token', 'secret', 'password', 'apikey', 'api_key',
+  // Native-provider diagnostics often carry absolute roots, cache files, or executable locations.
+  // The add-on list is a management surface, not a way to map the Hub's filesystem.
+  'file', 'path', 'root', 'roots', 'rootdir', 'rootdirs', 'bin', 'binary', 'executable',
+]);
+
+function publicStats(value, key = '') {
+  if (PUBLIC_PRIVATE_KEYS.has(String(key).toLowerCase())) return undefined;
+  if (Array.isArray(value)) return value.map((entry) => publicStats(entry)).filter((entry) => entry !== undefined);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [childKey, childValue] of Object.entries(value)) {
+      const safe = publicStats(childValue, childKey);
+      if (safe !== undefined) out[childKey] = safe;
+    }
+    return out;
+  }
+  if (typeof value === 'string') {
+    // Statistics and errors are never a reason to return a configured endpoint or its path/query.
+    if (/\b(?:https?|magnet):/i.test(value)) return '[redacted]';
+    return value.slice(0, 240);
+  }
+  return value;
+}
+
+function publicExternalRow(addon) {
+  return {
+    id: addon.id,
+    name: publicLabel(addon.name, addon.id || 'External add-on'),
+    native: false,
+    kind: addon.kind,
+    priority: addon.priority,
+    enabled: addon.enabled,
+    addedAt: addon.addedAt || null,
+    provenance: normalizeProvenance(addon.provenance).kind,
+    resources: Object.keys(addon.resources || {}),
+    catalogs: (addon.cats || []).map((catalog) => ({ id: catalog.id, name: catalog.name })),
+    error: publicAddonError(addon.lastError),
+    counts: {
+      items: addon.items && Number.isFinite(addon.items.size) ? addon.items.size : 0,
+      streams: addon.streamSources && Number.isFinite(addon.streamSources.size) ? addon.streamSources.size : 0,
+      lastFetch: addon.lastFetch || null,
+    },
+  };
+}
+
 // ---- shared JSON cache: TTL in memory, per-item responses survive a restart ----------------------
 
-const cache = new Map(); // url -> { at, body }
-const inflight = new Map(); // url -> promise
+const cache = new Map(); // redirect-policy + url -> { at, body }
+const inflight = new Map(); // redirect-policy + url -> promise
 const pending = new Map(); // identity -> how many upstream calls for that identity are in flight right now
 
 /**
@@ -181,34 +535,347 @@ function trackPending(identity, work) {
     });
 }
 
-function get(url, timeoutMs = FETCH_TIMEOUT_MS, ok404 = false) {
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https:') ? https : http;
-    const req = mod.get(url, {
-      headers: { 'User-Agent': UA, Accept: 'application/json' },
-      timeout: timeoutMs,
-    }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        return resolve(get(new URL(res.headers.location, url).toString(), timeoutMs, ok404));
+/**
+ * Fetch JSON from an external add-on without giving it a path back into the hub's LAN. Every hostname is
+ * resolved before connecting, every returned address must be public, and the validated answer is pinned
+ * into the request lookup callback to close the usual DNS-rebinding gap between validation and connect.
+ */
+function get(url, timeoutMs = FETCH_TIMEOUT_MS, ok404 = false, options = {}) {
+  let initialUrl;
+  try {
+    initialUrl = httpUrlFor(url);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  const timeout = boundedInteger(timeoutMs, FETCH_TIMEOUT_MS, 250, 30000);
+  const deadline = Date.now() + timeout;
+  options = options && typeof options === 'object' ? options : {};
+  const policy = normalizeRedirectPolicy(options.redirectPolicy || options.policy);
+
+  const fetchOne = async (currentUrl, redirects) => {
+    const remainingBeforeLookup = deadline - Date.now();
+    if (remainingBeforeLookup <= 0) throw new Error('addon request timed out');
+    const addresses = await resolvePublicAddresses(currentUrl, remainingBeforeLookup);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('addon request timed out');
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let req = null;
+      const timer = setTimeout(() => fail(new Error('addon request timed out')), remaining);
+      if (timer.unref) timer.unref();
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        callback(value);
+      };
+      const fail = (error) => {
+        if (settled) return;
+        if (req) req.destroy();
+        finish(reject, error);
+      };
+
+      const mod = currentUrl.protocol === 'https:' ? https : http;
+      try {
+        req = mod.get(currentUrl, {
+          headers: { 'User-Agent': UA, Accept: 'application/json' },
+          timeout: remaining,
+          lookup: pinnedLookup(addresses),
+        }, (res) => {
+          const status = Number(res.statusCode) || 0;
+          if (status >= 300 && status < 400 && res.headers.location) {
+            res.resume();
+            if (redirects >= MAX_REDIRECTS) return fail(new Error('addon redirect limit exceeded'));
+            let redirectedUrl;
+            try {
+              redirectedUrl = httpUrlFor(new URL(res.headers.location, currentUrl));
+            } catch (error) {
+              return fail(error);
+            }
+            if (!redirectAllowed(initialUrl, redirectedUrl, policy)) {
+              return fail(new Error('addon redirect left its reviewed origin'));
+            }
+            return finish(resolve, fetchOne(redirectedUrl, redirects + 1));
+          }
+          if (status === 404 && ok404) {
+            // "I have nothing for this id" is a protocol answer, not a failure: cache it empty.
+            res.resume();
+            return finish(resolve, '{}');
+          }
+          if (status !== 200) {
+            res.resume();
+            return fail(new Error('addon returned HTTP ' + status));
+          }
+          const declaredLength = Number(res.headers['content-length']);
+          if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+            res.resume();
+            return fail(new Error('addon response exceeded size limit'));
+          }
+          const chunks = [];
+          let bytes = 0;
+          res.on('data', (chunk) => {
+            if (settled) return;
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += buffer.length;
+            if (bytes > MAX_BODY_BYTES) return fail(new Error('addon response exceeded size limit'));
+            chunks.push(buffer);
+          });
+          res.on('error', fail);
+          res.on('end', () => finish(resolve, Buffer.concat(chunks, bytes).toString('utf8')));
+        });
+        req.on('timeout', () => fail(new Error('addon request timed out')));
+        req.on('error', fail);
+      } catch (error) {
+        fail(error);
       }
-      if (res.statusCode === 404 && ok404) {
-        // "I have nothing for this id" is a protocol answer, not a failure: cache it empty.
-        res.resume();
-        return resolve('{}');
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error('HTTP ' + res.statusCode + ' for ' + url));
-      }
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', (c) => (body += c));
-      res.on('end', () => resolve(body));
     });
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', reject);
+  };
+
+  return fetchOne(initialUrl, 0);
+}
+
+// ---- subtitle format sniff (a filename is a claim; the file's first bytes are the truth) -------------
+
+const SUBTITLE_FORMATS = new Set(['srt', 'ass', 'ssa', 'vtt', 'ttml', 'dfxp', 'sub']);
+const SUB_EXT_RE = /\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i;
+
+function normalizeSubtitleFormat(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  const bare = raw.replace(/^\./, '');
+  if (bare === 'webvtt') return 'vtt';
+  return SUBTITLE_FORMATS.has(bare) ? bare : null;
+}
+
+function subtitleFormatFromName(name) {
+  const m = SUB_EXT_RE.exec(String(name || ''));
+  return m ? normalizeSubtitleFormat(m[1]) : null;
+}
+
+function withSubtitleExtension(name, format) {
+  const s = String(name || '');
+  const want = normalizeSubtitleFormat(format);
+  if (!s || !want) return s;
+  const m = SUB_EXT_RE.exec(s);
+  if (!m) return s; // no extension to contradict: leave the name as-is
+  const current = normalizeSubtitleFormat(m[1]);
+  if (current === want) return s;
+  return s.slice(0, m.index) + '.' + want + s.slice(m.index + m[0].length);
+}
+
+/**
+ * What the file is, from its opening bytes. Pure and offline (no network, no clock), so it can be
+ * fixture-tested exactly. null means the opening is not recognisable as a subtitle at all.
+ */
+function detectSubtitleFormat(sample) {
+  if (sample == null) return null;
+  let text = Buffer.isBuffer(sample) ? sample.toString('utf8') : String(sample);
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  if (text.length > 4096) text = text.slice(0, 4096);
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  if (!lines.length) return null;
+  const first = lines[0];
+  if (/^WEBVTT\b/i.test(first)) return 'vtt';
+  if (first.startsWith('<?xml') || /^<tt\b/i.test(first)) return 'ttml';
+  if (/^\[Script Info\]/i.test(first)) return 'ass';
+  const head = lines.slice(0, 3).join('\n');
+  // A timestamp arrow without a WEBVTT header and without a TTML/ASS opener is SubRip: SRT uses
+  // "00:00:01,000 --> ...", VTT would have matched the header check above.
+  if (/(\d{1,2}:){2}\d{1,2}[.,]\d{3}\s*-->/.test(head)) return 'srt';
+  if (/^\d+\s*$/.test(first)) return 'srt';
+  return null;
+}
+
+/**
+ * First up-to-`maxBytes` bytes of a URL, through the same DNS-pinned transport as get(). Sends
+ * `Range: bytes=0-…` but does not require 206: when a host ignores Range the first chunk is still
+ * the truth, and the connection is torn down as soon as enough bytes have arrived.
+ * Never rejects: every failure (blocked host, timeout, bad status, redirect policy, …) resolves null,
+ * so a sniff can never break the listing it serves.
+ */
+function getHeadText(url, { timeoutMs = SUB_SNIFF_TIMEOUT_MS, maxBytes = SUB_SNIFF_BYTES, redirectPolicy } = {}) {
+  let initialUrl;
+  try {
+    initialUrl = httpUrlFor(url);
+  } catch (error) {
+    return Promise.resolve(null);
+  }
+  const timeout = boundedInteger(timeoutMs, SUB_SNIFF_TIMEOUT_MS, 250, 30000);
+  const deadline = Date.now() + timeout;
+  const policy = normalizeRedirectPolicy(redirectPolicy);
+  const cap = boundedInteger(maxBytes, SUB_SNIFF_BYTES, 64, 8192);
+
+  const fetchOne = async (currentUrl, redirects) => {
+    const remainingBeforeLookup = deadline - Date.now();
+    if (remainingBeforeLookup <= 0) return null;
+    let addresses;
+    try {
+      addresses = await resolvePublicAddresses(currentUrl, remainingBeforeLookup);
+    } catch (error) {
+      return null; // private / unresolvable / blocked: unknown, not an error for the listing
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let req = null;
+      const timer = setTimeout(() => finish(null), remaining);
+      if (timer.unref) timer.unref();
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (req) {
+          try { req.destroy(); } catch (e) { /* destroying is best-effort */ }
+        }
+        resolve(value);
+      };
+
+      const mod = currentUrl.protocol === 'https:' ? https : http;
+      try {
+        req = mod.get(currentUrl, {
+          headers: {
+            'User-Agent': UA,
+            Accept: 'text/plain, text/vtt, application/x-subrip, */*',
+            Range: 'bytes=0-' + (cap - 1),
+          },
+          timeout: remaining,
+          lookup: pinnedLookup(addresses),
+        }, (res) => {
+          const status = Number(res.statusCode) || 0;
+          if (status >= 300 && status < 400 && res.headers.location) {
+            try { res.resume(); } catch (e) { /* best-effort */ }
+            if (redirects >= MAX_REDIRECTS) return finish(null);
+            let redirectedUrl;
+            try {
+              redirectedUrl = httpUrlFor(new URL(res.headers.location, currentUrl));
+            } catch (error) {
+              return finish(null);
+            }
+            if (!redirectAllowed(initialUrl, redirectedUrl, policy)) return finish(null);
+            return finish(fetchOne(redirectedUrl, redirects + 1));
+          }
+          if (status !== 200 && status !== 206) {
+            try { res.resume(); } catch (e) { /* best-effort */ }
+            return finish(null);
+          }
+          const chunks = [];
+          let bytes = 0;
+          res.on('data', (chunk) => {
+            if (settled) return;
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += buffer.length;
+            chunks.push(buffer);
+            if (bytes >= cap) {
+              const text = Buffer.concat(chunks, bytes).toString('utf8', 0, Math.min(bytes, cap + 1024));
+              try { res.resume(); } catch (e) { /* best-effort */ }
+              return finish(text.slice(0, cap * 4));
+            }
+          });
+          res.on('error', () => finish(null));
+          res.on('end', () => finish(Buffer.concat(chunks, bytes).toString('utf8')));
+        });
+        req.on('timeout', () => finish(null));
+        req.on('error', () => finish(null));
+      } catch (error) {
+        finish(null);
+      }
+    });
+  };
+
+  return fetchOne(initialUrl, 0);
+}
+
+const subFormatCache = new Map(); // policy + url -> { format, at }
+
+function subCacheKey(url, policy) {
+  return normalizeRedirectPolicy(policy) + '\u0000' + String(url || '');
+}
+
+function clearSubFormatCache() {
+  subFormatCache.clear();
+}
+
+function cachedSubtitleFormat(url, policy) {
+  const key = subCacheKey(url, policy);
+  const hit = subFormatCache.get(key);
+  if (!hit) return undefined;
+  const ttl = hit.format ? SUB_SNIFF_TTL_MS : SUB_SNIFF_UNKNOWN_TTL_MS;
+  if (Date.now() - hit.at >= ttl) {
+    subFormatCache.delete(key);
+    return undefined;
+  }
+  return hit.format;
+}
+
+function rememberSubtitleFormat(url, policy, format) {
+  try {
+    subFormatCache.set(subCacheKey(url, policy), { format: format || null, at: Date.now() });
+    if (subFormatCache.size > SUB_SNIFF_CACHE_MAX) {
+      const oldest = subFormatCache.keys().next().value;
+      if (oldest !== undefined) subFormatCache.delete(oldest);
+    }
+  } catch (e) { /* the cache is an optimisation, never a failure mode */ }
+}
+
+/** Sniffed truth for one URL, or null. Cached, bounded, and never throws. */
+async function sniffSubtitleFormat(url, { redirectPolicy, timeoutMs, maxBytes } = {}) {
+  const text = String(url || '');
+  if (!/^https?:\/\//i.test(text)) return null;
+  const policy = normalizeRedirectPolicy(redirectPolicy);
+  const cached = cachedSubtitleFormat(text, policy);
+  if (cached !== undefined) return cached;
+  let format = null;
+  try {
+    const head = await getHeadText(text, { timeoutMs, maxBytes, redirectPolicy: policy });
+    format = head ? detectSubtitleFormat(head) : null;
+  } catch (e) {
+    format = null;
+  }
+  rememberSubtitleFormat(text, policy, format);
+  return format;
+}
+
+/**
+ * Sniff many URLs at once, capped concurrency. When the batch budget runs out mid-flight the
+ * remaining entries simply stay null (the caller falls back to the filename extension): started
+ * probes still finish in the background and populate the cache for the next request.
+ */
+function sniffSubtitleFormats(urls, { redirectPolicy, budgetMs, timeoutMs } = {}) {
+  const list = (Array.isArray(urls) ? urls : []).map((u) => String(u || ''));
+  if (!list.length) return Promise.resolve([]);
+  const policy = normalizeRedirectPolicy(redirectPolicy);
+  const budget = boundedInteger(budgetMs, SUB_SNIFF_BUDGET_MS, 250, 30000);
+  const results = new Array(list.length).fill(null);
+  const probe = (async () => {
+    const byUrl = new Map();
+    list.forEach((u, i) => {
+      if (!byUrl.has(u)) byUrl.set(u, []);
+      byUrl.get(u).push(i);
+    });
+    const unique = [...byUrl.keys()];
+    for (let at = 0; at < unique.length; at += SUB_SNIFF_CONCURRENCY) {
+      const wave = unique.slice(at, at + SUB_SNIFF_CONCURRENCY);
+      await Promise.allSettled(wave.map(async (u) => {
+        let format = null;
+        try {
+          format = await sniffSubtitleFormat(u, { redirectPolicy: policy, timeoutMs });
+        } catch (e) {
+          format = null;
+        }
+        for (const i of byUrl.get(u) || []) results[i] = format;
+      }));
+    }
+    return results;
+  })();
+  if (!Number.isFinite(budget) || budget <= 0) return probe.catch(() => results);
+  const timer = new Promise((res) => {
+    const t = setTimeout(() => res(results.slice()), budget);
+    if (t.unref) t.unref();
   });
+  return Promise.race([probe.catch(() => results), timer]);
 }
 
 /**
@@ -284,14 +951,22 @@ function noteRateLimited(url) {
   if (!was || was <= Date.now()) log('ADDON RATE LIMITED', h, 'refused with 429 - waiting ' + Math.round(calm / 60000) + ' min before asking again');
 }
 
-function getJson(url, { wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT_MS, tag = '', ok404 = false } = {}) {
-  const hit = cache.get(url);
+function getJson(url, {
+  wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT_MS, tag = '', ok404 = false,
+  redirectPolicy = DEFAULT_REDIRECT_POLICY, policy: requestedPolicy,
+} = {}) {
+  const policy = normalizeRedirectPolicy(requestedPolicy || redirectPolicy);
+  const key = addonCacheKey(url, policy);
+  const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttlFor(hit.body)) return Promise.resolve(hit.body);
-  if (!inflight.has(url) && !rateLimitedHost(url)) {
-    const p = get(url, timeoutMs, ok404)
+  // Rate-limit by endpoint host, but retain redirect-policy cache partitioning. A reviewed source can
+  // therefore never consume a response fetched through the public redirect policy, even while a host
+  // is cooling down after a 429.
+  if (!inflight.has(key) && !rateLimitedHost(url)) {
+    const p = get(url, timeoutMs, ok404, { redirectPolicy: policy })
       .then((body) => {
         const parsed = JSON.parse(body);
-        cache.set(url, { at: Date.now(), body: parsed });
+        cache.set(key, { at: Date.now(), body: parsed });
         scheduleCacheSave();
         return parsed;
       })
@@ -299,15 +974,15 @@ function getJson(url, { wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT
         // A connect failure often arrives as an AggregateError with no message at all; a blank log line
         // is exactly how one of these hunts went blind, so name the failure by whatever it does carry.
         const msg = e.message || e.code || e.name || String(e);
-        if (tag) log('ADDON UPSTREAM FAIL', tag, url, msg);
+        if (tag) log('ADDON UPSTREAM FAIL', tag, publicEndpoint(url), msg);
         if (/HTTP 429/.test(msg)) noteRateLimited(url);
         return hit ? hit.body : null;
       })
-      .finally(() => inflight.delete(url));
-    inflight.set(url, p);
+      .finally(() => inflight.delete(key));
+    inflight.set(key, p);
   }
   if (staleOk && hit) return Promise.resolve(hit.body);
-  return wait ? inflight.get(url) : Promise.resolve(hit ? hit.body : null);
+  return wait ? (inflight.get(key) || Promise.resolve(hit ? hit.body : null)) : Promise.resolve(hit ? hit.body : null);
 }
 
 /**
@@ -321,7 +996,11 @@ function loadPersistedCache() {
     let n = 0;
     for (const [url, entry] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
       if (entry && entry.body && Number.isFinite(entry.at)) {
-        cache.set(url, entry);
+        // Caches written before redirect-policy isolation used the raw URL key. Treat those as the
+        // default public policy only; a reviewed add-on must never consume a response cached through a
+        // less restrictive redirect chain.
+        const key = url.includes(CACHE_KEY_SEPARATOR) ? url : addonCacheKey(url, DEFAULT_REDIRECT_POLICY);
+        cache.set(key, entry);
         n++;
       }
     }
@@ -666,6 +1345,8 @@ class External {
     this.external = true;
     this.enabled = entry.enabled !== false;
     this.addedAt = entry.addedAt || Date.now();
+    this.provenance = normalizeProvenance(entry.provenance);
+    this.redirectPolicy = redirectPolicyFor(this.provenance, entry.redirectPolicy);
 
     this.manifest = null;
     this.resources = {}; // name -> {types, idPrefixes}
@@ -700,6 +1381,14 @@ class External {
     return r.types.includes(type);
   }
 
+  fetchJson(url, options) {
+    return getJson(url, { ...(options || {}), redirectPolicy: this.redirectPolicy });
+  }
+
+  cacheEntry(url) {
+    return cache.get(addonCacheKey(url, this.redirectPolicy));
+  }
+
   /**
    * Ask for the manifest again if we never got one. An addon whose manifest failed to arrive was mounted
    * but mute until its six-hour refresh tick: every catalog answered from cache and every metadata or stream
@@ -716,9 +1405,10 @@ class External {
   }
 
   async loadManifest({ wait = false } = {}) {
-    const body = await getJson(this.manifestUrl, { wait, staleOk: true, timeoutMs: MANIFEST_WAIT_MS, tag: this.id });
+    const body = await this.fetchJson(this.manifestUrl,
+      { wait, staleOk: true, timeoutMs: MANIFEST_WAIT_MS, tag: this.id });
     if (!body || typeof body !== 'object') {
-      this.lastError = 'no manifest came back from ' + this.manifestUrl;
+      this.lastError = 'manifest unavailable';
       return null;
     }
     this.lastError = null;
@@ -824,7 +1514,7 @@ class External {
     }
     const qs = parts.length ? parts.join('&') : 'default';
     const url = this.url + '/catalog/' + cat.type + '/' + cat.remoteId + '/' + qs + '.json';
-    const body = await getJson(url, { wait, staleOk: true, tag: this.id });
+    const body = await this.fetchJson(url, { wait, staleOk: true, tag: this.id });
     const metas = body && Array.isArray(body.metas) ? body.metas : [];
     const items = metas.map((m) => this.toItem(m, cat.type)).filter(Boolean);
     for (const it of items) this.items.set(it.identity, it);
@@ -971,7 +1661,7 @@ class External {
     let raw = null;
     let askedType = null;
     for (const t of order) {
-      const body = await getJson(this.metaPath(identity, t),
+      const body = await this.fetchJson(this.metaPath(identity, t),
         { wait: true, staleOk: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
       if (body && body.meta && body.meta.id) {
         raw = body.meta;
@@ -985,7 +1675,7 @@ class External {
       this.items.set(identity, item);
       if (this.has('stream')) {
         // streamPath now resolves through the type we just confirmed, so streams are asked correctly.
-        await getJson(this.streamPath(identity),
+        await this.fetchJson(this.streamPath(identity),
           { wait: true, staleOk: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
         item.sources = this.sources(item);
       }
@@ -1007,7 +1697,7 @@ class External {
     if (!addressableBy(identity, this.id)) return [];
     const cached = this.streamSources.get(identity);
     if (cached) return cached;
-    const hit = cache.get(this.streamPath(identity));
+    const hit = this.cacheEntry(this.streamPath(identity));
     if (!hit || !hit.body) return [];
     const parsed = sourcesFromStreams(this.id, hit.body);
     // An empty parse is not a fact worth remembering. Memoising it is how a play a minute later answers
@@ -1027,7 +1717,7 @@ class External {
       for (const identity of identities.filter((id) => addressableBy(id, this.id))
         .slice(0, WARM_STREAMS)) {
         try {
-          await getJson(this.streamPath(identity), { wait: true, tag: this.id, ok404: true });
+          await this.fetchJson(this.streamPath(identity), { wait: true, tag: this.id, ok404: true });
           this.sources({ identity });
         } catch (e) { /* a cold lookup is not worth logging loudly; the detail page retries */ }
       }
@@ -1046,7 +1736,7 @@ class External {
   async fetchStreamsWork(identity) {
     await this.ensureManifest();
     if (!this.has('stream') || !addressableBy(identity, this.id)) return [];
-    await getJson(this.streamPath(identity),
+    await this.fetchJson(this.streamPath(identity),
       { wait: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
     return this.sources({ identity });
   }
@@ -1095,7 +1785,7 @@ class External {
     // answer it was built from has since gone stale or empty. Ask that addon once, live, before calling
     // the copy unplayable — "no play target" was otherwise a hub cache artefact, not a dead file.
     if (!entry) {
-      await getJson(this.streamPath(identity),
+      await this.fetchJson(this.streamPath(identity),
         { wait: true, staleOk: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
       this.sources({ identity });
       index = this.streamIndex.get(identity);
@@ -1142,37 +1832,61 @@ class External {
     if (!this.has('subtitles') || !addressableBy(identity, this.id)) return [];
     const type = this.typeFor(identity);
     const rid = remoteIdFor(identity, this.id);
-    const out = [];
+    const raw = [];
     for (const lang of langs) {
       const url = this.url + '/subtitles/' + type + '/' + rid + '/' + lang + '.json';
-      const body = await getJson(url, { wait: true, staleOk: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
+      const body = await this.fetchJson(url,
+        { wait: true, staleOk: true, timeoutMs: META_WAIT_MS, tag: this.id, ok404: true });
       for (const s of (body && Array.isArray(body.subtitles) ? body.subtitles : [])) {
         if (!s || !s.url) continue;
-        out.push({
+        const name = (typeof s.name === 'string' && s.name)
+          || (typeof s.filename === 'string' && s.filename)
+          || (typeof s.file === 'string' && s.file)
+          || null;
+        raw.push({
           id: String(s.id || (this.id + ':' + rid + ':' + lang)),
           addon: this.id,
           lang: s.lang || lang,
           url: s.url,
+          name,
+          declared: normalizeSubtitleFormat(s.format),
         });
       }
     }
-    return out;
+    if (!raw.length) return [];
+    // The filename the addon chose is a claim (the "English.vtt" that serves SRT bytes); the sniffed
+    // content is the truth the app's subtitleMime(format, url) must see first. A failed or
+    // undeterminable sniff leaves `format` to the hub route's extension fallback — the listing itself
+    // never fails because of a sniff.
+    const sniffed = await sniffSubtitleFormats(raw.map((e) => e.url), { redirectPolicy: this.redirectPolicy });
+    return raw.map((entry, i) => {
+      const truth = sniffed[i] || entry.declared || null;
+      const out = {
+        id: entry.id,
+        addon: entry.addon,
+        lang: entry.lang,
+        url: entry.url,
+      };
+      if (entry.name) out.name = truth ? withSubtitleExtension(entry.name, truth) : entry.name;
+      if (truth) out.format = truth;
+      return out;
+    });
   }
 
   stats() {
     return {
       id: this.id,
-      name: this.name,
-      url: this.manifestUrl,
+      name: publicLabel(this.name, this.id || 'External add-on'),
       native: false,
       enabled: this.enabled,
       kind: this.kind,
+      provenance: this.provenance.kind,
       resources: Object.keys(this.resources),
       catalogs: this.cats.length,
       items: this.items.size,
       streams: this.streamSources.size,
       lastFetch: this.lastFetch ? new Date(this.lastFetch).toISOString() : null,
-      error: this.lastError,
+      error: publicAddonError(this.lastError),
       addedAt: this.addedAt,
     };
   }
@@ -1203,6 +1917,28 @@ function writeEntries(entries) {
 
 function entries() {
   return readEntries() || [];
+}
+
+/**
+ * Legacy external entries predate provenance. They are explicitly migrated to manual; matching a URL to
+ * a future reviewed catalogue is intentionally not part of this migration, so consent never changes on
+ * behalf of an owner.
+ */
+function persistProvenance(entriesList) {
+  let changed = false;
+  for (const entry of entriesList) {
+    if (!entry || entry.native) continue;
+    const provenance = normalizeProvenance(entry.provenance);
+    if (JSON.stringify(entry.provenance || null) !== JSON.stringify(provenance)) {
+      entry.provenance = provenance;
+      changed = true;
+    }
+    if (provenance.kind === 'reviewed' && entry.redirectPolicy !== SAME_ORIGIN_REDIRECT_POLICY) {
+      entry.redirectPolicy = SAME_ORIGIN_REDIRECT_POLICY;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function slug(name, url) {
@@ -1276,6 +2012,7 @@ function init(reg, st) {
         id, name: a.name || id, url: a.url,
         enabled: a.enabled !== false, addedAt: now,
         priority: Number.isFinite(a.priority) ? a.priority : 40 + i,
+        provenance: { kind: 'manual' },
       };
     });
     const seededNative = nativeDefaults.map((a) => ({
@@ -1349,6 +2086,7 @@ function init(reg, st) {
       list.push({
         id: seed.id, name: seed.name, url: seed.url,
         enabled: true, addedAt: Date.now(), priority: ++lastPriority,
+        provenance: { kind: 'manual' },
       });
       touched = true;
       log('ADDONS seeded', seed.id, '-', seed.url);
@@ -1358,10 +2096,11 @@ function init(reg, st) {
       touched = true;
     }
   }
-  if (touched) {
+  const provenanceTouched = persistProvenance(list);
+  if (touched || provenanceTouched) {
     try {
       writeEntries(list);
-    } catch (e) { log('ADDONS seed merge write failed', e.message); }
+    } catch (e) { log('ADDONS seed/provenance write failed', e.message); }
   }
 
   for (const entry of list) {
@@ -1443,6 +2182,9 @@ async function list() {
     } catch (e) {
       stats = { error: e.message };
     }
+    const safeStats = publicStats(stats);
+    const counts = safeStats && typeof safeStats === 'object' && !Array.isArray(safeStats) ? safeStats : {};
+    delete counts.error;
     let cats = [];
     try {
       cats = (typeof p.catalogs === 'function' ? await p.catalogs() : []) || [];
@@ -1456,62 +2198,85 @@ async function list() {
       enabled: entry.enabled !== false,
       addedAt: entry.addedAt || null,
       catalogs: cats.map((c) => ({ id: c.id, name: c.name })),
-      error: stats.error || null,
-      counts: stats,
+      error: publicAddonError(stats.error),
+      counts,
     });
   }
   for (const addon of installed.values()) {
     if (!addon || addon.native) continue;
     // Same shape as a native row: `catalogs` is a list the app can render, counts is an object.
-    rows.push({
-      id: addon.id,
-      name: addon.name || addon.id,
-      native: false,
-      kind: addon.kind,
-      priority: addon.priority,
-      enabled: addon.enabled,
-      addedAt: addon.addedAt || null,
-      url: addon.manifestUrl,
-      resources: Object.keys(addon.resources || {}),
-      catalogs: (addon.cats || []).map((c) => ({ id: c.id, name: c.name })),
-      error: addon.lastError || null,
-      counts: { items: addon.items.size, streams: addon.streamSources.size, lastFetch: addon.lastFetch || null },
-    });
+    rows.push(publicExternalRow(addon));
   }
   rows.sort((a, b) => Number(a.native === false) - Number(b.native === false)
     || String(a.id).localeCompare(String(b.id)));
   return rows;
 }
 
-/** POST /app/v1/addons — validate the manifest, persist, hot-load. Returns {ok, addon} or {ok, error}. */
-async function add(url, name) {
-  if (!/^https?:\/\//i.test(String(url || ''))) return { ok: false, status: 400, error: 'url must be http(s)' };
-  let manifestUrl = String(url).trim();
-  if (/\/$/.test(manifestUrl)) manifestUrl += 'manifest.json';
-  if (!/manifest\.json$/.test(manifestUrl)) manifestUrl = manifestUrl.replace(/\/+$/, '') + '/manifest.json';
+/**
+ * POST /app/v1/addons — validate the manifest, persist, hot-load. The optional third argument is an
+ * internal install policy hook for the reviewed registry; public callers retain the two-argument shape.
+ */
+async function add(url, name, options) {
+  let addonName = name;
+  let installOptions = options;
+  // Keep the existing `(url, name)` API while making a future trusted caller able to use
+  // `add(url, { name, provenance })` without a parallel install path.
+  if (name && typeof name === 'object' && !Array.isArray(name)) {
+    installOptions = name;
+    addonName = name.name;
+  }
+  installOptions = installOptions && typeof installOptions === 'object' ? installOptions : {};
+  let manifestUrl;
+  try {
+    manifestUrl = manifestUrlFor(url).toString();
+    await resolvePublicAddresses(manifestUrl, MANIFEST_WAIT_MS);
+  } catch (e) {
+    return { ok: false, status: 400, error: 'url must be a public HTTP(S) address' };
+  }
+  const provenance = normalizeProvenance(installOptions.provenance);
+  const redirectPolicy = redirectPolicyFor(provenance,
+    installOptions.redirectPolicy || installOptions.policy || (installOptions.sameOriginRedirects ? true : undefined));
   for (const existing of installed.values()) {
     if (existing && !existing.native && sameAddress(existing.manifestUrl, manifestUrl)) {
+      // A manually-installed URL is not silently promoted when a reviewed installer later sees it.
       return { ok: false, status: 409, error: 'already installed', id: existing.id };
     }
   }
-  const probe = new External({ id: 'probe', url: manifestUrl });
+  const probe = new External({ id: 'probe', url: manifestUrl, provenance, redirectPolicy });
   const manifest = await probe.loadManifest({ wait: true });
-  if (!manifest) return { ok: false, status: 502, error: 'manifest not reachable', url: manifestUrl };
+  if (!manifest) return { ok: false, status: 502, error: 'manifest not reachable' };
   if (!manifest.id && !manifest.name && !manifest.catalogs && !manifest.resources) {
-    return { ok: false, status: 422, error: 'not an addon manifest', url: manifestUrl };
+    return { ok: false, status: 422, error: 'not an addon manifest' };
+  }
+  // A directory installer may supply this closure from its server-side descriptor. It runs after the
+  // manifest arrives but before anything is persisted or mounted, so a changed capability surface is
+  // quarantined rather than promoted through a second install path.
+  if (typeof installOptions.validateManifest === 'function') {
+    let validation;
+    try {
+      validation = installOptions.validateManifest(manifest);
+    } catch (error) {
+      validation = null;
+    }
+    if (!validation || validation.ok !== true) {
+      return { ok: false, status: 422, error: 'source manifest no longer matches its install contract' };
+    }
   }
   const list0 = entries();
-  const id = slug(manifest.name || name || manifest.id || manifestUrl, manifestUrl);
+  const hostName = new URL(manifestUrl).hostname;
+  const id = slug(manifest.name || addonName || manifest.id || hostName, manifestUrl);
   if (registry.byId[id]) return { ok: false, status: 409, error: 'id already taken', id };
   const entry = {
     id,
-    name: name || manifest.name || manifest.id || id,
+    name: addonName || manifest.name || manifest.id || id,
     url: manifestUrl,
     enabled: true,
     addedAt: Date.now(),
     priority: 40 + list0.filter((e) => !e.native).length,
     configured: true, // someone chose this URL: the seed merge in init() must not overwrite it
+    provenance,
   };
+  if (redirectPolicy !== DEFAULT_REDIRECT_POLICY) entry.redirectPolicy = redirectPolicy;
   list0.push(entry);
   writeEntries(list0);
   const addon = mount(entry);
@@ -1593,5 +2358,13 @@ module.exports = {
     return { TTL_MS, EMPTY_TTL_MS, FETCH_TIMEOUT_MS, META_WAIT_MS,
       MAX_SOURCES: maxSources(), MIN_SIZE_BYTES: minSizeBytes(), WARM_STREAMS };
   },
-  util: { langCodes, humanSize, parseStream, sourcesFromStreams, identityFor, remoteIdFor, mapType },
+  util: {
+    langCodes, humanSize, parseStream, sourcesFromStreams, identityFor, remoteIdFor, mapType,
+    manifestUrlFor, httpUrlFor, isPublicAddress, resolvePublicAddresses, redirectAllowed,
+    normalizeProvenance, redirectPolicyFor, publicAddonError, publicStats, publicExternalRow,
+    persistProvenance, addonCacheKey,
+    get,
+    normalizeSubtitleFormat, detectSubtitleFormat, subtitleFormatFromName, withSubtitleExtension,
+    getHeadText, sniffSubtitleFormat, sniffSubtitleFormats, clearSubFormatCache,
+  },
 };

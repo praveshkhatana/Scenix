@@ -558,6 +558,15 @@ class BrowseActivity : Activity() {
                 startActivity(Intent(this, LiveChannelsActivity::class.java).putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
             }
         }
+        // Sources are a first-class household destination, not a deep Settings row. Keep this in
+        // the left rail rather than crowding the playback-oriented top bar; AddonsActivity receives
+        // the active profile and fails closed unless it has independently confirmed an adult.
+        entries += LeftRail.Entry("Sources", R.drawable.ic_chip_globe, "sources") {
+            startActivity(
+                Intent(this, AddonsActivity::class.java)
+                    .putExtra(AddonsActivity.EXTRA_PROFILE, profileId)
+            )
+        }
         entries += LeftRail.Entry("Settings", R.drawable.ic_nav_settings, "settings") {
             startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
         }
@@ -1360,13 +1369,12 @@ class BrowseActivity : Activity() {
         title?.text = if (standalone) "This TV is running on its own"
         else "This hub has no titles to show"
         body?.text = if (standalone) {
-            // A fresh standalone install now ships with the same keyless default sources a fresh hub
-            // seeds, so this card is only what's left when even those cannot answer — the wording
-            // should not lecture about setup the install already did.
-            "Scenix is the backend on this TV. If its shelves are still empty, the add-on list or the " +
-                "network needs a look — Settings → Add-ons, or open " +
-                "${com.scenix.tv.core.LocalServer.webBase(this).ifBlank { "this TV's address" }} " +
-                "in a browser on your phone and type there."
+            // Standalone owns the playback backend, but it deliberately does not pretend its local API
+            // is a browser control centre.  Sending an owner to the TV address produced a JSON 404 and
+            // made a working native Sources screen look broken.
+            "Scenix is the backend on this TV. If its shelves are still empty, check the add-on list " +
+                "and network in Settings → Access & safety → Sources. Standalone does not host browser management; pair " +
+                "a Hub when you want to manage this household from a phone or computer."
         }
         else
             "The hub is reachable, but its shelves are empty. Add an add-on to the hub in Settings, or " +

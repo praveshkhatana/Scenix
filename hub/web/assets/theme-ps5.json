@@ -218,11 +218,11 @@
     "dimAmount": 0.54
   },
   "detail": {
-    "maxSources": 6
+    "maxSources": 6.0
   },
   "preview": {
-    "enabled": 1,
-    "delayMs": 1500,
+    "enabled": 0.0,
+    "delayMs": 1500.0,
     "_note": "The PS5-like stage stays a sampled still: it preserves the console-like calm and leaves render budget for remote focus."
   },
   "hero": {
@@ -267,6 +267,5 @@
     "searchBadges": "show",
     "stage": "off",
     "rank": "outline"
-  },
-  "_from": "generated from app/src/main/assets/theme-ps5.json by scripts/webthemes.mjs — edit the TV's file"
+  }
 }

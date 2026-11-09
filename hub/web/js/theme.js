@@ -13,6 +13,24 @@ const TOKEN_PATH = '/ui/assets/theme.json';
 
 let T = {};
 
+/*
+ * The browser renderer is deliberately explicit about the curated packs it knows how to draw.  This is
+ * not a theme allow-list — a future authored pack can still take the safe generic path — it is a small
+ * handshake between the registry gate and the selectors in packs.css.  If a curated asset changes its
+ * structural pack without its renderer changing too, `data-web-pack` becomes `generic` rather than
+ * quietly claiming the old composition is still present.
+ */
+export const CURATED_WEB_PACKS = Object.freeze({
+  'scenix-dark':    { hero: 'full', rows: 'poster', card: 'overlay', focus: 'ring' },
+  'scenix-midnight': { hero: 'centered', rows: 'landscape', card: 'glass', focus: 'glow' },
+  'scenix-ember':   { hero: 'split', rows: 'poster', card: 'frame', focus: 'lift' },
+  'scenix-apple':   { homeLayout: 'apple', hero: 'full', rows: 'landscape', card: 'below', focus: 'glow', nav: 'pill' },
+  'scenix-netflix': { homeLayout: 'netflix', hero: 'full', rows: 'landscape', card: 'overlay', focus: 'ring', nav: 'classic' },
+  'scenix-ps5':     { homeLayout: 'ps5', hero: 'rail', rows: 'landscape', card: 'glass', focus: 'glow', nav: 'ps5' },
+  'scenix-kids':    { homeLayout: 'kids', hero: 'full', rows: 'poster', card: 'below', focus: 'glow', nav: 'kids' },
+  'scenix-glass':   { homeLayout: 'glass', hero: 'full', rows: 'poster', card: 'below', focus: 'glow', nav: 'clean' },
+});
+
 /* group + key -> the CSS custom property it drives. Lengths are multiplied by --s. */
 const COLOR_VARS = {
   bg: '--bg', surface: '--surface', surface2: '--surface2', surface3: '--surface3', line: '--line',
@@ -44,6 +62,14 @@ const root = document.documentElement;
 let scale = 1;
 
 function setVar(name, value) { root.style.setProperty(name, value); }
+
+function cssName(name) {
+  return String(name || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[^a-zA-Z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
 
 /**
  * Eight hex digits mean two different colours depending on which side of the house they were written on:
@@ -99,9 +125,9 @@ function wallImage(raw) {
 
 function applyPack() {
   const p = T.pack || {};
-  const attr = (key, fallback) => {
+  const attr = (key, fallback, dataKey = key) => {
     const v = String(p[key] === undefined || p[key] === null ? fallback : p[key]).trim();
-    root.setAttribute('data-' + key, v || fallback);
+    root.setAttribute('data-' + dataKey, v || fallback);
   };
   attr('pack', 'classic');
   attr('hero', 'split');
@@ -113,6 +139,10 @@ function applyPack() {
   attr('detail', 'backdrop');
   attr('nav', 'classic');
   attr('stage', 'off');
+  attr('homeLayout', 'classic', 'home-layout');
+  attr('homeHero', 'shared-slider', 'home-hero');
+  attr('homeRails', 'stacked', 'home-rails');
+  attr('homeNavigation', 'top-bar', 'home-navigation');
   /*
    * The wall packs — Liquid Glass, Kids — are not a colour with cards on top of it. The television paints a
    * slow field of soft light behind the whole page, and the token file carries that field as a list of
@@ -124,21 +154,71 @@ function applyPack() {
     root.setAttribute('data-wall', 'pack');
     setVar('--wall', wall);
     setNum('--wall-grain', Math.max(0, Math.min(6, Number(p.wallGrain) || 0)) / 100);
+  } else {
+    root.removeAttribute('data-wall');
+    root.style.removeProperty('--wall');
+    root.style.removeProperty('--wall-grain');
   }
-  root.setAttribute('data-theme', String(T.id || 'scenix-dark'));
+  const id = String(T.id || 'scenix-dark');
+  const signature = CURATED_WEB_PACKS[id];
+  const verified = !!signature && Object.entries(signature).every(([key, value]) => p[key] === value);
+  root.setAttribute('data-theme', id);
+  root.setAttribute('data-web-pack', verified ? 'curated' : 'generic');
   root.style.setProperty('--focus-color',
     p.focusColor ? cssColor(p.focusColor) : 'var(--focus-ring)');
+
+  // Theme contracts expose more than the shared base set (Glass' wall, Kids' focus band, the console
+  // rail).  Publish every portable token under a namespace so a renderer can use it without adding a
+  // hard-coded parallel palette.  The named variables above remain the backwards-compatible base API.
+  const lengthKey = /(?:height|width|bottom|top|pad|gap|inset|size|radius)$/i;
+  for (const [key, value] of Object.entries(p)) {
+    const name = `--pack-${cssName(key)}`;
+    if (typeof value === 'number' && lengthKey.test(key)) setLen(name, value);
+    else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') setVar(name, String(value));
+  }
+}
+
+/**
+ * Ink on a filled brand surface, the way the television computes it (Theme.kt: onBrand =
+ * black when luminance(brand) > 0.55, white otherwise). The web used to carry a static
+ * --on-brand, which was only right for the Apple pack: under a red brand the white
+ * knob/check would have been painted in the page's own dark. Mirroring the one formula
+ * keeps filled brand surfaces readable in every curated pack without a second value.
+ */
+function colorLuminance(value) {
+  let rgb = null;
+  const hex = /^#([0-9a-f]{6,8})$/i.exec(String(value || '').trim());
+  if (hex) {
+    const rgbHex = hex[1].slice(-6);
+    const n = parseInt(rgbHex, 16);
+    rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  } else {
+    const rgba = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/.exec(String(value || '').trim());
+    if (rgba) rgb = [Number(rgba[1]), Number(rgba[2]), Number(rgba[3])];
+  }
+  if (!rgb) return 0;
+  const linear = (channel) => {
+    const v = Math.max(0, Math.min(1, channel / 255));
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.0722 * linear(rgb[2]);
 }
 
 function applyTokens() {
   const c = T.colors || {};
   for (const [k, v] of Object.entries(COLOR_VARS)) if (c[k]) setVar(v, cssColor(c[k]));
+  if (c.brand) setVar('--on-brand', colorLuminance(c.brand) > 0.55 ? '#000000' : '#ffffff');
+  for (const [key, value] of Object.entries(c)) {
+    if (typeof value === 'string') setVar(`--theme-color-${cssName(key)}`, cssColor(value));
+  }
 
   const sp = T.spacing || {};
   for (const [k, v] of Object.entries(SPACE_VARS)) setLen(v, sp[k]);
+  for (const [key, value] of Object.entries(sp)) setLen(`--theme-space-${cssName(key)}`, value);
 
   const ty = T.type || {};
   for (const [k, v] of Object.entries(TYPE_VARS)) setLen(v, ty[k]);
+  for (const [key, value] of Object.entries(ty)) setLen(`--theme-type-${cssName(key)}`, value);
   setLen('--modal-w', ty.modalWidth);
   setLen('--key-w', ty.keyWidth);
   setLen('--key-h', ty.keyHeight);
@@ -146,11 +226,16 @@ function applyTokens() {
 
   const r = T.radii || {};
   for (const [k, v] of Object.entries(RADIUS_VARS)) setLen(v, r[k]);
+  for (const [key, value] of Object.entries(r)) setLen(`--theme-radius-${cssName(key)}`, value);
 
   const f = T.focus || {};
   setLen('--ring-w', f.ringWidth);
   setNum('--focus-scale', f.scale);
   setNum('--focus-ms', f.durationMs !== undefined ? `${f.durationMs}ms` : undefined);
+  for (const [key, value] of Object.entries(f)) {
+    if (typeof value === 'string') setVar(`--theme-focus-${cssName(key)}`, cssColor(value));
+    else if (typeof value === 'number') setVar(`--theme-focus-${cssName(key)}`, String(value));
+  }
 
   const a = T.anim || {};
   if (a.cardFadeInMs !== undefined) setNum('--card-in-ms', `${a.cardFadeInMs}ms`);

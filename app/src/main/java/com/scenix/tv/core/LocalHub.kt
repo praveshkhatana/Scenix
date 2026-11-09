@@ -1,11 +1,16 @@
 package com.scenix.tv.core
 
 import android.content.Context
+import android.util.Base64
 import android.util.Log
 import com.scenix.tv.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 import kotlin.math.roundToInt
 
 /**
@@ -45,6 +50,15 @@ class LocalHub private constructor(context: Context) {
     private val progressFile = File(data, "progress.json")
     private val listFile = File(data, "list.json")
     private val prefStore = File(data, "profile-prefs.json")
+    // A standalone browser is still a separate caller from the native Settings screen. Keep proof
+    // of an administrator unlock in memory, with a short expiry, rather than treating the local
+    // loopback port as proof that every write is allowed.
+    private val adminSessions = HashMap<String, AdminSession>()
+    private val secureRandom = SecureRandom()
+    private var failedSettingsUnlocks: FailedUnlocks? = null
+
+    private data class AdminSession(val client: String, val expiresAt: Long)
+    private data class FailedUnlocks(var count: Int, var until: Long)
 
     // ---- the owner's settings -----------------------------------------------------------------
 
@@ -59,6 +73,7 @@ class LocalHub private constructor(context: Context) {
     fun settings(): JSONObject = synchronized(lock) {
         val o = readJson(settingsFile)
         val seededAddons = if (!settingsFile.exists()) JSONArray(DEFAULT_STANDALONE_ADDONS.map { JSONObject(it) }) else null
+        val savedLock = o.optJSONObject("lock") ?: JSONObject()
         JSONObject()
             .put("addons", o.optJSONArray("addons") ?: seededAddons ?: JSONArray())
             .put("audioLanguages", o.optJSONArray("audioLanguages") ?: JSONArray())
@@ -68,6 +83,11 @@ class LocalHub private constructor(context: Context) {
             .put("theme", o.optString("theme", "scenix-apple"))
             .put("debrid", o.optJSONObject("debrid") ?: defaultDebrid())
             .put("live", o.optJSONObject("live") ?: JSONObject())
+            // Only the internal model sees the verifier. [publicSettings] replaces it with the
+            // `enabled`/`pinSet` state that every Settings surface is allowed to display.
+            .put("lock", JSONObject()
+                .put("enabled", savedLock.optBoolean("enabled", false))
+                .put("pinHash", savedLock.optString("pinHash").trim()))
             // The folder this TV may read, as a SAF tree URI plus the words the owner sees. Empty is
             // a normal state: there are no local files until someone picks a folder.
             .put("local", o.optJSONObject("local") ?: JSONObject())
@@ -93,7 +113,9 @@ class LocalHub private constructor(context: Context) {
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
     fun setSettings(body: JSONObject): JSONObject = synchronized(lock) {
         val merged = settings()
-        for (k in arrayOf("addons", "audioLanguages", "subtitleLanguages")) {
+        // Source addresses are never a generic settings field. They enter only through addAddon(),
+        // where their manifest is checked at the public-network boundary before persistence.
+        for (k in arrayOf("audioLanguages", "subtitleLanguages")) {
             if (body.has(k)) merged.put(k, body.optJSONArray(k) ?: JSONArray())
         }
         if (body.has("adult")) merged.put("adult", body.optBoolean("adult", false))
@@ -130,6 +152,182 @@ class LocalHub private constructor(context: Context) {
         merged
     }
 
+    /** Whether a write needs a short-lived administrator capability at this moment. */
+    fun settingsLockActive(): Boolean = synchronized(lock) {
+        val saved = settings().optJSONObject("lock") ?: return@synchronized false
+        saved.optBoolean("enabled", false) && saved.optString("pinHash").isNotBlank()
+    }
+
+    /** Verify a settings PIN and mint client-bound, process-memory proof for later protected writes. */
+    fun unlockSettings(pin: String, headers: Map<String, String>): JSONObject = synchronized(lock) {
+        val saved = settings().optJSONObject("lock") ?: JSONObject()
+        val pinHash = saved.optString("pinHash").trim()
+        if (pinHash.isBlank()) return@synchronized JSONObject().put("ok", true).put("pinSet", false)
+        val now = System.currentTimeMillis()
+        if (!settingsUnlockAllowed(now)) {
+            val retry = ((failedSettingsUnlocks?.until ?: now) - now).coerceAtLeast(0L)
+            return@synchronized JSONObject()
+                .put("ok", false)
+                .put("error", "too many attempts")
+                .put("retryAfterMs", retry)
+        }
+        if (!pinMatches(pinHash, pin)) {
+            settingsUnlockFailed(now)
+            return@synchronized JSONObject().put("ok", false).put("error", "wrong PIN")
+        }
+        failedSettingsUnlocks = null
+        val session = mintAdminSession(headers)
+        JSONObject()
+            .put("ok", true)
+            .put("pinSet", true)
+            .put("adminSession", session.first)
+            .put("adminSessionExpiresAt", session.second)
+    }
+
+    /**
+     * The dedicated lock route mirrors the Hub contract. The PIN verifier is never accepted by a
+     * generic settings PATCH, and every PIN/lock change revokes outstanding capabilities first.
+     */
+    fun setSettingsLock(body: JSONObject, headers: Map<String, String>): JSONObject = synchronized(lock) {
+        val current = settings().optJSONObject("lock") ?: JSONObject()
+        val currentHash = current.optString("pinHash").trim()
+        val currentPin = body.optString("pinCurrent", body.optString("current", "")).trim()
+        if (currentHash.isNotBlank() && !hasAdminSession(headers)) {
+            // This route verifies the current PIN too.  Keep its failure budget identical to the
+            // dedicated unlock route so it cannot be used as an unlimited PIN oracle.
+            val now = System.currentTimeMillis()
+            if (!settingsUnlockAllowed(now)) {
+                val retry = ((failedSettingsUnlocks?.until ?: now) - now).coerceAtLeast(0L)
+                return@synchronized JSONObject()
+                    .put("error", "too many attempts")
+                    .put("retryAfterMs", retry)
+            }
+            if (!pinMatches(currentHash, currentPin)) {
+                settingsUnlockFailed(now)
+                return@synchronized JSONObject().put("error", "the current settings PIN is needed")
+            }
+            failedSettingsUnlocks = null
+        }
+
+        var nextHash = currentHash
+        if (body.has("pin")) {
+            if (body.isNull("pin")) {
+                nextHash = ""
+            } else {
+                val fresh = body.optString("pin").trim()
+                if (!PIN.matcher(fresh).matches()) {
+                    return@synchronized JSONObject().put("error", "the PIN must be 4 to 8 digits")
+                }
+                nextHash = hashPin(fresh)
+            }
+        }
+        val enabled = body.optBoolean("enabled", false)
+        if (enabled && nextHash.isBlank()) {
+            return@synchronized JSONObject().put("error", "set a PIN before turning the lock on")
+        }
+
+        val merged = settings()
+        merged.put("lock", JSONObject().put("enabled", enabled).put("pinHash", nextHash))
+        writeJson(settingsFile, merged)
+        adminSessions.clear()
+        failedSettingsUnlocks = null
+        val session = if (enabled && nextHash.isNotBlank()) mintAdminSession(headers) else null
+        JSONObject()
+            .put("ok", true)
+            .put("lock", JSONObject().put("enabled", enabled).put("pinSet", nextHash.isNotBlank()))
+            .also { out ->
+                if (session != null) {
+                    out.put("adminSession", session.first)
+                    out.put("adminSessionExpiresAt", session.second)
+                }
+            }
+    }
+
+    /** True when a locked standalone backend received the unexpired proof for this HTTP client. */
+    fun hasAdminSession(headers: Map<String, String>): Boolean = synchronized(lock) {
+        val token = headers[ADMIN_SESSION_HEADER].orEmpty().trim()
+        if (!TOKEN.matcher(token).matches()) return@synchronized false
+        val now = System.currentTimeMillis()
+        pruneAdminSessions(now)
+        val session = adminSessions[token] ?: return@synchronized false
+        session.expiresAt > now && MessageDigest.isEqual(
+            session.client.toByteArray(Charsets.UTF_8), clientKey(headers).toByteArray(Charsets.UTF_8),
+        )
+    }
+
+    private fun mintAdminSession(headers: Map<String, String>): Pair<String, Long> {
+        val now = System.currentTimeMillis()
+        pruneAdminSessions(now)
+        val bytes = ByteArray(32)
+        secureRandom.nextBytes(bytes)
+        val token = bytes.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        val expiresAt = now + ADMIN_SESSION_TTL_MS
+        adminSessions[token] = AdminSession(clientKey(headers), expiresAt)
+        return token to expiresAt
+    }
+
+    private fun pruneAdminSessions(now: Long) {
+        adminSessions.entries.removeIf { (_, session) -> session.expiresAt <= now }
+    }
+
+    private fun settingsUnlockAllowed(now: Long): Boolean {
+        val attempts = failedSettingsUnlocks ?: return true
+        if (attempts.until <= now) {
+            failedSettingsUnlocks = null
+            return true
+        }
+        return attempts.count < MAX_UNLOCK_ATTEMPTS
+    }
+
+    private fun settingsUnlockFailed(now: Long) {
+        val attempts = failedSettingsUnlocks
+        if (attempts == null || attempts.until <= now) {
+            failedSettingsUnlocks = FailedUnlocks(1, now + UNLOCK_WINDOW_MS)
+        } else {
+            attempts.count++
+        }
+    }
+
+    private fun clientKey(headers: Map<String, String>): String {
+        val userAgent = headers["user-agent"].orEmpty().take(512)
+        val authorization = headers["authorization"].orEmpty().take(2048)
+        return digestHex("$userAgent\n$authorization".toByteArray(Charsets.UTF_8))
+    }
+
+    private fun hashPin(pin: String): String {
+        val salt = ByteArray(PIN_SALT_BYTES)
+        secureRandom.nextBytes(salt)
+        val derived = derivePin(pin, salt, PIN_ITERATIONS) ?: return ""
+        return "pbkdf2-sha256:$PIN_ITERATIONS:${Base64.encodeToString(salt, Base64.NO_WRAP)}:" +
+            Base64.encodeToString(derived, Base64.NO_WRAP)
+    }
+
+    private fun pinMatches(stored: String, entered: String): Boolean {
+        if (!PIN.matcher(entered).matches()) return false
+        val parts = stored.split(':')
+        if (parts.size != 4 || parts[0] != "pbkdf2-sha256") return false
+        val iterations = parts[1].toIntOrNull()?.coerceIn(MIN_PIN_ITERATIONS, MAX_PIN_ITERATIONS) ?: return false
+        val salt = try { Base64.decode(parts[2], Base64.NO_WRAP) } catch (_: Throwable) { return false }
+        val expected = try { Base64.decode(parts[3], Base64.NO_WRAP) } catch (_: Throwable) { return false }
+        if (salt.size != PIN_SALT_BYTES || expected.size != PIN_HASH_BYTES) return false
+        val actual = derivePin(entered, salt, iterations) ?: return false
+        return MessageDigest.isEqual(expected, actual)
+    }
+
+    private fun derivePin(pin: String, salt: ByteArray, iterations: Int): ByteArray? {
+        val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, PIN_HASH_BYTES * 8)
+        return try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+        } catch (_: Throwable) {
+            null
+        } finally {
+            spec.clearPassword()
+        }
+    }
+
+    private fun digestHex(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(value).joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+
     /**
      * The addons this TV has been told about. Content asks for the enabled ones; the list shown to the
      * owner includes the switched-off ones, because an addon that is off still has to be seen to be
@@ -139,8 +337,8 @@ class LocalHub private constructor(context: Context) {
         val arr = settings().optJSONArray("addons") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val url = s(o, "manifest", s(o, "url", "")).trim()
-            if (url.isBlank()) return@mapNotNull null
+            val url = AddonClient.canonicalManifestUrl(s(o, "manifest", s(o, "url", "")))
+                ?: return@mapNotNull null
             val name = s(o, "name", "").trim()
             AddonSpec(
                 id = s(o, "id", "").ifBlank { slug(url) },
@@ -157,13 +355,12 @@ class LocalHub private constructor(context: Context) {
 
     private fun ttlMs(): Long = settings().optLong("cacheTtlHours", 6L).coerceIn(1L, 24L) * 3600_000L
 
-    /** Where this TV keeps its settings, named the way a hub names the file its addons live in. */
-    fun settingsPath(): String = settingsFile.absolutePath
-
     /**
      * The envelope a hub answers `GET /app/v1/settings` with: what is stored, what an untouched file would
      * mean, the words the language codes in it stand for, and where the values live on this box. A screen
-     * needs the defaults beside the settings to tell an owner's choice from a build's silence.
+     * needs the defaults beside the settings to tell an owner's choice from a build's silence. It
+     * intentionally omits device file paths: an API response is not a debugging channel and no
+     * Settings surface needs the private on-disk location to do its job.
      */
     fun settingsEnvelope(): JSONObject = JSONObject()
         .put("settings", publicSettings())
@@ -172,7 +369,6 @@ class LocalHub private constructor(context: Context) {
         .put("themes", themeCatalog())
         .put("debrid", debridStatus())
         .put("live", liveEnvelope())
-        .put("file", settingsPath())
 
     private fun defaultDebrid(): JSONObject = JSONObject()
         .put("enabled", false).put("provider", "real-debrid").put("token", "")
@@ -180,10 +376,19 @@ class LocalHub private constructor(context: Context) {
     /** The settings shape a screen may see: the token is write-only and never crosses the contract. */
     private fun publicSettings(): JSONObject {
         val out = JSONObject(settings().toString())
+        // Installed source addresses can contain per-source configuration. The dedicated `/addons`
+        // route returns a redacted management summary, so no full settings response needs this array.
+        out.remove("addons")
         val d = out.optJSONObject("debrid") ?: defaultDebrid()
         d.remove("token")
         d.put("tokenSet", ((settings().optJSONObject("debrid") ?: JSONObject()).optString("token")).isNotBlank())
         out.put("debrid", d)
+        val lock = out.optJSONObject("lock") ?: JSONObject()
+        // The PIN verifier is strictly server-private. The app only needs the two state bits to
+        // decide whether to show a lock toggle or ask for the existing PIN.
+        out.put("lock", JSONObject()
+            .put("enabled", lock.optBoolean("enabled", false))
+            .put("pinSet", lock.optString("pinHash").isNotBlank()))
         return out
     }
 
@@ -275,6 +480,7 @@ class LocalHub private constructor(context: Context) {
         .put("cacheTtlHours", 6)
         .put("theme", "scenix-apple")
         .put("debrid", defaultDebrid())
+        .put("lock", JSONObject().put("enabled", false).put("pinHash", ""))
         .put("live", JSONObject())
         .put("local", JSONObject())
 
@@ -283,18 +489,45 @@ class LocalHub private constructor(context: Context) {
      * which tongues a household listens in is not a fact about this app — so a screen labels exactly the
      * choices in front of it.
      */
-    /** The theme registry shipped in the APK's assets, in the same shape the hub serves. */
-    fun themeCatalog(): JSONArray {
+    /** The complete registry compiled into this TV. It includes TV-only layout families. */
+    private fun allThemeCatalog(): JSONArray {
         return try {
             val text = assets.open("themes.json").bufferedReader().use { it.readText() }
             JSONObject(text).optJSONArray("themes") ?: JSONArray()
         } catch (t: Throwable) {
             JSONArray().put(JSONObject().put("id", "scenix-apple")
-                .put("name", "Apple").put("asset", "theme-apple.json").put("pack", "Scene"))
+                .put("name", "Apple").put("asset", "theme-apple.json").put("pack", "Scene")
+                .put("targets", JSONArray().put("android-tv").put("web")))
         }
     }
 
-    /** `GET /app/v1/theme`: the selected tokens, so the bundled web UI follows the TV's theme too. */
+    /**
+     * Browser-facing projection of the registry. A web page is offered only layouts it genuinely
+     * ships, never a TV-specific family it would approximate with an unrelated fallback.
+     */
+    fun themeCatalog(): JSONArray {
+        val out = JSONArray()
+        val all = allThemeCatalog()
+        for (i in 0 until all.length()) {
+            val choice = all.optJSONObject(i) ?: continue
+            val targets = choice.optJSONArray("targets") ?: continue
+            var web = false
+            for (j in 0 until targets.length()) if (targets.optString(j) == "web") web = true
+            if (web) out.put(choice)
+        }
+        return out
+    }
+
+    /** Whether a value may enter the household's browser-facing setting. */
+    fun supportsWebTheme(id: String): Boolean {
+        val themes = themeCatalog()
+        for (i in 0 until themes.length()) {
+            if (themes.optJSONObject(i)?.optString("id") == id) return true
+        }
+        return false
+    }
+
+    /** `GET /app/v1/theme`: selected browser tokens, with an explicit effective id on fallback. */
     fun themeJson(): JSONObject {
         val themes = themeCatalog()
         val wanted = settings().optString("theme", "scenix-apple")
@@ -303,7 +536,14 @@ class LocalHub private constructor(context: Context) {
             val o = themes.optJSONObject(i) ?: continue
             if (o.optString("id") == wanted) { choice = o; break }
         }
-        // A saved theme this build no longer ships is not an error: the first shipped pack answers.
+        // A stale/TV-only shared preference must be visible as a fallback, never represented as if
+        // the browser drew it. Prefer Apple as the stable web reference before the first entry.
+        if (choice == null) {
+            for (i in 0 until themes.length()) {
+                val candidate = themes.optJSONObject(i) ?: continue
+                if (candidate.optString("id") == "scenix-apple") { choice = candidate; break }
+            }
+        }
         if (choice == null && themes.length() > 0) choice = themes.optJSONObject(0)
         val id = choice?.optString("id") ?: "scenix-apple"
         val name = choice?.optString("name") ?: "Apple"
@@ -313,7 +553,17 @@ class LocalHub private constructor(context: Context) {
         } catch (t: Throwable) {
             JSONObject()
         }
-        return JSONObject().put("id", id).put("name", name).put("themes", themes).put("tokens", tokens)
+        return JSONObject()
+            // `id` is retained for older callers. New callers can distinguish what was requested
+            // from what this renderer actually drew.
+            .put("id", id)
+            .put("name", name)
+            .put("requestedId", wanted)
+            .put("effectiveId", id)
+            .put("available", id == wanted)
+            .put("reason", if (id == wanted) "" else "This theme is available on this TV only")
+            .put("themes", themes)
+            .put("tokens", tokens)
     }
 
     private fun languageNames(): JSONObject {
@@ -1376,9 +1626,9 @@ class LocalHub private constructor(context: Context) {
         }
         return JSONObject()
             .put("id", spec.id)
-            .put("name", spec.name)
-            .put("url", spec.manifestUrl)
+            .put("name", publicAddonName(spec))
             .put("native", false)   // nothing on a TV was shipped by a build: the owner typed every URL
+            .put("provenance", "manual")
             .put("enabled", spec.enabled)
             .put("kind", kind)
             .put("resources", JSONArray(resourceNames(am)))
@@ -1387,6 +1637,15 @@ class LocalHub private constructor(context: Context) {
     }
 
     private fun resourceNames(am: AddonManifest?): List<String> = am?.resources?.keys?.sorted() ?: emptyList()
+
+    /** A label may be useful in Settings; an endpoint or a configuration string never is. */
+    private fun publicAddonName(spec: AddonSpec): String {
+        val name = spec.name.trim()
+        if (name.isBlank() || name.contains("://") || name.startsWith("magnet:", true) ||
+            Regex("(?:token|secret|password|api[_-]?key|config)=", RegexOption.IGNORE_CASE).containsMatchIn(name)
+        ) return "Advanced manual source"
+        return name.take(80)
+    }
 
     /** One addon's report, found by the id or the URL a caller used. */
     private fun addonStatsFor(which: String): JSONObject? =
@@ -1407,7 +1666,7 @@ class LocalHub private constructor(context: Context) {
      */
     fun addAddon(url: String, name: String = ""): JSONObject = synchronized(lock) {
         val address = manifestAddress(url)
-            ?: return JSONObject().put("error", "url must be http(s)")
+            ?: return JSONObject().put("error", "source must use a public HTTP(S) address")
         val arr = settings().optJSONArray("addons") ?: JSONArray()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -1417,21 +1676,23 @@ class LocalHub private constructor(context: Context) {
         }
         val spec = AddonSpec(slug(address), name.trim(), address, true)
         if (addons.manifest(spec, wait = true, ttlMs = 0) == null) {
-            return JSONObject().put("error", "manifest not reachable").put("url", address)
+            return JSONObject().put("error", "manifest not reachable")
         }
         val entry = JSONObject().put("url", address)
         if (name.isNotBlank()) entry.put("name", name.trim())
         arr.put(entry)
-        setSettings(JSONObject().put("addons", arr))
+        writeAddonEntries(arr)
         JSONObject().put("addon", addonStats(spec))
     }
 
-    /** An addon address the way a hub reads one: http(s) only, and a directory gets its manifest file. */
-    private fun manifestAddress(url: String): String? {
-        val t = url.trim()
-        if (!Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(t)) return null
-        val trimmed = t.trimEnd('/')
-        return if (trimmed.endsWith("/manifest.json", true)) trimmed else "$trimmed/manifest.json"
+    /** An add-on address is accepted only when it resolves to public HTTP(S) before persistence. */
+    private fun manifestAddress(url: String): String? = AddonClient.publicManifestUrl(url)
+
+    /** Internal source mutations use this narrow writer; generic Settings writes cannot smuggle URLs. */
+    private fun writeAddonEntries(entries: JSONArray) = synchronized(lock) {
+        val merged = settings()
+        merged.put("addons", entries)
+        writeJson(settingsFile, merged)
     }
 
     private fun sameAddress(a: String, b: String): Boolean =
@@ -1451,7 +1712,7 @@ class LocalHub private constructor(context: Context) {
             if (matchesAddon(o, which)) removed = true else kept.put(o)
         }
         if (!removed) return null
-        setSettings(JSONObject().put("addons", kept))
+        writeAddonEntries(kept)
         return which
     }
 
@@ -1466,7 +1727,7 @@ class LocalHub private constructor(context: Context) {
             }
         }
         if (!hit) return false
-        setSettings(JSONObject().put("addons", arr))
+        writeAddonEntries(arr)
         return true
     }
 
@@ -2699,11 +2960,22 @@ class LocalHub private constructor(context: Context) {
         // A release name, split the way a title is read: words, not punctuation.
         private val NAME_WORD = Regex("[^a-z0-9]+")
         private const val LIVE_TTL_MS = 5 * 60_000L
+        private const val ADMIN_SESSION_HEADER = "x-scenix-admin-session"
+        private const val ADMIN_SESSION_TTL_MS = 30 * 60_000L
+        private const val PIN_ITERATIONS = 120_000
+        private const val MIN_PIN_ITERATIONS = 10_000
+        private const val MAX_PIN_ITERATIONS = 300_000
+        private const val PIN_SALT_BYTES = 16
+        private const val PIN_HASH_BYTES = 32
+        private const val MAX_UNLOCK_ATTEMPTS = 10
+        private const val UNLOCK_WINDOW_MS = 5 * 60_000L
 
         private val QUALITY_P = Regex("(\\d{3,4})p", RegexOption.IGNORE_CASE)
         private val FOUR_K = Regex("\\b4k\\b|\\buhd\\b|\\b2160\\b", RegexOption.IGNORE_CASE)
         private val MINUTES = Regex("(\\d+)\\s*min", RegexOption.IGNORE_CASE)
         private val SIZE = Regex("([\\d.]+)\\s*(GB|MB|KB)", RegexOption.IGNORE_CASE)
+        private val PIN = java.util.regex.Pattern.compile("^\\d{4,8}$")
+        private val TOKEN = java.util.regex.Pattern.compile("^[a-f0-9]{64}$", java.util.regex.Pattern.CASE_INSENSITIVE)
 
         /**
          * One instance per process. [LocalServer] and the HTTP client must answer out of the same

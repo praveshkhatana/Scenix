@@ -212,12 +212,12 @@
     "dimAmount": 0.72
   },
   "detail": {
-    "maxSources": 6,
+    "maxSources": 6.0,
     "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
   },
   "preview": {
-    "enabled": 1,
-    "delayMs": 1500,
+    "enabled": 0.0,
+    "delayMs": 1500.0,
     "_note": "The billboard remains sampled artwork. This avoids a live video surface competing with remote navigation or image decoding on lower-end TVs."
   },
   "hero": {
@@ -257,6 +257,5 @@
     "searchBadges": "show",
     "stage": "off",
     "rank": "compact"
-  },
-  "_from": "generated from app/src/main/assets/theme-netflix.json by scripts/webthemes.mjs — edit the TV's file"
+  }
 }

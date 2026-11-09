@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.text.InputFilter
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -37,6 +38,7 @@ class TextEntryActivity : Activity() {
         val value = intent?.getStringExtra(EXTRA_VALUE).orEmpty()
         val hint = intent?.getStringExtra(EXTRA_HINT).orEmpty()
         val plainText = intent?.getBooleanExtra(EXTRA_PLAIN_TEXT, false) == true
+        val numericPin = intent?.getBooleanExtra(EXTRA_NUMERIC_PIN, false) == true
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -59,13 +61,17 @@ class TextEntryActivity : Activity() {
             setTextColor(app.theme.ink)
             setHint(hint)
             setSingleLine(true)
-            inputType = InputType.TYPE_CLASS_TEXT or if (plainText) {
+            inputType = when {
+                // The same entry surface is also a small, reusable recovery prompt for a household
+                // Settings PIN. Keep it numeric, masked and capped at the server contract's maximum;
+                // callers still decide whether a shorter entry is meaningful before sending it.
+                numericPin -> InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+                plainText -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PERSON_NAME
                 // A person's name needs spaces; a URL or token wants the URI keyboard. The rest of
                 // the settings keep the URI default they were written against.
-                InputType.TYPE_TEXT_VARIATION_PERSON_NAME
-            } else {
-                InputType.TYPE_TEXT_VARIATION_URI
+                else -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             }
+            if (numericPin) filters = arrayOf(InputFilter.LengthFilter(8))
             imeOptions = EditorInfo.IME_ACTION_DONE
             setBackgroundColor(app.theme.surface2)
             setPadding(app.theme.px(18f), app.theme.px(14f), app.theme.px(18f), app.theme.px(14f))
@@ -129,6 +135,7 @@ class TextEntryActivity : Activity() {
         const val EXTRA_VALUE = "value"
         const val EXTRA_HINT = "hint"
         const val EXTRA_PLAIN_TEXT = "plain_text"
+        const val EXTRA_NUMERIC_PIN = "numeric_pin"
         const val EXTRA_RESULT = "text"
     }
 }

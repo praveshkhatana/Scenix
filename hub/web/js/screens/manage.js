@@ -27,13 +27,14 @@ import { paintAvatar } from '/ui/js/avatars.js';
 import { openAvatarPicker } from '/ui/js/avatarmodal.js';
 import { profileBadges, profileDefaults, profileEditor, profileNote, refreshProfiles } from '/ui/js/profileedit.js';
 import { makeRows } from '/ui/js/rows.js';
+import { ensureSettingsAdmin } from '/ui/js/adminlock.js';
 
 export function screen(ctx) {
   const wrap = el('div', { class: 'screen pmanage' });
   const rows = makeRows(ctx);
   // The hub's vocabulary, asked for once and cached for as long as this screen is open. An empty hub answer
   // simply means fewer controls, never a wrong default invented here.
-  let hub = { ageOptions: [] };
+  let hub = { ageOptions: [], lock: null };
   const people = el('div', { class: 'prows' });
 
   const head = el('div', { class: 'page-head' },
@@ -252,9 +253,10 @@ export function screen(ctx) {
   async function loadHub() {
     try {
       const s = await api.settings();
-      hub = { ageOptions: profileDefaults(((s && s.settings) || {})).ageOptions };
+      const settings = (s && s.settings) || {};
+      hub = { ageOptions: profileDefaults(settings).ageOptions, lock: settings.lock || null };
     } catch (e) {
-      hub = { ageOptions: [] };
+      hub = { ageOptions: [], lock: null };
     }
   }
 
@@ -266,7 +268,16 @@ export function screen(ctx) {
      the next visit, because the session list is fetched once at boot. The repaint replaces every row though:
      whatever held the ring — including the one the shell just put back from return memory — has to be handed to
      the row that took its place, or a returning viewer finds a page with no ring at all. */
-  loadHub().then(() => refreshProfiles()).then(() => {
+  (async () => {
+    await loadHub();
+    if (!wrap.isConnected || (ctx.route() && ctx.route().name !== 'manage')) return;
+    // Direct Manage Profiles is administration too. Asking here gives an owner a clear way through
+    // the Settings lock instead of letting every row fail only after they have edited it.
+    if (!await ensureSettingsAdmin(ctx, hub.lock, 'Enter the household Settings PIN to manage profiles')) {
+      if (wrap.isConnected && ctx.route() && ctx.route().name === 'manage') ctx.back();
+      return;
+    }
+    await refreshProfiles();
     const held = people.querySelector('.mrow.foc');
     const pid = held && held.dataset.profile;
     paintRows();
@@ -274,7 +285,7 @@ export function screen(ctx) {
       const again = people.querySelector(`.mrow[data-profile="${cssAttr(pid)}"]`);
       if (again) focus.setFocus(again, { scroll: false });
     }
-  });
+  })();
 
   wrap.__defaultFocus = () => (session.profile && session.profile.id
     ? people.querySelector(`.mrow[data-profile="${cssAttr(session.profile.id)}"]`)

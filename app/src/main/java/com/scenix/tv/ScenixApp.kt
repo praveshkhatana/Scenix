@@ -32,7 +32,9 @@ class ScenixApp : Application() {
         prefs = Prefs(this)
         // Packs come and go between builds. A TV still holding a retired theme id lands on the
         // default look at boot instead of wandering through fallbacks with a stale label.
-        if (Theme.catalog(assets).none { it.id == prefs.theme() }) prefs.setTheme(Theme.DEFAULT_ID)
+        // Include validated local reskins here. Checking assets alone discarded a selected local
+        // theme on the next process start even though its safe file was still present.
+        if (Theme.catalog(this, assets).none { it.id == prefs.theme() }) prefs.setTheme(Theme.DEFAULT_ID)
         theme = Theme.load(this, assets, w, h, Theme.assetFor(this, assets, prefs.theme()), prefs.uiZoom())
         ctx = AppContext(this, theme, prefs)
     }

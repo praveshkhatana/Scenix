@@ -209,12 +209,12 @@
     "rowHeight": 68
   },
   "detail": {
-    "maxSources": 6,
+    "maxSources": 6.0,
     "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
   },
   "preview": {
-    "enabled": 1,
-    "delayMs": 1500,
+    "enabled": 1.0,
+    "delayMs": 1500.0,
     "_note": "the billboard artwork turns into a muted looping trailer after this long under the eye; set enabled to 0 to keep it a still picture"
   },
   "hero": {
@@ -239,6 +239,5 @@
     "focusColor": "#FFFFFF",
     "motion": "rise",
     "detail": "backdrop"
-  },
-  "_from": "generated from app/src/main/assets/theme.json by scripts/webthemes.mjs — edit the TV's file"
+  }
 }

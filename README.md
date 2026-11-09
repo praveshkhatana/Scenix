@@ -83,15 +83,20 @@ it can draw.
 | | **Hub mode** (recommended) | **Standalone mode** (simplest) |
 |---|---|---|
 | What you run | the hub on any box on your network, plus the app | the app alone |
-| Configuration | the Hub UI, in any browser | the same UI, hosted in the app |
+| Configuration | the Hub UI, in any browser | native TV Settings |
 | P2P playback | one gateway reader shared by the household | a local engine; downloads to the TV cache and is limited by free space |
 | Debrid | one account shared by the household | one account on the TV |
 | Live TV | playlist + health + per-profile lineup | playlist + on-TV health + per-profile lineup |
 | Local files | a folder on the hub's disk | a folder chosen on the TV (MediaStore fallback) |
 | Shared cache | yes | no |
 
-Both speak the same `/app/v1` contract, so the interface is identical and the app only branches on
-capabilities the backend advertises.
+Both speak the same `/app/v1` contract, so the native TV client can use either backend and only
+branches on capabilities the backend advertises. Settings on the TV has a **Connect from phone**
+card (behind the household Settings PIN): scanning the QR opens the same web Settings on a
+phone — in hub mode the hub URL (`:8788`), in standalone the TV's own LAN address (`:8787`,
+which serves the bundled web snapshot from `assets/web/` alongside `/app/v1`). The phone
+web page already guards writes with the household Settings PIN (`POST /app/v1/settings/unlock`
+→ `X-Scenix-Admin-Session`); no pairing code is needed.
 
 ## Nothing is hardcoded
 
@@ -169,9 +174,11 @@ and use **Type an address** in the TV setup.
 3. To change the backend later, open **Settings → Hub connection**. That row shows the current hub
    (or "Standalone") and reopens this setup screen. It is admin-gated, and kids profiles never see it.
 
-Standalone mode hosts the same web UI and contract inside the TV app. It can play direct HTTP links,
-add-on catalogues and P2P copies through the TV's own engine, can use a Real-Debrid account, and can
-draw an M3U live wall with the same health ordering and stable zap numbers a hub gives.
+Standalone mode hosts the local `/app/v1` contract for the native TV app. It can play direct HTTP
+links, add-on catalogues and supported P2P copies through the TV's own engine when that engine is
+available, can use a Real-Debrid account, and can draw an M3U live wall with the same health ordering
+and stable zap numbers a hub gives. It does not expose a browser-management site to other devices;
+use Hub mode when you want browser or phone management.
 
 **Local files** are chosen once in **Settings → Local files**. The app keeps the folder grant (SAF)
 and indexes video and audio up to four levels deep; a television whose image has no system folder
@@ -225,7 +232,7 @@ backend is chosen the app opens the native profile gate and stays native.
 hub/            the content server (Node, built-ins only)
   providers/    a content source            rows/     a shelf on Home
   rules/        policy over items           core/     the shared machinery
-  web/          the interface the hub serves and the TV shell hosts
+  web/          the interface the hub serves to browsers and phones
 app/            the TV client (Android / Android TV, native Views + media3)
 ```
 

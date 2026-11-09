@@ -32,6 +32,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -39,6 +40,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -55,6 +57,7 @@ import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Programme
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.PlaybackOriginPolicy
 import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.player.Ceilings
@@ -78,6 +81,9 @@ import org.json.JSONObject
  *   · a live channel has no scrubber and no speed, and left/right at rest zaps the live row.
  *   · a series rolls into its next episode with a visible countdown and an Undo window.
  */
+// Media3's player tuning and analytics surface is intentionally experimental. The TV player is the
+// only owner of that surface; opting in here keeps the acknowledgement scoped to playback code.
+@OptIn(UnstableApi::class)
 class PlayerActivity : Activity() {
 
     private lateinit var app: AppContext
@@ -227,6 +233,8 @@ class PlayerActivity : Activity() {
     private var subsGen = 0
     private var failovers = 0
     private var sameCopyRetries = 0
+    /** Set when a subtitle payload failed to parse (bad VTT/SRT); subtitles stay off for this title. */
+    private var textTrackBlocked = false
     /** Bounded re-tunes after a live feed closed its body mid-evening; reset when a picture plays. */
     private var liveEndedRetries = 0
     private var bufferingSince = 0L
@@ -286,6 +294,8 @@ class PlayerActivity : Activity() {
 
     // ---- media ----------------------------------------------------------------------------
     private var player: ExoPlayer? = null
+    /** Whether [player]'s meter was created for a verified hub-owned local HLS ladder. */
+    private var playerUsesLocalLadderSeed = false
     private var http: DefaultHttpDataSource.Factory? = null
     private var playerView: PlayerView? = null
     private var preloadOverlay: FrameLayout? = null
@@ -406,7 +416,9 @@ class PlayerActivity : Activity() {
             title = intent?.getStringExtra(EXTRA_TITLE).orEmpty(),
         )
         displayTitle = spec.title
-        buildPlayer()
+        // The real player is built only after /play identifies the delivery origin. A Studio preview
+        // has no delivery answer, so it keeps an unseeded player solely for its static chrome.
+        if (previewMode) buildPlayer(seedLocalLadder = false)
         buildViews()
         setContentView(root)
         if (previewMode) {
@@ -456,6 +468,8 @@ class PlayerActivity : Activity() {
         playerView?.player = null
         player?.release()
         player = null
+        bandwidthMeter = null
+        playerUsesLocalLadderSeed = false
         super.onDestroy()
     }
 
@@ -463,7 +477,7 @@ class PlayerActivity : Activity() {
     // media
     // =========================================================================================
 
-    private fun buildPlayer() {
+    private fun buildPlayer(seedLocalLadder: Boolean) {
         val httpFactory = DefaultHttpDataSource.Factory()
             // NOT setUserAgent: DefaultHttpDataSource applies the factory's UA AFTER the per-request
             // properties, so the hub's own User-Agent — the browser UA live feeds demand — was silently
@@ -492,17 +506,17 @@ class PlayerActivity : Activity() {
                 dataSpec
             }
         }
-        // An adaptive ladder begins on the rung the player's starting bandwidth estimate allows. With
-        // no estimate media3 conservatively opens the lowest rung, so a 720p film visibly starts at
-        // 480p and upshifts four seconds later. The hub is on this household's LAN, where even a weak
-        // Wi-Fi link carries more than 9 Mbps; seeding that figure selects 720p at once for a 720/480
-        // ladder, and 720p first (then 1080p by measurement) for a 1080 ladder. A remote hub keeps
-        // media3's own cautious start: the LAN assumption does not hold beyond the router.
+        // An adaptive ladder begins on the rung the player's starting bandwidth estimate allows. This
+        // path is entered only after a play answer proved that the HLS ladder is both local and owned
+        // by this control origin. A loopback fixture/standalone controller may still hand us a public
+        // URL, where media3 must retain its cautious default instead of inheriting a LAN assumption.
         val meterBuilder = DefaultBandwidthMeter.Builder(this)
             // A network-type callback at startup would otherwise replace the LAN seed with media3's
             // country default (often 1 Mbps) before the first segment is measured.
             .setResetOnNetworkTypeChange(false)
-        if (isLocalHub(hubOrigin.host)) meterBuilder.setInitialBitrateEstimate(9_000L)
+        if (seedLocalLadder) {
+            meterBuilder.setInitialBitrateEstimate(PlaybackOriginPolicy.LOCAL_LADDER_INITIAL_BITRATE_BPS)
+        }
         val meter = meterBuilder.build()
         bandwidthMeter = meter
         val builder = ExoPlayer.Builder(this)
@@ -546,6 +560,22 @@ class PlayerActivity : Activity() {
             }
         })
         player = p
+        playerUsesLocalLadderSeed = seedLocalLadder
+        playerView?.player = p
+    }
+
+    /**
+     * A player owns its bandwidth meter, so switch it when the delivery policy changes. This keeps a
+     * prior local-ladder measurement from becoming the starting estimate for a later direct remote
+     * source (or the other way round) in the same activity.
+     */
+    private fun ensurePlayer(seedLocalLadder: Boolean) {
+        if (player != null && playerUsesLocalLadderSeed == seedLocalLadder) return
+        playerView?.player = null
+        player?.release()
+        player = null
+        bandwidthMeter = null
+        buildPlayer(seedLocalLadder)
     }
 
     private fun listener() = object : Player.Listener {
@@ -582,6 +612,14 @@ class PlayerActivity : Activity() {
                     hideCenter()
                     updatePlayLabel()
                     onEnded()
+                }
+                // `stop()` moves the reusable player through IDLE before the next item is prepared.
+                // It is not a playback failure, but a pending stall timer from the previous item must
+                // never fire over the next item's "Preparing" state.
+                Player.STATE_IDLE -> {
+                    bufferingSince = 0L
+                    handler.removeCallbacks(stallCheck)
+                    updatePlayLabel()
                 }
             }
         }
@@ -716,6 +754,7 @@ class PlayerActivity : Activity() {
         tried.clear()
         failovers = 0
         sameCopyRetries = 0
+        textTrackBlocked = false
         bufferingSince = 0L
         recoveryScheduled = false
         mixDisabled = false
@@ -824,6 +863,16 @@ class PlayerActivity : Activity() {
             showError("The hub answered a different title. Nothing was started.")
             return
         }
+        // Control and delivery origins are distinct: fixture/standalone answer control calls through
+        // loopback but can return direct public HLS. Only a verified same-origin local ladder may use
+        // the optimistic 9 Mbps initial estimate or the temporary 720p start-rung override.
+        val useLocalLadderSeed = PlaybackOriginPolicy.usesLocalLadderSeed(
+            controlOrigin = HubEndpoint.base(this),
+            mediaUrl = str(reply, "url"),
+            kind = str(reply, "kind"),
+            hasLadder = reply.optJSONObject("ladder") != null,
+        )
+        ensurePlayer(useLocalLadderSeed)
         clearError()
         // A failed source pick writes a status line; the new copy starting is the moment that line
         // stops being true. Leaving it up is how "not available" sat on screen over a playing film.
@@ -859,8 +908,7 @@ class PlayerActivity : Activity() {
                 ?: reply.optJSONObject("remux")?.optLong("startMs", 0L)
                 ?: 0L
             ).coerceAtLeast(0L)
-        startRungPending = reply.optJSONObject("ladder") != null &&
-            isLocalHub(Uri.parse(HubEndpoint.base(this)).host)
+        startRungPending = useLocalLadderSeed
         startRungLocked = false
         forcedRungHeight = 0
         val mix = reply.optJSONObject("audioMix")
@@ -947,18 +995,29 @@ class PlayerActivity : Activity() {
             (durationMs - 20_000).coerceAtLeast(0L) else positionMs
         val mediaStart = if (live) C.TIME_UNSET
             else (capped - timelineOffsetMs).coerceAtLeast(0L)
+        if (textTrackBlocked) {
+            // A subtitle payload that failed to parse must never be re-selected, even if the player
+            // was rebuilt by ensurePlayer above and lost the parameters the error handler set.
+            val params = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .build()
+            p.trackSelectionParameters = params
+        }
         p.setMediaItem(item, mediaStart)
         // A source switch, an episode roll and a failover all reuse the same ExoPlayer; re-asserting
         // the session's trim here keeps a viewer's volume through every one of those paths.
         p.volume = if (muted || volume <= 0.001f) 0f else volume
         pendingAudio = selectedAudioId
-        pendingSub = selectedSubId
+        pendingSub = if (textTrackBlocked) null else selectedSubId
         audioApplied = false
         subApplied = false
         subsInItem = hubSubs.length()
         p.prepare()
         p.playWhenReady = playWhenReady
-        speed = p.playbackParameters.speed
+        // The session's speed lives in this field; a player rebuilt when the ladder-seed flag
+        // flips (remote source → local ladder) starts at 1.0 and must INHERIT the viewer's chosen
+        // speed, not hand it back a reset. Nothing else ever moves playbackParameters on its own.
         p.setPlaybackSpeed(speed)
         paintTransport(true)
         updateHeader()
@@ -986,7 +1045,9 @@ class PlayerActivity : Activity() {
         // An offset ladder's media timeline starts at the resume point, while an external subtitle
         // file is timed from the beginning of the film. Loading it unchanged would show every line
         // minutes early; the menu says subtitles are off rather than pretending they are in sync.
-        if (timelineOffsetMs <= 0L) for (i in 0 until hubSubs.length()) {
+        // The hub may label an SRT file "vtt"; once that payload has failed to parse, attaching the
+        // same sidecars to the next media item would only hand the parser the same bomb again.
+        if (!textTrackBlocked && timelineOffsetMs <= 0L) for (i in 0 until hubSubs.length()) {
             val s = hubSubs.optJSONObject(i) ?: continue
             val subUrl = str(s, "url").ifBlank { str(s, "src") }
             if (subUrl.isBlank()) continue
@@ -1072,28 +1133,6 @@ class PlayerActivity : Activity() {
             .build()
         Log.i(TAG, "start rung released to adaptive selection, bandwidth "
             + ((bandwidthMeter?.bitrateEstimate ?: 0L) / 1000) + " kbps")
-    }
-
-    /**
-     * Whether the hub address names this household's own network: loopback, the three private IPv4
-     * ranges, link-local IPv6, or a `.local` name. Only there is it safe to start a ladder on a high
-     * rung before measuring the link.
-     */
-    private fun isLocalHub(host: String?): Boolean {
-        val h = host?.trim()?.lowercase() ?: return false
-        if (h.isEmpty()) return false
-        if (h == "localhost" || h == "::1" || h.endsWith(".local")) return true
-        // A URI host is a name or an address. Only a colon proves the latter, so a domain that happens
-        // to start with "fc" is not mistaken for a unique-local IPv6 address.
-        if (h.contains(':') && (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd"))) {
-            return true
-        }
-        val parts = h.split('.')
-        if (parts.size != 4) return false
-        val a = parts[0].toIntOrNull() ?: return false
-        val b = parts[1].toIntOrNull() ?: return false
-        return a == 127 || a == 10 || (a == 172 && b in 16..31) ||
-            (a == 192 && b == 168) || (a == 169 && b == 254)
     }
 
     /** A hub-relative subtitle path becomes an address the decoder can open. */
@@ -1325,10 +1364,31 @@ class PlayerActivity : Activity() {
     // recovery
     // =========================================================================================
 
+    /** True when any cause in the chain names one of the given fragments (in class or message). */
+    private fun causeChainMentions(e: Throwable?, vararg needles: String): Boolean {
+        var cur: Throwable? = e
+        while (cur != null) {
+            val text = ((cur.javaClass.name.lowercase()) + " " + (cur.message?.lowercase() ?: ""))
+            if (needles.any { it in text }) return true
+            cur = cur.cause
+        }
+        return false
+    }
+
     private fun handlePlaybackError(error: PlaybackException) {
         if (isFinishing || isDestroyed) return
         val name = error.errorCodeName
         Log.w(TAG, "playback error " + name + " / " + error.errorCode + " / " + error.message)
+        val probe = StringBuilder("TEXTFAULT probe code=" + error.errorCode + " blocked=" + textTrackBlocked
+            + " match=" + causeChainMentions(error, "webvtt", "subtitle", "subrip"))
+        var cur: Throwable? = error
+        repeat(3) {
+            val c = cur?.cause ?: return@repeat
+            probe.append(" | cause=").append(c.javaClass.simpleName).append(":")
+                .append((c.message ?: "").take(60))
+            cur = c
+        }
+        Log.w(TAG, probe.toString())
         val detail = (error.message ?: "").lowercase()
         // A message-text match alone banned HEVC for the whole install: media3 IO errors embed the data
         // URI, so a 404 on `movie-1080p-hevc.mkv` used to block the codec permanently with no way back.
@@ -1343,6 +1403,30 @@ class PlayerActivity : Activity() {
             // that for this panel, then let the normal failover ask the hub for an H.264 copy.
             app.prefs.setHevcBlocked(true)
             Log.w(TAG, "HEVC disabled for this panel after a decode failure")
+        }
+        // A subtitle payload that does not match its declared format (an SRT embedded in an MKV
+        // that media3 labels vtt) fails at the text parser as ERR 3001 before any frame plays —
+        // video and audio themselves are fine, so one bad text track must not sink the copy.
+        // Drop subtitles once for this title and retry before blaming the hub's copies.
+        if (!textTrackBlocked && error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED &&
+            causeChainMentions(error, "webvtt", "subtitle", "subrip")) {
+            textTrackBlocked = true
+            val p = player
+            if (p != null) {
+                val b = p.trackSelectionParameters.buildUpon()
+                b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                b.clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                p.trackSelectionParameters = b.build()
+                pendingSub = null
+                val pos = filmPosition(p)
+                sameCopyRetries++
+                quietOrCenter("Subtitles are broken in this copy — playing without them…")
+                val gen = requestGen
+                handler.postDelayed({
+                    if (!isFinishing && gen == requestGen) answer?.let { start(it, pos, playWhenReady = true) }
+                }, 600)
+                return
+            }
         }
         val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
             name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
@@ -2294,6 +2378,10 @@ class PlayerActivity : Activity() {
                 val name = str(o, "languageName").ifBlank { langName(lang) }
                 val source = str(o, "source")
                 val mixed = kind == "mix"
+                // A filename can claim a language before the Hub has read that donor's tracks.
+                // Keep it selectable — the Hub checks it before it remuxes — but never make a
+                // person think an unmeasured claim is already a playable, verified dub.
+                val confirmed = o.optBoolean("confirmed")
                 val selected = if (mixed) {
                     !mixDisabled && str(mixHint, "language").equals(lang, true)
                 } else {
@@ -2301,7 +2389,11 @@ class PlayerActivity : Activity() {
                 }
                 parent.addView(menuRow(
                     name,
-                    if (mixed) "mixed from " + source.ifBlank { "another copy" } else "in this copy",
+                    if (mixed) {
+                        (if (confirmed) "mixed from " else "from ") +
+                            source.ifBlank { "another copy" } +
+                            if (confirmed) "" else " · verify before mixing"
+                    } else "in this copy",
                     selected,
                 ) {
                     if (mixed) reloadAudio(mix = true, language = lang, from = source)
@@ -4914,6 +5006,15 @@ class PlayerActivity : Activity() {
         private val focusPlate = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(0x22, 255, 255, 255)
         }
+        // Transport glyphs redraw with playback/focus state. Reuse their tiny geometry and paints so
+        // a stationary player bar does not produce per-frame garbage on lower-memory TV hardware.
+        private val focusAccent = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val glyphPath = Path()
+        private val glyphBounds = RectF()
+        private val waveformHeights = floatArrayOf(5f, 10f, 16f, 21f, 15f, 9f, 4f)
+        private val speedTickDegrees = intArrayOf(210, 240, 270, 300, 330)
+        private val arrowWingDeltas = doubleArrayOf(2.7, -2.7)
+        private val secondsText = seconds.coerceAtLeast(1).toString()
 
         // A plain View measures AT_MOST as "fill the parent"; without this a wrap_content icon
         // button became the whole bottom bar. The glyph box is the suggested minimum.
@@ -4932,7 +5033,7 @@ class PlayerActivity : Activity() {
             if (focused) {
                 canvas.drawRoundRect(cx - 19 * u, cy - 15 * u, cx + 19 * u, cy + 15 * u,
                     12 * u, 12 * u, focusPlate)
-                val accent = (context.applicationContext as ScenixApp).ctx.let {
+                focusAccent.color = (context.applicationContext as ScenixApp).ctx.let {
                     val explicit = it.theme.colorOr("playerAccent", -1)
                     if (explicit != -1) explicit else {
                         val b = it.theme.color("brand", "#2D8CFF")
@@ -4942,7 +5043,7 @@ class PlayerActivity : Activity() {
                     }
                 }
                 canvas.drawRoundRect(cx - 13 * u, cy + 17 * u, cx + 13 * u, cy + 19.5f * u,
-                    1.5f * u, 1.5f * u, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
+                    1.5f * u, 1.5f * u, focusAccent)
             }
             when (glyph) {
                 GLYPH_PLAY -> if (playing) {
@@ -4951,12 +5052,12 @@ class PlayerActivity : Activity() {
                     canvas.drawRoundRect(cx - 8 * u, cy - h, cx - 8 * u + w, cy + h, 1.2f * u, 1.2f * u, solid)
                     canvas.drawRoundRect(cx + 4.6f * u, cy - h, cx + 4.6f * u + w, cy + h, 1.2f * u, 1.2f * u, solid)
                 } else {
-                    val path = Path()
-                    path.moveTo(cx - 6.5f * u, cy - 10.5f * u)
-                    path.lineTo(cx + 10 * u, cy)
-                    path.lineTo(cx - 6.5f * u, cy + 10.5f * u)
-                    path.close()
-                    canvas.drawPath(path, solid)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 6.5f * u, cy - 10.5f * u)
+                    glyphPath.lineTo(cx + 10 * u, cy)
+                    glyphPath.lineTo(cx - 6.5f * u, cy + 10.5f * u)
+                    glyphPath.close()
+                    canvas.drawPath(glyphPath, solid)
                 }
                 GLYPH_REWIND -> {
                     // A bar and two left chevrons: the same rewind mark the reference row uses.
@@ -4965,75 +5066,70 @@ class PlayerActivity : Activity() {
                     canvas.drawLine(cx - 11 * u, cy - y, cx - 11 * u, cy + y, stroke)
                     for (k in 0..1) {
                         val x = cx - 5 * u + k * 7.5f * u
-                        val p = Path()
-                        p.moveTo(x + 6 * u, cy - y)
-                        p.lineTo(x - 1 * u, cy)
-                        p.lineTo(x + 6 * u, cy + y)
-                        canvas.drawPath(p, stroke)
+                        glyphPath.reset()
+                        glyphPath.moveTo(x + 6 * u, cy - y)
+                        glyphPath.lineTo(x - 1 * u, cy)
+                        glyphPath.lineTo(x + 6 * u, cy + y)
+                        canvas.drawPath(glyphPath, stroke)
                     }
                 }
-                GLYPH_FORWARD -> seekIcon(canvas, cx, cy, u, seconds.coerceAtLeast(1), back = false)
+                GLYPH_FORWARD -> seekIcon(canvas, cx, cy, u, back = false)
                 GLYPH_BACK -> {
-                    val path = Path()
-                    path.moveTo(cx + 3.5f * u, cy - 8 * u)
-                    path.lineTo(cx - 4 * u, cy)
-                    path.lineTo(cx + 3.5f * u, cy + 8 * u)
-                    canvas.drawPath(path, stroke)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx + 3.5f * u, cy - 8 * u)
+                    glyphPath.lineTo(cx - 4 * u, cy)
+                    glyphPath.lineTo(cx + 3.5f * u, cy + 8 * u)
+                    canvas.drawPath(glyphPath, stroke)
                 }
                 GLYPH_VOLUME -> {
                     // A speaker with waves, crossed out when muted: this is the player's own trim,
                     // distinct from the Audio pill, which picks a language track.
-                    val speaker = Path()
-                    speaker.moveTo(cx - 12 * u, cy - 4.5f * u)
-                    speaker.lineTo(cx - 6.5f * u, cy - 4.5f * u)
-                    speaker.lineTo(cx - 1 * u, cy - 10 * u)
-                    speaker.lineTo(cx - 1 * u, cy + 10 * u)
-                    speaker.lineTo(cx - 6.5f * u, cy + 4.5f * u)
-                    speaker.lineTo(cx - 12 * u, cy + 4.5f * u)
-                    speaker.close()
-                    canvas.drawPath(speaker, solid)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 12 * u, cy - 4.5f * u)
+                    glyphPath.lineTo(cx - 6.5f * u, cy - 4.5f * u)
+                    glyphPath.lineTo(cx - 1 * u, cy - 10 * u)
+                    glyphPath.lineTo(cx - 1 * u, cy + 10 * u)
+                    glyphPath.lineTo(cx - 6.5f * u, cy + 4.5f * u)
+                    glyphPath.lineTo(cx - 12 * u, cy + 4.5f * u)
+                    glyphPath.close()
+                    canvas.drawPath(glyphPath, solid)
                     if (muted) {
                         canvas.drawLine(cx + 2 * u, cy - 4.5f * u, cx + 12 * u, cy + 4.5f * u, stroke)
                         canvas.drawLine(cx + 12 * u, cy - 4.5f * u, cx + 2 * u, cy + 4.5f * u, stroke)
                     } else {
-                        canvas.drawArc(
-                            RectF(cx + 1 * u, cy - 6 * u, cx + 9 * u, cy + 6 * u),
-                            -62f, 124f, false, stroke,
-                        )
-                        canvas.drawArc(
-                            RectF(cx + 1 * u, cy - 10 * u, cx + 15 * u, cy + 10 * u),
-                            -55f, 110f, false, stroke,
-                        )
+                        glyphBounds.set(cx + 1 * u, cy - 6 * u, cx + 9 * u, cy + 6 * u)
+                        canvas.drawArc(glyphBounds, -62f, 124f, false, stroke)
+                        glyphBounds.set(cx + 1 * u, cy - 10 * u, cx + 15 * u, cy + 10 * u)
+                        canvas.drawArc(glyphBounds, -55f, 110f, false, stroke)
                     }
                 }
                 GLYPH_AUDIO -> {
                     // A waveform, not a speaker: the control picks a language track, and the bars read
                     // as "sound" at a glance without implying a volume slider.
-                    val heights = floatArrayOf(5f, 10f, 16f, 21f, 15f, 9f, 4f)
-                    for (i in heights.indices) {
+                    for (i in waveformHeights.indices) {
                         val x = cx + (i - 3) * 3.6f * u
-                        val h = heights[i] * u
+                        val h = waveformHeights[i] * u
                         canvas.drawLine(x, cy - h / 2f, x, cy + h / 2f, stroke)
                     }
                 }
                 GLYPH_SUBS -> {
                     // A speech bubble with two cue lines and a tail, matching the reference's subtitle
                     // affordance; "CC" in a box read as a broadcast caption service.
-                    val r = RectF(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 6 * u)
-                    canvas.drawRoundRect(r, 3.2f * u, 3.2f * u, stroke)
+                    glyphBounds.set(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 6 * u)
+                    canvas.drawRoundRect(glyphBounds, 3.2f * u, 3.2f * u, stroke)
                     canvas.drawLine(cx - 7 * u, cy - 3.4f * u, cx + 7 * u, cy - 3.4f * u, stroke)
                     canvas.drawLine(cx - 7 * u, cy + 1.4f * u, cx + 2 * u, cy + 1.4f * u, stroke)
-                    val tail = Path()
-                    tail.moveTo(cx - 5 * u, cy + 6 * u)
-                    tail.lineTo(cx - 7.5f * u, cy + 12 * u)
-                    tail.lineTo(cx - 1 * u, cy + 6 * u)
-                    canvas.drawPath(tail, stroke)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 5 * u, cy + 6 * u)
+                    glyphPath.lineTo(cx - 7.5f * u, cy + 12 * u)
+                    glyphPath.lineTo(cx - 1 * u, cy + 6 * u)
+                    canvas.drawPath(glyphPath, stroke)
                 }
                 GLYPH_SPEED -> {
                     // A dial with ticks and a needle: the same speedometer language as the reference.
                     val r = 10 * u
                     canvas.drawCircle(cx, cy, r, stroke)
-                    for (deg in intArrayOf(210, 240, 270, 300, 330)) {
+                    for (deg in speedTickDegrees) {
                         val a = Math.toRadians(deg.toDouble())
                         canvas.drawCircle(
                             cx + (r - 2.8f * u) * Math.cos(a).toFloat(),
@@ -5047,8 +5143,8 @@ class PlayerActivity : Activity() {
                 }
                 GLYPH_QUALITY -> {
                     // A display: the quality/source sheet is about what the panel is receiving.
-                    val r = RectF(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 5 * u)
-                    canvas.drawRoundRect(r, 2.4f * u, 2.4f * u, stroke)
+                    glyphBounds.set(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 5 * u)
+                    canvas.drawRoundRect(glyphBounds, 2.4f * u, 2.4f * u, stroke)
                     canvas.drawLine(cx, cy + 5 * u, cx, cy + 9.5f * u, stroke)
                     canvas.drawLine(cx - 5 * u, cy + 9.5f * u, cx + 5 * u, cy + 9.5f * u, stroke)
                 }
@@ -5065,12 +5161,12 @@ class PlayerActivity : Activity() {
                 }
                 GLYPH_NEXT -> {
                     // skip-forward: a solid triangle against a bar
-                    val path = Path()
-                    path.moveTo(cx - 9 * u, cy - 9 * u)
-                    path.lineTo(cx + 5 * u, cy)
-                    path.lineTo(cx - 9 * u, cy + 9 * u)
-                    path.close()
-                    canvas.drawPath(path, solid)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 9 * u, cy - 9 * u)
+                    glyphPath.lineTo(cx + 5 * u, cy)
+                    glyphPath.lineTo(cx - 9 * u, cy + 9 * u)
+                    glyphPath.close()
+                    canvas.drawPath(glyphPath, solid)
                     canvas.drawRoundRect(cx + 7 * u, cy - 9 * u, cx + 11 * u, cy + 9 * u,
                         1.2f * u, 1.2f * u, solid)
                 }
@@ -5079,10 +5175,8 @@ class PlayerActivity : Activity() {
                     // the same language the episode rows themselves use.
                     for (i in 0..2) {
                         val y = cy + (i - 1) * 7.4f * u
-                        canvas.drawRoundRect(
-                            RectF(cx - 12 * u, y - 3.2f * u, cx - 4.2f * u, y + 3.2f * u),
-                            1f * u, 1f * u, stroke,
-                        )
+                        glyphBounds.set(cx - 12 * u, y - 3.2f * u, cx - 4.2f * u, y + 3.2f * u)
+                        canvas.drawRoundRect(glyphBounds, 1f * u, 1f * u, stroke)
                         canvas.drawLine(cx - 1 * u, y, cx + 12 * u, y, stroke)
                     }
                 }
@@ -5093,12 +5187,12 @@ class PlayerActivity : Activity() {
         }
 
         /** A circular arrow with the seconds inside it — the television convention for "jump". */
-        private fun seekIcon(canvas: Canvas, cx: Float, cy: Float, u: Float, seconds: Int, back: Boolean) {
+        private fun seekIcon(canvas: Canvas, cx: Float, cy: Float, u: Float, back: Boolean) {
             val r = 10.5f * u
-            val rect = RectF(cx - r, cy - r, cx + r, cy + r)
+            glyphBounds.set(cx - r, cy - r, cx + r, cy + r)
             val start = if (back) 240f else 300f
             val sweep = if (back) -300f else 300f
-            canvas.drawArc(rect, start, sweep, false, stroke)
+            canvas.drawArc(glyphBounds, start, sweep, false, stroke)
             val end = Math.toRadians((start + sweep).toDouble())
             val ex = cx + (r * Math.cos(end)).toFloat()
             val ey = cy + (r * Math.sin(end)).toFloat()
@@ -5106,7 +5200,7 @@ class PlayerActivity : Activity() {
             val tx = if (back) Math.sin(end) else -Math.sin(end)
             val ty = if (back) -Math.cos(end) else Math.cos(end)
             val tip = Math.atan2(ty, tx)
-            for (delta in doubleArrayOf(2.7, -2.7)) {
+            for (delta in arrowWingDeltas) {
                 val a = tip + delta
                 canvas.drawLine(
                     ex, ey,
@@ -5116,7 +5210,7 @@ class PlayerActivity : Activity() {
                 )
             }
             letters.textSize = 9.4f * u
-            canvas.drawText(seconds.toString(), cx, cy + 3.5f * u, letters)
+            canvas.drawText(secondsText, cx, cy + 3.5f * u, letters)
         }
     }
 
@@ -5161,6 +5255,13 @@ class PlayerActivity : Activity() {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
+        private val knobGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(0x55, 140, 123, 255)
+        }
+        private val knobCradle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(0xCC, 0, 0, 0)
+        }
+        private val targetBounds = RectF()
 
         override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
             super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
@@ -5191,12 +5292,10 @@ class PlayerActivity : Activity() {
                 val kx = (w * fraction).coerceIn(knobR, w - knobR)
                 if (focused) {
                     // The knob is the only focus decoration a full-width timeline needs.
-                    canvas.drawCircle(kx, cy, knobR + theme.px(9f),
-                        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0x55, 140, 123, 255) })
+                    canvas.drawCircle(kx, cy, knobR + theme.px(9f), knobGlow)
                 }
                 // A dark cradle under the knob keeps it legible over the light played range.
-                canvas.drawCircle(kx, cy, knobR + theme.px(3f),
-                    Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0xCC, 0, 0, 0) })
+                canvas.drawCircle(kx, cy, knobR + theme.px(3f), knobCradle)
                 canvas.drawCircle(kx, cy, knobR, knob)
             }
             if (targetMs >= 0L) drawTarget(canvas, w, cy, bar / 2f)
@@ -5218,8 +5317,8 @@ class PlayerActivity : Activity() {
             val left = (center - bubbleW / 2f).coerceIn(0f, (w - bubbleW).coerceAtLeast(0f))
             val bottom = (barCy - barHalf - theme.px(4f)).coerceAtLeast(bubbleH)
             val top = bottom - bubbleH
-            canvas.drawRoundRect(RectF(left, top, left + bubbleW, bottom),
-                bubbleH / 2f, bubbleH / 2f, bubbleBg)
+            targetBounds.set(left, top, left + bubbleW, bottom)
+            canvas.drawRoundRect(targetBounds, bubbleH / 2f, bubbleH / 2f, bubbleBg)
             canvas.drawText(label, left + bubbleW / 2f,
                 top + bubbleH / 2f + bubbleText.textSize * 0.35f, bubbleText)
         }

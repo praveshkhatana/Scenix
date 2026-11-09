@@ -17,6 +17,7 @@ import { el, clear, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
 import { makeRows } from '/ui/js/rows.js';
+import { withSettingsAdmin } from '/ui/js/adminlock.js';
 
 export function screen(ctx) {
   const root = el('div', { class: 'screen categories' });
@@ -97,11 +98,13 @@ export function screen(ctx) {
     if (busy) return;
     busy = true;
     try {
-      const out = await api.saveSettings({ categories: next });
-      const saved = out && out.settings && Array.isArray(out.settings.categories)
-        ? out.settings.categories : next;
-      categories = saved.map((c) => Object.assign({}, c));
-      if (note) toast(note);
+      const out = await withSettingsAdmin(ctx, () => api.saveSettings({ categories: next }));
+      if (out !== null) {
+        const saved = out && out.settings && Array.isArray(out.settings.categories)
+          ? out.settings.categories : next;
+        categories = saved.map((c) => Object.assign({}, c));
+        if (note) toast(note);
+      }
     } catch (e) {
       toast('The hub would not save that');
     }

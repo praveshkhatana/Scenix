@@ -17,6 +17,9 @@
  *     has no such rule yet.
  *   · The fields the hub does *not* guard — a name, a face — are not gated here either. A screen that invented
  *     its own stricter rule would only teach viewers that the real lock is arbitrary.
+ *   · A household Settings lock is a separate boundary over every profile mutation. Its short-lived
+ *     session is acquired and retried once by `withSettingsAdmin`; the profile PIN checks above remain
+ *     independent, so unlocking a profile never requires first changing household settings.
  *   · The household's own numbers (which ages to offer, whether a new profile starts behind a PIN, which
  *     languages this hub asks for) are read from `/app/v1/settings`. Nothing in this file names a person, an
  *     age, or a language.
@@ -29,6 +32,7 @@ import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
 import { session, setProfiles, isKids, isLocked } from '/ui/js/state.js';
+import { withSettingsAdmin } from '/ui/js/adminlock.js';
 
 /**
  * The fields the hub refuses to move on a locked profile without the current PIN
@@ -48,6 +52,9 @@ export function touchesGate(fields) {
 /** A refusal that reads as what happened rather than as a dead button. */
 export function whyRefused(e, fallback) {
   if (isAdultGate(e)) return (e.body && e.body.error) || 'An adult PIN is needed for that';
+  if (e && e.status === 403 && e.body && e.body.sessionRequired === true) {
+    return 'The household Settings PIN is needed';
+  }
   if (e && e.status === 403) return 'That is not the current PIN';
   const body = e && e.body && e.body.error;
   return body || fallback;
@@ -263,8 +270,9 @@ export function profileEditor(ctx, profile, opts = {}) {
       // a ceiling - but the field is one, so the request carries the one it has and the hub answers for the other
       // by refusing. A profile with a number of its own never reaches the second question (index.js accepts its
       // own proof for both), so the retry below cannot undo the first answer.
-      out = await withAdultProof(ctx, 'change that profile',
-        (extra) => api.updateProfile(profile.id, Object.assign({}, body, extra)));
+      out = await withSettingsAdmin(ctx,
+        () => withAdultProof(ctx, 'change that profile',
+          (extra) => api.updateProfile(profile.id, Object.assign({}, body, extra))));
     } catch (e) {
       if (gate) proof = null;   // the number we held is no good: ask again next time
       ctx.toast(whyRefused(e, (note || 'The hub') + ' would not save that change'));
@@ -338,8 +346,9 @@ export function profileEditor(ctx, profile, opts = {}) {
     const own = current ? { pinCurrent: current } : {};
     let out = null;
     try {
-      out = await withAdultProof(ctx, 'remove a profile',
-        (extra) => api.deleteProfile(profile.id, Object.assign({}, own, extra)));
+      out = await withSettingsAdmin(ctx,
+        () => withAdultProof(ctx, 'remove a profile',
+          (extra) => api.deleteProfile(profile.id, Object.assign({}, own, extra))));
     } catch (e) {
       proof = null;
       ctx.toast(whyRefused(e, (e && e.body && e.body.error) || 'The hub would not remove that profile'));

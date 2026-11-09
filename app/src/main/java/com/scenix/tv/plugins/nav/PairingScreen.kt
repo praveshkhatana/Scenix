@@ -54,25 +54,28 @@ object PairingScreen {
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
 
-        val scroll = ScrollView(ctx.app)
+        val scroll = ScrollView(ctx.app).apply {
+            isFillViewport = true
+            clipToPadding = false
+        }
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val col = LinearLayout(ctx.app)
         col.orientation = LinearLayout.VERTICAL
-        col.setPadding(theme.gutter, theme.px(28f), theme.gutter, theme.px(56f))
+        col.setPadding(theme.gutter, theme.px(30f), theme.gutter, theme.px(64f))
         scroll.addView(col)
 
+        addEyebrow(ctx, col, "DEVICE SETUP")
         col.addView(
-            Views.text(ctx, "h2", 44f, theme.ink, "Set up this TV", bold = true),
+            Views.text(ctx, "h2", 48f, theme.ink, "Choose how this TV streams", bold = true),
             lp(0),
         )
         col.addView(
             Views.text(
                 ctx, "sub", 22f, theme.ink2,
-                "Scenix streams from a hub: a small server on a machine you already own. " +
-                    "A TV with no hub can still run on its own, pulling its own content from addons.",
-                maxLines = 3,
+                "Use a Hub for a shared, always-on library, or keep this TV independent with its own sources.",
+                maxLines = 2,
             ),
-            lp(theme.px(8f)),
+            lp(theme.px(7f)),
         )
 
         // A paired TV that reopens setup needs to know what it is currently using before it can
@@ -86,48 +89,49 @@ object PairingScreen {
             backend == Prefs.BACKEND_HUB -> "Currently connected to $currentHub."
             else -> ""
         }
-        if (current.isNotBlank()) infoRow(ctx, col, current)
+        if (current.isNotBlank()) connectionPanel(ctx, col, current)
 
         // ---- hubs announcing themselves -------------------------------------------------------
-        section(ctx, col, "Hubs on this network")
+        section(ctx, col, "HUB MODE")
+        infoRow(
+            ctx,
+            col,
+            "A Hub keeps profiles, source health and TV settings in one place. It is the recommended choice for a shared home.",
+        )
         if (HubDiscovery.isScanning()) {
-            infoRow(ctx, col, "Looking for hubs on this network\u2026")
+            infoRow(ctx, col, "Looking for Hubs on this network\u2026")
         } else {
             val found = ctx.prefs.discoveredHubs()
             if (found.isEmpty()) {
-                infoRow(ctx, col, "Nothing is announcing itself. A hub answers a search on its own, so start the hub and search again.")
+                quietState(
+                    ctx,
+                    col,
+                    "No Hub discovered yet",
+                    "Start your Hub, then search again. You can also connect with an address below.",
+                )
             }
             for (hub in found) hubRow(ctx, col, hub, host)
         }
-        actionRow(ctx, col, "Search again", "", "Run") { scan(host) }
+        actionRow(ctx, col, "Find Hubs on this network", "Discovery only — no connection is made", "SEARCH") { scan(host) }
 
         // ---- or an address nobody announced ---------------------------------------------------
-        section(ctx, col, "Or type an address")
+        section(ctx, col, "CONNECT MANUALLY")
         addressField(ctx, col, host)
 
-        // ---- installing a hub, for someone who has never had one ------------------------------
-        section(ctx, col, "First time? Install a hub")
+        // ---- or no hub at all -----------------------------------------------------------------
+        section(ctx, col, "STANDALONE MODE")
+        standaloneCard(ctx, col, host)
         infoRow(
             ctx, col,
-            "1. Pick a computer that can stay on and install Node.js 18 or newer.\n" +
-                "2. Copy Scenix there and run:  cd hub && node index.js\n" +
-                "3. Open http://<that-computer>:8788 in a browser; add your sources and profiles there.\n" +
-                "4. Come back here, press Search again, or type that address above.",
-        )
-        infoRow(
-            ctx, col,
-            "Both devices must be on the same network. Allow TCP 8788 and UDP 1900 through the " +
-                "computer's firewall; the hub prints its address when it starts.",
+            "Standalone plays direct HTTP sources managed on this TV. It does not provide a shared browser control centre, P2P copies or Live TV.",
         )
 
-        // ---- or no hub at all -----------------------------------------------------------------
-        section(ctx, col, "Or no hub")
-        actionRow(ctx, col, "Keep this TV on its own", "this app becomes the backend", "Start") {
-            goStandalone(host)
-        }
+        // ---- installing a hub, for someone who has never had one ------------------------------
+        section(ctx, col, "NEW TO HUBS?")
         infoRow(
-            ctx, col,
-            "On its own this TV plays direct HTTP links \u2014 no P2P copies, no live TV. What it can show comes from addons you add in Settings.",
+            ctx,
+            col,
+            "Run the Hub on a computer that can stay on, then open its web control centre to manage profiles and sources. Return here to search or enter its address.",
         )
 
         // A screen that opens onto an empty list is a screen that looks broken, so the first render
@@ -188,51 +192,88 @@ object PairingScreen {
 
     private fun hubRow(ctx: AppContext, col: LinearLayout, hub: HubAddress, host: ScreenHost) {
         val theme = ctx.theme
-        val row = LinearLayout(ctx.app)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
-        row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
-        row.isFocusable = true
-        row.isClickable = true
-
-        col2(
-            ctx, row,
-            Views.text(ctx, "li", 23f, theme.ink, hub.display(), bold = true, maxLines = 1),
-            Views.text(ctx, "liMeta", 19f, theme.ink2, hub.url, maxLines = 1),
-        )
-        val go = Views.text(ctx, "li", 21f, theme.brand, "Use this hub", bold = true)
-        val glp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        glp.marginStart = theme.px(24f)
-        row.addView(go, glp)
-
-        row.setOnClickListener { chooseHub(host, hub.url, hub.name) }
-        row.setOnFocusChangeListener { v, has ->
-            // The focused plate deepens the row's own fill (never a dark slab under dark ink —
-            // owner round 8: content vanished on the black plate), and the ring stays rounded.
-            v.background = if (has) {
-                Views.rounded(theme.colorOr("listFillFocused", theme.color("surfHover", "#2F2F2F")),
-                    theme.radius("listItem", 6f))
-            } else Views.rounded(theme.surface, theme.radius("listItem", 6f))
-            v.foreground = if (has) {
-                Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
-            } else null
+        val radius = theme.radius("panel", 18f)
+        val card = LinearLayout(ctx.app).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(28f), theme.px(20f), theme.px(28f), theme.px(18f))
+            background = panelFill(ctx, radius)
+            isFocusable = true
+            isClickable = true
+            contentDescription = "${hub.display()}. Discovered Hub at ${hub.url}. Press Select to connect."
         }
-        col.addView(row, lp(theme.px(8f)))
+        val top = LinearLayout(ctx.app).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        top.addView(
+            Views.text(ctx, "li", 26f, theme.ink, hub.display(), bold = true, maxLines = 1),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        val discovered = Views.text(ctx, "meta", 15f, theme.brand, "DISCOVERED", bold = true)
+        discovered.letterSpacing = 0.12f
+        discovered.setPadding(theme.px(13f), theme.px(7f), theme.px(13f), theme.px(7f))
+        discovered.background = Views.rounded(theme.colorOr("chipBg", theme.surface2), theme.radius("chip", 12f))
+        top.addView(discovered)
+        card.addView(top)
+        card.addView(
+            Views.text(ctx, "liMeta", 20f, theme.ink2, hub.url, maxLines = 1),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(8f)
+            },
+        )
+        val action = Views.text(ctx, "meta", 17f, theme.brand, "CONNECT THIS TV  ›", bold = true)
+        action.letterSpacing = 0.08f
+        card.addView(
+            action,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(17f)
+            },
+        )
+        Focus.attach(
+            card,
+            card,
+            ctx,
+            radius,
+            scale = false,
+            animateScale = false,
+            elevate = false,
+            glowInset = theme.focusGlowInsetSm,
+            control = true,
+            onClick = { chooseHub(host, hub.url, hub.name) },
+        )
+        col.addView(card, lp(theme.px(10f)))
     }
 
     /** The typed-address case: a hub on another network, or one that has not been told to announce. */
     private fun addressField(ctx: AppContext, col: LinearLayout, host: ScreenHost) {
         val theme = ctx.theme
+        val radius = theme.radius("panel", 18f)
         val box = LinearLayout(ctx.app)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
-        box.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
+        box.setPadding(theme.px(28f), theme.px(22f), theme.px(28f), theme.px(24f))
+        box.background = panelFill(ctx, radius)
         col.addView(box, lp(theme.px(10f)))
 
+        val overline = Views.text(ctx, "meta", 15f, theme.brand, "HUB ADDRESS", bold = true)
+        overline.letterSpacing = 0.12f
+        box.addView(overline)
         box.addView(
-            Views.text(ctx, "li", 22f, theme.ink2, "Hub address"),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            Views.text(ctx, "li", 27f, theme.ink, "Connect a Hub by address", bold = true),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(6f)
+            },
+        )
+        box.addView(
+            Views.text(ctx, "liMeta", 19f, theme.ink2, "Use this when the Hub is on another network or is not announcing itself.", maxLines = 2),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(5f)
+            },
+        )
+        box.addView(
+            Views.text(ctx, "li", 19f, theme.ink2, "Hub address"),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(20f)
+            },
         )
 
         val field = EditText(ctx.app)
@@ -241,15 +282,27 @@ object PairingScreen {
         field.setTextColor(theme.ink)
         field.setHintTextColor(theme.ink3)
         field.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 22f))
-        field.background = Views.rounded(theme.surface2, theme.radius("field", 6f), theme.px(1f), theme.line)
-        field.setPadding(theme.px(16f), theme.px(12f), theme.px(16f), theme.px(12f))
+        field.background = Views.rounded(theme.surface2, theme.radius("field", 8f), theme.px(1f), theme.line)
+        field.setPadding(theme.px(18f), theme.px(13f), theme.px(18f), theme.px(13f))
+        field.minHeight = theme.px(58f)
+        field.setSingleLine(true)
         val inputType = android.text.InputType.TYPE_CLASS_TEXT or
             android.text.InputType.TYPE_TEXT_VARIATION_URI or
             android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         field.inputType = inputType
         val flp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        flp.topMargin = theme.px(10f)
+        flp.topMargin = theme.px(9f)
         box.addView(field, flp)
+        Focus.attach(
+            field,
+            field,
+            ctx,
+            theme.radius("field", 8f),
+            scale = false,
+            animateScale = false,
+            elevate = false,
+            control = true,
+        )
 
         var current = field.text?.toString() ?: ""
         field.addTextChangedListener(object : TextWatcher {
@@ -262,7 +315,7 @@ object PairingScreen {
         // through the WebView's auth handler, so the page never sees it. Blank means the old open-LAN
         // behaviour, and the field stays out of the way.
         box.addView(
-            Views.text(ctx, "li", 20f, theme.ink2, "Access token (only if your hub asks)"),
+            Views.text(ctx, "li", 19f, theme.ink2, "Access token (only if your Hub asks)"),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = theme.px(12f)
             },
@@ -273,8 +326,10 @@ object PairingScreen {
         token.setTextColor(theme.ink)
         token.setHintTextColor(theme.ink3)
         token.setTextSize(TypedValue.COMPLEX_UNIT_PX, theme.type("li", 21f))
-        token.background = Views.rounded(theme.surface2, theme.radius("field", 6f), theme.px(1f), theme.line)
-        token.setPadding(theme.px(16f), theme.px(10f), theme.px(16f), theme.px(10f))
+        token.background = Views.rounded(theme.surface2, theme.radius("field", 8f), theme.px(1f), theme.line)
+        token.setPadding(theme.px(18f), theme.px(12f), theme.px(18f), theme.px(12f))
+        token.minHeight = theme.px(54f)
+        token.setSingleLine(true)
         token.inputType = android.text.InputType.TYPE_CLASS_TEXT or
             android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or
             android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -286,6 +341,16 @@ object PairingScreen {
         val tlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         tlp.topMargin = theme.px(8f)
         box.addView(token, tlp)
+        Focus.attach(
+            token,
+            token,
+            ctx,
+            theme.radius("field", 8f),
+            scale = false,
+            animateScale = false,
+            elevate = false,
+            control = true,
+        )
 
         val row = LinearLayout(ctx.app)
         row.orientation = LinearLayout.HORIZONTAL
@@ -293,9 +358,9 @@ object PairingScreen {
         val slp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         slp.topMargin = theme.px(14f)
 
-        val save = Views.text(ctx, "button", 21f, theme.onBrand, "Connect", bold = true, gravity = Gravity.CENTER)
-        save.setPadding(theme.px(22f), theme.px(10f), theme.px(22f), theme.px(10f))
-        save.background = Views.rounded(theme.brand, theme.radius("button", 6f))
+        val save = Views.text(ctx, "button", 20f, theme.onBrand, "CONNECT HUB", bold = true, gravity = Gravity.CENTER)
+        save.setPadding(theme.px(24f), theme.px(12f), theme.px(24f), theme.px(12f))
+        save.background = Views.rounded(theme.brand, theme.radius("button", 8f))
         save.isFocusable = true
         save.setOnClickListener {
             val url = HubDiscovery.normalise(current)
@@ -307,7 +372,16 @@ object PairingScreen {
                 chooseHub(host, url, "")
             }
         }
-        Focus.attach(save, save, ctx, theme.radius("button", 6f), scale = false)
+        Focus.attach(
+            save,
+            save,
+            ctx,
+            theme.radius("button", 8f),
+            scale = false,
+            animateScale = false,
+            elevate = false,
+            control = true,
+        )
         row.addView(save, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         if (addressError != null) {
@@ -319,19 +393,132 @@ object PairingScreen {
         box.addView(row, slp)
     }
 
-    // ---- row builders, the same shapes Settings uses ------------------------------------------
+    // ---- setup surface ------------------------------------------------------------------------
+
+    private fun addEyebrow(ctx: AppContext, col: LinearLayout, label: String) {
+        val eyebrow = Views.text(ctx, "meta", 16f, ctx.theme.brand, label, bold = true)
+        eyebrow.letterSpacing = 0.16f
+        col.addView(eyebrow, lp(0))
+    }
+
+    private fun panelFill(ctx: AppContext, radius: Int) = Views.rounded(
+        ctx.theme.colorOr("settingsPanel", ctx.theme.surface),
+        radius,
+        maxOf(1, ctx.theme.px(1f)),
+        ctx.theme.colorOr("settingsPanelStroke", ctx.theme.line),
+    )
+
+    private fun connectionPanel(ctx: AppContext, col: LinearLayout, value: String) {
+        val theme = ctx.theme
+        val radius = theme.radius("panel", 18f)
+        val panel = LinearLayout(ctx.app).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(28f), theme.px(18f), theme.px(28f), theme.px(18f))
+            background = panelFill(ctx, radius)
+        }
+        val label = Views.text(ctx, "meta", 15f, theme.brand, "CURRENT CONNECTION", bold = true)
+        label.letterSpacing = 0.13f
+        panel.addView(label)
+        panel.addView(
+            Views.text(ctx, "li", 23f, theme.ink, value, bold = true, maxLines = 2),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(6f)
+            },
+        )
+        col.addView(panel, lp(theme.px(18f)))
+    }
+
+    private fun quietState(ctx: AppContext, col: LinearLayout, title: String, detail: String) {
+        val theme = ctx.theme
+        val panel = LinearLayout(ctx.app).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(28f), theme.px(18f), theme.px(28f), theme.px(18f))
+            background = Views.rounded(
+                theme.colorOr("chipBg", theme.surface2),
+                theme.radius("panel", 18f),
+                maxOf(1, theme.px(1f)),
+                theme.line,
+            )
+            contentDescription = "$title. $detail"
+        }
+        panel.addView(Views.text(ctx, "li", 23f, theme.ink, title, bold = true))
+        panel.addView(
+            Views.text(ctx, "liMeta", 19f, theme.ink2, detail, maxLines = 3),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(6f)
+            },
+        )
+        col.addView(panel, lp(theme.px(10f)))
+    }
+
+    private fun standaloneCard(ctx: AppContext, col: LinearLayout, host: ScreenHost) {
+        val theme = ctx.theme
+        val radius = theme.radius("panel", 18f)
+        val card = LinearLayout(ctx.app).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(theme.px(28f), theme.px(22f), theme.px(28f), theme.px(20f))
+            background = panelFill(ctx, radius)
+            isFocusable = true
+            isClickable = true
+            contentDescription = "Run on this TV. Standalone mode. Press Select to start standalone mode."
+        }
+        val label = Views.text(ctx, "meta", 15f, theme.brand, "RUN ON THIS TV", bold = true)
+        label.letterSpacing = 0.13f
+        card.addView(label)
+        card.addView(
+            Views.text(ctx, "li", 28f, theme.ink, "Keep this TV independent", bold = true),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(7f)
+            },
+        )
+        card.addView(
+            Views.text(ctx, "liMeta", 19f, theme.ink2, "Add sources here and watch directly from this television — no second machine required.", maxLines = 2),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(6f)
+            },
+        )
+        val action = Views.text(ctx, "meta", 17f, theme.brand, "START STANDALONE  ›", bold = true)
+        action.letterSpacing = 0.08f
+        card.addView(
+            action,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(18f)
+            },
+        )
+        Focus.attach(
+            card,
+            card,
+            ctx,
+            radius,
+            scale = false,
+            animateScale = false,
+            elevate = false,
+            glowInset = theme.focusGlowInsetSm,
+            control = true,
+            onClick = { goStandalone(host) },
+        )
+        col.addView(card, lp(theme.px(10f)))
+    }
 
     private fun section(ctx: AppContext, col: LinearLayout, label: String) {
-        col.addView(Views.text(ctx, "rowTitle", 24f, ctx.theme.ink, label, bold = true), lp(ctx.theme.px(22f)))
+        val title = Views.text(ctx, "rowTitle", 21f, ctx.theme.ink3, label, bold = true)
+        title.letterSpacing = 0.14f
+        col.addView(title, lp(ctx.theme.px(30f)))
     }
 
     private fun infoRow(ctx: AppContext, col: LinearLayout, value: String) {
         val theme = ctx.theme
-        val row = LinearLayout(ctx.app)
-        row.setPadding(theme.px(20f), theme.px(12f), theme.px(20f), theme.px(12f))
-        row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
-        row.addView(Views.text(ctx, "li", 21f, theme.ink2, value, maxLines = 6))
-        col.addView(row, lp(theme.px(8f)))
+        val row = LinearLayout(ctx.app).apply {
+            setPadding(theme.px(28f), theme.px(16f), theme.px(28f), theme.px(16f))
+            background = Views.rounded(
+                theme.colorOr("chipBg", theme.surface2),
+                theme.radius("panel", 18f),
+                maxOf(1, theme.px(1f)),
+                theme.line,
+            )
+        }
+        row.addView(Views.text(ctx, "liMeta", 19f, theme.ink2, value, maxLines = 4))
+        col.addView(row, lp(theme.px(10f)))
     }
 
     private fun actionRow(
@@ -343,42 +530,46 @@ object PairingScreen {
         onClick: () -> Unit,
     ) {
         val theme = ctx.theme
-        val row = LinearLayout(ctx.app)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), theme.px(14f))
-        row.background = Views.rounded(theme.surface, theme.radius("listItem", 6f))
-        row.isFocusable = true
-        row.isClickable = true
-
-        row.addView(
-            Views.text(ctx, "li", 23f, theme.ink, label, bold = true),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
+        val radius = theme.radius("panel", 18f)
+        val row = LinearLayout(ctx.app).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(theme.px(28f), theme.px(18f), theme.px(28f), theme.px(18f))
+            background = panelFill(ctx, radius)
+            isFocusable = true
+            isClickable = true
+            contentDescription = "$label. $value. Press Select to $action."
+        }
+        val copy = LinearLayout(ctx.app).apply { orientation = LinearLayout.VERTICAL }
+        copy.addView(Views.text(ctx, "li", 24f, theme.ink, label, bold = true))
         if (value.isNotBlank()) {
-            row.addView(
-                Views.text(ctx, "liMeta", 20f, theme.ink2, value, maxLines = 1),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            copy.addView(
+                Views.text(ctx, "liMeta", 18f, theme.ink2, value, maxLines = 2),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = theme.px(5f)
+                },
             )
         }
+        row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val actionView = Views.text(ctx, "meta", 16f, theme.brand, action, bold = true, gravity = Gravity.END)
+        actionView.letterSpacing = 0.08f
         row.addView(
-            Views.text(ctx, "li", 21f, theme.brand, action, bold = true),
+            actionView,
             marginLp(theme.px(24f)),
         )
-
-        row.setOnClickListener { onClick() }
-        row.setOnFocusChangeListener { v, has ->
-            // The focused plate deepens the row's own fill (never a dark slab under dark ink —
-            // owner round 8: content vanished on the black plate), and the ring stays rounded.
-            v.background = if (has) {
-                Views.rounded(theme.colorOr("listFillFocused", theme.color("surfHover", "#2F2F2F")),
-                    theme.radius("listItem", 6f))
-            } else Views.rounded(theme.surface, theme.radius("listItem", 6f))
-            v.foreground = if (has) {
-                Views.ring(theme.focusRingColor, theme.radius("listItem", 6f), theme.focusRingPx)
-            } else null
-        }
-        col.addView(row, lp(theme.px(8f)))
+        Focus.attach(
+            row,
+            row,
+            ctx,
+            radius,
+            scale = false,
+            animateScale = false,
+            elevate = false,
+            glowInset = theme.focusGlowInsetSm,
+            control = true,
+            onClick = onClick,
+        )
+        col.addView(row, lp(theme.px(10f)))
     }
 
     /** Two lines stacked inside a horizontal row: the name, and the address under it. */

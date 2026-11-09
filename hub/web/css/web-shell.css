@@ -1,0 +1,174 @@
+/*
+ * Browser shell refinements
+ *
+ * The product has one token source and one family of theme packs.  This file intentionally does
+ * not invent a second palette or a desktop-only card system: it only adapts the controls and
+ * management surfaces when a real fine pointer is present.  A TV browser stays on the authored
+ * remote-first layer above; a laptop or desktop keeps the same theme, art direction and content.
+ */
+
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --web-page-gutter: clamp(24px, 4vw, 76px);
+    --web-settings-rail: clamp(214px, 20vw, 292px);
+    --web-settings-gap: clamp(20px, 3vw, 48px);
+    --web-focus-outline: max(2px, var(--ring-w));
+  }
+
+  /* Native browser affordances without changing the remote focus geometry or moving a control. */
+  button:not([disabled]),
+  [data-f]:not([disabled]),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  :where(button, a, input, select, textarea, [data-f], [role="button"]):focus-visible {
+    outline: var(--web-focus-outline) solid var(--focus-ring);
+    outline-offset: 3px;
+  }
+
+  .mbox:focus-visible,
+  .mbox.pin:focus-visible {
+    outline: var(--web-focus-outline) solid var(--focus-ring);
+    outline-offset: 4px;
+  }
+
+  /* Make scrollable browser regions discoverable instead of inheriting the TV's hidden bars. */
+  .screen,
+  .settings-rail,
+  .settings-pane,
+  .mbox.source-detail,
+  .wlist {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+
+  .screen::-webkit-scrollbar,
+  .settings-rail::-webkit-scrollbar,
+  .settings-pane::-webkit-scrollbar,
+  .mbox.source-detail::-webkit-scrollbar,
+  .wlist::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .screen::-webkit-scrollbar-thumb,
+  .settings-rail::-webkit-scrollbar-thumb,
+  .settings-pane::-webkit-scrollbar-thumb,
+  .mbox.source-detail::-webkit-scrollbar-thumb,
+  .wlist::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  .screen {
+    scroll-padding-top: calc(var(--nav-h) + 20px);
+  }
+
+  /* Settings is the browser's control centre: a pinned, readable rail and one bounded content column,
+     rather than a TV canvas scaled down into a long, unfocused surface. */
+  .settings-shell {
+    grid-template-columns: var(--web-settings-rail) minmax(0, 860px);
+    justify-content: start;
+    gap: var(--web-settings-gap);
+  }
+
+  .settings-rail {
+    padding: 24px 18px 40px var(--web-page-gutter);
+    border-inline-end: 1px solid var(--line);
+    overscroll-behavior: contain;
+  }
+
+  .settings-pane {
+    padding: 24px var(--web-page-gutter) 64px 0;
+    scroll-padding-bottom: 32px;
+  }
+
+  .settings-section {
+    width: min(100%, 860px);
+  }
+
+  /* The compact navigation keeps its theme's own mark and colours; pointer hover is only a state layer,
+     never a scale or positional transition that could make a mouse click jitter. */
+  .nav-item,
+  .sitem,
+  .settings-pane .li,
+  .source-directory-lane,
+  .settings-pane .source-directory-card,
+  .source-detail-ack {
+    transition-property: color, background-color, border-color, box-shadow, opacity;
+  }
+
+  .nav-item:hover:not(.on),
+  .sitem:hover:not(.on) {
+    color: var(--ink);
+    background: color-mix(in srgb, var(--surface2) 82%, transparent);
+  }
+
+  .settings-pane .li.act:hover,
+  .source-directory-lane:hover,
+  .settings-pane .source-directory-card:hover,
+  .source-detail-ack:hover {
+    background: var(--surface3);
+    border-color: var(--border);
+  }
+
+  .settings-pane .li.act:hover .chev,
+  .source-directory-lane:hover .source-directory-lane-note {
+    color: var(--ink1);
+  }
+
+  .settings-pane .li.act:focus-visible,
+  .source-directory-lane:focus-visible,
+  .settings-pane .source-directory-card:focus-visible,
+  .source-detail-ack:focus-visible {
+    outline-offset: 4px;
+  }
+
+  /* Directory descriptions carry important provenance and capability information.  The TV rail uses a
+     one-line scan; on a browser the available width is used for a second readable line instead of hiding it. */
+  .source-directory-lane-note {
+    display: -webkit-box;
+    overflow: hidden;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .source-directory-card-name,
+  .source-directory-card-description,
+  .source-directory-tag,
+  .source-directory-version {
+    overflow-wrap: anywhere;
+  }
+
+  /* Route-aware chrome: a management page should not have the transparent home-billboard header over
+     it. `:has()` is intentionally additive; browsers without it retain the existing safe gradient. */
+  #stage:has(.screen.settings) .nav {
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+/* The rail remains a two-column map while it has room; below this point the remote-first responsive rules
+ * continue to own the layout.  Keeping the breakpoint outside the pointer query prevents a TV panel from
+ * unexpectedly receiving desktop proportions merely because it is wide. */
+@media (min-width: 1120px) and (hover: hover) and (pointer: fine) {
+  .settings-pane .source-directory-results {
+    max-width: 760px;
+  }
+}
+
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) and (prefers-reduced-motion: reduce) {
+  .nav-item,
+  .sitem,
+  .settings-pane .li,
+  .source-directory-lane,
+  .settings-pane .source-directory-card,
+  .source-detail-ack {
+    transition-duration: 1ms;
+  }
+}

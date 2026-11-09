@@ -129,14 +129,20 @@ object Focus {
             }
             else -> Views.ring(ringColor, ringRadiusPx, ringWidth)
         }
-        val plain = Views.ring(android.graphics.Color.TRANSPARENT, ringRadiusPx, 0)
         val base = ringOn?.background
+        // A transparent foreground still creates a RenderNode draw pass for every unfocused card.
+        // That is invisible work on a shelf or source directory: the old implementation installed
+        // one on every ViewGroup merely to clear the focus ring. Preserve any real foreground and
+        // restore it on blur instead, so idle cards draw exactly their authored layers and nothing
+        // else. This is especially important on the 2 GB target where a focus walk otherwise
+        // invalidates a long stack of transparent full-width surfaces.
+        val baseForeground = ringOn?.foreground
         // Foreground is the right layer for a container whose children reach its edges (a poster
         // card): it paints over them. It is the wrong layer for a TextView on this Android 11 panel,
         // whose foreground never reached the screen, so those views get a background LayerDrawable
         // instead. Both are the same white ring to the viewer.
         val onForeground = ringOn is ViewGroup
-        if (onForeground) ringOn?.foreground = plain
+        if (onForeground) ringOn?.foreground = baseForeground
 
         focusable.isFocusable = true
         focusable.isFocusableInTouchMode = false
@@ -144,7 +150,7 @@ object Focus {
         fun paintRing(focused: Boolean) {
             val target = ringOn ?: return
             if (onForeground) {
-                target.foreground = if (focused) ring else plain
+                target.foreground = if (focused) ring else baseForeground
                 return
             }
             target.background = when {

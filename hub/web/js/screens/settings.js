@@ -41,7 +41,8 @@ import { backendName } from '/ui/js/player.js';
 import { session, isLocked } from '/ui/js/state.js';
 import { langList } from '/ui/js/format.js';
 import { withAdultProof } from '/ui/js/profileedit.js';
-import { pushHandler, popHandler, setDigitSink } from '/ui/js/input.js';
+import { ensureSettingsAdmin, withSettingsAdmin } from '/ui/js/adminlock.js';
+import { pushHandler, popHandler } from '/ui/js/input.js';
 
 export function screen(ctx) {
   const root = el('div', { class: 'screen settings' });
@@ -54,6 +55,27 @@ export function screen(ctx) {
   let names = {};          // /app/v1/settings → languageNames, supplied by the hub
   let prefs = null;        // /app/v1/prefs → prefs
   let installed = [];      // /app/v1/addons → addons
+  let reviewed = [];       // /app/v1/addon-registry → vetted source metadata only
+  let reviewedDirectory = null; // optional richer projection; legacy hubs only return `reviewed`
+  let reviewedDirectoryState = 'loading'; // ready | refreshing | unavailable
+  let reviewedInstalledHere = new Set(); // a short-lived acknowledgement while a legacy hub lacks entry.installed
+  // Discovery has two explicit trust lanes.  Community data never falls through to the reviewed
+  // registry (or vice versa), even when both happen to describe a source with a similar name.
+  let sourceDirectoryLane = 'curated'; // curated | community
+  let communityDirectory = null; // /app/v1/community-addon-directory → redacted descriptors only
+  let communityDirectoryState = 'loading'; // ready | refreshing | unavailable
+  let communityInstalledHere = new Set(); // bridge an install until the next Hub directory response
+  let sourceDirectoryQuery = '';
+  let sourceDirectoryCategory = '';
+  let sourceDirectoryType = '';
+  let communityDirectoryQuery = '';
+  let communityDirectoryType = '';
+  // Source directories can be much larger than the household's installed list.  Keep the first
+  // interaction bounded: a remote never needs ninety focus stops created before it can choose one,
+  // and a browser never needs to lay out every unfiltered card before the first frame paints.
+  const SOURCE_DIRECTORY_PAGE_SIZE = 12;
+  let reviewedDirectoryVisible = SOURCE_DIRECTORY_PAGE_SIZE;
+  let communityDirectoryVisible = SOURCE_DIRECTORY_PAGE_SIZE;
   let rowList = null;      // /app/v1/settings → rows, when this backend has any to offer
   let liveInfo = null;     // /app/v1/settings → live {channels, groups}, the channel manager's data
   let catalogOptions = null; // /app/v1/settings → catalogOptions, the material for owner-made categories
@@ -62,12 +84,24 @@ export function screen(ctx) {
 
   let sections = [];       // the rail: one entry per section this hub can answer for, built on every paint
   let current = 0;         // which section the pane is showing
-  let diagOpen = false;    // the System pane's advanced step; the readout costs a walk to reach otherwise
+  let currentSectionId = 'overview'; // preserve the owner’s place if an async write triggers a repaint
+  let diagOpen = false;    // the This Hub pane's advanced step; the readout costs a walk to reach otherwise
   let handler = null;      // the Back key, while this screen holds the stage
 
   root.appendChild(el('div', { class: 'page-head' },
     el('h1', { text: 'Settings' }),
     el('div', { class: 'sub', text: 'What your hub is configured to do, and what this profile asks for inside it.' })));
+
+  // The compact control header: which area this is, what it currently holds, and
+  // the trust state of the household. It is not a control — the remote never has
+  // to land on it — and it repaints with the section, the way the television's
+  // own header strip does, so the eye never has to check back left.
+  const strip = el('div', { class: 'context-strip', 'aria-hidden': 'true' },
+    el('span', { class: 'ctx-scope' }),
+    el('span', { class: 'ctx-summary' }),
+    el('span', { class: 'ctx-state' }));
+  root.appendChild(strip);
+  paintContextStrip();
 
   // The rail never scrolls away with its section: the two panes are columns of a grid that fills the
   // screen, and only the right pane scrolls when a section runs long. The ring enters on the rail, so
@@ -78,7 +112,8 @@ export function screen(ctx) {
   pane.appendChild(el('div', { class: 'row-err' }, el('span', { text: 'Reading this hub’s configuration…' })));
 
   // The rail is a selector, not a queue: the pane must always answer to the name the ring is on, or
-  // walking Down past "Live TV" while Playback rows sit under it reads as a broken page. So the section
+  // walking Down past "Watching" while its playback or live-TV rows sit under another label reads as a
+  // broken page. So the section
   // switches the moment the ring lands on a rail item — the same rule every TV settings menu follows,
   // and why the ring never waits for an Enter the viewer has no reason to press.
   // The engine's own focus listener is the hook, not the DOM `focusin` event: the engine moves the ring
@@ -90,7 +125,6 @@ export function screen(ctx) {
     const i = Array.prototype.indexOf.call(rail.children, b);
     if (i >= 0 && i !== current) selectSection(i);
   });
-  root.__dispose = () => onRailFocus();
 
   /* ------------------------------------------------------------------- parts */
 
@@ -194,6 +228,9 @@ export function screen(ctx) {
         paintVal();
       };
       const commit = () => {
+        // A prior write may still be waiting on the Hub or a Settings-PIN prompt.  Do not let a
+        // second dial selection paint an unconfirmed value while that first result is pending.
+        if (busy) { ctx.closeModals(); return; }
         ctx.closeModals();
         setLv(b, show(values[i]));
         write(values[i]);
@@ -264,6 +301,9 @@ export function screen(ctx) {
       box.appendChild(el('div', { class: 'mfoot' },
         (() => { const c = el('button', { class: 'btn line', type: 'button', text: 'Cancel', onclick: () => ctx.closeModals() }); focus.focusable(c); return c; })(),
         (() => { const s = el('button', { class: 'btn white', type: 'button', text: 'Save' }); s.onclick = () => {
+          // As with the dial, reject a second commit before it changes the row's selected array
+          // or displayed summary. The authoritative response will repaint the completed write.
+          if (busy) { ctx.closeModals(); return; }
           ctx.closeModals();
           selected.length = 0;
           Array.prototype.push.apply(selected, chosen);
@@ -319,6 +359,7 @@ export function screen(ctx) {
     b.appendChild(sw);
     b.onclick = async () => {
       if (!write) return ctx.toast('This hub is read-only from a browser');
+      if (busy) return;
       const next = !sw.classList.contains('on');
       sw.classList.toggle('on', next);
       b.setAttribute('aria-checked', next ? 'true' : 'false');
@@ -330,7 +371,7 @@ export function screen(ctx) {
   /* ------------------------------------------------------------------ writes */
 
   async function writePrefs(patch) {
-    if (busy) return;
+    if (busy) return false;
     busy = true;
     let ok = true;
     try {
@@ -351,17 +392,26 @@ export function screen(ctx) {
     }
     busy = false;
     if (!ok) ctx.reload();
+    return ok;
   }
   async function writeSettings(patch) {
-    if (busy) return;
+    if (busy) return false;
     busy = true;
     const next = Object.assign({}, setting, patch);
     let ok = true;
+    let cancelled = false;
     let saved = null;
-    try { saved = await api.saveSettings({ settings: next }); }
+    try {
+      saved = await withSettingsAdmin(ctx,
+        () => api.saveSettings({ settings: next }), setting && setting.lock);
+      if (saved === null) { ok = false; cancelled = true; }
+    }
     catch (e) {
       // Older builds accept the object flat rather than wrapped in `settings`.
-      try { saved = await api.saveSettings(next); } catch (e2) { ok = false; }
+      try {
+        saved = await withSettingsAdmin(ctx, () => api.saveSettings(next), setting && setting.lock);
+        if (saved === null) { ok = false; cancelled = true; }
+      } catch (e2) { ok = false; }
     }
     if (ok) {
       setting = next;
@@ -380,8 +430,17 @@ export function screen(ctx) {
         if (debridInfo) debridInfo.tokenSet = tokenSet;
       }
       ctx.toast('Saved on the hub');
-    } else ctx.toast('The hub would not take that change');
+      busy = false;
+      return true;
+    }
+    // Pick, checklist and switch rows intentionally update their local affordance before their
+    // asynchronous writer returns. A cancelled Settings-PIN pad or a refused/expired capability must
+    // therefore rebuild from the Hub rather than leave a value that only looked saved. Clear `busy`
+    // first: the replacement screen can immediately accept the next deliberate action.
+    ctx.toast(cancelled ? 'That change was not saved' : 'The hub would not take that change');
     busy = false;
+    ctx.reload();
+    return false;
   }
 
   /* --------------------------------------------------------------- the pane */
@@ -393,8 +452,14 @@ export function screen(ctx) {
    * opacity only, the same language the rest of the product moves in.
    */
   function selectSection(i, { refocus = false } = {}) {
+    if (!sections[i]) return;
     current = i;
-    for (let k = 0; k < rail.children.length; k++) rail.children[k].classList.toggle('on', k === i);
+    currentSectionId = sections[i].id;
+    for (let k = 0; k < rail.children.length; k++) {
+      const selected = k === i;
+      rail.children[k].classList.toggle('on', selected);
+      rail.children[k].setAttribute('aria-selected', selected ? 'true' : 'false');
+    }
     // The section itself is not a nav band: a band that spans the whole pane walks members in document
     // order, which reads as Down moving sideways along a chip line. Each row carries its own small band
     // (`data-nav="h"` on the row button), and bandStep between those bands is the row-by-row walk the
@@ -409,19 +474,64 @@ export function screen(ctx) {
     pane.appendChild(node);
     // Rows rise in sequence as a section enters: the same staggered fade the home shelves use, so the
     // pane arrives as a stack of things rather than a wall that pops into being all at once.
-    const movers = node.querySelectorAll('.pane-head, .sgroup > h3, .li');
+    // Directory entries can be a large remote catalogue. They render at final geometry: staging the
+    // first fourteen cards made a D-pad switch look like a late, uneven list on lower-memory TVs.
+    const movers = node.querySelectorAll('.pane-head, .sgroup > h3, .li:not(.source-directory-card)');
     for (let k = 0; k < movers.length && k < 14; k++) {
       movers[k].classList.add('rise');
       movers[k].style.animationDelay = `${Math.min(420, k * 35)}ms`;
     }
     pane.scrollTop = 0;
     if (refocus) focus.focusDefault(rail.children[i]);
+    paintContextStrip();
+  }
+
+  /**
+   * The header strip is the section map: scope, what the area currently holds,
+   * and the trust state. Every value is read from state the page already
+   * loaded; nothing new is fetched, and nothing here can be pressed.
+   */
+  function paintContextStrip() {
+    const scopeEl = strip.querySelector('.ctx-scope');
+    const summaryEl = strip.querySelector('.ctx-summary');
+    const stateEl = strip.querySelector('.ctx-state');
+    if (!scopeEl) return;
+    const locked = !!(setting && setting.lock && setting.lock.enabled);
+    const isKid = profile && profile.kind === 'kids';
+    const backend = caps.preview === true ? 'Local preview'
+      : backendName() === 'native' ? 'This TV' : 'Hub';
+    const firstName = (list) => (Array.isArray(list) && list[0] ? (names[list[0]] || list[0]) : '—');
+    const audio = prefs ? firstName(prefs.audioLanguages) : '—';
+    const subs = prefs ? firstName(prefs.subtitleLanguages) : '—';
+    const quality = prefs && prefs.qualityCap != null ? String(prefs.qualityCap) : 'auto';
+    const selectedTheme = themeChoices.find((choice) => choice.id === (setting && setting.theme));
+    const themeName = (selectedTheme && selectedTheme.name) || (setting && setting.theme) || 'Default';
+    const hidden = new Set(((setting && setting.rows && setting.rows.hidden) || []));
+    const visibleRows = rowList ? rowList.filter((entry) => !hidden.has(entry.id)).length : 0;
+    const pinState = locked ? 'PIN ON' : 'PIN OFF';
+    const map = {
+      overview: ['SETTINGS', `Audio ${audio} · ${backend}`, isKid ? 'CHILD PROFILE' : pinState],
+      watching: ['PROFILE PLAYBACK', `Audio ${audio} · Subtitles ${subs}`, quality],
+      appearance: ['THIS TV', themeName, String(profile.name || 'Default profile')],
+      home: ['HOME ROWS', `${visibleRows} visible`, 'ADMIN'],
+      sources: ['HUB SOURCES', backend, 'ADMIN'],
+      household: ['SHARED HOUSEHOLD', 'Library, live TV and profiles', locked ? 'PIN ON' : 'ADMIN'],
+      access: ['ACCESS & SAFETY', 'Administrator settings', pinState],
+      hub: ['THIS HUB', backend, 'ADMIN'],
+    };
+    const id = sections[current] && sections[current].id;
+    const entry = map[id] || ['SETTINGS', backend, isKid ? 'CHILD PROFILE' : pinState];
+    scopeEl.textContent = entry[0];
+    summaryEl.textContent = entry[1];
+    stateEl.textContent = entry[2];
   }
 
   function paint() {
+    const previousSectionId = currentSectionId;
     sections = availableSections();
-    if (!sections.length) sections = [{ id: 'system', icon: 'gear', title: 'System', build: buildSystem }];
-    if (current >= sections.length) current = 0;
+    if (!sections.length) sections = [{ id: 'overview', icon: 'home', title: 'Overview', build: buildOverview }];
+    const kept = sections.findIndex((section) => section.id === previousSectionId);
+    current = kept >= 0 ? kept : 0;
 
     rail.textContent = '';
     for (let i = 0; i < sections.length; i++) {
@@ -446,17 +556,166 @@ export function screen(ctx) {
   /** Sections appear only where the hub answered something. An empty rail item is a dead key. */
   function availableSections() {
     const canHub = !!caps.settingsAdmin;
-    const list = [];
-    if (prefs) list.push({ id: 'playback', icon: 'play', title: 'Playback', build: buildPlayback });
-    if (setting && setting.live) list.push({ id: 'live', icon: 'tv', title: 'Live TV', build: buildLive });
+    const list = [{ id: 'overview', icon: 'home', title: 'Overview', build: buildOverview }];
+    if (prefs || (setting && setting.live)) list.push({ id: 'watching', icon: 'play', title: 'Watching', build: buildWatching });
+    if (themeChoices.length) list.push({ id: 'appearance', icon: 'sliders', title: 'Appearance', build: buildAppearance });
     const hasRows = !!(rowList && rowList.length && caps.settingsAdmin);
     const hasCats = !!(setting && canHub && (Array.isArray(catalogOptions) || Array.isArray(setting.categories)));
-    if (hasRows || hasCats) list.push({ id: 'home', icon: 'home', title: 'Home & categories', build: buildHome });
-    if (caps.addonAdmin) list.push({ id: 'addons', icon: 'list', title: 'Add-ons', build: buildAddons });
+    if (hasRows || hasCats) list.push({ id: 'home', icon: 'home', title: 'Home', build: buildHome });
+    if (caps.addonAdmin) list.push({ id: 'sources', icon: 'list', title: 'Sources', build: buildSources });
     const hasHouse = !!caps.profileEdit || !!(setting && setting.debrid);
     if (hasHouse) list.push({ id: 'household', icon: 'user', title: 'Household', build: buildHousehold });
-    list.push({ id: 'system', icon: 'gear', title: 'System', build: buildSystem });
+    if (setting && canHub) list.push({ id: 'access', icon: 'lock', title: 'Access & safety', build: buildAccess });
+    list.push({ id: 'hub', icon: 'gear', title: 'This Hub', build: buildHub });
     return list;
+  }
+
+  /** A summary is useful only when it can take the owner to the setting it describes. */
+  function openSection(id) {
+    const target = sections.findIndex((section) => section.id === id);
+    if (target >= 0) selectSection(target, { refocus: true });
+  }
+
+  function buildOverview(parent) {
+    const g = group('At a glance', 'The household backend, profile, sources, and theme in one quiet place. Nothing on this page changes a setting.');
+    const backend = caps.preview === true ? 'Local preview'
+      : backendName() === 'native' ? 'This TV' : 'Hub';
+    const backendRow = line('Backend', 'Where this browser is getting its library and household settings.');
+    backendRow.appendChild(value(backend));
+    g.appendChild(backendRow);
+
+    const profileRow = line('Watching as', 'The active profile controls safe content and playback preferences.');
+    profileRow.appendChild(value(profile.name || 'Default profile'));
+    g.appendChild(profileRow);
+
+    const activeSources = (installed || []).filter((source) => source && source.enabled !== false).length;
+    const sourceRow = line('Sources', 'Only enabled sources can contribute titles or streams.');
+    sourceRow.appendChild(value(`${activeSources} active`));
+    g.appendChild(sourceRow);
+
+    const selectedTheme = themeChoices.find((theme) => theme.id === (setting && setting.theme));
+    const themeRow = line('Theme', 'The same registered theme contract is used by compatible screens.');
+    themeRow.appendChild(value((selectedTheme && selectedTheme.name) || (setting && setting.theme) || 'Default'));
+    g.appendChild(themeRow);
+    parent.appendChild(g);
+
+    const shortcuts = group('Quick links', 'Open the part of the control centre you came to manage.');
+    let shortcutCount = 0;
+    const addShortcut = (id, label, note, valueText) => {
+      if (sections.some((section) => section.id === id)) {
+        openRow(shortcuts, label, note, () => openSection(id), { valueText });
+        shortcutCount += 1;
+      }
+    };
+    addShortcut('watching', 'Playback and live TV', 'Audio, subtitles, quality, buffering, and channels.', 'Open');
+    addShortcut('appearance', 'Appearance', 'Select a shared visual theme for compatible devices.', 'Open');
+    addShortcut('sources', 'Sources', 'Discover, install, and manage the sources this Hub can use.', 'Open');
+    addShortcut('household', 'Household', 'Profiles, kids safety, and household-wide account choices.', 'Open');
+    addShortcut('access', 'Access & safety', 'Protect settings and profile changes with the household PIN.', 'Open');
+    addShortcut('hub', 'This Hub', 'Hub identity, cache, maintenance, and diagnostics.', 'Open');
+    if (shortcutCount) parent.appendChild(shortcuts);
+  }
+
+  function buildWatching(parent) {
+    buildPlayback(parent);
+    buildLive(parent);
+  }
+
+  function buildAppearance(parent) {
+    if (!themeChoices.length) return;
+    const g = group('Theme', 'Choose a look this browser and connected TV both ship. TV-only layouts stay on that television.');
+    pickRow(g, 'Theme', 'Only layouts with synchronized shared tokens appear here. Changing it reloads the browser.', themeChoices.map((theme) => theme.id),
+      (setting && setting.theme) || 'scenix-dark',
+      (id) => { const theme = themeChoices.find((choice) => choice.id === id); return theme ? theme.name : id; },
+      async (id) => {
+        // A refresh is how the web shell applies a new token file. It must follow the Hub's
+        // acknowledgement, never a cancelled PIN pad or a rejected TV-only choice.
+        if (await writeSettings({ theme: id })) window.location.reload();
+      });
+    parent.appendChild(g);
+  }
+
+  /* -------------------------------------------------------------- access */
+
+  function lockError(error, fallback) {
+    return (error && error.body && error.body.error) || fallback;
+  }
+
+  /** Persist the lock state and immediately redraw its single source of truth in the rail. */
+  async function saveSettingsLock(body, note) {
+    const out = await api.saveSettingsLock(body);
+    if (!out || !out.lock) throw new Error('The hub did not return the Settings-lock state');
+    setting = Object.assign({}, setting, { lock: out.lock });
+    if (note) ctx.toast(note);
+    paint();
+    return out;
+  }
+
+  /** The household lock belongs in a small, explicit Access & safety section rather than diagnostics. */
+  function buildAccess(parent) {
+    if (!setting || !canHubSetting()) return;
+    const lock = setting.lock || { enabled: false, pinSet: false };
+    const g = group('Settings lock',
+      'Protects household settings and profile changes on this hub. It stays in this browser only for the current visit.');
+
+    if (lock.enabled === true) {
+      actionRow(g, 'Settings lock', 'On. Changes to household settings and profiles need the household Settings PIN.', {
+        valueText: 'On',
+        actions: () => [{
+          label: 'Change Settings PIN',
+          run: async () => {
+            const fresh = await ctx.enterSettingsPin('Choose a new 4 to 8 digit Settings PIN');
+            if (!fresh) return;
+            try {
+              await withSettingsAdmin(ctx,
+                () => saveSettingsLock({ enabled: true, pin: fresh }, 'Settings PIN changed'), lock);
+            } catch (error) { ctx.toast(lockError(error, 'The hub would not change the Settings PIN')); }
+          },
+        }, {
+          label: 'Turn Settings lock off', danger: true,
+          run: async () => {
+            try {
+              await withSettingsAdmin(ctx,
+                () => saveSettingsLock({ enabled: false }, 'Settings lock turned off'), lock);
+            } catch (error) { ctx.toast(lockError(error, 'The hub would not turn the Settings lock off')); }
+          },
+        }],
+      });
+    } else if (lock.pinSet === true) {
+      actionRow(g, 'Settings lock', 'Off. A Settings PIN is stored and can turn the lock back on.', {
+        valueText: 'Off',
+        actions: () => [{
+          label: 'Turn Settings lock on',
+          run: async () => {
+            const current = await ctx.enterSettingsPin('Enter the existing 4 to 8 digit Settings PIN');
+            if (!current) return;
+            try { await saveSettingsLock({ enabled: true, pinCurrent: current }, 'Settings lock turned on'); }
+            catch (error) { ctx.toast(lockError(error, 'The hub would not turn the Settings lock on')); }
+          },
+        }, {
+          label: 'Change stored Settings PIN',
+          run: async () => {
+            const current = await ctx.enterSettingsPin('Enter the current 4 to 8 digit Settings PIN');
+            if (!current) return;
+            const fresh = await ctx.enterSettingsPin('Choose a new 4 to 8 digit Settings PIN');
+            if (!fresh) return;
+            try {
+              await saveSettingsLock(
+                { enabled: false, pin: fresh, pinCurrent: current }, 'Stored Settings PIN changed',
+              );
+            } catch (error) { ctx.toast(lockError(error, 'The hub would not change the Settings PIN')); }
+          },
+        }],
+      });
+    } else {
+      openRow(g, 'Settings lock', 'Off. Add a 4 to 8 digit Settings PIN to protect household changes.', async () => {
+        const fresh = await ctx.enterSettingsPin('Choose a new 4 to 8 digit Settings PIN');
+        if (!fresh) return;
+        try { await saveSettingsLock({ enabled: true, pin: fresh }, 'Settings lock turned on'); }
+        catch (error) { ctx.toast(lockError(error, 'The hub would not turn the Settings lock on')); }
+      }, { valueText: 'Off' });
+    }
+    parent.appendChild(g);
   }
 
   /* ------------------------------------------------------------------ paint */
@@ -530,7 +789,9 @@ export function screen(ctx) {
       toggle(g3, 'Build an adaptive quality ladder',
         'On: a Play press may return one HLS master with variants transcoded on this hub, so the player can change quality mid-film instead of rebuffering. Off keeps playback copy-only. This costs hub CPU and disk.',
         !!ad.enabled,
-        canHubSetting() ? async (v) => { await writeSettings({ adaptive: Object.assign({}, ad, { enabled: v }) }); paint(); } : null);
+        canHubSetting() ? async (v) => {
+          if (await writeSettings({ adaptive: Object.assign({}, ad, { enabled: v }) })) paint();
+        } : null);
       pickRow(g3, 'Ladder top quality',
         'The highest rung the ladder may offer. The client can lower it further from its own display ceiling; it is never upscaled above the source.',
         [720, 1080, 1440, 2160], Number(ad.maxHeight || 1080),
@@ -588,8 +849,7 @@ export function screen(ctx) {
             : !/^https?:\/\//i.test(v) ? 'That has to start with http:// or https://.' : null),
         });
         if (url === null) return;
-        await writeSettings({ live: Object.assign({}, setting.live, { playlist: url }) });
-        paint();
+        if (await writeSettings({ live: Object.assign({}, setting.live, { playlist: url }) })) paint();
       },
       { valueText: canHub ? (setting.live.playlist || 'not set') : (setting.live.playlist || 'no playlist set') });
 
@@ -605,7 +865,7 @@ export function screen(ctx) {
         { valueText: counts });
     }
     if (!setting.live.playlist) {
-      g.appendChild(el('p', { class: 'note', text: 'Set a playlist address first: Settings → Live TV → Live TV playlist.' }));
+      g.appendChild(el('p', { class: 'note', text: 'Set a playlist address first: Settings → Watching → Live TV playlist.' }));
     }
     parent.appendChild(g);
   }
@@ -643,8 +903,7 @@ export function screen(ctx) {
                 label: hidden.has(row.id) ? `Show ${title} on Home` : `Hide ${title} from Home`,
                 run: async () => {
                   if (hidden.has(row.id)) hidden.delete(row.id); else hidden.add(row.id);
-                  await writeRows({ hidden: [...hidden] });
-                  paint();
+                  if (await writeRows({ hidden: [...hidden] })) paint();
                 },
               }];
               if (at > 0) acts.push({
@@ -652,8 +911,7 @@ export function screen(ctx) {
                 run: async () => {
                   const to = seq.slice();
                   to.splice(at, 1); to.splice(at - 1, 0, row.id);
-                  await writeRows({ order: to });
-                  paint();
+                  if (await writeRows({ order: to })) paint();
                 },
               });
               if (at >= 0 && at < seq.length - 1) acts.push({
@@ -661,8 +919,7 @@ export function screen(ctx) {
                 run: async () => {
                   const to = seq.slice();
                   to.splice(at, 1); to.splice(at + 1, 0, row.id);
-                  await writeRows({ order: to });
-                  paint();
+                  if (await writeRows({ order: to })) paint();
                 },
               });
               return acts;
@@ -711,6 +968,9 @@ export function screen(ctx) {
   }
 
   function whyRefused(e, fallback) {
+    if (e && e.status === 403 && e.body && e.body.sessionRequired === true) {
+      return 'The household Settings PIN is needed';
+    }
     return e && e.status === 403 ? 'That is not the current PIN' : fallback;
   }
 
@@ -720,7 +980,9 @@ export function screen(ctx) {
     const digits = await ctx.enterPin(p, current ? 'Choose a new PIN' : 'Choose a PIN');
     if (!digits) return;
     try {
-      await api.updateProfile(p.id, { pin: digits, pinRequired: true, pinCurrent: current });
+      const out = await withSettingsAdmin(ctx,
+        () => api.updateProfile(p.id, { pin: digits, pinRequired: true, pinCurrent: current }), setting && setting.lock);
+      if (out === null) return;
       ctx.toast(`${p.name} now needs that PIN`);
       ctx.reload();
     } catch (e) { ctx.toast(whyRefused(e, 'The hub would not store that PIN')); }
@@ -732,7 +994,9 @@ export function screen(ctx) {
     try {
       // The hub clears the number but leaves the requirement flag behind, which is how a profile ends up
       // "PIN wanted, none set" and a pad that can never be satisfied. Take both off in one request.
-      await api.updateProfile(p.id, { pin: null, pinRequired: false, pinCurrent: current });
+      const out = await withSettingsAdmin(ctx,
+        () => api.updateProfile(p.id, { pin: null, pinRequired: false, pinCurrent: current }), setting && setting.lock);
+      if (out === null) return;
       ctx.toast(`${p.name} no longer needs a PIN`);
       ctx.reload();
     } catch (e) { ctx.toast(whyRefused(e, 'The hub would not remove the PIN')); }
@@ -758,7 +1022,9 @@ export function screen(ctx) {
                   const current = await proofOfLock(p);
                   if (current === null) return;
                   try {
-                    await api.updateProfile(p.id, { kind: kids ? 'adult' : 'kids', pinCurrent: current });
+                    const out = await withSettingsAdmin(ctx,
+                      () => api.updateProfile(p.id, { kind: kids ? 'adult' : 'kids', pinCurrent: current }), setting && setting.lock);
+                    if (out === null) return;
                     ctx.toast(`${p.name} is now a ${kids ? 'standard' : 'kids'} profile`);
                     ctx.reload();
                   } catch (e) { ctx.toast(whyRefused(e, 'The hub would not change that profile')); }
@@ -774,7 +1040,12 @@ export function screen(ctx) {
                 danger: true,
                 run: async () => {
                   // The profile and its preferences go away; what has been watched stays on the hub.
-                  try { await api.deleteProfile(p.id); ctx.toast(`${p.name} removed`); ctx.reload(); }
+                  try {
+                    const out = await withSettingsAdmin(ctx, () => api.deleteProfile(p.id), setting && setting.lock);
+                    if (out === null) return;
+                    ctx.toast(`${p.name} removed`);
+                    ctx.reload();
+                  }
                   catch (e) { ctx.toast('The hub would not remove that profile'); }
                 },
               });
@@ -784,7 +1055,9 @@ export function screen(ctx) {
       }
       openRow(g, 'Add profile', 'A new profile starts with the house defaults.', async () => {
         try {
-          const r = await api.createProfile({ name: 'New profile', kind: 'adult' });
+          const r = await withSettingsAdmin(ctx,
+            () => api.createProfile({ name: 'New profile', kind: 'adult' }), setting && setting.lock);
+          if (r === null) return;
           ctx.toast(r && r.profile ? `${r.profile.name} added — give it a name in the hub’s profile file` : 'Profile added');
           ctx.reload();
         } catch (e) { ctx.toast('The hub would not add a profile'); }
@@ -814,8 +1087,7 @@ export function screen(ctx) {
           // Enabling an account with no provider chosen cannot work. With one adapter available, choose
           // it here so the switch is not a control that silently does nothing.
           const provider = d.provider || (only ? only.id : '');
-          await writeSettings({ debrid: Object.assign({}, d, { enabled: v, provider }) });
-          paint();
+          if (await writeSettings({ debrid: Object.assign({}, d, { enabled: v, provider }) })) paint();
         } : null);
       pickRow(gD, 'Provider', only
         ? 'This build has one debrid adapter installed.'
@@ -845,16 +1117,14 @@ export function screen(ctx) {
                     : v.length < 8 ? 'That looks too short to be an API token.' : null),
                 });
                 if (token === null) return;
-                await writeSettings({ debrid: Object.assign({}, d, { token }) });
-                paint();
+                if (await writeSettings({ debrid: Object.assign({}, d, { token }) })) paint();
               },
             }];
             if (tokenSet) acts.push({
               label: 'Remove the token', danger: true,
               run: async () => {
                 // null is the explicit erase; an empty token from this screen would mean "keep it".
-                await writeSettings({ debrid: Object.assign({}, d, { token: null }) });
-                paint();
+                if (await writeSettings({ debrid: Object.assign({}, d, { token: null }) })) paint();
               },
             });
             return acts;
@@ -872,28 +1142,979 @@ export function screen(ctx) {
 
   /* ----------------------------------------------------------------- add-ons */
 
-  /* The registry is the hub's, so the page shows what it reports rather than assuming a fixed set: an
-     owner installs Torrentio or a catalog on one box and every screen then has to render whatever that
-     box now holds. A built-in row is listed but not removable; anything added over HTTP can be switched
-     off without deleting it, which is the difference between "this source is down tonight" and "I never
-     want this source again". On a remote, on/off and remove are two things that could be done to the
-     same row, so the row opens a choice instead of parking two buttons on it. */
+  /* The source registry is Hub-owned. Reviewed entries are repository-owned declarations rather than a
+     remote marketplace; manual URLs are deliberately separate, advanced, and visibly unreviewed. */
+  function sourceDirectoryString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  function uniqueSourceDirectoryValues(values) {
+    const seen = new Set();
+    for (const value of values || []) {
+      const clean = sourceDirectoryString(value);
+      if (clean) seen.add(clean);
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }
+
+  function sourceDirectoryEntries() {
+    const entries = reviewedDirectory && Array.isArray(reviewedDirectory.entries)
+      ? reviewedDirectory.entries : reviewed;
+    return Array.isArray(entries) ? entries.filter((entry) => entry && typeof entry === 'object') : [];
+  }
+
+  function sourceDirectoryResources(source) {
+    const names = [];
+    for (const resource of (source && Array.isArray(source.resources) ? source.resources : [])) {
+      names.push(typeof resource === 'string' ? resource : resource && resource.name);
+    }
+    return uniqueSourceDirectoryValues(names);
+  }
+
+  function sourceDirectoryTypes(source) {
+    const types = Array.isArray(source && source.types) ? source.types.slice() : [];
+    for (const resource of (source && Array.isArray(source.resources) ? source.resources : [])) {
+      if (resource && typeof resource === 'object' && Array.isArray(resource.types)) types.push(...resource.types);
+    }
+    return uniqueSourceDirectoryValues(types);
+  }
+
+  function sourceDirectoryCategories(source) {
+    return uniqueSourceDirectoryValues(source && Array.isArray(source.categories) ? source.categories : []);
+  }
+
+  function sourceDirectoryLabel(value) {
+    const clean = sourceDirectoryString(value);
+    if (!clean) return 'Source';
+    return clean.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  function sourceDirectoryValues(kind) {
+    const key = kind === 'category' ? 'categories' : 'types';
+    const supplied = reviewedDirectory && reviewedDirectory.filters && Array.isArray(reviewedDirectory.filters[key])
+      ? reviewedDirectory.filters[key] : [];
+    const derived = [];
+    for (const source of sourceDirectoryEntries()) {
+      derived.push(...(kind === 'category' ? sourceDirectoryCategories(source) : sourceDirectoryTypes(source)));
+    }
+    return uniqueSourceDirectoryValues([...supplied, ...derived]);
+  }
+
+  function sourceDirectoryIsInstalled(source) {
+    if (!source) return false;
+    if (source.installed === true || (source.install && source.install.installed === true)) return true;
+    return reviewedInstalledHere.has(String(source.id || ''));
+  }
+
+  function sourceDirectoryInstallUnavailable(source) {
+    return !!(source && source.install && source.install.available === false);
+  }
+
+  /** Config-required sources never turn into a manual-URL path: the only alternative is a short-lived code. */
+  function sourceSetupAvailable(source) {
+    const setup = source && source.install && source.install.setup;
+    return !!(source && source.install && source.install.reason === 'configuration-required'
+      && setup && setup.available === true && setup.method === 'web-code');
+  }
+
+  function sourceDirectoryInstallUnavailableMessage(source) {
+    if (source && source.install && source.install.reason === 'configuration-required') {
+      return sourceSetupAvailable(source)
+        ? 'This source needs browser setup. Start a short-lived setup code; configuration details never appear on the TV.'
+        : 'This source needs setup that this Hub cannot complete yet. Installation is not available from this screen.';
+    }
+    return 'This reviewed source is not available to install from this Hub right now.';
+  }
+
+  function sourceDirectoryDescription(source) {
+    const description = sourceDirectoryString(source && source.description);
+    if (description) return description.slice(0, 320);
+    const types = sourceDirectoryTypes(source);
+    const resources = sourceDirectoryResources(source);
+    if (types.length && resources.length) {
+      return `${types.map(sourceDirectoryLabel).join(' and ')} through ${resources.map(sourceDirectoryLabel).join(' and ')}.`;
+    }
+    return 'The Hub checks this source’s reviewed identity and capability contract during installation.';
+  }
+
+  function sourceDirectoryMatches(source) {
+    if (sourceDirectoryCategory && !sourceDirectoryCategories(source).includes(sourceDirectoryCategory)) return false;
+    if (sourceDirectoryType && !sourceDirectoryTypes(source).includes(sourceDirectoryType)) return false;
+    const query = sourceDirectoryQuery.trim().toLocaleLowerCase();
+    if (!query) return true;
+    const searchable = [
+      source && source.id,
+      source && source.name,
+      source && source.description,
+      ...sourceDirectoryCategories(source),
+      ...sourceDirectoryTypes(source),
+      ...sourceDirectoryResources(source),
+    ].map(sourceDirectoryString).join(' ').toLocaleLowerCase();
+    return searchable.includes(query);
+  }
+
+  function reviewedDirectoryResults() {
+    return sourceDirectoryEntries().filter(sourceDirectoryMatches)
+      .sort((a, b) => String(a.name || a.id || '').localeCompare(String(b.name || b.id || '')));
+  }
+
+  function applyReviewedDirectory(reply) {
+    reviewed = Array.isArray(reply && reply.reviewed) ? reply.reviewed : [];
+    reviewedDirectory = reply && reply.directory && typeof reply.directory === 'object' ? reply.directory : null;
+    // A fresh directory response is authoritative when it supplies install state. The local marker only
+    // bridges legacy Hub responses between a successful install and the next directory read.
+    if (reviewedDirectory && Array.isArray(reviewedDirectory.entries)
+      && reviewedDirectory.entries.some((entry) => entry && Object.prototype.hasOwnProperty.call(entry, 'installed'))) {
+      reviewedInstalledHere.clear();
+    }
+    reviewedDirectoryState = reply ? 'ready' : 'unavailable';
+    resetSourceDirectoryPaging('curated');
+  }
+
+  async function refreshReviewedDirectory() {
+    if (reviewedDirectoryState === 'refreshing') return;
+    reviewedDirectoryState = 'refreshing';
+    try {
+      applyReviewedDirectory(await api.reviewedAddons());
+      ctx.toast('Reviewed source directory refreshed');
+    } catch (e) {
+      reviewedDirectoryState = 'unavailable';
+      ctx.toast('The Hub could not refresh its reviewed source directory');
+    }
+    if (root.isConnected && (!ctx.route || !ctx.route() || ctx.route().name === 'settings')) paint();
+  }
+
+  /* Community entries are intentionally handled as a second, non-endorsed data model.  Do not reuse
+     the reviewed install marker or trust copy here: a similar card shape must never erase the source's
+     provenance from either a mouse or remote viewer. */
+  function communityDirectoryEntries() {
+    return communityDirectory && Array.isArray(communityDirectory.entries)
+      ? communityDirectory.entries.filter((entry) => entry && typeof entry === 'object') : [];
+  }
+
+  function applyCommunityDirectory(reply) {
+    communityDirectory = reply && typeof reply === 'object' ? reply : null;
+    const entries = communityDirectoryEntries();
+    if (communityDirectory && Array.isArray(communityDirectory.entries)) {
+      // The Hub's installed flag wins over the short visit-local acknowledgement after a refresh.
+      if (entries.some((entry) => Object.prototype.hasOwnProperty.call(entry, 'installed'))) {
+        communityInstalledHere.clear();
+      }
+      communityDirectoryState = 'ready';
+    } else {
+      communityDirectoryState = 'unavailable';
+    }
+    resetSourceDirectoryPaging('community');
+  }
+
+  async function refreshCommunityDirectory({ quiet = false } = {}) {
+    if (communityDirectoryState === 'refreshing') return;
+    communityDirectoryState = 'refreshing';
+    try {
+      applyCommunityDirectory(await api.communityAddonDirectory());
+      if (!quiet) ctx.toast('Community source directory refreshed');
+    } catch (e) {
+      communityDirectoryState = 'unavailable';
+      if (!quiet) ctx.toast('The Hub could not refresh its community source directory');
+    }
+    const at = focus.getFocus();
+    if (root.isConnected && sourceDirectoryLane === 'community'
+      && (!ctx.route || !ctx.route() || ctx.route().name === 'settings')
+      && (!at || root.contains(at))) paint();
+  }
+
+  function communityDirectoryTypes() {
+    const supplied = communityDirectory && communityDirectory.filters
+      && Array.isArray(communityDirectory.filters.types) ? communityDirectory.filters.types : [];
+    const derived = [];
+    for (const source of communityDirectoryEntries()) derived.push(...sourceDirectoryTypes(source));
+    return uniqueSourceDirectoryValues([...supplied, ...derived]);
+  }
+
+  function communityDirectoryIsInstalled(source) {
+    if (!source) return false;
+    return source.installed === true || communityInstalledHere.has(String(source.id || ''));
+  }
+
+  function communityDirectoryInstallUnavailable(source) {
+    return !!(source && (source.configurationRequired === true
+      || (source.install && source.install.available === false)));
+  }
+
+  function communityDirectoryInstallUnavailableMessage(source) {
+    if (source && (source.configurationRequired === true
+      || (source.install && source.install.reason === 'configuration-required'))) {
+      return sourceSetupAvailable(source)
+        ? 'This Community source needs browser setup. It remains unreviewed and still requires acknowledgement.'
+        : 'This community source requires configuration that this Hub cannot safely complete. Installation is unavailable here.';
+    }
+    return 'This community source is not currently available to install from this Hub.';
+  }
+
+  function communityDirectoryDescription(source) {
+    const description = sourceDirectoryString(source && source.description);
+    return description.slice(0, 320)
+      || 'A community-published source. It is not reviewed or endorsed by this Hub.';
+  }
+
+  function communityDirectoryMatches(source) {
+    if (communityDirectoryType && !sourceDirectoryTypes(source).includes(communityDirectoryType)) return false;
+    const query = communityDirectoryQuery.trim().toLocaleLowerCase();
+    if (!query) return true;
+    const searchable = [
+      source && source.id,
+      source && source.name,
+      source && source.description,
+      ...sourceDirectoryTypes(source),
+      ...sourceDirectoryResources(source),
+    ].map(sourceDirectoryString).join(' ').toLocaleLowerCase();
+    return searchable.includes(query);
+  }
+
+  function communityDirectoryResults() {
+    return communityDirectoryEntries().filter(communityDirectoryMatches)
+      .sort((a, b) => String(a.name || a.id || '').localeCompare(String(b.name || b.id || '')));
+  }
+
+  function communityDirectorySafetyTags(source) {
+    const tags = [{ label: 'Community · unreviewed', tone: 'community' }];
+    if (source && source.adult === true) tags.push({ label: 'Adult material', tone: 'attention' });
+    if (source && source.p2p === true) tags.push({ label: 'P2P', tone: 'attention' });
+    if (source && source.configurationRequired === true) tags.push({ label: 'Setup required', tone: 'unavailable' });
+    else if (source && source.configurable === true) tags.push({ label: 'May need setup', tone: 'muted' });
+    return tags;
+  }
+
+  function selectSourceDirectoryLane(lane) {
+    if (lane !== 'curated' && lane !== 'community') return;
+    resetSourceDirectoryPaging();
+    sourceDirectoryLane = lane;
+    // Lane contents are mutually exclusive. Repainting removes the other directory from the focus
+    // engine instead of visually hiding hundreds of stale remote stops behind this list.
+    paint();
+    const currentLane = pane.querySelector(`[data-source-directory-lane="${lane}"]`);
+    if (currentLane) focus.focusDefault(currentLane);
+  }
+
+  function sourceDirectoryLanePicker() {
+    const lanes = el('div', { class: 'source-directory-lanes', role: 'tablist', 'data-nav': 'h',
+      'aria-label': 'Source directory trust lane' });
+    const lane = (id, label, note) => {
+      const selected = sourceDirectoryLane === id;
+      const button = el('button', {
+        class: `source-directory-lane${selected ? ' on' : ''}`,
+        type: 'button', role: 'tab', 'aria-selected': selected ? 'true' : 'false',
+        'data-source-directory-lane': id,
+        'aria-label': `${label}. ${note}`,
+        onclick: () => selectSourceDirectoryLane(id),
+      }, el('span', { class: 'source-directory-lane-label', text: label }),
+      el('span', { class: 'source-directory-lane-note', text: note }));
+      focus.focusable(button);
+      return button;
+    };
+    lanes.appendChild(lane('curated', 'Curated', 'Reviewed by this Hub'));
+    lanes.appendChild(lane('community', 'Community', 'Unreviewed listings'));
+    return lanes;
+  }
+
+  /**
+   * A directory is a catalogue, not a one-screen list.  Keeping a bounded page means filters answer
+   * immediately on lower-memory TVs and browser scroll stays responsive when a Hub exposes hundreds of
+   * descriptors.  Pages are deliberately explicit instead of auto-loading on scroll: the next work is
+   * always a named, keyboard-reachable choice and never surprises a remote user by moving the target.
+   */
+  function resetSourceDirectoryPaging(lane = 'all') {
+    if (lane === 'all' || lane === 'curated') reviewedDirectoryVisible = SOURCE_DIRECTORY_PAGE_SIZE;
+    if (lane === 'all' || lane === 'community') communityDirectoryVisible = SOURCE_DIRECTORY_PAGE_SIZE;
+  }
+
+  function sourceDirectoryPageLimit(lane) {
+    return lane === 'community' ? communityDirectoryVisible : reviewedDirectoryVisible;
+  }
+
+  function showMoreSourceDirectoryEntries(lane) {
+    if (lane === 'community') communityDirectoryVisible += SOURCE_DIRECTORY_PAGE_SIZE;
+    else reviewedDirectoryVisible += SOURCE_DIRECTORY_PAGE_SIZE;
+  }
+
+  function sourceDirectoryResultCount(label, shown, total) {
+    const noun = total === 1 ? 'source' : 'sources';
+    if (!total) return `No ${label} ${noun}`;
+    return shown < total
+      ? `Showing ${shown} of ${total} ${label} ${noun}`
+      : `${total} ${label} ${noun}`;
+  }
+
+  /**
+   * Draw only the directory page the viewer asked to see.  The card maker owns provenance and install
+   * copy, while this shared pager owns nothing but bounded DOM work and an honest count.  That separation
+   * keeps Curated and Community trust rules distinct even though both benefit from the same performance
+   * behaviour.
+   */
+  function renderSourceDirectoryPage({ lane, label, results, list, count, emptyText, makeCard }) {
+    const render = (focusIndex = -1) => {
+      const shown = Math.min(results.length, sourceDirectoryPageLimit(lane));
+      const visible = results.slice(0, shown);
+      count.textContent = sourceDirectoryResultCount(label, visible.length, results.length);
+      list.textContent = '';
+
+      if (!visible.length) {
+        list.appendChild(el('div', { class: 'source-directory-empty', role: 'status', text: emptyText }));
+        return;
+      }
+
+      visible.forEach((source, index) => {
+        const card = makeCard(source);
+        card.dataset.sourceDirectoryCardIndex = String(index);
+        list.appendChild(card);
+      });
+
+      if (shown < results.length) {
+        const remaining = results.length - shown;
+        const next = Math.min(SOURCE_DIRECTORY_PAGE_SIZE, remaining);
+        const more = el('button', {
+          class: 'btn line source-directory-more', type: 'button', 'data-nav': 'h',
+          text: `Show ${next} more`,
+          'aria-label': `Show ${next} more ${label} sources. ${remaining} remain.`,
+          onclick: () => {
+            const firstNewIndex = shown;
+            showMoreSourceDirectoryEntries(lane);
+            render(firstNewIndex);
+          },
+        });
+        focus.focusable(more);
+        list.appendChild(more);
+      }
+
+      if (focusIndex >= 0) {
+        const nextCard = list.querySelector(`[data-source-directory-card-index="${focusIndex}"]`);
+        if (nextCard) focus.setFocus(nextCard);
+      }
+    };
+    render();
+  }
+
+  function sourceDirectoryFact(label, content) {
+    return el('div', { class: 'source-detail-fact' },
+      el('span', { class: 'source-detail-fact-label', text: label }),
+      el('span', { class: 'source-detail-fact-value', text: content }));
+  }
+
+  /**
+   * Complete an opaque code on the web. The configured address is typed into the browser only after
+   * the owner has independently completed the publisher's flow; the TV and directory never receive
+   * it, and the Hub validates it against the original source origin before it reaches addons.add.
+   */
+  async function finishSourceSetupCode(initialCode = '') {
+    const code = await ctx.enterText({
+      title: 'Finish source setup',
+      reason: 'Enter the short setup code shown on the TV. It expires after ten minutes and can be used only once.',
+      placeholder: 'SCX-XXXX-XXXX-XXXX',
+      initial: initialCode,
+      action: 'Find setup',
+    }, { valueText: initialCode || 'Enter code' });
+    if (code === null) return false;
+    let setupReply;
+    try {
+      setupReply = await withSettingsAdmin(ctx, () => api.sourceSetup(code), setting && setting.lock);
+      if (setupReply === null) return false;
+    } catch (e) {
+      ctx.toast((e && e.body && e.body.error) || 'That setup code is unavailable or expired');
+      return false;
+    }
+    const setup = setupReply && setupReply.setup;
+    if (!setup || !setup.code || !setup.source) {
+      ctx.toast('That setup code did not return a safe source handoff');
+      return false;
+    }
+    if (setup.state === 'completed') {
+      ctx.toast(`${setup.source.name || 'Source'} setup is already complete`);
+      return true;
+    }
+    const configuredManifest = await ctx.enterText({
+      title: `Finish ${setup.source.name || 'source'} setup`,
+      reason: `Complete the publisher's configuration in a trusted browser window, then paste its configured public manifest address here. This address is kept server-side and is never sent to the TV. Code: ${setup.code}`,
+      placeholder: 'https://…/manifest.json',
+      initial: '',
+      action: 'Verify and install',
+    }, { valueText: 'Paste manifest' });
+    if (configuredManifest === null) return false;
+    try {
+      const result = await withSettingsAdmin(ctx,
+        () => api.completeSourceSetup(setup.code, configuredManifest), setting && setting.lock);
+      if (result === null) return false;
+      installed = (result && result.addons) || installed;
+      reviewedInstalledHere.clear();
+      communityInstalledHere.clear();
+      ctx.toast(`${setup.source.name || 'Source'} configured and installed`);
+      paint();
+      return true;
+    } catch (e) {
+      ctx.toast((e && e.body && e.body.error) || 'The configured source could not be installed');
+      return false;
+    }
+  }
+
+  async function startReviewedSourceSetup(source) {
+    try {
+      const reply = await withSettingsAdmin(ctx,
+        () => api.startReviewedSourceSetup(source.id), setting && setting.lock);
+      if (reply === null || !reply.setup || !reply.setup.code) return;
+      await finishSourceSetupCode(reply.setup.code);
+    } catch (e) {
+      ctx.toast((e && e.body && e.body.error) || 'The secure setup could not be started');
+    }
+  }
+
+  async function startCommunitySourceSetup(source) {
+    try {
+      const reply = await withSettingsAdmin(ctx,
+        () => api.startCommunitySourceSetup(source.id, true), setting && setting.lock);
+      if (reply === null || !reply.setup || !reply.setup.code) return;
+      await finishSourceSetupCode(reply.setup.code);
+    } catch (e) {
+      ctx.toast((e && e.body && e.body.error) || 'The secure Community setup could not be started');
+    }
+  }
+
+  /** Details remain a review step. The install request is only reachable after a second, named consent. */
+  function openReviewedSourceDetail(source, returnFocus) {
+    const box = el('div', { class: 'mbox source-detail', role: 'dialog', 'aria-modal': 'true' });
+    let phase = 'details';
+    let installing = false;
+    let failure = '';
+
+    const close = () => ctx.closeModals();
+    const render = () => {
+      box.textContent = '';
+      const closeButton = el('button', {
+        class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Close source details', title: 'Close', onclick: close,
+      });
+      focus.focusable(closeButton);
+      box.appendChild(closeButton);
+
+      const installedHere = sourceDirectoryIsInstalled(source);
+      const installUnavailable = sourceDirectoryInstallUnavailable(source);
+      const types = sourceDirectoryTypes(source);
+      const categories = sourceDirectoryCategories(source);
+      const resources = sourceDirectoryResources(source);
+      box.appendChild(el('div', { class: 'source-detail-kicker', text: installedHere
+        ? 'Installed reviewed source' : installUnavailable ? 'Setup required' : 'Reviewed source' }));
+      box.appendChild(el('h2', { text: source.name || source.id || 'Reviewed source' }));
+      box.appendChild(el('p', { class: 'source-detail-description', text: sourceDirectoryDescription(source) }));
+      box.appendChild(el('div', { class: 'source-detail-facts' },
+        sourceDirectoryFact('Review', 'Listed and capability-checked by this Hub'),
+        sourceDirectoryFact('Version', source.version ? `v${source.version}` : 'Version not supplied'),
+        types.length ? sourceDirectoryFact('Supports', types.map(sourceDirectoryLabel).join(' · ')) : null,
+        resources.length ? sourceDirectoryFact('Provides', resources.map(sourceDirectoryLabel).join(' · ')) : null,
+        categories.length ? sourceDirectoryFact('Categories', categories.map(sourceDirectoryLabel).join(' · ')) : null,
+      ));
+      if (installUnavailable) {
+        box.appendChild(el('p', { class: 'source-detail-unavailable', role: 'status',
+          text: sourceDirectoryInstallUnavailableMessage(source) }));
+      } else if (source.configurationRequired === true) {
+        box.appendChild(el('p', { class: 'source-detail-notice', text: 'This source declares that it may need additional setup after installation.' }));
+      }
+      if (failure) box.appendChild(el('p', { class: 'source-detail-error', role: 'alert', text: failure }));
+
+      const foot = el('div', { class: 'mfoot source-detail-actions' });
+      const cancel = el('button', {
+        class: 'btn line', type: 'button', text: phase === 'confirm' ? 'Back' : 'Close', onclick: () => {
+          if (phase === 'confirm') { phase = 'details'; failure = ''; render(); }
+          else close();
+        },
+      });
+      focus.focusable(cancel);
+      foot.appendChild(cancel);
+
+      if (installedHere) {
+        box.appendChild(el('p', { class: 'source-detail-installed', text: 'Installed on this Hub. Manage it in Installed sources below.' }));
+      } else if (installUnavailable) {
+        if (sourceSetupAvailable(source)) {
+          const startSetup = el('button', {
+            class: 'btn white', type: 'button', text: 'Start secure browser setup', onclick: () => {
+              close();
+              startReviewedSourceSetup(source);
+            },
+          });
+          startSetup.dataset.directoryPrimary = 'true';
+          focus.focusable(startSetup);
+          foot.appendChild(startSetup);
+        }
+      } else if (phase === 'details') {
+        const reviewInstall = el('button', {
+          class: 'btn white', type: 'button', text: 'Review install', onclick: () => { phase = 'confirm'; failure = ''; render(); },
+        });
+        reviewInstall.dataset.directoryPrimary = 'true';
+        focus.focusable(reviewInstall);
+        foot.appendChild(reviewInstall);
+      } else {
+        box.appendChild(el('p', {
+          class: 'source-detail-consent',
+          text: `Install ${source.name || source.id || 'this source'} on this Hub? The Hub will retrieve and verify the approved manifest. No address is entered or copied from this screen.`,
+        }));
+        const install = el('button', {
+          class: 'btn white', type: 'button', text: installing ? 'Installing…' : 'Install source',
+          disabled: installing, onclick: async () => {
+            if (installing) return;
+            installing = true;
+            failure = '';
+            render();
+            try {
+              const result = await withSettingsAdmin(ctx,
+                () => api.installReviewedAddon(source.id), setting && setting.lock);
+              if (result === null) {
+                phase = 'details';
+                failure = 'Installation was not completed.';
+                return;
+              }
+              installed = (result && result.addons) || installed;
+              reviewedInstalledHere.add(String(source.id || ''));
+              ctx.closeModals();
+              ctx.toast(`${source.name || 'Source'} installed`);
+              paint();
+              return;
+            } catch (e) {
+              failure = (e && e.body && e.body.error) || 'The reviewed source could not be installed';
+            } finally {
+              installing = false;
+              if (box.isConnected) render();
+            }
+          },
+        });
+        if (!installing) {
+          install.dataset.directoryPrimary = 'true';
+          focus.focusable(install);
+        }
+        foot.appendChild(install);
+      }
+      box.appendChild(foot);
+      const primary = box.querySelector('[data-directory-primary]') || cancel || closeButton;
+      if (primary) focus.focusDefault(primary);
+    };
+
+    ctx.mountModal(box, () => {
+      if (returnFocus && returnFocus.isConnected) focus.setFocus(returnFocus, { scroll: false });
+    });
+    render();
+  }
+
+  function buildReviewedSourceDirectory(parent, { embedded = false } = {}) {
+    const g = embedded ? el('div', { class: 'source-directory-lane-body' }) : group('Reviewed source directory',
+      'Browse sources this Hub has reviewed. Opening a source shows its capabilities first; installation always asks for an explicit confirmation.');
+    const all = sourceDirectoryEntries();
+
+    if (reviewedDirectoryState === 'unavailable' && !all.length) {
+      g.appendChild(el('div', { class: 'source-directory-empty source-directory-error', role: 'status',
+        text: 'The Hub did not return a reviewed source directory. Advanced manual addresses remain separate and are not a substitute for reviewed entries.' }));
+      openRow(g, 'Retry reviewed directory', 'Ask this Hub for its reviewed source list again.', refreshReviewedDirectory, { valueText: 'Retry' });
+      parent.appendChild(g);
+      return;
+    }
+
+    if (!all.length) {
+      // The empty directory is intentional. Leaving the lane out makes discovery look broken and can
+      // encourage an owner to mistake an arbitrary URL for a recommendation.
+      g.appendChild(el('div', { class: 'source-directory-empty', role: 'status',
+        text: 'This Hub has not listed any curated sources yet. Community listings and advanced manual addresses remain separate.' }));
+      parent.appendChild(g);
+      return;
+    }
+
+    openRow(g, 'Search reviewed sources',
+      'Find a source by name, category, capability, or description.',
+      async () => {
+        const next = await ctx.enterText({
+          title: 'Search reviewed sources',
+          reason: 'Search the Hub’s reviewed directory. A keyboard can type or paste; a TV remote uses the on-screen keys.',
+          placeholder: 'Name, category, or capability',
+          initial: sourceDirectoryQuery,
+          action: 'Show results',
+        });
+        if (next === null) return;
+        sourceDirectoryQuery = next.trim().slice(0, 120);
+        resetSourceDirectoryPaging('curated');
+        paint();
+      }, { valueText: sourceDirectoryQuery || 'All' });
+
+    const categories = sourceDirectoryValues('category');
+    if (categories.length) {
+      pickRow(g, 'Category', 'Narrow the reviewed directory by its Hub-supplied category.',
+        ['', ...categories], sourceDirectoryCategory,
+        (value) => value ? sourceDirectoryLabel(value) : 'Any category',
+        (value) => { sourceDirectoryCategory = value; resetSourceDirectoryPaging('curated'); paint(); });
+    }
+    const types = sourceDirectoryValues('type');
+    if (types.length) {
+      pickRow(g, 'Content type', 'Show sources that support a particular kind of content.',
+        ['', ...types], sourceDirectoryType,
+        (value) => value ? sourceDirectoryLabel(value) : 'Any content type',
+        (value) => { sourceDirectoryType = value; resetSourceDirectoryPaging('curated'); paint(); });
+    }
+    if (sourceDirectoryQuery || sourceDirectoryCategory || sourceDirectoryType) {
+      openRow(g, 'Clear directory filters', 'Return to every reviewed source in this Hub.', () => {
+        sourceDirectoryQuery = '';
+        sourceDirectoryCategory = '';
+        sourceDirectoryType = '';
+        resetSourceDirectoryPaging('curated');
+        paint();
+      }, { valueText: 'Clear' });
+    }
+
+    const results = reviewedDirectoryResults();
+    const resultCount = el('span', {
+      class: 'source-directory-result-count', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true',
+    });
+    g.appendChild(el('div', { class: 'source-directory-result-head' },
+      resultCount,
+      reviewedDirectoryState === 'refreshing'
+        ? el('span', { class: 'source-directory-refreshing', text: 'Refreshing…' })
+        : reviewedDirectoryState === 'unavailable'
+          ? el('span', { class: 'source-directory-unavailable', text: 'Refresh unavailable · showing the last list' })
+          : null));
+    const list = el('div', { class: 'source-directory-results' });
+    renderSourceDirectoryPage({
+      lane: 'curated', label: 'reviewed', results, list, count: resultCount,
+      emptyText: 'No reviewed sources match these filters. Clear them to browse the complete directory.',
+      makeCard: (source) => {
+        const installedHere = sourceDirectoryIsInstalled(source);
+        const installUnavailable = sourceDirectoryInstallUnavailable(source);
+        const tags = [
+          ...sourceDirectoryCategories(source),
+          ...sourceDirectoryTypes(source),
+        ].slice(0, 5);
+        const card = el('button', {
+          class: 'source-directory-card li act', type: 'button', 'data-nav': 'h',
+          'aria-label': `${source.name || source.id || 'Reviewed source'}. ${installedHere
+            ? 'Installed.' : installUnavailable ? 'Setup required. Open details.' : 'Reviewed source. Open details.'}`,
+        },
+        el('div', { class: 'source-directory-card-main' },
+          el('div', { class: 'source-directory-card-head' },
+            el('span', { class: 'source-directory-card-name', text: source.name || source.id || 'Reviewed source' }),
+            el('span', { class: `source-directory-state${installedHere ? ' installed' : installUnavailable ? ' unavailable' : ''}`,
+              text: installedHere ? 'Installed' : installUnavailable ? 'Setup required' : 'Reviewed' })),
+          el('span', { class: 'source-directory-card-description', text: sourceDirectoryDescription(source) })),
+        el('div', { class: 'source-directory-tags' },
+          ...tags.map((tag) => el('span', { class: 'source-directory-tag', text: sourceDirectoryLabel(tag) })),
+          source.version ? el('span', { class: 'source-directory-version', text: `v${source.version}` }) : null));
+        card.onclick = () => openReviewedSourceDetail(source, card);
+        focus.focusable(card);
+        return card;
+      },
+    });
+    g.appendChild(list);
+    parent.appendChild(g);
+  }
+
+  /** Community source detail keeps the non-endorsement acknowledgement separate from reviewed installs. */
+  function openCommunitySourceDetail(source, returnFocus) {
+    const box = el('div', { class: 'mbox source-detail community-source-detail', role: 'dialog', 'aria-modal': 'true' });
+    let phase = 'details';
+    let acknowledged = false;
+    let installing = false;
+    let failure = '';
+
+    const close = () => ctx.closeModals();
+    const render = (restore = '') => {
+      box.textContent = '';
+      const closeButton = el('button', {
+        class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Close community source details', title: 'Close', onclick: close,
+      });
+      focus.focusable(closeButton);
+      box.appendChild(closeButton);
+
+      const installedHere = communityDirectoryIsInstalled(source);
+      const installUnavailable = communityDirectoryInstallUnavailable(source);
+      const setupAvailable = sourceSetupAvailable(source);
+      const types = sourceDirectoryTypes(source);
+      const resources = sourceDirectoryResources(source);
+      const safety = [];
+      if (source && source.adult === true) safety.push('May include adult material');
+      if (source && source.p2p === true) safety.push('Uses peer-to-peer delivery');
+      if (!safety.length) safety.push('No adult or peer-to-peer indicator was supplied');
+
+      box.appendChild(el('div', { class: 'source-detail-kicker community', text: installedHere
+        ? 'Installed community source' : installUnavailable ? 'Community source · setup required' : 'Community source · unreviewed' }));
+      box.appendChild(el('h2', { text: source.name || source.id || 'Community source' }));
+      box.appendChild(el('p', { class: 'source-detail-description', text: communityDirectoryDescription(source) }));
+      box.appendChild(el('div', { class: 'source-detail-facts' },
+        sourceDirectoryFact('Trust', 'Community-published · not reviewed or endorsed by this Hub'),
+        sourceDirectoryFact('Version', source.version ? `v${source.version}` : 'Version not supplied'),
+        sourceDirectoryFact('Safety signals', safety.join(' · ')),
+        sourceDirectoryFact('Setup', source && source.configurationRequired === true
+          ? setupAvailable ? 'Configuration required — secure web setup' : 'Configuration required — unavailable here'
+          : source && source.configurable === true ? 'May need setup after installation' : 'No setup declared'),
+        types.length ? sourceDirectoryFact('Supports', types.map(sourceDirectoryLabel).join(' · ')) : null,
+        resources.length ? sourceDirectoryFact('Provides', resources.map(sourceDirectoryLabel).join(' · ')) : null,
+      ));
+      box.appendChild(el('p', { class: 'source-detail-notice source-detail-community-notice',
+        text: 'Community publication is not an endorsement. Review privacy, legality, availability, and the safety signals above before installing. This screen never exposes a manifest address.' }));
+      if (installUnavailable) {
+        box.appendChild(el('p', { class: 'source-detail-unavailable', role: 'status',
+          text: communityDirectoryInstallUnavailableMessage(source) }));
+      }
+      if (failure) box.appendChild(el('p', { class: 'source-detail-error', role: 'alert', text: failure }));
+
+      const foot = el('div', { class: 'mfoot source-detail-actions' });
+      const cancel = el('button', {
+        class: 'btn line', type: 'button', text: phase === 'confirm' ? 'Back' : 'Close', onclick: () => {
+          if (phase === 'confirm') { phase = 'details'; acknowledged = false; failure = ''; render(); }
+          else close();
+        },
+      });
+      focus.focusable(cancel);
+      foot.appendChild(cancel);
+
+      let acknowledgementControl = null;
+      let installControl = null;
+      if (installedHere) {
+        box.appendChild(el('p', { class: 'source-detail-installed', text: 'Installed on this Hub. Manage it in Installed sources below.' }));
+      } else if (installUnavailable && !setupAvailable) {
+        // A Community entry never falls back to manual URL entry when a safe handoff is unavailable.
+      } else if (phase === 'details') {
+        const reviewRisks = el('button', {
+          class: 'btn white', type: 'button', text: 'Review community risks', onclick: () => { phase = 'confirm'; failure = ''; render('ack'); },
+        });
+        reviewRisks.dataset.directoryPrimary = 'true';
+        focus.focusable(reviewRisks);
+        foot.appendChild(reviewRisks);
+      } else {
+        box.appendChild(el('p', { class: 'source-detail-consent',
+          text: setupAvailable
+            ? `Start secure browser setup for ${source.name || source.id || 'this community source'}? The Hub will preserve its Community trust boundary and re-check the cached descriptor before it installs it.`
+            : `Install ${source.name || source.id || 'this community source'} on this Hub? The Hub will re-check the cached descriptor before it installs it.`,
+        }));
+        acknowledgementControl = el('button', {
+          class: `source-detail-ack${acknowledged ? ' on' : ''}`,
+          type: 'button', role: 'checkbox', 'aria-checked': acknowledged ? 'true' : 'false',
+          'aria-label': 'Acknowledge that this community source is not reviewed or endorsed',
+          text: acknowledged
+            ? 'Acknowledged: this is a community listing, not a reviewed recommendation'
+            : 'Acknowledge: this is a community listing, not a reviewed recommendation',
+          onclick: () => { acknowledged = !acknowledged; render('ack'); },
+        });
+        focus.focusable(acknowledgementControl);
+        box.appendChild(acknowledgementControl);
+        installControl = el('button', {
+          class: 'btn white source-detail-community-install', type: 'button',
+          text: installing ? (setupAvailable ? 'Starting setup…' : 'Installing…')
+            : (setupAvailable ? 'Start secure browser setup' : 'Install community source'),
+          disabled: !acknowledged || installing,
+          'aria-disabled': !acknowledged || installing ? 'true' : 'false',
+          onclick: async () => {
+            if (!acknowledged || installing) return;
+            installing = true;
+            failure = '';
+            render('ack');
+            try {
+              if (setupAvailable) {
+                close();
+                await startCommunitySourceSetup(source);
+                return;
+              }
+              const result = await withSettingsAdmin(ctx,
+                () => api.installCommunityAddon(source.id, true), setting && setting.lock);
+              if (result === null) {
+                failure = 'Installation was not completed.';
+                return;
+              }
+              installed = (result && result.addons) || installed;
+              communityInstalledHere.add(String(source.id || ''));
+              ctx.closeModals();
+              ctx.toast(`${source.name || 'Community source'} installed`);
+              paint();
+              return;
+            } catch (e) {
+              failure = (e && e.body && e.body.error) || 'The community source could not be installed';
+            } finally {
+              installing = false;
+              if (box.isConnected) render('ack');
+            }
+          },
+        });
+        if (acknowledged && !installing) {
+          installControl.dataset.directoryPrimary = 'true';
+          focus.focusable(installControl);
+        }
+        foot.appendChild(installControl);
+      }
+      box.appendChild(foot);
+      const primary = restore === 'ack' ? acknowledgementControl
+        : box.querySelector('[data-directory-primary]') || acknowledgementControl || cancel || closeButton;
+      if (primary) focus.focusDefault(primary);
+    };
+
+    ctx.mountModal(box, () => {
+      if (returnFocus && returnFocus.isConnected) focus.setFocus(returnFocus, { scroll: false });
+    });
+    render();
+  }
+
+  function buildCommunitySourceDirectory(parent, { embedded = false } = {}) {
+    const g = embedded ? el('div', { class: 'source-directory-lane-body' }) : group('Community source directory',
+      'Community listings are not reviewed or endorsed. Read the safety signals and acknowledge that boundary before installing.');
+    const all = communityDirectoryEntries();
+
+    if (communityDirectoryState === 'loading' && !all.length) {
+      g.appendChild(el('div', { class: 'source-directory-empty', role: 'status',
+        text: 'Checking this Hub’s community source directory…' }));
+      parent.appendChild(g);
+      return;
+    }
+    if (communityDirectoryState === 'unavailable' && !all.length) {
+      g.appendChild(el('div', { class: 'source-directory-empty source-directory-error', role: 'status',
+        text: 'The Hub could not provide community sources. Curated sources and advanced manual addresses remain separate.' }));
+      openRow(g, 'Retry community directory', 'Ask this Hub for its non-endorsed community list again.', refreshCommunityDirectory, { valueText: 'Retry' });
+      parent.appendChild(g);
+      return;
+    }
+    if (!all.length) {
+      g.appendChild(el('div', { class: 'source-directory-empty', role: 'status',
+        text: 'This Hub’s community directory is empty right now. A missing listing is not a recommendation to use an advanced manual address.' }));
+      parent.appendChild(g);
+      return;
+    }
+
+    const notice = sourceDirectoryString(communityDirectory && communityDirectory.notice)
+      || 'Community sources are not reviewed or endorsed. Review privacy, legality, and availability before installation.';
+    g.appendChild(el('p', { class: 'source-directory-community-notice', role: 'status', text: notice }));
+    openRow(g, 'Search community sources',
+      'Find a community listing by name, content type, capability, or description.',
+      async () => {
+        const next = await ctx.enterText({
+          title: 'Search community sources',
+          reason: 'Search only the Hub’s redacted community descriptors. A keyboard can type or paste; a TV remote uses on-screen keys.',
+          placeholder: 'Name, type, or capability',
+          initial: communityDirectoryQuery,
+          action: 'Show results',
+        });
+        if (next === null) return;
+        communityDirectoryQuery = next.trim().slice(0, 80);
+        resetSourceDirectoryPaging('community');
+        paint();
+      }, { valueText: communityDirectoryQuery || 'All' });
+    const types = communityDirectoryTypes();
+    if (types.length) {
+      pickRow(g, 'Content type', 'Show community sources that declare a particular content type.',
+        ['', ...types], communityDirectoryType,
+        (value) => value ? sourceDirectoryLabel(value) : 'Any content type',
+        (value) => { communityDirectoryType = value; resetSourceDirectoryPaging('community'); paint(); });
+    }
+    if (communityDirectoryQuery || communityDirectoryType) {
+      openRow(g, 'Clear community filters', 'Return to every community listing this Hub supplied.', () => {
+        communityDirectoryQuery = '';
+        communityDirectoryType = '';
+        resetSourceDirectoryPaging('community');
+        paint();
+      }, { valueText: 'Clear' });
+    }
+
+    const results = communityDirectoryResults();
+    const resultCount = el('span', {
+      class: 'source-directory-result-count', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true',
+    });
+    g.appendChild(el('div', { class: 'source-directory-result-head' },
+      resultCount,
+      communityDirectoryState === 'refreshing'
+        ? el('span', { class: 'source-directory-refreshing', text: 'Refreshing…' })
+        : communityDirectoryState === 'unavailable'
+          ? el('span', { class: 'source-directory-unavailable', text: 'Refresh unavailable · showing the last list' })
+          : null));
+    const list = el('div', { class: 'source-directory-results' });
+    renderSourceDirectoryPage({
+      lane: 'community', label: 'community', results, list, count: resultCount,
+      emptyText: 'No community sources match these filters. Clear them to browse this Hub’s complete community list.',
+      makeCard: (source) => {
+        const installedHere = communityDirectoryIsInstalled(source);
+        const installUnavailable = communityDirectoryInstallUnavailable(source);
+        const tags = [
+          ...communityDirectorySafetyTags(source),
+          ...sourceDirectoryTypes(source).map((label) => ({ label: sourceDirectoryLabel(label), tone: 'neutral' })),
+        ].slice(0, 5);
+        const safetyDescription = [
+          'Community listing, not reviewed or endorsed.',
+          source.adult === true ? 'May include adult material.' : '',
+          source.p2p === true ? 'Uses peer-to-peer delivery.' : '',
+          installUnavailable ? 'Setup required.' : '',
+        ].filter(Boolean).join(' ');
+        const card = el('button', {
+          class: 'source-directory-card source-directory-community-card li act', type: 'button', 'data-nav': 'h',
+          'aria-label': `${source.name || source.id || 'Community source'}. ${installedHere
+            ? 'Installed.' : installUnavailable ? 'Setup required. Open details.' : safetyDescription + ' Open details.'}`,
+        },
+        el('div', { class: 'source-directory-card-main' },
+          el('div', { class: 'source-directory-card-head' },
+            el('span', { class: 'source-directory-card-name', text: source.name || source.id || 'Community source' }),
+            el('span', { class: `source-directory-state community${installedHere ? ' installed' : installUnavailable ? ' unavailable' : ''}`,
+              text: installedHere ? 'Installed' : installUnavailable ? 'Setup required' : 'Unreviewed' })),
+          el('span', { class: 'source-directory-card-description', text: communityDirectoryDescription(source) })),
+        el('div', { class: 'source-directory-tags' },
+          ...tags.map((tag) => el('span', { class: `source-directory-tag ${tag.tone}`, text: tag.label })),
+          source.version ? el('span', { class: 'source-directory-version', text: `v${source.version}` }) : null));
+        card.onclick = () => openCommunitySourceDetail(source, card);
+        focus.focusable(card);
+        return card;
+      },
+    });
+    g.appendChild(list);
+    parent.appendChild(g);
+  }
+
+  function buildSourceDirectory(parent) {
+    const g = group('Discover sources',
+      'Curated sources are reviewed by this Hub. Community listings are unreviewed and require an explicit acknowledgement before installation.');
+    g.appendChild(sourceDirectoryLanePicker());
+    openRow(g, 'Finish a source setup code',
+      'Complete a setup that was started on this TV. The short code expires after ten minutes; configuration details stay off the TV.',
+      () => finishSourceSetupCode(), { valueText: 'Enter code' });
+    if (sourceDirectoryLane === 'community') buildCommunitySourceDirectory(g, { embedded: true });
+    else buildReviewedSourceDirectory(g, { embedded: true });
+    parent.appendChild(g);
+  }
+
+  function sourceState(ad, detail) {
+    // This is a rendering of observations the Hub already has, not a fresh probe. Opening Settings
+    // must stay cheap and private: a source page cannot wake every third-party provider just to paint
+    // a badge, and a quiet upstream must not turn into a timing oracle for this browser.
+    if (ad.enabled === false) return { value: 'Off', note: `${detail} · kept here but not used` };
+    if (ad.error) return { value: 'Attention', note: `Needs attention · ${String(ad.error).slice(0, 60)}` };
+    if (ad.native) return { value: 'On', note: detail };
+    const lastFetch = Number(ad.counts && ad.counts.lastFetch) || 0;
+    return lastFetch > 0
+      ? { value: 'Ready', note: `${detail} · last refresh is available` }
+      : { value: 'Starting', note: `${detail} · waiting for its first refresh` };
+  }
+
   function buildAddons(parent) {
-    const g = group('Add-ons', 'Sources this hub reads. A fresh Scenix includes Public Domain Movies, a built-in shelf of films in the U.S. public domain; switching a source off keeps its address and settings, and the hub simply stops asking it.');
+    buildSourceDirectory(parent);
+
+    const g = group('Installed sources', 'Sources this hub reads. A fresh Scenix includes Public Domain Movies, a built-in shelf of films in the U.S. public domain; switching a source off keeps its address and settings, and the hub simply stops asking it.');
     for (const ad of installed || []) {
       const cats = (ad.catalogs || []).length;
-      const note = ad.native
+      const detail = ad.native
         ? `Built in${cats ? ` · ${cats} catalogue${cats > 1 ? 's' : ''}` : ''}`
-        : `${(ad.url || '').replace(/^https?:\/\//, '').slice(0, 46)}${cats ? ` · ${cats} catalogue${cats > 1 ? 's' : ''}` : ''}`;
+        : `${ad.provenance === 'reviewed' ? 'Reviewed source'
+          : ad.provenance === 'community' ? 'Community source · unreviewed'
+            : 'Advanced manual source'}${cats ? ` · ${cats} catalogue${cats > 1 ? 's' : ''}` : ''}`;
+      const state = sourceState(ad, detail);
       const name = ad.name || ad.id;
-      actionRow(g, name, ad.error ? `Last error: ${String(ad.error).slice(0, 60)}` : note, {
-        valueText: ad.enabled === false ? 'Off' : 'On',
+      actionRow(g, name, state.note, {
+        valueText: state.value,
         actions: () => {
           const on = ad.enabled !== false;
           const acts = [{
             label: on ? `Turn ${name} off` : `Turn ${name} on`,
             run: async () => {
-              try { await api.setAddon(ad.id, !on); ctx.toast(`${name} ${on ? 'off' : 'on'}`); }
+              try {
+                const out = await withSettingsAdmin(ctx,
+                  () => api.setAddon(ad.id, !on), setting && setting.lock);
+                if (out === null) return;
+                if (out && out.addon) {
+                  installed = (installed || []).map((item) => item.id === ad.id
+                    ? Object.assign({}, item, out.addon) : item);
+                }
+                ctx.toast(`${name} ${on ? 'off' : 'on'}`);
+              }
               catch (e) { ctx.toast('The hub would not change that add-on'); }
               paint();
             },
@@ -902,8 +2123,14 @@ export function screen(ctx) {
             label: `Remove ${name}`, danger: true,
             run: async () => {
               try {
-                const r = await api.removeAddon(ad.id);
+                const r = await withSettingsAdmin(ctx,
+                  () => api.removeAddon(ad.id), setting && setting.lock);
+                if (r === null) return;
                 installed = (r && r.addons) || (installed || []).filter((o) => o.id !== ad.id);
+                // Older Hub responses do not expose a reviewed registry id on an installed row. Clearing
+                // the short-lived acknowledgement avoids leaving a removed source marked installed.
+                reviewedInstalledHere.clear();
+                communityInstalledHere.clear();
                 ctx.toast(`${name} removed`);
               } catch (e) { ctx.toast('The hub would not remove that add-on'); }
               paint();
@@ -913,12 +2140,16 @@ export function screen(ctx) {
         },
       });
     }
-    openRow(g, 'Add another source',
-      'Type the address of an add-on manifest. The hub reads it before keeping it, so a typo is refused here rather than emptying the home screen later.',
+    parent.appendChild(g);
+
+    const manual = group('Advanced manual source',
+      'Use this only when you already trust a public HTTP(S) manifest address. Manual sources are unreviewed and never appear in the reviewed directory.');
+    openRow(manual, 'Add an advanced manual source',
+      'Type an unreviewed public HTTP(S) manifest address. The Hub validates it before keeping it, but its upstream behavior has not been curated by this build.',
       async () => {
         const url = await ctx.enterText({
-          title: 'Add an add-on',
-          reason: 'The manifest address of a source, for example https://example.org/manifest.json. A folder address works too: the hub appends the manifest name.',
+          title: 'Add an advanced manual source',
+          reason: 'The public HTTP(S) manifest address of a source, for example https://example.org/manifest.json. A folder address works too: the Hub appends the manifest name.',
           placeholder: 'https://…/manifest.json',
           action: 'Add',
           validate: (v) => (!v ? 'Type an address first.'
@@ -926,7 +2157,8 @@ export function screen(ctx) {
         });
         if (!url) return;
         try {
-          const r = await api.addAddon(url);
+          const r = await withSettingsAdmin(ctx, () => api.addAddon(url), setting && setting.lock);
+          if (r === null) return;
           installed = (r && r.addons) || installed;
           ctx.toast(`${(r && r.addon && r.addon.name) || 'Add-on'} is now a source here`);
           paint();
@@ -934,23 +2166,23 @@ export function screen(ctx) {
           ctx.toast((e && e.body && e.body.error) || 'The hub would not take that add-on');
         }
       }, { valueText: null });
-    parent.appendChild(g);
+    parent.appendChild(manual);
   }
 
-  function buildSystem(parent) {
+  /** Sources are kept together: discovery, installed add-ons, manual addresses, and owner-managed packs. */
+  function buildSources(parent) {
+    buildAddons(parent);
+    buildHub(parent, { includeHub: false, includeSourcePacks: true, includeDiagnostics: false });
+  }
+
+  function buildHub(parent, {
+    includeHub = true,
+    includeSourcePacks = false,
+    includeDiagnostics = true,
+  } = {}) {
     const canHub = !!caps.settingsAdmin;
 
-    if (themeChoices.length) {
-      const g = group('Theme', 'The colour and surface language of both the television and this page. Changing it reloads the browser.');
-      pickRow(g, 'Theme', 'One token file drives both clients.', themeChoices.map((t) => t.id),
-        (setting && setting.theme) || 'scenix-dark',
-        (id) => { const t = themeChoices.find((x) => x.id === id); return t ? t.name : id; },
-        (id) => { writeSettings({ theme: id }).then(() => window.location.reload()); });
-      parent.appendChild(g);
-    }
-
-
-    if (setting) {
+    if (includeHub && setting) {
       const g = group('This hub', 'Set once for the whole house. The values below are what the hub is running with.');
       const name = line('Name', 'The word that appears on the splash screen and in the launcher.');
       name.appendChild(value(setting.hubName));
@@ -988,7 +2220,11 @@ export function screen(ctx) {
           'Clearing it makes the hub ask its addons again on the next request. Nothing you have watched is touched.',
           async () => {
             ctx.toast('Clearing the cache…');
-            try { await api.clearCache(); ctx.toast('Cache cleared'); }
+            try {
+              const out = await withSettingsAdmin(ctx, () => api.clearCache(), setting && setting.lock);
+              if (out === null) return;
+              ctx.toast('Cache cleared');
+            }
             catch (e) { ctx.toast('The hub would not clear the cache'); }
           }, { valueText: null });
       }
@@ -1018,7 +2254,7 @@ export function screen(ctx) {
        A picture pack contributes copies from a URL template; an audio pack contributes audio-only rows
        the hub mixes into a picture that does not carry the household's language. The hub's code never
        learns the name of either host — it only reads what the owner typed here. */
-    if (setting && caps.addonAdmin) {
+    if (includeSourcePacks && setting && caps.addonAdmin) {
       const packs = [
         {
           key: 'igc', title: 'IGC source pack',
@@ -1053,8 +2289,7 @@ export function screen(ctx) {
                 label: on ? `Turn ${shown} off` : `Turn ${shown} on`,
                 run: async () => {
                   const next = list.map((x) => (x.id === d.id ? { ...x, enabled: !on } : x));
-                  await writePack(next);
-                  paint();
+                  if (await writePack(next)) paint();
                 },
               }, {
                 label: 'Change the address',
@@ -1064,8 +2299,7 @@ export function screen(ctx) {
                     d.url, (v) => (!v ? 'Type an address first.'
                       : !/^https?:\/\//i.test(v) ? 'That has to start with http:// or https://.' : null));
                   if (url === null) return;
-                  await writePack(list.map((x) => (x.id === d.id ? { ...x, url } : x)));
-                  paint();
+                  if (await writePack(list.map((x) => (x.id === d.id ? { ...x, url } : x)))) paint();
                 },
               }, {
                 label: 'Change the languages',
@@ -1075,14 +2309,12 @@ export function screen(ctx) {
                     (d.languages || []).join(', '));
                   if (raw === null) return;
                   const languages = raw.split(/[,\s]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
-                  await writePack(list.map((x) => (x.id === d.id ? { ...x, languages } : x)));
-                  paint();
+                  if (await writePack(list.map((x) => (x.id === d.id ? { ...x, languages } : x)))) paint();
                 },
               }, {
                 label: `Remove ${shown}`, danger: true,
                 run: async () => {
-                  await writePack(list.filter((x) => x.id !== d.id));
-                  paint();
+                  if (await writePack(list.filter((x) => x.id !== d.id))) paint();
                 },
               }];
               return acts;
@@ -1105,9 +2337,10 @@ export function screen(ctx) {
           const slug = String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
             || 'source';
           const id = `${slug}-${Date.now().toString(36)}`;
-          await writePack([...list, { id, name: name.trim(), url: url.trim(), languages, enabled: true }]);
-          ctx.toast(`${name.trim()} added`);
-          paint();
+          if (await writePack([...list, { id, name: name.trim(), url: url.trim(), languages, enabled: true }])) {
+            ctx.toast(`${name.trim()} added`);
+            paint();
+          }
         }, { valueText: null });
         parent.appendChild(g);
       }
@@ -1115,7 +2348,7 @@ export function screen(ctx) {
 
     // The readout is for whoever fixes the box, not for whoever watches: it stays one deliberate step
     // behind a switch, so a viewer walking the pane never reads a wall of capability jargon.
-    toggle(parent, 'Show advanced', 'What this hub reports about itself right now: the address it was reached on, what it can do, and what it last tried.',
+    if (includeDiagnostics) toggle(parent, 'Show advanced', 'What this hub reports about itself right now: the address it was reached on, what it can do, and what it last tried.',
       diagOpen, async (v) => {
         diagOpen = v;
         if (v) {
@@ -1154,132 +2387,23 @@ export function screen(ctx) {
       debridInfo.ready ? 'ok' : debridInfo.enabled ? 'mid' : 'no');
     }
     row('Editable from here', [canHub && 'hub', canPrefs && 'this profile', !!caps.profileEdit && 'profiles', !!caps.cacheAdmin && 'cache'].filter(Boolean).join(', ') || 'nothing — this hub is read-only from a browser', 'mid');
-    api.health().then(() => row('Hub reachable', 'yes', 'ok')).catch(() => row('Hub reachable', 'no answer', 'no'));
+    api.health().then((health) => {
+      if (health && health.version) row('Hub build', `v${health.version}`, 'mid');
+      row('Hub reachable', 'yes', 'ok');
+    }).catch(() => row('Hub reachable', 'no answer', 'no'));
     return d;
-  }
-
-  /* ------------------------------------------------------------------ the gate */
-
-  /**
-   * The household admin PIN, asked once before this page draws anything.
-   *
-   * The lock is a property of the hub, not of the person watching: when `/app/v1/settings` says
-   * `settings.lock.enabled`, every section and action on this page belongs behind it, so the gate is
-   * drawn before the rail exists rather than in front of each row. The hub checks the number — this page
-   * never holds the PIN — and a refusal shakes the pad and clears it. Back, Cancel and ✕ leave the page
-   * as they always would; the caller reads `false` as "do not stay here".
-   *
-   * Resolves true when the hub accepts the number, false when the viewer walked away.
-   */
-  function askAdminPin() {
-    return new Promise((resolve) => {
-      let got = '';
-      let busy = false;
-      let answered = false;
-      const shown = el('div', {
-        class: 'field',
-        style: 'margin-bottom: calc(18px * var(--s)); justify-content: center;',
-      }, el('div', { class: 'q empty', text: '4 to 8 digits' }));
-      const err = el('div', { class: 'err' });
-      const pad = el('div', { class: 'p9' });
-      const box = el('div', { class: 'mbox pin' });
-      const draw = () => {
-        const q = shown.querySelector('.q');
-        q.textContent = got ? '•'.repeat(got.length) : '4 to 8 digits';
-        q.classList.toggle('empty', !got);
-      };
-      const finish = (ok) => {
-        if (answered) return;
-        answered = true;
-        setDigitSink(null);
-        ctx.closeModals();
-        resolve(ok);
-      };
-      const refuse = (message) => {
-        got = '';
-        draw();
-        err.textContent = message;
-        box.classList.remove('shake');
-        void box.offsetWidth;            // the shake is a one-shot animation, so it has to be restarted
-        box.classList.add('shake');
-        focus.focusDefault(pad.querySelector('.key'));
-      };
-      const submit = async () => {
-        if (busy) return;
-        if (got.length < 4) { refuse('Enter at least 4 digits'); return; }
-        busy = true;
-        err.textContent = '';
-        try {
-          const out = await api.unlockSettings(got);
-          if (out && out.ok !== false) { finish(true); return; }
-          refuse('That PIN is not right');
-        } catch (e) {
-          if (e && e.status === 429) refuse('Too many attempts — wait a moment and try again');
-          else if (e && e.status === 403) refuse('That PIN is not right');
-          else refuse('The hub would not check that PIN');
-        }
-        busy = false;
-      };
-      const press = (k) => {
-        if (busy) return;
-        if (k === 'clear') { got = ''; err.textContent = ''; draw(); return; }
-        if (k === 'ok') { submit(); return; }
-        if (got.length >= 8) return;
-        got += k;
-        err.textContent = '';
-        draw();
-      };
-      for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'ok']) {
-        const btn = el('button', {
-          class: `key${k.length > 1 ? ' sm' : ''}`, type: 'button',
-          text: k === 'clear' ? 'Clear' : k === 'ok' ? 'OK' : k,
-          onclick: () => press(k),
-        });
-        focus.focusable(btn);
-        pad.appendChild(btn);
-      }
-      const leave = () => finish(false);
-      box.appendChild(el('button', {
-        class: 'mclose', type: 'button', text: '✕', 'aria-label': 'Back', title: 'Back', onclick: leave,
-      }));
-      box.appendChild(el('div', { class: 'pmark' }, el('span', { text: 'Scenix' })));
-      box.appendChild(el('h2', { text: 'Admin PIN required' }));
-      box.appendChild(el('p', { text: 'This settings page is locked. Enter the household PIN to open it.' }));
-      box.appendChild(shown);
-      box.appendChild(pad);
-      box.appendChild(err);
-      box.appendChild(el('div', { class: 'mfoot' },
-        el('button', { class: 'btn line', type: 'button', text: 'Back', onclick: leave })));
-      // The pad owns the keys before the screen behind it does: digits go to the buffer, Enter submits,
-      // Backspace deletes a digit. Escape is left to the modal, which closes it and answers "no".
-      const lane = (e, key) => {
-        if (key === 'Enter' || key === 'NumpadEnter' || key === ' ') { submit(); return true; }
-        if (key === 'Backspace') { got = got.slice(0, -1); err.textContent = ''; draw(); return true; }
-        return false;
-      };
-      focus.focusable(box.querySelector('.mclose'));
-      for (const b of box.querySelectorAll('.mfoot .btn')) focus.focusable(b);
-      ctx.mountModal(box, () => {
-        setDigitSink(null);
-        popHandler(lane);
-        if (!answered) { answered = true; resolve(false); }
-      });
-      pushHandler(lane);
-      setDigitSink(press);
-      focus.focusDefault(pad.querySelector('.key'));
-    });
   }
 
   /* --------------------------------------------------------------------- keys */
 
   // BACK unwinds this screen before the router unwinds the route: from any section but the first it
-  // returns the rail to Playback, which is what "go back" means on a page with no history. From the
+  // returns the rail to Overview, which is what "go back" means on a control centre with no history. From the
   // first section it is left to the router, which leaves Settings the way it leaves any screen.
   // (A dial or action list that is open is handled above this screen in the key stack: Back there
   // cancels the modal and never reaches this handler.)
   //
   // LEFT and RIGHT get the same treatment at the columns' edges. The focus engine's geometry crosses
-  // honestly most of the time, but a section whose first control sits at the far right edge (Live TV)
+  // honestly most of the time, but a section whose first control sits at the far right edge (Watching)
   // would put a Right press from the rail into the fixed menu bar, and a Left press from a row would
   // pick whichever control happens to be leftmost on screen. The two columns are the screen's contract
   // — one Right is into the pane at its first control, one Left from a row is back to the rail — so the
@@ -1317,15 +2441,20 @@ export function screen(ctx) {
   /* ------------------------------------------------------------------- load */
 
   (async () => {
-    const [s, p, a3] = await Promise.all([
+    const [s, p, a3, r4] = await Promise.all([
       api.settings().catch(() => null),
       profile.id ? api.prefs(profile.id).catch(() => null) : Promise.resolve(null),
       caps.addonAdmin ? api.addons().catch(() => null) : Promise.resolve(null),
+      caps.addonAdmin ? api.reviewedAddons().catch(() => null) : Promise.resolve(null),
     ]);
     rowList = Array.isArray(s && s.rows) ? s.rows : null;
     catalogOptions = Array.isArray(s && s.catalogOptions) ? s.catalogOptions : null;
+    // The Hub already projects this list to browser-capable shared themes. Leaving it unassigned
+    // hid the Appearance → Theme row completely even though the browser had matching token assets.
+    themeChoices = Array.isArray(s && s.themes) ? s.themes : [];
     const ad = a3 ? (a3.addons || []) : [];
     installed = Array.isArray(ad) ? ad : [];
+    applyReviewedDirectory(r4);
     setting = s ? (s.settings || s) : null;
     liveInfo = (s && s.live) || null;
     debridInfo = (s && s.debrid) || null;
@@ -1333,22 +2462,31 @@ export function screen(ctx) {
     prefs = p ? (p.prefs || p) : null;
     // A slow hub answer must not paint, or raise a PIN dialog, over the screen the viewer already left.
     if (!root.isConnected || (ctx.route() && ctx.route().name !== 'settings')) return;
-    // The admin lock is a property of the hub, not of whoever is watching: when it is on, the gate is
-    // drawn before any section exists, and a viewer without the number never sees one. A hub that does
-    // not know about `lock` (or has it off) answers nothing here and paints exactly as it always did.
+    // The common gate is also used by direct profile management and the nested administration screens.
+    // It owns the Settings-PIN pad and session expiry recovery, so this page cannot drift into a second
+    // keypad or leave a viewer at a protected row after its short-lived capability expires.
     if (setting && setting.lock && setting.lock.enabled === true) {
       pane.textContent = '';
       pane.appendChild(el('div', { class: 'row-err' }, el('span', { text: 'This settings page is locked.' })));
-      const open = await askAdminPin();
+      const open = await ensureSettingsAdmin(ctx, setting.lock);
       if (!open) { ctx.back(); return; }
     }
     paint();
+    // Community discovery is optional and must not delay a usable Settings page or make curated
+    // discovery wait on a remote catalogue. Its lane paints an honest loading/unavailable state until
+    // this bounded Hub request resolves.
+    if (caps.addonAdmin) refreshCommunityDirectory({ quiet: true });
   })();
 
   // The ring enters on the rail: the first thing a viewer does in Settings is choose a section, not
   // hunt for a control. The rail is empty until the hub answers, so `__defaultFocus` may return null
   // on the very first frame — `paint` puts the ring on the first rail item when the sections arrive.
   root.__defaultFocus = () => rail.querySelector('.sitem');
-  root.__dispose = () => { if (handler) popHandler(handler); };
+  root.__dispose = () => {
+    // The focus engine keeps global listeners. Both its rail subscription and the screen's Back-key
+    // handler must leave together; replacing one disposer with the other leaks Settings into later routes.
+    onRailFocus();
+    if (handler) popHandler(handler);
+  };
   return root;
 }

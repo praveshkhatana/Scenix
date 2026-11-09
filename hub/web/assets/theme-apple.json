@@ -219,12 +219,12 @@
     "dimAmount": 0.58
   },
   "detail": {
-    "maxSources": 6,
+    "maxSources": 6.0,
     "_note": "how many ranked sources the detail screen lists; the rest live in the player's Source menu"
   },
   "preview": {
-    "enabled": 1,
-    "delayMs": 1500,
+    "enabled": 0.0,
+    "delayMs": 1500.0,
     "_note": "Apple pack keeps the hero artwork-led until Hub previews are title-scoped and reliable; this avoids a live video surface competing with remote navigation"
   },
   "hero": {
@@ -259,6 +259,5 @@
     "rank": "compact",
     "stage": "focus",
     "featuredMarker": "bar"
-  },
-  "_from": "generated from app/src/main/assets/theme-apple.json by scripts/webthemes.mjs — edit the TV's file"
+  }
 }

@@ -16,11 +16,16 @@
 -keep class org.libtorrent4j.** { *; }
 -dontwarn org.libtorrent4j.**
 
-# Two optional code paths reference classes the platform only has at other API levels, and R8
-# treats that as an error. The Liquid Glass library's shader tier names android.graphics.Runtime*
-# (API 33+; the Android 11 tier never loads those paths), and snakeyaml's bean introspector names
-# java.beans.* (only reached for a JavaBean-style addon, which ours are not). Absent on this
-# target, never executed — the honest answer is to say so, not to keep a phantom class.
+# The Liquid Glass library's API-33 shader tier names Runtime* classes that the Android 11 tier
+# never loads. R8 still sees those symbols, so allow only these optional platform references.
 -dontwarn android.graphics.RuntimeColorFilter
 -dontwarn android.graphics.RuntimeXfermode
--dontwarn java.beans.**
+# GeckoView brings SnakeYAML 2.2. On Android, SnakeYAML's PlatformFeatureDetector selects its
+# field-based path before Java Bean introspection, but its desktop-only implementation still refers
+# to these Java SE classes. Android does not ship java.beans; suppress only the five exact optional
+# references reported by R8 rather than keeping or silencing the whole library.
+-dontwarn java.beans.BeanInfo
+-dontwarn java.beans.FeatureDescriptor
+-dontwarn java.beans.IntrospectionException
+-dontwarn java.beans.Introspector
+-dontwarn java.beans.PropertyDescriptor

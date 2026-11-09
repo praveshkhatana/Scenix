@@ -275,11 +275,11 @@
     "dimAmount": 0.58
   },
   "detail": {
-    "maxSources": 6
+    "maxSources": 6.0
   },
   "preview": {
-    "enabled": 1,
-    "delayMs": 1500,
+    "enabled": 0.0,
+    "delayMs": 1500.0,
     "_note": "Glass keeps the hero plate artwork-led; the wash must not churn under a live preview on a 2 GB set"
   },
   "hero": {
@@ -331,9 +331,7 @@
     "frostDownsample": 3,
     "frostMaterial": "regular",
     "frostCapture": "wall",
-    "frostCpuScale": 4,
-    "frostCpuBlur": 0,
-    "frostAberrScale": 8,
+    "frostCpuScale": 4, "frostCpuBlur": 0, "frostAberrScale": 8,
     "frostDebug": 0,
     "wallRaster": 1,
     "focusGlass": 1,
@@ -351,6 +349,5 @@
     "frostOutward": 1,
     "focusGlassOutward": 1,
     "focusGlassAberrScale": 5
-  },
-  "_from": "generated from app/src/main/assets/theme-glass.json by scripts/webthemes.mjs — edit the TV's file"
+  }
 }

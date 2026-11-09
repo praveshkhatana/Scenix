@@ -11,11 +11,11 @@ import com.scenix.tv.R
  * nobody watches. So one probe of `GET /healthz` decides whether the page is reachable, and it keeps
  * trying in the background so the catalogue comes back by itself when the hub does.
  *
- * A hub is a plain Node process the owner can move to any machine — a box in the house, a laptop, a
- * hosted address — so there is rarely one permanent address to write into the TV. Each pass walks
- * every candidate from [Prefs.hubUrlCandidates] and stops at the first that answers, remembering it
- * so the next boot starts there. That is the difference between "the hub moved and the TV is bricked"
- * and "the TV followed it".
+ * A Hub is a plain Node process the owner can move to any machine — a box in the house, a laptop, a
+ * hosted address — so there is rarely one permanent address to write into the TV. A selected address
+ * is probed by itself: a miss must not silently fan out to every discovered machine on the LAN. Before
+ * a person has selected an address, [Prefs.hubUrlCandidates] provides the deliberate first-run and
+ * recovery candidates.
  *
  * When there is no candidate at all the app does not spin: one LAN announcement search
  * ([HubDiscovery]) per pass, and if nothing answers, [unpaired] is set so the app can ask the viewer
@@ -55,7 +55,7 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         if (standalone) {
             Log.i(TAG, "standalone mode: this TV is the backend, no hub probing")
             online = true
-                onReady?.invoke(true)
+            onReady?.invoke(true)
             return
         }
         check(onReady)
@@ -80,16 +80,13 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         start(onReady)
     }
 
-    /**
-     * One pass over the candidate list. The remembered winner is tried first, so a hub that has
-     * been sitting at the same address pays for exactly one request.
-     */
+    /** One pass over the allowed candidates. A selected hub produces exactly one request. */
     private fun check(done: ((Boolean) -> Unit)? = null) {
         // A scheduled pass can land after the viewer has already chosen standalone. There is nothing
         // to reach in that mode, so the watcher stands down instead of probing a network this TV left.
         if (standalone) {
             online = true
-                done?.invoke(true)
+            done?.invoke(true)
             return
         }
         val list = ctx.prefs.hubUrlCandidates(app.getString(R.string.hub_urls))
@@ -113,9 +110,8 @@ class HubWatch(context: Context, private val ctx: AppContext) {
             return
         }
         unpaired = false
-        // [Prefs.hubUrlCandidates] already orders the explicit choice first and the last working hub
-        // second. Starting at the last-working index here would silently override a hub the viewer
-        // just chose — two hubs on one LAN share the same default name, so that is not theoretical.
+        // [Prefs.hubUrlCandidates] collapses an explicit choice to one origin. Starting anywhere
+        // else would silently override what the viewer selected.
         tryAt(list, 0, tried = 0, done = done)
     }
 
@@ -131,8 +127,9 @@ class HubWatch(context: Context, private val ctx: AppContext) {
         Thread({
             val ok = HubProbe.healthy(url)
             if (ok) {
+                // Remember a successful recovery probe, but do not turn an automatically found
+                // origin into an explicit selection. Only pairing/settings may select a Hub.
                 ctx.prefs.setHubLastWorking(url)
-                if (url != ctx.prefs.hubUrl("")) ctx.prefs.setHubUrl(url)
                 Log.i(TAG, "hub answering at $url")
                 // And follow the hub: if this backend sits behind its own newest build, pull it
                 // now (hub core/update.js), so installing a new APK here never leaves an old hub.

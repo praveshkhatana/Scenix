@@ -201,7 +201,18 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     /** The household settings PIN: verify it, or change the lock (the current PIN is required). */
     fun unlockSettings(pin: String, done: (ok: Boolean, error: String?) -> Unit) {
         request("/app/v1/settings/unlock", "", "POST", JSONObject().put("pin", pin), 10000) { root, status, error ->
-            done(root?.optBoolean("ok") == true, error ?: if (status == 403) "That PIN is not right" else null)
+            val ok = root?.optBoolean("ok") == true
+            if (ok) {
+                val session = root?.optString("adminSession", "")?.trim().orEmpty()
+                if (session.isNotBlank()) {
+                    prefs.setAdminSession(session, HubEndpoint.base(context),
+                        root?.optLong("adminSessionExpiresAt", 0L) ?: 0L)
+                } else {
+                    // Unlocked/legacy hubs need no capability; do not retain one for a different lock.
+                    prefs.clearAdminSession()
+                }
+            }
+            done(ok, error ?: if (status == 403) "That PIN is not right" else null)
         }
     }
 
@@ -214,7 +225,18 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         val body = JSONObject().put("enabled", enabled)
         if (!pin.isNullOrBlank()) body.put("pin", pin)
         if (!current.isNullOrBlank()) body.put("pinCurrent", current)
-        request("/app/v1/settings/lock", "", "POST", body, 12000) { root, _, error -> done(root, error) }
+        request("/app/v1/settings/lock", "", "POST", body, 12000) { root, _, error ->
+            if (root?.optBoolean("ok") == true) {
+                val session = root.optString("adminSession", "").trim()
+                if (session.isNotBlank()) {
+                    prefs.setAdminSession(session, HubEndpoint.base(context),
+                        root.optLong("adminSessionExpiresAt", 0L))
+                } else {
+                    prefs.clearAdminSession()
+                }
+            }
+            done(root, error)
+        }
     }
 
     /** Installed add-ons, with the same enable/remove/add calls the web settings uses. */
@@ -222,6 +244,72 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         request("/app/v1/addons", "", "GET", null, 12000) { root, _, error ->
             done(root?.optJSONArray("addons"), error)
         }
+    }
+
+    /** The Hub-owned, reviewed source directory. Older/standalone backends may answer an empty list. */
+    fun reviewedAddons(done: (addons: JSONArray?, error: String?) -> Unit) {
+        request("/app/v1/addon-registry", "", "GET", null, 12000) { root, _, error ->
+            // `directory.entries` is the richer, manifest-derived directory contract.  Keep the
+            // original `reviewed` field as a fallback so a TV can pair with an already-deployed
+            // Hub without a coordinated update.  Neither shape contains a manifest URL.
+            val entries = root?.optJSONObject("directory")?.optJSONArray("entries")
+                ?: root?.optJSONArray("reviewed")
+            done(entries, error)
+        }
+    }
+
+    /**
+     * The non-endorsed Community directory is Hub-owned. The native client accepts only its fixed
+     * media-type vocabulary and an 80-character search term; it never receives provider addresses.
+     */
+    fun communityAddonDirectory(
+        type: String,
+        query: String,
+        done: (directory: JSONObject?, error: String?) -> Unit,
+    ) {
+        val safeType = communityType(type)
+        val safeQuery = query.trim().take(80)
+        request(
+            "/app/v1/community-addon-directory",
+            "type=${enc(safeType)}&q=${enc(safeQuery)}",
+            "GET",
+            null,
+            15000,
+        ) { root, _, error -> done(root, error) }
+    }
+
+    /** Reads one opaque Community entry; the activity validates its non-endorsement contract. */
+    fun communityAddonDetail(
+        opaqueId: String,
+        done: (entry: JSONObject?, error: String?) -> Unit,
+    ) {
+        val id = opaqueId.trim()
+        if (id.isBlank()) {
+            done(null, "That community source is unavailable")
+            return
+        }
+        request("/app/v1/community-addon-directory/${enc(id)}", "", "GET", null, 15000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** Community installation is opaque-ID-only and always carries the explicit acknowledgement. */
+    fun installCommunityAddon(
+        opaqueId: String,
+        done: (root: JSONObject?, error: String?) -> Unit,
+    ) {
+        val id = opaqueId.trim()
+        if (id.isBlank()) {
+            done(null, "That community source is unavailable")
+            return
+        }
+        request(
+            "/app/v1/community-addon-directory/${enc(id)}/install",
+            "",
+            "POST",
+            JSONObject().put("nonEndorsementAcknowledged", true),
+            15000,
+        ) { root, _, error -> done(root, error) }
     }
 
     fun setAddon(id: String, on: Boolean, done: (root: JSONObject?, error: String?) -> Unit) {
@@ -235,6 +323,47 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
 
     fun addAddon(url: String, done: (root: JSONObject?, error: String?) -> Unit) {
         request("/app/v1/addons", "", "POST", JSONObject().put("url", url), 15000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** Install only by the Hub's reviewed registry id; a TV never supplies the upstream URL. */
+    fun addReviewedAddon(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addon-registry/" + enc(id) + "/install", "", "POST", null, 15000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /**
+     * Starts an opaque, expiring browser handoff for a configuration-required reviewed source.
+     * The response contains only a short code and source label — never an upstream manifest or
+     * configuration field/value — so the TV cannot become a place where setup secrets appear.
+     */
+    fun startReviewedSourceSetup(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addon-registry/" + enc(id) + "/setup-session", "", "POST", null, 12000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** Community setup keeps the same acknowledgement as installation before the Hub mints a code. */
+    fun startCommunitySourceSetup(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request(
+            "/app/v1/community-addon-directory/" + enc(id) + "/setup-session",
+            "",
+            "POST",
+            JSONObject().put("nonEndorsementAcknowledged", true),
+            12000,
+        ) { root, _, error -> done(root, error) }
+    }
+
+    /** Polls only the code's safe receipt state after the owner has finished setup on the web. */
+    fun sourceSetupStatus(code: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        val clean = code.trim()
+        if (clean.isBlank()) {
+            done(null, "That setup code is unavailable")
+            return
+        }
+        request("/app/v1/source-setups/" + enc(clean), "", "GET", null, 10000) { root, _, error ->
             done(root, error)
         }
     }
@@ -433,7 +562,7 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 // profile say no" — and deserves those words, not a status code. The hub now names
                 // the rule and the evidence, so the screen can say which setting did it.
                 if (status == 403 && (root?.opt("droppedByRule") != null || root?.has("tier") == true)) {
-                    val why = root?.optString("detail")?.takeIf { it.isNotBlank() }
+                    val why = root.optString("detail").takeIf { it.isNotBlank() }
                         ?: "this profile can't watch this title"
                     done(null, why)
                     return@request
@@ -572,6 +701,10 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                         val basic = Base64.encodeToString("scenix:$token".toByteArray(), Base64.NO_WRAP)
                         conn.setRequestProperty("Authorization", "Basic $basic")
                     }
+                    val adminSession = prefs.adminSessionFor(base)
+                    if (adminSession.isNotBlank()) {
+                        conn.setRequestProperty("X-Scenix-Admin-Session", adminSession)
+                    }
                     if (body != null) {
                         conn.doOutput = true
                         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -591,6 +724,12 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                     if (status !in 200..299) {
                         error = root?.optString("error", "")?.takeIf { it.isNotBlank() }
                             ?: "The hub answered $status"
+                        // A short-lived settings capability is only useful while the server accepts
+                        // it. Drop an expired/revoked proof immediately so the next protected visit
+                        // reopens the PIN gate instead of repeatedly sending a known-bad token.
+                        if (status == 403 && root?.optBoolean("sessionRequired", false) == true) {
+                            prefs.clearAdminSession()
+                        }
                     }
                 } finally {
                     conn.disconnect()
@@ -635,5 +774,10 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         /** A path segment that survives a title identity and never doubles a slash. */
         fun enc(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun communityType(value: String): String = when (value.trim().lowercase()) {
+            "movie", "series", "channel", "other" -> value.trim().lowercase()
+            else -> "movie"
+        }
     }
 }

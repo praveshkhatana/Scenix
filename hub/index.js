@@ -27,6 +27,10 @@ const zlib = require('zlib');
 const { URL, URLSearchParams } = require('url');
 
 const ROOT = __dirname;
+// This must run before the cores below are imported: most choose their state files at module load.
+const offlinePreview = require('./core/offline-preview').prepare(ROOT);
+const OFFLINE_PREVIEW = offlinePreview.enabled;
+const HUB_BIND = offlinePreview.bind;
 const THEME_DIR = path.join(ROOT, 'web', 'assets');
 const PORT = Number(process.env.PORT || 8788);
 const TLS_CERT = String(process.env.TLS_CERT || '').trim();
@@ -75,7 +79,10 @@ const HUB_ID = process.env.HUB_ID || 'scenix-hub';
 const HUB_VERSION = process.env.HUB_VERSION || '0.1.0';
 
 const registry = require('./core/registry').load(ROOT);
-const store = require('./core/store').create(ROOT);
+const store = require('./core/store').create(ROOT, OFFLINE_PREVIEW ? {
+  dataDir: offlinePreview.dataDir,
+  profilesSeedFile: offlinePreview.profilesSeedFile,
+} : undefined);
 const merge = require('./core/merge');
 const shelves = require('./core/catalogs');
 const taste = require('./core/taste');
@@ -90,6 +97,10 @@ const channelItems = liveRow.channelItems;
 // the gateway and is never a hard dependency of the play path.
 const debrid = require('./core/debrid');
 const addons = require('./core/addons');
+const reviewedAddons = require('./core/reviewed-addons');
+const communityDirectory = require('./core/community-directory');
+const sourceSetupCore = require('./core/source-setup');
+const sourceSetup = sourceSetupCore.create();
 const trailers = require('./core/trailers');
 const ratings = require('./core/ratings');
 const castApi = require('./core/cast');
@@ -219,9 +230,26 @@ const UPSTREAM_UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) App
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// This is surfaced only on the loopback preview's health response.  It gives the focused test a
+// machine-readable proof that the startup lane did not quietly start a provider, compat, avatar or
+// genre job.  Production never creates or reports this object.
+const previewTelemetry = OFFLINE_PREVIEW ? {
+  enabled: true,
+  bind: HUB_BIND,
+  dataDir: offlinePreview.dataDir,
+  externalNetwork: false,
+  readOnly: true,
+  warmups: { providerStarts: 0, compatibility: 0, avatars: 0, genres: 0 },
+  skipped: { providerStarts: 0, compatibility: 0, avatars: 0, genres: 0 },
+} : null;
+
 // ---- plugin lifecycle -----------------------------------------------------------------------------
 
 for (const p of registry.providers) {
+  if (OFFLINE_PREVIEW) {
+    previewTelemetry.skipped.providerStarts++;
+    continue;
+  }
   if (typeof p.start === 'function') {
     try {
       p.start();
@@ -240,7 +268,7 @@ for (const f of registry.failures) log('  FAILED', f.kind, f.file, '-', f.error)
  * enable/disable surface works for both kinds) and every installed external addon is hot-mounted,
  * which puts it in registry.providers before the first request is served.
  */
-const addonBoot = addons.init(registry, store);
+const addonBoot = addons.init(registry, store, { offlinePreview: OFFLINE_PREVIEW });
 log('ADDONS', addonBoot.external, 'external mounted from', addonBoot.file,
   '+', registry.providers.filter((p) => p.native).length, 'native');
 
@@ -287,6 +315,28 @@ function capabilities() {
     hubUpdate: true, // this backend can pull its own newest build (core/update.js); a copied
                      // folder with no git still reports itself honestly through that route
   };
+  if (OFFLINE_PREVIEW) {
+    // The preview is a renderer inspection surface, not an alternate household backend.  Do not let a
+    // browser imply that it can change state, install a source, fetch a face or start playback.
+    Object.assign(caps, {
+      gateway: false,
+      live: false,
+      localFiles: false,
+      remux: false,
+      tracks: false,
+      audioMix: false,
+      announce: false,
+      search: false,
+      subtitles: false,
+      settingsAdmin: false,
+      addonAdmin: false,
+      prefsEdit: false,
+      profileEdit: false,
+      cacheAdmin: false,
+      avatarFaces: false,
+      preview: true,
+    });
+  }
   // A flag only when the resolver can actually do something. Off, unconfigured or missing a token means
   // the capability is absent, exactly like an uninstalled addon: the clients need no "debrid is off" state.
   if (d.ready === true) caps.debrid = true;
@@ -371,6 +421,76 @@ function unlockFailed(id) {
   unlockTries.set(String(id), row);
 }
 function unlockSucceeded(id) { unlockTries.delete(String(id)); }
+
+// A successful PIN entry grants a short-lived, client-bound capability. The old implementation
+// returned `{ok:true}` but never attached that proof to later writes, so a direct request could
+// change household settings while the on-screen PIN pad was locked.
+const ADMIN_SESSION_HEADER = 'x-scenix-admin-session';
+const ADMIN_SESSION_TTL_MS = Math.max(60e3, Math.min(60 * 60e3,
+  Number(process.env.ADMIN_SESSION_TTL_MS || 30 * 60e3) || 30 * 60e3));
+const adminSessions = new Map(); // opaque token -> { client, expiresAt }
+
+function adminLockActive() {
+  const lock = settings.get().lock || {};
+  return lock.enabled === true && typeof lock.pinHash === 'string' && lock.pinHash.length > 0;
+}
+
+function adminClientKey(req) {
+  const address = String((req && req.socket && req.socket.remoteAddress) || '');
+  const userAgent = String((req && req.headers && req.headers['user-agent']) || '').slice(0, 512);
+  // A bearer hub token is already a client secret. Hash it into the binding rather than keeping it
+  // in session memory or returning it in an error/log.
+  const authorization = String((req && req.headers && req.headers.authorization) || '');
+  return crypto.createHash('sha256').update(address + '\n' + userAgent + '\n' + authorization).digest('hex');
+}
+
+function pruneAdminSessions(now = Date.now()) {
+  for (const [token, session] of adminSessions.entries()) {
+    if (!session || session.expiresAt <= now) adminSessions.delete(token);
+  }
+}
+
+function mintAdminSession(req) {
+  pruneAdminSessions();
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+  adminSessions.set(token, { client: adminClientKey(req), expiresAt });
+  return { token, expiresAt };
+}
+
+function validAdminSession(req) {
+  const token = String((req && req.headers && req.headers[ADMIN_SESSION_HEADER]) || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(token)) return false;
+  const session = adminSessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    if (session) adminSessions.delete(token);
+    return false;
+  }
+  return safeEqual(session.client, adminClientKey(req));
+}
+
+function clearAdminSessions() { adminSessions.clear(); }
+
+/** Enforce the server-side half of the household lock only while it is enabled. */
+function requireAdminSession(req, res) {
+  if (!adminLockActive() || validAdminSession(req)) return true;
+  send(res, 403, {
+    error: 'the household settings PIN is needed',
+    gate: 'settings-lock',
+    sessionRequired: true,
+  });
+  return false;
+}
+
+/** Preview is a renderer-only lane: sources may be inspected there but never altered or fetched. */
+function rejectPreviewSourceMutation(res) {
+  if (!OFFLINE_PREVIEW) return false;
+  send(res, 403, {
+    error: 'offline preview is read-only',
+    code: 'preview-read-only',
+  });
+  return true;
+}
 
 /** Hash every plaintext PIN the seed or an older build left behind, once, at boot. */
 function migratePins() {
@@ -486,6 +606,10 @@ function isAdultChange(held, patch) {
 const COMPAT_BUDGET_MS = Number(process.env.COMPAT_BUDGET_MS || 20000);
 
 async function ensureCompat(provider) {
+  if (OFFLINE_PREVIEW) {
+    previewTelemetry.skipped.compatibility++;
+    return null;
+  }
   if (typeof provider.legacy.ensure !== 'function') return;
   await withBudget(Promise.resolve().then(() => provider.legacy.ensure()), COMPAT_BUDGET_MS,
     null, 'compat warmup ' + provider.id);
@@ -1160,7 +1284,7 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type,range,accept-encoding',
+    'Access-Control-Allow-Headers': 'content-type,range,accept-encoding,x-scenix-admin-session',
     'Access-Control-Expose-Headers': 'content-range,accept-ranges,content-length',
   };
 }
@@ -1289,6 +1413,17 @@ async function healthBody() {
       },
       failed: registry.failures,
     },
+    ...(previewTelemetry ? {
+      // Keep the preview proof useful without exposing its temporary filesystem directory.
+      preview: {
+        enabled: true,
+        bind: previewTelemetry.bind,
+        externalNetwork: false,
+        readOnly: true,
+        warmups: { ...previewTelemetry.warmups },
+        skipped: { ...previewTelemetry.skipped },
+      },
+    } : {}),
   };
   healthCache = body;
   healthCacheAt = Date.now();
@@ -4200,28 +4335,157 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   return { status: 200, body: out };
 }
 
-/** The theme registry and the selected theme's tokens, for the web boot and the settings picker. */
+/** The browser projection of the curated registry, for web boot and its settings picker. */
 function themeCatalog() {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(THEME_DIR, 'themes.json'), 'utf8'));
-    return Array.isArray(j.themes) ? j.themes : [];
+    return Array.isArray(j.themes) ? j.themes.filter((theme) => (
+      theme && typeof theme.id === 'string' && typeof theme.asset === 'string'
+      && Array.isArray(theme.targets) && theme.targets.includes('web')
+    )) : [];
   } catch (e) {
     return [];
   }
 }
-function themePayload() {
+
+/** A requested theme and the browser renderer's truthful effective choice. */
+function resolveWebTheme(requested = String(settings.get().theme || 'scenix-apple')) {
   const themes = themeCatalog();
-  // "Clean" is the shipped default; a household holding a pack that was retired between builds
-  // lands on the first entry of the shipped catalog rather than a theme the build cannot draw.
-  const wanted = String(settings.get().theme || 'scenix-apple');
-  const choice = themes.find((t) => t.id === wanted) || themes[0]
-    || { id: 'scenix-apple', name: 'Clean', asset: 'theme-apple.json' };
+  const wanted = String(requested || '').trim() || 'scenix-apple';
+  const requestedChoice = themes.find((theme) => theme.id === wanted);
+  const fallback = themes.find((theme) => theme.id === 'scenix-apple') || themes[0]
+    || { id: 'scenix-apple', name: 'Apple', asset: 'theme-apple.json', targets: ['web'] };
+  return {
+    themes,
+    wanted,
+    choice: requestedChoice || fallback,
+    available: !!requestedChoice,
+  };
+}
+
+function isSharedTheme(id) {
+  return themeCatalog().some((theme) => theme.id === String(id || '').trim());
+}
+
+function themePayload() {
+  const { themes, wanted, choice, available } = resolveWebTheme();
   let tokens = null;
   try {
     // The manifest is the allow-list; an id from a request never becomes a path.
     tokens = JSON.parse(fs.readFileSync(path.join(THEME_DIR, path.basename(String(choice.asset))), 'utf8'));
   } catch (e) { /* the page keeps app.css defaults */ }
-  return { id: choice.id, name: choice.name, themes, tokens };
+  return {
+    // `id` keeps older web shells working. New callers must render effectiveId and can surface a
+    // clear explanation when an old household setting names a TV-only pack.
+    id: choice.id,
+    name: choice.name,
+    requestedId: wanted,
+    effectiveId: choice.id,
+    available,
+    reason: available ? '' : 'This theme is available on this TV only',
+    themes,
+    tokens,
+  };
+}
+
+/** Registry ids are kept in local provenance, so browse state never needs to expose an add-on URL. */
+function reviewedInstalledIds() {
+  const ids = new Set();
+  for (const addon of addons.entries()) {
+    const provenance = addon && addon.provenance;
+    if (provenance && provenance.kind === 'reviewed' && typeof provenance.registryId === 'string') {
+      ids.add(provenance.registryId);
+    }
+  }
+  return ids;
+}
+
+function reviewedDirectoryOptions(u) {
+  return {
+    category: u.searchParams.get('category'),
+    type: u.searchParams.get('type'),
+    q: u.searchParams.has('q') ? u.searchParams.get('q') : u.searchParams.get('query'),
+    installedIds: reviewedInstalledIds(),
+  };
+}
+
+/** Community provenance remains separate from reviewed provenance even after a source is installed. */
+function communityInstalledIds() {
+  const ids = new Set();
+  for (const addon of addons.entries()) {
+    const provenance = addon && addon.provenance;
+    if (provenance && provenance.kind === 'community' && typeof provenance.directoryId === 'string') {
+      ids.add(provenance.directoryId);
+    }
+  }
+  return ids;
+}
+
+function communityDirectoryOptions(u) {
+  return {
+    type: u.searchParams.get('type'),
+    q: u.searchParams.has('q') ? u.searchParams.get('q') : u.searchParams.get('query'),
+    installedIds: communityInstalledIds(),
+  };
+}
+
+/** Safe data retained in a one-time configuration handoff — never a manifest/config address. */
+function sourceSetupSessionSource(kind, entry) {
+  if (!entry || !entry.configurationRequired) return null;
+  return {
+    kind,
+    id: kind === 'reviewed' ? entry.id : entry.id,
+    name: entry.name,
+    revision: entry.version,
+  };
+}
+
+/** A registry/cache refresh while somebody is configuring is a safety event, not an install fallback. */
+function sourceSetupMatches(sessionSource, entry, kind) {
+  return !!(sessionSource && entry && sessionSource.kind === kind
+    && sessionSource.id === entry.id && sessionSource.name === entry.name
+    && sessionSource.revision === entry.version && entry.configurationRequired === true);
+}
+
+/**
+ * Resolve and install the original descriptor only after a one-time code has been reserved.  The
+ * configured address comes from the web body, is validated against the original HTTPS origin, and
+ * is passed straight to the existing add-on boundary; it is never included in a response or log.
+ */
+async function installConfiguredSourceSetup(sessionSource, configuredManifest) {
+  if (sessionSource.kind === 'reviewed') {
+    let entry;
+    try { entry = reviewedAddons.find(sessionSource.id); } catch (error) {
+      return { ok: false, status: 503, error: 'reviewed source setup is unavailable' };
+    }
+    if (!sourceSetupMatches(sessionSource, entry, 'reviewed')) {
+      return { ok: false, status: 409, error: 'this reviewed source changed; start setup again' };
+    }
+    const url = sourceSetupCore.configuredManifestUrl(configuredManifest, entry.manifest);
+    if (!url.ok) return { ok: false, status: 422, error: url.error };
+    return addons.add(url.value, entry.name, {
+      provenance: { kind: 'reviewed', registryId: entry.id, revision: entry.version },
+      redirectPolicy: 'same-origin',
+      validateManifest: (manifest) => reviewedAddons.validateRemoteManifest(entry, manifest),
+    });
+  }
+  if (sessionSource.kind === 'community') {
+    let entry;
+    try { entry = await communityDirectory.find(sessionSource.id); } catch (error) {
+      return { ok: false, status: 503, error: 'community source setup is unavailable' };
+    }
+    if (!sourceSetupMatches(sessionSource, entry, 'community')) {
+      return { ok: false, status: 409, error: 'this Community source changed; start setup again' };
+    }
+    const url = sourceSetupCore.configuredManifestUrl(configuredManifest, entry.manifestUrl);
+    if (!url.ok) return { ok: false, status: 422, error: url.error };
+    return addons.add(url.value, entry.name, {
+      provenance: { kind: 'community', directoryId: entry.id, revision: entry.version },
+      redirectPolicy: 'same-origin',
+      validateManifest: (manifest) => communityDirectory.validateConfiguredManifest(entry, manifest),
+    });
+  }
+  return { ok: false, status: 409, error: 'this setup code has an unsupported source' };
 }
 
 async function handle(req, res) {
@@ -4386,7 +4650,13 @@ async function handle(req, res) {
       }
       if (pinMatches({ pinHash: lock.pinHash }, body && body.pin)) {
         unlockSucceeded('settings-lock');
-        return send(res, 200, { ok: true, pinSet: true });
+        const session = mintAdminSession(req);
+        return send(res, 200, {
+          ok: true,
+          pinSet: true,
+          adminSession: session.token,
+          adminSessionExpiresAt: session.expiresAt,
+        });
       }
       unlockFailed('settings-lock');
       return send(res, 403, { error: 'wrong PIN', ok: false });
@@ -4396,10 +4666,20 @@ async function handle(req, res) {
       const body = await readBody(req);
       const cur = settings.get().lock || {};
       const wantsEnabled = body && body.enabled === true;
+      const sessionIsValid = validAdminSession(req);
       if (cur.pinHash) {
         const given = (body && (body.pinCurrent || body.current)) || '';
-        if (!pinMatches({ pinHash: cur.pinHash }, given)) {
-          return send(res, 403, { error: 'the current settings PIN is needed', gate: 'settings-lock' });
+        if (!sessionIsValid) {
+          // Changing or disabling the lock is also a PIN-verification route.  It must share the
+          // unlock rate limit; otherwise this endpoint becomes an unlimited PIN oracle.
+          if (!unlockAllowed('settings-lock')) {
+            return send(res, 429, { error: 'too many attempts', retryAfterMs: 300000 });
+          }
+          if (!pinMatches({ pinHash: cur.pinHash }, given)) {
+            unlockFailed('settings-lock');
+            return send(res, 403, { error: 'the current settings PIN is needed', gate: 'settings-lock' });
+          }
+          unlockSucceeded('settings-lock');
         }
       }
       let pinHash = cur.pinHash || '';
@@ -4415,9 +4695,18 @@ async function handle(req, res) {
         return send(res, 400, { error: 'set a PIN before turning the lock on' });
       }
       const next = settings.set({ lock: { enabled: wantsEnabled, pinHash } });
+      // A changed lock/PIN invalidates every outstanding capability. When it remains enabled, the
+      // request that just proved the PIN receives one fresh session so the settings visit continues.
+      clearAdminSessions();
+      const session = (next.lock || {}).enabled === true && (next.lock || {}).pinHash
+        ? mintAdminSession(req) : null;
       return send(res, 200, {
         ok: true,
         lock: { enabled: (next.lock || {}).enabled === true, pinSet: !!((next.lock || {}).pinHash) },
+        ...(session ? {
+          adminSession: session.token,
+          adminSessionExpiresAt: session.expiresAt,
+        } : {}),
       });
     }
 
@@ -4466,10 +4755,10 @@ async function handle(req, res) {
             }
             : { channels: [], groups: [] };
         })(),
-        file: settings.FILE,
       });
     }
     if (path === '/app/v1/settings' && req.method === 'PUT') {
+      if (!requireAdminSession(req, res)) return;
       const raw = await readBody(req);
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return send(res, 400, { error: 'expected a JSON object of settings' });
@@ -4484,6 +4773,15 @@ async function handle(req, res) {
       // the hash). Settings screens send back the whole settings object they read, so an unmodified
       // `lock: {enabled, pinSet}` in this PUT must never be allowed to erase the stored hash.
       delete body.lock;
+      if (Object.prototype.hasOwnProperty.call(body, 'theme') && !isSharedTheme(body.theme)) {
+        return send(res, 400, {
+          error: 'this theme is available on this TV only',
+          requestedId: String(body.theme || ''),
+          themes: themeCatalog().map((theme) => ({
+            id: theme.id, name: theme.name, targets: theme.targets,
+          })),
+        });
+      }
       const before = settings.get();
       const next = settings.set(body);
       const effects = {};
@@ -4545,6 +4843,10 @@ async function handle(req, res) {
     // verified by this process and never read back, which is what turns "ask for four digits" from
     // theatre into a gate.
     if (path === '/app/v1/profiles' && req.method === 'POST') {
+      // The household Settings lock protects the whole administration surface, including profile
+      // creation. Profile *unlock* below stays reachable without this capability: it proves a
+      // profile's own PIN and must not become circular when an owner needs either proof.
+      if (!requireAdminSession(req, res)) return;
       const body = await readBody(req);
       /* The ceiling a new profile starts behind is the whole point of the household's locks, so choosing it is
          an adult act: a Kids profile is held to the hub's ceiling by its rules whatever the number on it says,
@@ -4557,6 +4859,7 @@ async function handle(req, res) {
     }
     m = /^\/app\/v1\/profiles\/([^/]+)$/.exec(path);
     if (m && (req.method === 'PUT' || req.method === 'PATCH')) {
+      if (!requireAdminSession(req, res)) return;
       const body = await readBody(req);
       const patch = {};
       for (const k of ['name', 'kind', 'age', 'languages', 'rules', 'prefs', 'pin', 'pinRequired', 'avatar']) {
@@ -4623,6 +4926,7 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, profile: wireProfile(store.profile(m[1])) });
     }
     if (m && req.method === 'DELETE') {
+      if (!requireAdminSession(req, res)) return;
       /* Removing a person takes their gate down with them, so the number on the profile has to be produced to
          remove it. Without this, every lock in this file could be undone by a DELETE that asks nothing — a child
          cannot lift their own ceiling, but they could delete the profile that had it and start a new one.
@@ -5105,11 +5409,34 @@ async function handle(req, res) {
         const list = await withBudget(Promise.resolve().then(() => p.subtitles(identity, want)),
           SUBS_BUDGET_MS, [], 'subs ' + p.id);
         for (const s of list || []) {
-          // The community protocol names a subtitle and states its language, but never its container, and a
-          // decoder has to be told one. The extension inside the name the addon chose is the only honest
-          // signal available; when it is missing `format` stays absent rather than being guessed at.
-          const ext = /\.(srt|ass|ssa|vtt)\b/i.exec(String(s.name || ''));
-          found.push({ ...s, ...(ext ? { format: ext[1].toLowerCase() } : {}), addon: p.name || p.id });
+          // A subtitle provider that sniffed its file (see core/addons.js sniffSubtitleFormats) states
+          // `format` as a fact about the bytes, so it wins. Only when a provider did not (or could not)
+          // sniff does the extension inside the name the addon chose remain as the fallback: when both
+          // are missing `format` stays absent rather than being guessed at.
+          const normalizeFmt = addons.util && typeof addons.util.normalizeSubtitleFormat === 'function'
+            ? addons.util.normalizeSubtitleFormat : null;
+          const declared = normalizeFmt
+            ? normalizeFmt(s.format)
+            : (() => {
+              const bare = String(s.format || '').trim().toLowerCase().replace(/^\./, '');
+              return ['srt', 'ass', 'ssa', 'vtt', 'ttml', 'dfxp', 'sub'].includes(bare)
+                ? (bare === 'webvtt' ? 'vtt' : bare) : null;
+            })();
+          const ext = /\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i.exec(String(s.name || ''));
+          let format = declared || null;
+          if (!format && ext) format = ext[1].toLowerCase() === 'webvtt' ? 'vtt' : ext[1].toLowerCase();
+          const next = { ...s, addon: p.name || p.id };
+          if (format) {
+            next.format = format;
+            if (typeof next.name === 'string' && next.name
+              && !new RegExp('\\.' + format + '\\b', 'i').test(next.name)
+              && /\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i.test(next.name)) {
+              next.name = next.name.replace(/\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i, '.' + format);
+            }
+          } else {
+            delete next.format;
+          }
+          found.push(next);
         }
       }
       found.sort((a, b) => {
@@ -5120,8 +5447,234 @@ async function handle(req, res) {
       return send(res, 200, { identity, langs: want, subs: found });
     }
 
-    // Addons: the list the app's Settings renders, and the install/remove surface.
+    // Reviewed sources are an intentionally small, repository-owned catalogue — never a remote
+    // marketplace. Its public projection omits the upstream manifest URL; install accepts only an
+    // immutable registry id and verifies the fetched manifest before it is persisted.
+    if (path === '/app/v1/addon-registry' && req.method === 'GET') {
+      try {
+        const directory = reviewedAddons.publicDirectory(reviewedDirectoryOptions(u));
+        return send(res, 200, {
+          // The legacy reviewed array remains for clients already on the original endpoint. It now
+          // carries the same safe metadata as the explicit directory envelope, never a manifest URL.
+          reviewed: directory.entries,
+          directory,
+          manualInstall: { available: true, safety: 'advanced-unreviewed' },
+        });
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+    }
+    if (path === '/app/v1/addon-registry/directory' && req.method === 'GET') {
+      try {
+        const directory = reviewedAddons.publicDirectory(reviewedDirectoryOptions(u));
+        return send(res, 200, {
+          ...directory,
+          manualInstall: { available: true, safety: 'advanced-unreviewed' },
+        });
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/addon-registry\/([a-z0-9-]+)$/.exec(path);
+    if (m && req.method === 'GET') {
+      try {
+        const entry = reviewedAddons.publicEntry(m[1], { installedIds: reviewedInstalledIds() });
+        if (!entry) return send(res, 404, { error: 'no such reviewed source', id: m[1] });
+        return send(res, 200, { entry });
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/addon-registry\/([a-z0-9-]+)\/setup-session$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      let entry;
+      try {
+        entry = reviewedAddons.find(m[1]);
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed source setup is unavailable' });
+      }
+      if (!entry) return send(res, 404, { error: 'no such reviewed source', id: m[1] });
+      const source = sourceSetupSessionSource('reviewed', entry);
+      if (!source) return send(res, 409, {
+        error: 'this reviewed source does not require browser setup',
+        code: 'configuration-not-required',
+        id: entry.id,
+      });
+      const setup = sourceSetup.createSession(source);
+      return send(res, 200, { ok: true, setup });
+    }
+    m = /^\/app\/v1\/addon-registry\/([a-z0-9-]+)\/install$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      let entry;
+      try {
+        entry = reviewedAddons.find(m[1]);
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+      if (!entry) return send(res, 404, { error: 'no such reviewed source', id: m[1] });
+      if (entry.configurationRequired) {
+        return send(res, 409, {
+          error: 'this reviewed source requires browser setup before installation',
+          code: 'configuration-required',
+          id: entry.id,
+        });
+      }
+      const out = await addons.add(entry.manifest, entry.name, {
+        provenance: { kind: 'reviewed', registryId: entry.id, revision: entry.version },
+        validateManifest: (manifest) => reviewedAddons.validateRemoteManifest(entry, manifest),
+      });
+      if (!out.ok) return send(res, out.status || 502, { error: out.error, id: entry.id });
+      invalidateCaches();
+      return send(res, 200, {
+        ok: true,
+        addon: out.addon.stats(),
+        addons: await addons.list(),
+      });
+    }
+
+    // Community sources are intentionally a separate, non-endorsed directory. The Hub fetches only
+    // the fixed protocol catalogue, returns a redacted projection, and accepts only its opaque cached
+    // descriptor id for installation. This route never treats a caller-supplied URL as a community item.
+    if (path === '/app/v1/community-addon-directory' && req.method === 'GET') {
+      try {
+        return send(res, 200, await communityDirectory.publicDirectory(communityDirectoryOptions(u)));
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community sources are unavailable', code: 'community-directory-unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/community-addon-directory\/(community-[a-f0-9]{24})$/.exec(path);
+    if (m && req.method === 'GET') {
+      try {
+        const entry = await communityDirectory.publicEntry(m[1], { installedIds: communityInstalledIds() });
+        if (!entry) return send(res, 404, { error: 'no such community source', id: m[1] });
+        return send(res, 200, { entry });
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community sources are unavailable', code: 'community-directory-unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/community-addon-directory\/(community-[a-f0-9]{24})\/setup-session$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      const body = await readBody(req);
+      if (!communityDirectory.hasNonEndorsementAcknowledgement(body)) {
+        return send(res, 428, {
+          error: 'community setup requires an explicit non-endorsement acknowledgement',
+          code: 'community-acknowledgement-required',
+          id: m[1],
+          acknowledgement: { field: 'nonEndorsementAcknowledged', value: true },
+        });
+      }
+      let entry;
+      try {
+        entry = await communityDirectory.find(m[1]);
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community source setup is unavailable', code: 'community-directory-unavailable' });
+      }
+      if (!entry) return send(res, 404, { error: 'no such community source', id: m[1] });
+      const source = sourceSetupSessionSource('community', entry);
+      if (!source) return send(res, 409, {
+        error: 'this Community source does not require browser setup',
+        code: 'configuration-not-required',
+        id: entry.id,
+      });
+      const setup = sourceSetup.createSession(source);
+      return send(res, 200, { ok: true, setup });
+    }
+    m = /^\/app\/v1\/community-addon-directory\/(community-[a-f0-9]{24})\/install$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      const body = await readBody(req);
+      if (!communityDirectory.hasNonEndorsementAcknowledgement(body)) {
+        return send(res, 428, {
+          error: 'community installation requires an explicit non-endorsement acknowledgement',
+          code: 'community-acknowledgement-required',
+          id: m[1],
+          acknowledgement: { field: 'nonEndorsementAcknowledged', value: true },
+        });
+      }
+      let entry;
+      try {
+        entry = await communityDirectory.find(m[1]);
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community sources are unavailable', code: 'community-directory-unavailable' });
+      }
+      // An id is useful only while it resolves from the bounded server-side cache. A guessed or expired
+      // id fails closed rather than becoming a pass-through URL installer.
+      if (!entry) return send(res, 404, { error: 'no such community source', id: m[1] });
+      if (entry.configurationRequired) {
+        return send(res, 409, {
+          error: 'this community source requires browser setup before installation',
+          code: 'configuration-required',
+          id: entry.id,
+        });
+      }
+      const out = await addons.add(entry.manifestUrl, entry.name, {
+        provenance: { kind: 'community', directoryId: entry.id, revision: entry.version },
+        // Same-origin redirects, like the reviewed lane and the configured handoff: a community
+        // host must not 301 the install onto a different origin's manifest.
+        redirectPolicy: 'same-origin',
+        validateManifest: (manifest) => communityDirectory.validateRemoteManifest(entry, manifest),
+      });
+      if (!out.ok) return send(res, out.status || 502, { error: out.error, id: entry.id });
+      invalidateCaches();
+      return send(res, 200, {
+        ok: true,
+        addon: out.addon.stats(),
+        addons: await addons.list(),
+      });
+    }
+
+    // The generic handoff endpoints deliberately accept only an opaque one-time code. They are
+    // administrator-gated even for GET, so a code does not become a LAN-visible source probe.
+    m = /^\/app\/v1\/source-setups\/([^/]+)$/.exec(path);
+    if (m && req.method === 'GET') {
+      if (!requireAdminSession(req, res)) return;
+      const setup = sourceSetup.status(m[1]);
+      return setup
+        ? send(res, 200, { ok: true, setup })
+        : send(res, 404, { error: 'setup code is unavailable or expired' });
+    }
+    m = /^\/app\/v1\/source-setups\/([^/]+)\/complete$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      const body = await readBody(req);
+      const reservation = sourceSetup.beginCompletion(m[1]);
+      if (!reservation.ok) return send(res, reservation.status, { error: reservation.error });
+      const out = await installConfiguredSourceSetup(reservation.source, body && body.manifestUrl);
+      if (!out.ok) {
+        sourceSetup.releaseCompletion(reservation.code);
+        return send(res, out.status || 502, { error: out.error || 'configured source could not be installed' });
+      }
+      const setup = sourceSetup.complete(reservation.code);
+      invalidateCaches();
+      return send(res, 200, {
+        ok: true,
+        setup,
+        addon: out.addon.stats(),
+        addons: await addons.list(),
+      });
+    }
+
+    // Add-ons: the list the app's Settings renders, and the explicitly advanced manual install/remove surface.
     if (path === '/app/v1/addons' && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
       const body = await readBody(req);
       const out = await addons.add(body && body.url, body && body.name);
       invalidateCaches();
@@ -5130,6 +5683,8 @@ async function handle(req, res) {
     }
     m = /^\/app\/v1\/addons\/([^/]+)\/(enable|disable)$/.exec(path);
     if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
       const st = addons.setEnabled(m[1], m[2] === 'enable');
       invalidateCaches();
       return st
@@ -5173,6 +5728,7 @@ async function handle(req, res) {
     // should not keep serving hour-old answers, and "clear the cache" is the first thing a support
     // conversation reaches for. Standalone hosts answer the same route, so one UI can offer one button.
     if (path === '/app/v1/cache/clear' && req.method === 'POST') {
+      if (!requireAdminSession(req, res)) return;
       // Everything this process remembers about the outside world, not just the addon responses: a stale
       // track listing or a link written off last week is just as much cache as a catalog page, and an
       // owner pressing "clear" cannot tell which of the three the button actually meant.
@@ -5185,6 +5741,8 @@ async function handle(req, res) {
 
     m = /^\/app\/v1\/addons\/([^/]+)$/.exec(path);
     if (m && req.method === 'DELETE') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
       const ok = addons.remove(m[1]);
       invalidateCaches();
       return ok
@@ -5194,7 +5752,6 @@ async function handle(req, res) {
     if (path === '/app/v1/addons') {
       return send(res, 200, {
         addons: await addons.list(),
-        file: addons.paths.ADDONS_FILE,
         limits: addons.limits,
       });
     }
@@ -5477,14 +6034,18 @@ async function handle(req, res) {
 // machine the television actually talks to.
 const server = tlsOptions ? https.createServer(tlsOptions, handle) : http.createServer(handle);
 
-server.listen(PORT, '0.0.0.0', () => {
-  log(HUB_ID, HUB_VERSION, 'on ' + SCHEME + '://0.0.0.0:' + PORT + '  (clients: /app/v1/home?profile=<id>)');
+server.listen(PORT, HUB_BIND, () => {
+  const bindLabel = HUB_BIND.includes(':') ? '[' + HUB_BIND + ']' : HUB_BIND;
+  log(HUB_ID, HUB_VERSION, 'on ' + SCHEME + '://' + bindLabel + ':' + PORT
+    + '  (clients: /app/v1/home?profile=<id>)');
   // ffmpeg reads a torrent through this hub's own proxy so the cushion sits in front of it too; it needs
   // to know the address to loop back to.
   readahead.setSelfOrigin(SCHEME + '://127.0.0.1:' + PORT);
   // The hub follows its own origin on a slow timer, so "update the app" never leaves an old hub
   // behind — and a hub that cannot self-pull (dirty checkout, no git) logs why once per pass.
-  hubupdate.start(log);
+  // A loopback offline preview is deliberately a sealed renderer-inspection lane: even its delayed
+  // status check must not fetch a remote Git origin while someone is evaluating the UI.
+  if (!OFFLINE_PREVIEW) hubupdate.start(log);
   log('addons:', registry.providers.map((p) => p.id + (p.native ? '' : '@' + p.priority)).join(', '));
   log('rows:', registry.rows.map((r) => r.id + '/' + (r.scope || 'all') + '@' + r.order).join(', '));
   log('rules:', registry.rules.map((r) => r.id + '@' + r.order).join(', '));
@@ -5527,12 +6088,17 @@ server.listen(PORT, '0.0.0.0', () => {
   for (const p of compatProviders()) ensureCompat(p);
   // Faces are the first thing a household sees, before they have watched a single thing, so the pictures
   // are fetched at boot and kept. A profile screen then answers from this box in milliseconds.
-  avatars.warm();
-  // Genre shelves read whatever the addons have already said. On a fresh process that is nothing, so the
-  // first home page a household sees after a restart is missing Action, Comedy and Horror entirely, and it
-  // only fills in once someone happens to look at them. Warm the genres the addons themselves declare, in
-  // the background, never inside a request.
-  addons.warmGenres()
-    .then((n) => { if (n) console.log(`genres: ${n} catalog pages warmed from what the addons declare`); })
-    .catch(() => {});
+  if (OFFLINE_PREVIEW) {
+    previewTelemetry.skipped.avatars++;
+    previewTelemetry.skipped.genres++;
+  } else {
+    avatars.warm();
+    // Genre shelves read whatever the addons have already said. On a fresh process that is nothing, so the
+    // first home page a household sees after a restart is missing Action, Comedy and Horror entirely, and it
+    // only fills in once someone happens to look at them. Warm the genres the addons themselves declare, in
+    // the background, never inside a request.
+    addons.warmGenres()
+      .then((n) => { if (n) console.log('genres: ' + n + ' catalog pages warmed from what the addons declare'); })
+      .catch(() => {});
+  }
 });

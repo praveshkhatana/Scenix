@@ -305,24 +305,52 @@ internal object GlassKit {
      */
     class HeroOverlay(context: Context, private val app: AppContext) : View(context) {
         private val paint = android.graphics.Paint()
+        // These shaders are only geometry/theme dependent. Recreating them for every frame made
+        // the glass hero allocate twice per draw while the artwork was otherwise completely still.
+        // Keep the exact same stops and rebuild only when a size, wash, or relevant pack token moves.
+        private var leftShader: android.graphics.LinearGradient? = null
+        private var bottomShader: android.graphics.LinearGradient? = null
+        private var shaderWidth = -1f
+        private var shaderHeight = -1f
+        private var shaderWash = 0
+        private var shaderFade = Float.NaN
+        private var shaderScrim = 0
         // The fixed pack tint for this plate slot (heroWashDeep / heroWashLight) — the reference
         // plates keep their tints whatever artwork loads beneath them.
         private var wash = 0
         fun setWash(color: Int) { if (color != wash) { wash = color; invalidate() } }
         fun currentWash(): Int = wash
+
+        private fun ensureShaders(width: Float, height: Float, fade: Float, scrim: Int) {
+            if (leftShader != null && bottomShader != null && shaderWidth == width &&
+                shaderHeight == height && shaderWash == wash && shaderFade == fade &&
+                shaderScrim == scrim
+            ) return
+            leftShader = android.graphics.LinearGradient(
+                0f, 0f, width, 0f, intArrayOf(wash, Color.TRANSPARENT),
+                floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP,
+            )
+            bottomShader = android.graphics.LinearGradient(
+                0f, 0f, 0f, height, intArrayOf(Color.TRANSPARENT, scrim),
+                floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP,
+            )
+            shaderWidth = width
+            shaderHeight = height
+            shaderWash = wash
+            shaderFade = fade
+            shaderScrim = scrim
+        }
+
         override fun onDraw(canvas: android.graphics.Canvas) {
             val w = width.toFloat(); val h = height.toFloat()
             if (w < 1f || h < 1f || wash == 0) return
             val theme = app.theme
             val fade = theme.packInt("heroFadePct", 62).coerceIn(25, 95) / 100f
-            paint.shader = android.graphics.LinearGradient(
-                0f, 0f, w, 0f, intArrayOf(wash, Color.TRANSPARENT),
-                floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP)
+            val scrim = theme.color("heroScrim", "rgba(6,16,30,0.50)")
+            ensureShaders(w, h, fade, scrim)
+            paint.shader = leftShader
             canvas.drawRect(0f, 0f, w, h, paint)
-            paint.shader = android.graphics.LinearGradient(
-                0f, 0f, 0f, h,
-                intArrayOf(Color.TRANSPARENT, theme.color("heroScrim", "rgba(6,16,30,0.50)")),
-                floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP)
+            paint.shader = bottomShader
             canvas.drawRect(0f, 0f, w, h, paint)
         }
     }
@@ -608,6 +636,14 @@ internal object GlassKit {
      */
     private var grainCache: android.graphics.Bitmap? = null
     private var grainStrength = -1
+    private data class WallBlob(val xPct: Float, val yPct: Float, val radiusPct: Float, val color: Int, val alpha: Float)
+    private data class DrawBlob(
+        val centerX: Float,
+        val centerY: Float,
+        val radius: Float,
+        val shader: android.graphics.RadialGradient,
+    )
+
     private fun grainBitmap(strength: Int): android.graphics.Bitmap {
         grainCache?.takeIf { !it.isRecycled && grainStrength == strength }?.let { return it }
         val side = 160
@@ -689,7 +725,7 @@ internal object GlassKit {
             val g = f[0].split(",")
             if (g.size != 3) return@mapNotNull null
             try {
-                Triple(Triple(g[0].toFloat(), g[1].toFloat(), g[2].toFloat()),
+                WallBlob(g[0].toFloat(), g[1].toFloat(), g[2].toFloat(),
                     Color.parseColor(f[1]), f[2].toFloat())
             } catch (e: Exception) { null }
         }
@@ -697,24 +733,56 @@ internal object GlassKit {
         if (blobs.isEmpty() && grain <= 0) return base
         return object : android.graphics.drawable.Drawable() {
             private val paint = android.graphics.Paint()
+            // The wall is kept under static content for long stretches. Its blur-like radial
+            // glows therefore need to be constructed only when its bounds change, not for every
+            // frame that merely composites the page above it.
+            private var cachedWidth = -1
+            private var cachedHeight = -1
+            private var drawBlobs: List<DrawBlob> = emptyList()
+            private var grainShader: android.graphics.BitmapShader? = null
+
+            private fun prepareDrawAssets(width: Int, height: Int) {
+                if (cachedWidth == width && cachedHeight == height) return
+                val longest = maxOf(width, height).toFloat()
+                drawBlobs = blobs.map { blob ->
+                    val centerX = blob.xPct / 100f * width
+                    val centerY = blob.yPct / 100f * height
+                    val radius = blob.radiusPct / 100f * longest
+                    val color = (blob.color and 0x00FFFFFF) or
+                        ((blob.alpha * 255).toInt().coerceIn(0, 255) shl 24)
+                    DrawBlob(
+                        centerX,
+                        centerY,
+                        radius,
+                        android.graphics.RadialGradient(
+                            centerX, centerY, radius, color, 0,
+                            android.graphics.Shader.TileMode.CLAMP,
+                        ),
+                    )
+                }
+                if (grain > 0 && grainShader == null) {
+                    grainShader = android.graphics.BitmapShader(
+                        grainBitmap(grain),
+                        android.graphics.Shader.TileMode.REPEAT,
+                        android.graphics.Shader.TileMode.REPEAT,
+                    )
+                }
+                cachedWidth = width
+                cachedHeight = height
+            }
+
             override fun draw(canvas: android.graphics.Canvas) {
                 val w = bounds.width(); val h = bounds.height()
                 base.setBounds(0, 0, w, h); base.draw(canvas)
-                val m = maxOf(w, h).toFloat()
-                for ((pos, color, alpha) in blobs) {
-                    val cx = pos.first / 100f * w; val cy = pos.second / 100f * h
-                    val r = pos.third / 100f * m
-                    val a = (color and 0x00FFFFFF) or ((alpha * 255).toInt().coerceIn(0, 255) shl 24)
-                    paint.shader = android.graphics.RadialGradient(
-                        cx, cy, r, a, 0, android.graphics.Shader.TileMode.CLAMP)
-                    canvas.drawCircle(cx, cy, r, paint)
+                prepareDrawAssets(w, h)
+                for (blob in drawBlobs) {
+                    paint.shader = blob.shader
+                    canvas.drawCircle(blob.centerX, blob.centerY, blob.radius, paint)
                 }
                 if (grain > 0) {
                     // The reference wash is photographic film, not a vector gradient: procedural
                     // grain (built once, tiled) breaks the banding without copying its asset.
-                    paint.shader = android.graphics.BitmapShader(
-                        grainBitmap(grain), android.graphics.Shader.TileMode.REPEAT,
-                        android.graphics.Shader.TileMode.REPEAT)
+                    paint.shader = grainShader
                     canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
                 }
             }

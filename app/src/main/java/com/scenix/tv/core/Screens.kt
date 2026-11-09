@@ -100,6 +100,13 @@ object Screens {
             background = rowFill(app)
             isFocusable = true
             isClickable = true
+            // Rows are a single remote control, even though their visible label, note and value are
+            // separate text views. Give an accessibility service the complete announced choice so
+            // it does not have to infer a setting from decorative children or a chevron glyph.
+            contentDescription = listOf(label, value, note)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString(". ")
             setOnClickListener { onClick() }
         }
         val texts = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }

@@ -149,22 +149,6 @@ internal object HomeSurfaceFactory {
                     ),
                 ),
             )
-            HomeLayoutSpec.Hero.GLASS_CARDS -> GlassSurface(
-                GlassHomeLayout(
-                    context,
-                    app,
-                    GlassHomeLayout.Callbacks(
-                        onOpen = callbacks.onOpen,
-                        onSection = callbacks.onSection,
-                        onProfile = callbacks.onProfile,
-                        onSearch = callbacks.onSearch,
-                        onSettings = callbacks.onSettings,
-                        onShelf = callbacks.onShelf,
-                        showsLive = callbacks.showsLive,
-                        showsGames = callbacks.showsGames,
-                    ),
-                ),
-            )
             HomeLayoutSpec.Hero.KIDS_STAGE -> KidsSurface(
                 KidsHomeLayout(
                     context,

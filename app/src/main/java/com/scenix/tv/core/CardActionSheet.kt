@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.lang.ref.WeakReference
 import com.scenix.tv.LiquidGlassKit
 
 /**
@@ -26,11 +27,14 @@ import com.scenix.tv.LiquidGlassKit
  */
 object CardActionSheet {
 
-    private var open: FrameLayout? = null
-    private var returnFocus: View? = null
+    // This singleton coordinates one overlay across screens, but it must never be the thing that
+    // retains a destroyed Activity's decor tree. The decor itself owns an attached sheet strongly;
+    // weak references here are sufficient for routing and disappear naturally with its screen.
+    private var open: WeakReference<FrameLayout>? = null
+    private var returnFocus: WeakReference<View>? = null
 
     /** The page the sheet stood in front of, and the focus rule it had before. */
-    private var page: ViewGroup? = null
+    private var page: WeakReference<ViewGroup>? = null
     private var pageFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
 
     data class Choice(val label: String, val run: () -> Unit)
@@ -41,12 +45,7 @@ object CardActionSheet {
      * stack two of them.
      */
     fun open(activity: Activity, app: AppContext, title: String, choices: List<Choice>): Boolean {
-        if (choices.isEmpty() || activity.isFinishing || activity.isDestroyed) return false
-        // A sheet is refused while one is up, so that a second hold cannot stack two of them. But a
-        // sheet left behind by a screen that went away under it — profile switch, theme change, the
-        // activity recreated while the scrim was still on screen — must not silence every hold that
-        // comes after it. Only a scrim that is actually attached still counts as open.
-        open?.let { if (it.isAttachedToWindow) return false else open = null }
+        if (choices.isEmpty() || activity.isFinishing || isOpen()) return false
         val theme = app.theme
         val anchor = activity.currentFocus
 
@@ -63,7 +62,7 @@ object CardActionSheet {
             addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) {}
                 override fun onViewDetachedFromWindow(v: View) {
-                    if (open === v) release()
+                    if (open?.get() === v) release()
                 }
             })
         }
@@ -159,7 +158,7 @@ object CardActionSheet {
         // answered OK: the sheet stayed on screen while a different title opened. The page cannot
         // take focus until the sheet is down.
         val stage = activity.findViewById<ViewGroup>(android.R.id.content)
-        page = stage
+        page = stage?.let(::WeakReference)
         stage?.let {
             pageFocusability = it.descendantFocusability
             it.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
@@ -168,8 +167,8 @@ object CardActionSheet {
         root.addView(scrim, ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
         ))
-        open = scrim
-        returnFocus = anchor
+        open = WeakReference(scrim)
+        returnFocus = anchor?.let(::WeakReference)
         panel.post { rows.firstOrNull()?.requestFocus() }
         return true
     }
@@ -180,17 +179,28 @@ object CardActionSheet {
      */
     private fun release() {
         open = null
-        page?.descendantFocusability = pageFocusability
+        page?.get()?.descendantFocusability = pageFocusability
         page = null
-    }
-
-    fun close() {
-        val sheet = open ?: return
-        (sheet.parent as? ViewGroup)?.removeView(sheet)
-        release()
-        returnFocus?.let { v -> if (v.isAttachedToWindow) v.requestFocus() }
+        pageFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
         returnFocus = null
     }
 
-    fun isOpen(): Boolean = open != null
+    fun close() {
+        val sheet = open?.get()
+        val focus = returnFocus?.get()
+        if (sheet == null) {
+            release()
+            return
+        }
+        (sheet.parent as? ViewGroup)?.removeView(sheet)
+        release()
+        focus?.takeIf { it.isAttachedToWindow }?.requestFocus()
+    }
+
+    fun isOpen(): Boolean {
+        val sheet = open?.get()
+        if (sheet?.isAttachedToWindow == true) return true
+        release()
+        return false
+    }
 }

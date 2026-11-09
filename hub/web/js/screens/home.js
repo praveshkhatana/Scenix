@@ -7,12 +7,43 @@
  */
 
 import { api, getTrailer } from '/ui/js/api.js';
-import { el, clear, toast } from '/ui/js/dom.js';
+import { el, clear, posterImg, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
+import { icon } from '/ui/js/icons.js';
 import { token } from '/ui/js/theme.js';
 import { billboard, rowFor, cardFor, lazyMount, dropMountedRows } from '/ui/js/plugins.js';
 import { startPreview, stopPreview } from '/ui/js/video.js';
 import { session, rememberFocus } from '/ui/js/state.js';
+import { paintAvatar } from '/ui/js/avatars.js';
+import { initials } from '/ui/js/format.js';
+
+/*
+ * A home pack is a structural contract, not a theme-name switch.  theme.js publishes these
+ * values on <html>, but Home owns the DOM it describes: keeping the normalisation here means a
+ * future authored pack can select a known composition without adding a new `theme.id` branch.
+ * Unknown values deliberately fall back to the durable billboard + stacked shelves rather than
+ * claiming a composition this renderer does not understand.
+ */
+const KNOWN_HOME_HEROES = new Set([
+  'shared-slider', 'cinema-billboard', 'focused-hub', 'glass-cards', 'kids-stage',
+]);
+const KNOWN_HOME_RAILS = new Set(['stacked', 'hub']);
+const KNOWN_HOME_NAVIGATION = new Set(['pack', 'top-bar', 'utility', 'none']);
+
+function homeSurfaceContract() {
+  const raw = (name, fallback) => String(token('pack', name, fallback) || '').trim();
+  const hero = raw('homeHero', '');
+  const rails = raw('homeRails', '');
+  const navigation = raw('homeNavigation', '');
+  return {
+    // `homeLayout` is still useful as a descriptive hook for older authored packs; it never decides
+    // which renderer is mounted.  The three explicit contracts above are the behavioural boundary.
+    layout: raw('homeLayout', 'classic') || 'classic',
+    hero: KNOWN_HOME_HEROES.has(hero) ? hero : 'classic-billboard',
+    rails: KNOWN_HOME_RAILS.has(rails) ? rails : 'stacked',
+    navigation: KNOWN_HOME_NAVIGATION.has(navigation) ? navigation : 'top-bar',
+  };
+}
 
 export function screen(ctx) {
   // On the television this page is the profile gate and the rest of the flow; Home itself is native.
@@ -24,8 +55,16 @@ export function screen(ctx) {
     }
   } catch (e) { /* an older shell keeps the web home */ }
 
+  const homeContract = homeSurfaceContract();
   const root = el('div', { class: 'screen home' });
-  const shelves = el('div', { class: 'rows pulled' });
+  root.dataset.homeLayout = homeContract.layout;
+  root.dataset.homeHero = homeContract.hero;
+  root.dataset.homeRails = homeContract.rails;
+  root.dataset.homeNavigation = homeContract.navigation;
+  const shelves = el('div', {
+    class: `rows pulled home-rails home-rails--${homeContract.rails}`,
+    dataset: { homeRails: homeContract.rails },
+  });
   root.appendChild(shelves);
 
   /* ---- the Apple stage -------------------------------------------------- */
@@ -83,6 +122,15 @@ export function screen(ctx) {
   let expand = null;
   let previewFor = null;
   let dead = false;
+  let ownedNavigation = null;
+
+  // Theme packs explicitly choose whether moving-preview decode is part of their experience.  The
+  // default stays on for legacy packs, but a zero is a hard budget boundary rather than a hint: the
+  // native surface treats it the same way, and the browser must not spend decoder/audio resources on
+  // a theme that is intentionally artwork-led.
+  function previewsAreEnabled() {
+    return Number(token('preview', 'enabled', 1)) > 0;
+  }
 
   /* ---- billboard -------------------------------------------------------- */
 
@@ -95,6 +143,253 @@ export function screen(ctx) {
   function prewarm(item) {
     if (!item || !item.identity) return;
     api.meta(item.identity, session.profile && session.profile.id).catch(() => {});
+  }
+
+  /* ---- Home-owned navigation ------------------------------------------ */
+
+  /**
+   * A theme can explicitly own Home navigation.  In that case hiding the host bar is only correct
+   * when its replacement carries every real way out: profile, search, settings, list and the
+   * sections the current Hub can actually fill.  These are contracts, not theme names — a future
+   * pack can select the same grammar without a new branch here.
+   */
+  function homeSections(home) {
+    const manifest = ctx.manifest() || {};
+    const manifestRows = Array.isArray(manifest.rows) ? manifest.rows : [];
+    const rows = Array.isArray(home && home.rows) ? home.rows : [];
+    const hasRow = (id) => rows.some((row) => row && row.id === id)
+      || manifestRows.some((row) => row && row.id === id);
+    const caps = session.caps;
+    // A just-loaded live shelf is stronger evidence than a stale capability cache. This mirrors
+    // the host bar's OR rule so owned navigation cannot hide a route the current Home already fills.
+    const hasLive = (caps ? !!caps.live : false) || hasRow('live');
+    const hasGames = caps ? caps.games !== false : true;
+    const isUtility = homeContract.navigation === 'utility';
+    const entries = [{
+      id: 'home', label: isUtility ? 'All' : 'Home', route: 'home', active: true,
+    }];
+    if (hasRow('movies')) entries.push({ id: 'movies', label: 'Movies', route: 'browse', arg: 'movies' });
+    if (hasRow('series')) entries.push({ id: 'series', label: 'Series', route: 'browse', arg: 'series' });
+    if (hasGames) entries.push({ id: 'games', label: 'Games', route: 'games' });
+    if (hasLive) entries.push({ id: 'live', label: 'Live', route: 'channels' });
+    return entries;
+  }
+
+  function navButton(entry) {
+    const b = el('button', {
+      class: `nav-item home-owned-section${entry.active ? ' on' : ''}`,
+      type: 'button', text: entry.label,
+      dataset: { tab: entry.id, homeControl: entry.id },
+      'aria-current': entry.active ? 'page' : null,
+      onclick: () => ctx.navigate(entry.route, entry.arg),
+    });
+    focus.focusable(b);
+    return b;
+  }
+
+  function homeUtility(label, iconName, route, extraClass = '') {
+    const b = el('button', {
+      class: `nav-icon home-owned-action ${extraClass}`.trim(),
+      type: 'button', 'aria-label': label, title: label,
+      dataset: { homeControl: route },
+      onclick: () => ctx.navigate(route),
+    }, icon(iconName));
+    focus.focusable(b);
+    return b;
+  }
+
+  function homeProfile() {
+    const profile = session.profile || {};
+    const b = el('button', {
+      class: 'avatar-chip home-owned-profile', type: 'button',
+      'aria-label': 'Switch profile', title: 'Switch profile',
+      dataset: { homeControl: 'profiles' },
+      onclick: () => ctx.navigate('profiles'),
+    });
+    const face = el('span', { class: 'a' }, el('span', { class: 'ini', text: initials(profile.name) }));
+    const index = (session.profiles || []).findIndex((person) => String(person.id) === String(profile.id));
+    paintAvatar(face, profile, index >= 0 ? index : 0);
+    b.append(face, el('span', { class: 'home-owned-profile-name', text: profile.name || 'Profiles' }));
+    focus.focusable(b);
+    return b;
+  }
+
+  function makeOwnedNavigation(home) {
+    const mode = homeContract.navigation;
+    if (mode !== 'utility' && mode !== 'none') return null;
+
+    const nav = el('header', {
+      class: `nav home-owned-nav home-owned-nav--${mode}`,
+      dataset: { homeNavigation: mode },
+      // A single-row owned header is a horizontal band. The two-row utility grammar deliberately
+      // stays geometric so Right follows its visible top system strip before the lower categories.
+      'data-nav': mode === 'none' ? 'h' : null,
+      'aria-label': 'Home navigation',
+    });
+    const brand = el('button', {
+      class: 'brand home-owned-brand', type: 'button', 'aria-label': 'Scenix home',
+      dataset: { homeControl: 'home' },
+      onclick: () => ctx.navigate('home'),
+    }, el('span', { class: 'brand-mark' }));
+    focus.focusable(brand);
+
+    // The header is one horizontal focus band. Giving its visual subgroups their own bands makes
+    // Down walk sideways from sections into utilities instead of leaving the chrome for Home.
+    const sections = el('div', { class: 'nav-items home-owned-sections', 'aria-label': 'Browse sections' });
+    for (const entry of homeSections(home)) sections.appendChild(navButton(entry));
+    // The owned glass/kids grammar keeps search at the end of its central capsule.  The console
+    // grammar keeps it beside the profile and settings actions, as one compact system strip.
+    if (mode === 'none') sections.appendChild(homeUtility('Search', 'search', 'search', 'home-owned-search'));
+
+    const utilities = el('div', { class: 'home-owned-utilities', 'aria-label': 'Household controls' });
+    utilities.appendChild(homeProfile());
+    utilities.appendChild(homeUtility('My list', 'star', 'list', 'home-owned-list'));
+    if (mode === 'utility') utilities.appendChild(homeUtility('Search', 'search', 'search', 'home-owned-search'));
+    utilities.appendChild(homeUtility('Settings', 'gear', 'settings', 'home-owned-settings'));
+
+    nav.append(brand, sections, utilities);
+    return nav;
+  }
+
+  function mountOwnedNavigation(home) {
+    const current = focus.getFocus();
+    const restore = ownedNavigation && current && ownedNavigation.contains(current)
+      ? current.dataset.homeControl : '';
+    if (ownedNavigation) { ownedNavigation.remove(); ownedNavigation = null; }
+    ownedNavigation = makeOwnedNavigation(home);
+    if (!ownedNavigation) return;
+    root.insertBefore(ownedNavigation, shelves);
+    // A late capability answer may add/remove one optional door. Preserve a viewer's place in
+    // the header if it remains, otherwise land them on Home rather than leaving focus detached.
+    if (restore) {
+      const target = ownedNavigation.querySelector(`[data-home-control="${restore}"]`)
+        || ownedNavigation.querySelector('[data-home-control="home"]');
+      // A connected control can still be hidden by a narrow responsive header. Candidates are the
+      // focus engine's visibility-tested snapshot, so never restore a ring to a hidden brand.
+      if (target && focus.candidates().includes(target)) {
+        focus.setFocus(target, { scroll: false, source: 'key' });
+        return;
+      }
+    }
+    if (root.isConnected && (!current || current === document.body || !root.contains(current))) {
+      // No preferred target: focusDefault filters responsive-hidden controls before choosing the
+      // first real stop, which matters when a compact header omits the wordmark.
+      focus.focusDefault();
+    }
+  }
+
+  /**
+   * Glass and Kids do not reinterpret the ordinary billboard as a different paint job.  Their contracts
+   * call for two simultaneously visible featured titles, so this keeps the shared hero data and play
+   * action but gives those packs the composition they actually declare.  Each plate is a single native
+   * button: mouse, keyboard and remote all activate the same clear promise — play this title — without
+   * putting a smaller button inside a larger one.
+   */
+  function featureHero(row, kind) {
+    const max = Math.min(2, Math.max(1, Number(token('hero', 'maxItems', 2)) || 2));
+    const items = (row.items || []).slice(0, max);
+    const host = el('section', {
+      class: `billboard feature-hero ${kind}-feature-hero`,
+      dataset: { row: row.id },
+      'data-nav': 'h',
+    });
+    items.forEach((item, index) => {
+      const title = String(item.title || 'Selected title');
+      const plate = el('button', {
+        class: 'feature-card', type: 'button',
+        dataset: { identity: item.identity || '', i: String(index) },
+        'aria-label': `Play ${title}`,
+        onclick: () => ctx.play(item),
+      });
+      const art = el('div', { class: 'feature-art' });
+      art.appendChild(posterImg(item.backdrop || item.poster, ''));
+      const facts = [];
+      if (item.match) facts.push(`${item.match}% match`);
+      if (item.year) facts.push(String(item.year));
+      if (item.maturity) facts.push(String(item.maturity));
+      plate.append(
+        art,
+        el('span', { class: 'feature-wash', 'aria-hidden': 'true' }),
+        el('span', { class: 'feature-copy' },
+          el('span', { class: 'feature-title', text: title }),
+          facts.length ? el('span', { class: 'feature-meta', text: facts.join(' · ') }) : null),
+        el('span', { class: 'feature-play', 'aria-hidden': 'true' },
+          el('span', { class: 'feature-play-disc' }, icon('play', { solid: true })),
+          el('span', { text: 'Play' })));
+      plate.addEventListener('focus', () => prewarm(item));
+      focus.focusable(plate);
+      host.appendChild(plate);
+    });
+    host.__items = items;
+    host.__index = () => 0;
+    return host;
+  }
+
+  /** Actual shelves become the compact glass/children's-stage shortcuts; no invented categories. */
+  function featureChips(rows) {
+    const limit = Math.max(0, Number(token('chips', 'max', 6)) || 6);
+    const usable = (rows || []).filter((row) => row && row.id && row.title).slice(0, limit);
+    if (!usable.length) return null;
+    const chips = el('div', { class: 'home-chips', 'data-nav': 'h', 'aria-label': 'Browse shelves' });
+    for (const row of usable) {
+      const chip = el('button', {
+        class: 'home-chip', type: 'button', text: row.title,
+        'aria-label': `Open ${row.title}`,
+        onclick: () => {
+          const target = Array.from(shelves.querySelectorAll('.row'))
+            .find((node) => node.dataset.row === String(row.id));
+          if (!target) return;
+          target.scrollIntoView({ block: 'start', behavior: 'auto' });
+          requestAnimationFrame(() => {
+            const first = target.querySelector('[data-f]');
+            if (first) focus.setFocus(first, { scroll: false, source: 'key' });
+          });
+        },
+      });
+      focus.focusable(chip);
+      chips.appendChild(chip);
+    }
+    return chips;
+  }
+
+  /**
+   * The web counterpart of the native HomeSurface factory.  The data set and actions stay shared;
+   * only the composition changes.  In particular, a focused hub never rotates out from under a
+   * viewer who is moving between its explicit hero tiles, while a cinema or shared-slider surface
+   * keeps the existing bounded cross-fade cadence.
+   */
+  function mountHomeSurface(hero, rest) {
+    if (!hero || !(hero.items || []).length) return;
+    const dualFeature = homeContract.hero === 'glass-cards' || homeContract.hero === 'kids-stage';
+    if (dualFeature) {
+      bb = featureHero(hero, homeContract.hero);
+      bb.classList.add('home-surface', `home-surface--${homeContract.hero}`);
+      bb.dataset.homeHero = homeContract.hero;
+      root.insertBefore(bb, shelves);
+      const shortcuts = featureChips(rest);
+      if (shortcuts) {
+        shortcuts.classList.add('home-surface-shortcuts');
+        root.insertBefore(shortcuts, shelves);
+      }
+      for (const item of hero.items.slice(0, 2)) prewarm(item);
+      return;
+    }
+
+    bb = billboard(hero, {
+      play: (item) => ctx.play(item),
+      open: (item) => ctx.open(item),
+      list: (item) => ctx.list(item),
+    });
+    bb.classList.add('home-surface', 'home-billboard', `home-billboard--${homeContract.hero}`);
+    bb.dataset.homeHero = homeContract.hero;
+    bb.dataset.homeRails = homeContract.rails;
+    root.insertBefore(bb, shelves);
+    prewarm(hero.items[0]);
+
+    // The focused-hub queue is an explicit selection strip, not a rotating billboard.  Let a
+    // viewer's selected tile stay selected; the other known single-hero packs retain the existing
+    // timed cross-fade (which already pauses while a viewer is elsewhere on the page).
+    if (homeContract.hero !== 'focused-hub') startRotation(bb);
   }
 
   function startRotation(row) {
@@ -121,6 +416,7 @@ export function screen(ctx) {
   }
 
   async function previewBillboard(slot) {
+    if (!previewsAreEnabled()) return;
     const item = slot.__items[slot.__index()];
     if (!item || dead) return;
     const trailer = await getTrailer(item.identity, session.profile && session.profile.id);
@@ -239,6 +535,16 @@ export function screen(ctx) {
 
   const disposers = [];
 
+  // `/caps` resolves independently of the Home payload. A late answer may make Live or Games
+  // available after this composition mounted, so an owned header refreshes its real doors while
+  // keeping focus on the same control where possible.
+  const onCapabilitiesChanged = () => {
+    if (dead || !root.isConnected || (homeContract.navigation !== 'utility' && homeContract.navigation !== 'none')) return;
+    mountOwnedNavigation(session.home || {});
+  };
+  window.addEventListener('scenix:caps', onCapabilitiesChanged);
+  disposers.push(() => window.removeEventListener('scenix:caps', onCapabilitiesChanged));
+
   if (stagePack) {
     const offStageFocus = focus.onFocus((node) => {
       if (!node || !homeStage) return;
@@ -273,7 +579,11 @@ export function screen(ctx) {
     const profile = session.profile && session.profile.id;
     if (!profile) return;
     // ?empty=1 shows this state against a hub that already has content, so it can be checked on a browser.
-    if (new URLSearchParams(location.search).has('empty')) { shelves.appendChild(firstRun()); return; }
+    if (new URLSearchParams(location.search).has('empty')) {
+      mountOwnedNavigation(session.home || {});
+      shelves.appendChild(firstRun());
+      return;
+    }
     let home = session.home;
     if (!home || home.__profile !== profile) {
       home = await api.home(profile);
@@ -284,6 +594,11 @@ export function screen(ctx) {
       ctx.syncNav();
     }
     if (dead) return;
+
+    // The replacement chrome is mounted only after the Hub has told us which optional doors are
+    // real. That keeps an owned Home from offering an empty Live or Games screen while preserving
+    // an immediate, fully reachable setup state for an empty household above.
+    mountOwnedNavigation(home);
 
     const rows = (home.rows || []).filter((r) => r && (r.items || []).length);
     // The hub orders the rows; `order` is authoritative when present, array order otherwise.
@@ -302,16 +617,7 @@ export function screen(ctx) {
     if (firstStage) stageShow(firstStage.backdrop || firstStage.poster);
     stageRoam(false);
 
-    if (hero && (hero.items || []).length) {
-      bb = billboard(hero, {
-        play: (item) => ctx.play(item),
-        open: (item) => ctx.open(item),
-        list: (item) => ctx.list(item),
-      });
-      root.insertBefore(bb, shelves);
-      prewarm(hero.items[0]);
-      startRotation(bb);
-    }
+    mountHomeSurface(hero, rest);
     for (let i = 0; i < rest.length; i++) buildRow(rest[i], i);
   }
 
@@ -337,6 +643,10 @@ export function screen(ctx) {
     const hostCard = node && node.closest ? node.closest('.card') : null;
     if (expandedCard && expandedCard !== hostCard) collapseExpanded();
     if (previewFor && previewFor !== node) endPreview();
+    // A feature hero is a navigation destination rather than a shelf tile. It must still clear a
+    // previously focused tile first: returning above would leave that tile's preview decoder (and,
+    // where permitted, audio) running behind the new hero.
+    if (node && node.closest && node.closest('.feature-hero')) return;
     if (!node || node === document.body) return;
     // The expansion is the remote's signature moment: walking the ring and dwelling on a tile. A mouse
     // does not dwell — it sweeps. Growing one card to 460 px while thirty neighbours reflow around it is
@@ -364,7 +674,7 @@ export function screen(ctx) {
           }
         }
       }, expandMs);
-      dwell = setTimeout(async () => {
+      if (previewsAreEnabled()) dwell = setTimeout(async () => {
         if (dead) return;
         const identity = card.dataset.identity;
         const trailer = await getTrailer(identity, session.profile && session.profile.id);
@@ -379,7 +689,10 @@ export function screen(ctx) {
           if (!dead && focus.getFocus() === node && ok) { previewFor = node; card.classList.add('playing'); }
         }
       }, delay);
-    } else if (inBillboard && bb) {
+    // Focused-hub uses its direct tile strip as the hero interaction, matching the native console
+    // surface. Starting a trailer while that strip is being walked makes the selected tile compete
+    // with a second moving surface and needlessly spends decode budget.
+    } else if (inBillboard && bb && homeContract.hero !== 'focused-hub' && previewsAreEnabled()) {
       dwell = setTimeout(() => { if (!dead) previewBillboard(bb); }, delay);
     }
     void inBillboard;
@@ -398,6 +711,11 @@ export function screen(ctx) {
     if (homeStage) { homeStage.remove(); homeStage = null; }
     for (const d of disposers) { try { d(); } catch (e) { /* ignore */ } }
   };
+
+  // Render the owned chrome before the asynchronous Home request. It starts conservative (only
+  // proven manifest/capability doors), then `load` and the capability event fill it in without
+  // ever leaving the route's focus scope empty.
+  mountOwnedNavigation(session.home || {});
 
   load().catch((e) => {
     if (dead) return;

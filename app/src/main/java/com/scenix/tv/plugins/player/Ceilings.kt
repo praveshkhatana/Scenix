@@ -1,6 +1,8 @@
 package com.scenix.tv.plugins.player
 
+import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -16,6 +18,9 @@ import com.scenix.tv.core.Format
  * `res/values/config.xml` (and `theme.json` mirrors them for the overlay text) so a faster TV is a
  * config change, not a code change.
  */
+// Media3 marks its builder-based playback tuning APIs unstable. This object is the deliberate
+// boundary for those knobs, so callers elsewhere do not inherit that opt-in by accident.
+@OptIn(UnstableApi::class)
 object Ceilings {
 
     fun applyDefaults(player: ExoPlayer, app: AppContext) {

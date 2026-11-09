@@ -172,8 +172,8 @@
 .detail .seasonpick .lname { font-size: calc(24px * var(--s)); font-weight: 700; color: var(--ink); }
 .detail .seasonpick .lv { color: #fff; font-weight: 700; font-size: calc(22px * var(--s));
   font-variant-numeric: tabular-nums; }
-.detail .seasonpick.foc { background: var(--surface3); border-color: transparent;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 0 0 calc(3px * var(--s)) var(--focus-ring); }
+.detail .seasonpick.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); border-color: transparent;
+  box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 
 /* A thin pool still gets its row; an empty one says so under the same heading instead of the section
    vanishing and leaving the page to wonder. */
@@ -201,10 +201,10 @@
 .episodes.v { display: flex; flex-direction: column; gap: calc(4px * var(--s)); }
 .episodes.v .epv {
   display: flex; align-items: center; gap: calc(20px * var(--s)); text-align: left;
-  padding: calc(12px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-button); background: none; border: 0;
+  padding: calc(12px * var(--s)) calc(16px * var(--s)); border-radius: var(--theme-radius-list-item, var(--r-panel)); background: none; border: 0;
   color: inherit; font: inherit; width: 100%; transition: transform var(--focus-ms) ease-out, background 150ms ease-out;
 }
-.episodes.v .epv.foc { background: var(--surface3); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07), 0 0 0 calc(3px * var(--s)) var(--focus-ring); }
+.episodes.v .epv.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 .episodes.v .epnum { flex: none; width: calc(44px * var(--s)); text-align: center; font-size: calc(34px * var(--s)); font-weight: 800; color: var(--ink3); font-variant-numeric: tabular-nums; }
 .episodes.v .epart {
   position: relative; flex: none; width: calc(232px * var(--s)); height: calc(130px * var(--s));
@@ -359,7 +359,7 @@
 */
 .ply-panel {
   display: grid; gap: calc(6px * var(--s)); max-width: calc(940px * var(--s)); text-align: left;
-  background: rgba(14, 16, 20, .86); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .20);
+  background: var(--panel-scrim); border: calc(1px * var(--s)) solid var(--border);
   border-radius: var(--r-panel); padding: calc(30px * var(--s)) calc(34px * var(--s));
   box-shadow: 0 calc(20px * var(--s)) calc(52px * var(--s)) rgba(0, 0, 0, .7);
 }
@@ -384,7 +384,7 @@
   right: calc(80px * var(--s)); bottom: calc(268px * var(--s));
   background: rgba(14, 16, 20, .72); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .26);
 }
-.skip.foc { background: #fff; color: var(--on-brand); }
+.skip.foc { background: #fff; color: #101010; }
 
 /* The next-episode card keeps app.css's opaque panel — it covers the picture, and a card that is half
    transparent over a moving film is unreadable in a different way. */
@@ -510,8 +510,9 @@
    changes nothing. */
 .padd-age .chip { min-width: calc(62px * var(--s)); justify-content: center; }
 /* A switch on a plain row, not a card: it sits under its own heading, and the card chrome would read as a
-   setting of the hub rather than a choice about this person. */
-.padd-pin .li { background: none; border: 0; padding: calc(10px * var(--s)) 0; }
+   setting of the hub rather than a choice about this person. Scoped through `.padd` so it still wins over
+   the settings-plate group above, which it predates and would otherwise be painted over by. */
+.padd .padd-pin .li { background: none; border: 0; border-radius: 0; margin-bottom: 0; padding: calc(10px * var(--s)) 0; }
 .padd-pin .li .note { max-width: calc(330px * var(--s)); }
 
 .padd-langs { margin-top: calc(34px * var(--s)); }
@@ -531,7 +532,9 @@
 .mrow {
   display: flex; align-items: center; gap: calc(26px * var(--s)); width: 100%;
   padding: calc(16px * var(--s)) calc(26px * var(--s));
-  background: var(--surface); border: calc(1px * var(--s)) solid var(--border); border-radius: var(--r-button);
+  background: var(--theme-color-list-fill, var(--surface));
+  border: calc(1px * var(--s)) solid var(--theme-color-list-stroke, var(--border));
+  border-radius: var(--theme-radius-list-item, var(--r-panel));
   color: var(--ink); text-align: left; cursor: pointer;
   transition: background var(--focus-ms) cubic-bezier(.23, 1, .32, 1);
 }
@@ -552,7 +555,7 @@
 .mrow .a .lock .ico { width: calc(16px * var(--s)); height: calc(16px * var(--s)); }
 /* The ring is an inset shadow rather than a border: a border would change the box the artwork is sized to and
    step the face by 3 px at the moment it gains focus. */
-.mrow.foc { background: var(--surface3); }
+.mrow.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 .mrow.foc .a { box-shadow: inset 0 0 0 calc(3px * var(--s)) #fff; }
 
 .mbody { flex: 1 1 auto; min-width: 0; }
@@ -639,7 +642,9 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
   display: grid; grid-template-columns: calc(58px * var(--s)) calc(44px * var(--s)) minmax(0, 1fr) auto auto auto;
   align-items: center; gap: calc(14px * var(--s));
   padding: calc(10px * var(--s)) calc(16px * var(--s));
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-list, calc(6px * var(--s)));
+  background: var(--theme-color-list-fill, var(--surface));
+  border: 1px solid var(--theme-color-list-stroke, var(--line));
+  border-radius: var(--theme-radius-list-item, calc(10px * var(--s)));
 }
 .chrow:focus-within { border-color: var(--focus-ring); background: var(--surface2); }
 .chrow.off { opacity: .5; }
@@ -684,7 +689,9 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
   display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
   align-items: center; gap: calc(14px * var(--s));
   padding: calc(12px * var(--s)) calc(16px * var(--s));
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-list, calc(6px * var(--s)));
+  background: var(--theme-color-list-fill, var(--surface));
+  border: 1px solid var(--theme-color-list-stroke, var(--line));
+  border-radius: var(--theme-radius-list-item, calc(10px * var(--s)));
 }
 .cat-row:focus-within { border-color: var(--focus-ring); background: var(--surface2); }
 .cat-row.off { opacity: .5; }
@@ -725,24 +732,21 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 }
 .settings-pane::-webkit-scrollbar { display: none; }
 
-/* One item per section. The selected item carries the brand bar — a vertical
-   stripe, not a filled pill: the pane already says where you are, and the rail
-   only has to say which name that pane answers to. */
+/* One item per section. The selected item carries the pack's own fill — a brand
+   plate, exactly like the television's section chips — so the rail reads as the
+   same control centre rather than a browser menu. */
 .sitem {
   position: relative; display: flex; align-items: center; gap: calc(18px * var(--s));
   width: 100%; padding: calc(18px * var(--s)) calc(24px * var(--s));
-  background: none; border: 0; border-radius: var(--r-button); cursor: pointer;
+  background: none; border: 0; border-radius: var(--theme-radius-chip, var(--r-chip)); cursor: pointer;
   color: var(--ink2); font: inherit; font-size: var(--t-li); font-weight: 600; text-align: left;
   transition: background var(--focus-ms) ease-out, color var(--focus-ms) ease-out;
 }
 .sitem .ico { flex: none; width: calc(30px * var(--s)); height: calc(30px * var(--s)); color: var(--ink3); }
-.sitem.on { background: var(--surface2); color: var(--ink); }
-.sitem.on .ico { color: var(--brand); }
-.sitem.on::before {
-  content: ''; position: absolute; left: calc(-16px * var(--s)); top: 22%; bottom: 22%;
-  width: calc(6px * var(--s)); border-radius: 999px; background: var(--brand);
-}
-.sitem.foc { background: var(--surface3); color: #fff; box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.sitem.on { background: var(--brand); color: var(--on-brand); font-weight: 700; }
+.sitem.on .ico { color: var(--on-brand); }
+.sitem.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); color: var(--ink); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.sitem.on.foc { background: var(--brand); color: var(--on-brand); }
 
 /* Switching sections is the page's one transition, and it is the one the eye has
    to read as "this pane replaced that one": transform and opacity only. */
@@ -752,23 +756,21 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
   to { opacity: 1; transform: translateX(0); }
 }
 
-/* Netflix rows: each setting is one full-width line, label and explanation on the
-   left, the value or the switch at the right edge, a hairline between. The shared
-   `.li` box (a card on the detail page and in sheets) is not what a long settings
-   list wants — the separation is the line, not the panel. The focus treatment is
-   the menu's own: the row fills as a rounded bar under the ring, because on a TV
-   settings list the highlight IS the selection; the value sits bright and heavy so
-   the eye reads state before it reads the name. */
+/* Settings rows are plates, not hairline dividers: the television's shared row
+   treatment (Screens.row) paints one rounded tile per control, full-width with
+   the value at the right edge. The same treatment covers the channel manager,
+   the profile sheet and the picker lists. */
 .settings-pane .li, .channel-manager .li, .psheet .li, .padd .li {
-  background: none; border: 0;
-  border-bottom: 1px solid var(--line);
-  padding: calc(22px * var(--s)) calc(16px * var(--s));
+  background: var(--theme-color-list-fill, var(--surface));
+  border: 1px solid var(--theme-color-list-stroke, transparent);
+  border-radius: var(--theme-radius-list-item, var(--r-panel));
+  margin-bottom: var(--theme-space-list-gap, calc(10px * var(--s)));
+  padding: calc(20px * var(--s)) calc(22px * var(--s));
   transition: background var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out;
 }
 .settings-pane .li.foc, .channel-manager .li.foc, .psheet .li.foc, .padd .li.foc {
-  background: var(--surface3); border-radius: var(--r-button);
-  border-bottom-color: transparent;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 0 0 calc(3px * var(--s)) var(--focus-ring);
+  background: var(--theme-color-list-fill-focused, var(--surface3));
+  box-shadow: 0 0 0 var(--ring-w) var(--focus-ring);
 }
 .settings-pane .li .lname, .channel-manager .li .lname, .psheet .li .lname, .padd .li .lname { font-size: calc(26px * var(--s)); font-weight: 700; color: var(--ink); }
 .settings-pane .li .note, .channel-manager .li .note, .psheet .li .note, .padd .li .note {
@@ -776,7 +778,7 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
   display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
 }
 .settings-pane .li .lv, .channel-manager .li .lv, .psheet .li .lv, .padd .li .lv {
-  display: inline-block; color: #fff; font-weight: 700; font-size: calc(24px * var(--s));
+  display: inline-block; color: var(--ink); font-weight: 700; font-size: calc(24px * var(--s));
 }
 .lv.bump { animation: lvBump 280ms ease-out; }
 @keyframes lvBump { 0% { transform: scale(1); } 35% { transform: scale(1.14); } 100% { transform: scale(1); } }
@@ -789,6 +791,29 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 }
 .pane-head .ico { flex: none; width: calc(34px * var(--s)); height: calc(34px * var(--s)); color: var(--brand); }
 .pane-head h2 { font-size: calc(34px * var(--s)); font-weight: 800; letter-spacing: -0.01em; }
+
+/* The compact control header: which area you are in, what it currently holds,
+   and the trust state of the household. It is the one-line map the television
+   paints above its rail chips; here it sits above the rail and the pane, and
+   carries no control of its own so the remote never has to land on it. */
+.context-strip {
+  display: flex; align-items: center; gap: calc(16px * var(--s));
+  margin: calc(2px * var(--s)) var(--gutter) calc(18px * var(--s));
+  min-height: calc(54px * var(--s));
+  padding: calc(9px * var(--s)) calc(20px * var(--s)) calc(9px * var(--s)) calc(16px * var(--s));
+  background: var(--theme-color-list-fill, var(--surface));
+  border: 1px solid var(--theme-color-list-stroke, var(--border));
+  border-radius: var(--theme-radius-list-item, var(--r-panel));
+}
+.ctx-scope {
+  flex: none; font-size: var(--t-meta); font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--theme-color-panel-value, var(--brand));
+}
+.ctx-summary {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--t-li-meta); color: var(--ink);
+}
+.ctx-state { flex: none; margin-left: auto; font-size: var(--t-meta); font-weight: 700; color: var(--ink2); }
 
 /* Staggered arrival: JS parks each mover at its own delay, so rows rise one after
    another like the shelves do instead of the whole list appearing at once. */
@@ -803,8 +828,8 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
    what fits without turning the menu into a document. */
 .settings-pane .sgroup { margin-bottom: calc(44px * var(--s)); }
 .settings-pane .sgroup > h3 {
-  font-size: calc(19px * var(--s)); font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--ink2); margin-bottom: calc(6px * var(--s));
+  font-size: calc(19px * var(--s)); font-weight: 700; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--theme-color-wall-ink2, var(--ink3)); margin-bottom: calc(6px * var(--s));
 }
 .settings-pane .sgroup > p.note {
   color: var(--ink3); font-size: calc(18px * var(--s)); margin-bottom: calc(14px * var(--s));
@@ -828,7 +853,7 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 .li.act .lname { display: block; }
 .li.act .chev { flex: none; width: calc(26px * var(--s)); height: calc(26px * var(--s)); color: var(--ink3); }
 .li.act.foc .chev { color: var(--ink); }
-.li.act.danger { color: #ff8a8a; }
+.li.act.danger { color: color-mix(in srgb, var(--live) 72%, var(--ink)); }
 
 /* ------------------------------------------------------------ settings modals
    Three dialogs, one per kind of decision. The dial is the number/choice picker:
@@ -847,7 +872,7 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 }
 .wval {
   min-width: calc(360px * var(--s)); padding: calc(14px * var(--s)) calc(20px * var(--s));
-  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-button);
+  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--theme-radius-list-item, var(--r-panel));
   color: var(--ink); font: inherit; font-size: calc(58px * var(--s)); font-weight: 800;
   cursor: pointer; line-height: 1.15;
 }
@@ -862,25 +887,186 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
 .warrow.foc { background: var(--surface3); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 .whint { color: var(--ink3); font-size: calc(18px * var(--s)); margin: calc(12px * var(--s)) 0 0; }
 
-/* The checklist rows are the settings rows again — hairline lines, switch at the
+/* The checklist rows are the settings rows again — plates with the switch at the
    right — inside the box rather than the pane. */
 .wlist { display: flex; flex-direction: column; max-height: calc(560px * var(--s)); overflow-y: auto; margin: calc(16px * var(--s)) 0 calc(8px * var(--s)); }
 .wlist .li, .alist .li {
-  background: none; border: 0; border-radius: 0;
-  border-bottom: 1px solid var(--line);
-  padding: calc(18px * var(--s)) calc(10px * var(--s));
+  background: var(--theme-color-list-fill, var(--surface));
+  border: 1px solid var(--theme-color-list-stroke, transparent);
+  border-radius: var(--theme-radius-list-item, var(--r-panel));
+  margin-bottom: var(--theme-space-list-gap, calc(10px * var(--s)));
+  padding: calc(18px * var(--s)) calc(20px * var(--s));
 }
-.wlist .li.foc, .alist .li.foc { background: var(--surface3); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.wlist .li.foc, .alist .li.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 .wlist::-webkit-scrollbar { width: 0; }
 
 /* The action list: one verb per full-width row. */
 .alist { display: flex; flex-direction: column; margin: calc(18px * var(--s)) 0 calc(6px * var(--s)); }
 .mbox.actions .mfoot, .mbox.check .mfoot { margin-top: calc(18px * var(--s)); }
 
+/* ----------------------------------------------------- reviewed source directory
+   This is a directory, not another generic settings list: its cards make the origin, capability
+   surface and installed state scannable without treating a manual URL as a recommendation.  It uses
+   the same surfaces, type scale and focus ring as every other theme, so switching a theme never gives
+   this management surface a second visual language. */
+.source-directory-result-head {
+  display: flex; align-items: center; justify-content: space-between; gap: calc(16px * var(--s));
+  margin: calc(20px * var(--s)) 0 calc(10px * var(--s));
+  color: var(--ink2); font-size: var(--t-meta); font-weight: 700;
+}
+.source-directory-result-count { min-width: 0; }
+.source-directory-lanes {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(10px * var(--s));
+  margin: calc(6px * var(--s)) 0 calc(18px * var(--s));
+}
+.source-directory-lane {
+  display: grid; align-content: center; gap: calc(4px * var(--s)); min-width: 0;
+  min-height: calc(72px * var(--s)); padding: calc(12px * var(--s)) calc(16px * var(--s));
+  border: 1px solid var(--line); border-radius: var(--theme-radius-chip, var(--r-chip)); background: var(--surface);
+  color: var(--ink1); font: inherit; text-align: left; cursor: pointer;
+  transition: background var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out, border-color var(--focus-ms) ease-out;
+}
+.source-directory-lane-label { font-size: var(--t-li); font-weight: 750; line-height: 1.1; }
+.source-directory-lane-note {
+  overflow: hidden; color: var(--ink3); font-size: var(--t-meta); line-height: 1.25;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.source-directory-lane.on { border-color: var(--brand); background: var(--surface2); }
+.source-directory-lane.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); border-color: transparent; box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.source-directory-lane-body { min-width: 0; }
+.source-directory-refreshing { color: var(--ink3); font-weight: 500; }
+.source-directory-unavailable { color: var(--ink3); font-weight: 500; }
+.source-directory-results { display: grid; gap: calc(10px * var(--s)); }
+.source-directory-more {
+  width: 100%; min-height: calc(58px * var(--s)); justify-content: center;
+  color: var(--ink1); font-size: var(--t-li-meta); text-align: center;
+  transition: background var(--focus-ms) ease-out, border-color var(--focus-ms) ease-out,
+              box-shadow var(--focus-ms) ease-out;
+}
+.source-directory-more.foc {
+  background: var(--theme-color-list-fill-focused, var(--surface3)); border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--border), 0 0 0 var(--ring-w) var(--focus-ring);
+}
+.settings-pane .source-directory-card {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: calc(14px * var(--s));
+  width: 100%; min-width: 0;
+  padding: calc(20px * var(--s)) calc(22px * var(--s));
+  background: var(--surface2); border: 1px solid var(--line); border-radius: var(--theme-radius-list-item, var(--r-panel));
+  color: var(--ink); text-align: left;
+  transition: background var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out,
+              border-color var(--focus-ms) ease-out;
+}
+.settings-pane .source-directory-card.foc {
+  background: var(--theme-color-list-fill-focused, var(--surface3)); border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--border), 0 0 0 var(--ring-w) var(--focus-ring);
+}
+.source-directory-card-main { min-width: 0; }
+.source-directory-card-head { display: flex; align-items: center; justify-content: space-between; gap: calc(18px * var(--s)); }
+.source-directory-card-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink); font-size: calc(25px * var(--s)); font-weight: 750;
+}
+.source-directory-state {
+  flex: none; padding: calc(5px * var(--s)) calc(10px * var(--s));
+  border: 1px solid var(--line); border-radius: var(--r-chip);
+  color: var(--brand); font-size: var(--t-meta); font-weight: 700; line-height: 1;
+}
+.source-directory-state.installed { color: var(--ink1); background: var(--surface); }
+.source-directory-state.unavailable { color: var(--ink3); }
+.source-directory-state.community { color: var(--ink2); }
+.source-directory-card-description {
+  display: -webkit-box; margin-top: calc(8px * var(--s)); overflow: hidden;
+  color: var(--ink3); font-size: var(--t-panel-note); line-height: 1.35;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.source-directory-tags { display: flex; flex-wrap: wrap; gap: calc(8px * var(--s)); }
+.source-directory-tag, .source-directory-version {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: calc(5px * var(--s)) calc(9px * var(--s));
+  border: 1px solid var(--line); border-radius: var(--r-chip);
+  color: var(--ink2); font-size: var(--t-meta); line-height: 1;
+}
+.source-directory-version { color: var(--ink3); }
+.source-directory-tag.community { background: var(--surface); color: var(--ink1); }
+.source-directory-tag.attention { border-style: dashed; color: var(--ink1); }
+.source-directory-tag.unavailable { border-style: dashed; color: var(--ink3); }
+.source-directory-tag.muted { color: var(--ink3); }
+.source-directory-empty {
+  display: flex; align-items: center; min-height: calc(92px * var(--s));
+  padding: calc(18px * var(--s)) calc(20px * var(--s));
+  border: 1px dashed var(--line); border-radius: var(--theme-radius-list-item, var(--r-panel));
+  color: var(--ink3); font-size: var(--t-panel-note); line-height: 1.4;
+}
+.source-directory-empty.source-directory-error { color: var(--ink2); }
+.source-directory-community-notice {
+  margin: 0 0 calc(14px * var(--s)); padding: calc(13px * var(--s)) calc(16px * var(--s));
+  border: 1px dashed var(--line); border-radius: var(--theme-radius-list-item, var(--r-panel));
+  background: var(--surface); color: var(--ink2); font-size: var(--t-panel-note); line-height: 1.4;
+}
+
+/* Detail is deliberately calm and fact-led. The second, named install step belongs at the bottom so
+   an owner can review what the Hub is about to add before a network-affecting action is available. */
+.mbox.source-detail {
+  position: relative; width: min(calc(880px * var(--s)), calc(100vw - 48px));
+  max-height: min(calc(900px * var(--s)), calc(100vh - 48px));
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; text-align: left;
+}
+.mbox.source-detail::-webkit-scrollbar { width: 0; }
+.source-detail-kicker {
+  margin: 0 0 calc(8px * var(--s)); color: var(--brand);
+  font-size: var(--t-meta); font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+}
+.mbox.source-detail h2 { max-width: calc(720px * var(--s)); padding-right: calc(52px * var(--s)); }
+.mbox.source-detail .source-detail-description { max-width: calc(700px * var(--s)); margin-bottom: calc(22px * var(--s)); }
+.source-detail-facts {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(10px * var(--s));
+  margin: 0 0 calc(20px * var(--s));
+}
+.source-detail-fact {
+  display: grid; gap: calc(5px * var(--s)); min-width: 0;
+  padding: calc(14px * var(--s)) calc(16px * var(--s));
+  background: var(--surface2); border: 1px solid var(--line); border-radius: var(--theme-radius-list-item, var(--r-panel));
+}
+.source-detail-fact-label { color: var(--ink3); font-size: var(--t-meta); font-weight: 600; }
+.source-detail-fact-value { color: var(--ink1); font-size: var(--t-panel-note); line-height: 1.3; }
+.mbox.source-detail .source-detail-notice,
+.mbox.source-detail .source-detail-consent,
+.mbox.source-detail .source-detail-installed,
+.mbox.source-detail .source-detail-unavailable,
+.mbox.source-detail .source-detail-error {
+  margin: 0 0 calc(16px * var(--s)); padding: calc(13px * var(--s)) calc(16px * var(--s));
+  background: var(--surface2); border: 1px solid var(--line); border-radius: var(--theme-radius-list-item, var(--r-panel));
+  color: var(--ink2); font-size: var(--t-panel-note); line-height: 1.35;
+}
+.mbox.source-detail .source-detail-error { color: var(--brand); }
+.mbox.source-detail .source-detail-installed { color: var(--ink1); }
+.source-detail-kicker.community { color: var(--ink2); }
+.mbox.source-detail .source-detail-community-notice { border-style: dashed; color: var(--ink1); }
+.source-detail-ack {
+  display: flex; align-items: center; gap: calc(12px * var(--s)); width: 100%; min-height: calc(58px * var(--s));
+  margin: 0 0 calc(14px * var(--s)); padding: calc(12px * var(--s)) calc(15px * var(--s));
+  border: 1px solid var(--line); border-radius: var(--theme-radius-list-item, var(--r-panel)); background: var(--surface2);
+  color: var(--ink1); font: inherit; font-size: var(--t-panel-note); line-height: 1.3; text-align: left; cursor: pointer;
+  transition: background var(--focus-ms) ease-out, box-shadow var(--focus-ms) ease-out, border-color var(--focus-ms) ease-out;
+}
+.source-detail-ack::before {
+  content: ''; flex: none; width: calc(17px * var(--s)); height: calc(17px * var(--s));
+  border: 1px solid var(--ink2); border-radius: calc(4px * var(--s)); background: transparent;
+}
+.source-detail-ack.on { background: var(--surface3); border-color: var(--brand); }
+.source-detail-ack.on::before { border-color: var(--brand); background: var(--brand); }
+.source-detail-ack.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.source-detail-community-install[disabled] { cursor: not-allowed; opacity: .48; }
+.source-detail-actions { justify-content: flex-end; margin-top: calc(22px * var(--s)); }
+
 /* The rail is the way out of the pane, so at laptop widths the two panes stay two
    panes rather than collapsing into the long page the rail replaced. */
 @media (max-width: 1100px) {
   .settings-shell { grid-template-columns: calc(300px * var(--s)) minmax(0, 1fr); }
+  .source-detail-facts { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .source-directory-lanes { grid-template-columns: 1fr; }
 }
 
 /* ==========================================================================

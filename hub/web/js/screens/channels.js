@@ -19,6 +19,7 @@ import { el, clear, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
 import { makeRows } from '/ui/js/rows.js';
+import { withSettingsAdmin } from '/ui/js/adminlock.js';
 
 const PAGE = 60;
 
@@ -61,16 +62,67 @@ export function screen(ctx) {
     return list;
   }
 
-  function save(patch, note) {
-    if (busy) return;
+  /** The one shape the Hub persists for the shared live lineup. */
+  function liveSnapshot() {
+    return {
+      hidden: [...hidden],
+      groupsHidden: [...groupsHidden],
+      order: order.slice(),
+    };
+  }
+
+  /** Apply only a Hub-confirmed lineup. No action mutates these values before its write succeeds. */
+  function applyLive(reply, includePublished = false, fallback = null) {
+    const setting = (reply && reply.settings) || reply || {};
+    const live = (setting.live && typeof setting.live === 'object') ? setting.live : (fallback || {});
+    hidden = new Set(Array.isArray(live.hidden) ? live.hidden : []);
+    groupsHidden = new Set(Array.isArray(live.groupsHidden) ? live.groupsHidden : []);
+    order = Array.isArray(live.order) ? live.order.slice() : [];
+    if (includePublished) {
+      const published = (reply && reply.live) || {};
+      if (Array.isArray(published.channels)) {
+        channels = published.channels.map((channel) => Object.assign({}, channel));
+      }
+      if (Array.isArray(published.groups)) groups = published.groups.slice();
+    }
+    if (activeGroup && !groups.includes(activeGroup)) activeGroup = '';
+    syncEnabled();
+  }
+
+  /**
+   * A cancelled PIN pad is not an optimistic write. Re-read after every refused/error path so a
+   * concurrent change on another screen wins too; if that read is unavailable, the values already
+   * on screen remain the last Hub-confirmed values because no mutation happened locally.
+   */
+  async function restoreAuthoritative() {
+    try {
+      const current = await api.settings();
+      if (root.isConnected) applyLive(current, true);
+    } catch (e) { /* Keep the last confirmed lineup; the write error was already explained. */ }
+  }
+
+  /** Persist a proposed lineup, then replace local state with the Hub's acknowledgement. */
+  async function saveLive(next, note) {
+    if (busy) return false;
     busy = true;
-    const live = Object.assign({}, {
-      hidden: [...hidden], groupsHidden: [...groupsHidden], order,
-    }, patch || {});
-    api.saveSettings({ live })
-      .then(() => { if (note) toast(note); })
-      .catch(() => toast('The hub would not save that'))
-      .finally(() => { busy = false; });
+    let saved = false;
+    try {
+      const out = await withSettingsAdmin(ctx, () => api.saveSettings({ live: next }));
+      if (out !== null) {
+        // The server's redacted settings response is the authority. A legacy answer without the
+        // block still follows a successful write, so the proposed (not optimistic) value is safe.
+        applyLive(out, false, next);
+        saved = true;
+        if (note) toast(note);
+      } else {
+        toast('That change was not saved');
+      }
+    } catch (e) {
+      toast('The hub would not save that');
+    }
+    if (!saved) await restoreAuthoritative();
+    busy = false;
+    return saved;
   }
 
   /* The controls are rows in the voice the rest of the app uses — one ring stop per row. The filter is
@@ -82,6 +134,12 @@ export function screen(ctx) {
     if (!r.length) return;
     focus.focusDefault(r[Math.max(0, Math.min(i, r.length - 1))]);
   }
+
+  /** Re-find a channel after a Hub refresh replaced the published row objects. */
+  function ringOnChannel(identity) {
+    ringOnRow(visible().findIndex((channel) => String(channel.identity) === String(identity)));
+  }
+
   function paintBar() {
     clear(bar);
     if (!channels.length) return;
@@ -92,12 +150,13 @@ export function screen(ctx) {
     if (groups.length) {
       const shownGroups = groups.filter((g) => !groupsHidden.has(g));
       const switchRow = rows.multiRow(bar, 'Group switches', 'take a whole group out of the zapping order at once',
-        groups, shownGroups, (g) => g, () => {
-          groupsHidden = new Set(groups.filter((g) => !shownGroups.includes(g)));
-          syncEnabled();
-          save({}, 'group switches saved');
-          paintList();
-          focus.focusDefault(switchRow);
+        groups, shownGroups, (g) => g, async (chosen) => {
+          const next = liveSnapshot();
+          next.groupsHidden = groups.filter((g) => !chosen.includes(g));
+          await saveLive(next, 'Group switches saved');
+          if (!root.isConnected) return;
+          paint();
+          focus.focusDefault(bar.querySelector('[data-ctl="gswitches"]'));
         });
       switchRow.dataset.ctl = 'gswitches';
     }
@@ -109,16 +168,16 @@ export function screen(ctx) {
     }
   }
 
-  function move(c, delta) {
+  async function move(c, delta) {
     const seq = ordered().map((x) => x.identity);
     const at = seq.indexOf(c.identity);
     const to = at + delta;
-    if (at < 0 || to < 0 || to >= seq.length) return;
+    if (at < 0 || to < 0 || to >= seq.length) return false;
     seq.splice(at, 1);
     seq.splice(to, 0, c.identity);
-    order = seq;
-    save({}, `${c.name} moved`);
-    paint();
+    const next = liveSnapshot();
+    next.order = seq;
+    return saveLive(next, `${c.name} moved`);
   }
 
   function paintList() {
@@ -135,17 +194,29 @@ export function screen(ctx) {
         valueText: on ? 'Shown' : 'Hidden',
         actions: () => {
           const live = c.enabled !== false;
-          const backToRow = () => ringOnRow(visible().indexOf(c));
+          const backToRow = () => ringOnChannel(c.identity);
           return [
-            { label: live ? 'Hide this channel' : 'Show this channel', run: () => {
-                if (live) hidden.add(c.identity); else hidden.delete(c.identity);
-                c.enabled = !live;
-                save({}, `${c.name} ${live ? 'hidden' : 'shown'}`);
-                paintList();
+            { label: live ? 'Hide this channel' : 'Show this channel', run: async () => {
+                const next = liveSnapshot();
+                if (live) next.hidden = next.hidden.concat([c.identity]);
+                else next.hidden = next.hidden.filter((id) => String(id) !== String(c.identity));
+                await saveLive(next, `${c.name} ${live ? 'hidden' : 'shown'}`);
+                if (!root.isConnected) return;
+                paint();
                 backToRow();
               } },
-            { label: 'Move earlier', run: () => { move(c, -1); backToRow(); } },
-            { label: 'Move later', run: () => { move(c, 1); backToRow(); } },
+            { label: 'Move earlier', run: async () => {
+                await move(c, -1);
+                if (!root.isConnected) return;
+                paint();
+                backToRow();
+              } },
+            { label: 'Move later', run: async () => {
+                await move(c, 1);
+                if (!root.isConnected) return;
+                paint();
+                backToRow();
+              } },
           ];
         },
       });
@@ -173,19 +244,11 @@ export function screen(ctx) {
   (async () => {
     try {
       const s = await api.settings();
-      const setting = (s && s.settings) || s || {};
-      const live = setting.live || {};
-      const liveInfo = (s && s.live) || {};
-      hidden = new Set(live.hidden || []);
-      groupsHidden = new Set(live.groupsHidden || []);
-      order = (live.order || []).slice();
-      channels = (liveInfo.channels || []).map((c) => Object.assign({}, c));
-      groups = (liveInfo.groups || []).slice();
+      applyLive(s, true);
       if (!channels.length) {
         head.appendChild(el('p', { class: 'note',
           text: 'This hub has not published a live playlist yet. Add one under Settings → This hub, then come back.' }));
       }
-      syncEnabled();
       paint();
       // The playlist arrives late, so the ring's way home can only be taken after it does: back to the
       // channel row that held it last time, or — on a first visit — to the first control.
