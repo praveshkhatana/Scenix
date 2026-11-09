@@ -1143,6 +1143,12 @@ function sideRead(res, copy, want, t0) {
         resolve(true);
       };
       up.on('data', (b) => { bytes += b.length; if (!res.write(b)) { try { up.pause(); } catch (e) { /* gone */ } } });
+      // Backpressure must be released, not just applied. The engine answers a ranged read far faster
+      // than a TV drains it, so `write()` returns false after the first socket buffer and the pause
+      // above parks the upstream forever — the side read then sat for its 30 s timeout, delivered
+      // ~160 KB, and the player saw a truncated body ("UnrecognizedInputFormatException" on a file the
+      // engine had cached in full). Resume on drain, exactly like the cushion and the remux pump do.
+      res.on('drain', () => { try { up.resume(); } catch (e) { /* gone */ } });
       up.on('end', () => finish('eof'));
       up.on('error', () => finish('probe-read-failed'));
       res.on('close', () => finish('client-disconnect'));
