@@ -1104,6 +1104,21 @@ function sideRead(res, copy, want, t0) {
     try { u = new URL(copy.url); } catch (e) { resolve(false); return; }
     const mod = u.protocol === 'https:' ? https : http;
     const range = 'bytes=' + from + '-' + (to == null ? '' : to);
+    // A range the engine has just failed to answer is not worth another 30 s of the viewer's evening.
+    // A player reloads the same tail probe (Matroska Cues / MP4 moov) on every retry, so a swarm that
+    // could not produce those bytes once kept the screen black for minutes: 30 s here, then the
+    // player's own retries, then the app's same-copy retries. Answer the repeat at once instead, and
+    // let the failover ask for a copy whose tail is actually cached.
+    if (copy.sideFailRange === range && Date.now() - (copy.sideFailAt || 0) < 60000) {
+      res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2' });
+      res.end(JSON.stringify({
+        error: 'warming', warming: true, retryAfterMs: 2000,
+        detail: 'the engine did not produce this range a moment ago',
+      }));
+      log('PROXY FAIL', copy.tag(), 'phase=headers', 'cause=probe-read-failed-recent', 'range=' + range);
+      resolve(true);
+      return;
+    }
     const req = mod.get(u, {
       headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...copy.originHeaders, Range: range },
       agent: false,
@@ -1135,6 +1150,8 @@ function sideRead(res, copy, want, t0) {
         // the end would point the continuation test at bytes that were never fetched.
         copy.sideEnd = (up.statusCode === 206 || from === 0) ? from + bytes : null;
         copy.sideAt = Date.now();
+        if (cause === 'probe-read-failed') { copy.sideFailRange = range; copy.sideFailAt = Date.now(); }
+        else if (cause === 'eof') { copy.sideFailRange = null; copy.sideFailAt = 0; }
         if (!res.writableEnded) { try { res.end(); } catch (e) { /* gone */ } }
         const secs = Math.max(0.001, (Date.now() - t0) / 1000);
         log(cause === 'eof' ? 'PROXY END' : 'PROXY CUT', copy.tag(), 'phase=body', 'cause=' + cause,
