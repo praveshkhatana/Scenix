@@ -170,6 +170,12 @@ class Copy {
     // short backoff, and a screen watching a healthy body must not be told otherwise. `givenUp` is the
     // state that means "this copy will not answer", and only that state may cut a delivery short.
     this.givenUp = false;
+    // The engine sometimes closes an open-ended read before the file's end: a paused reader, its own
+    // stream timeout, or a swarm that has not produced the next piece. That is a shortfall, not the end
+    // of the film. `shortReads` counts consecutive closes with no bytes in between, so a copy that keeps
+    // doing it still gives up instead of looping.
+    this.shortReads = 0;
+    this.shortEnd = false;
   }
 
   tag() {
@@ -227,6 +233,8 @@ class Copy {
     this.eof = false;
     this.error = null;
     this.givenUp = false;
+    this.shortReads = 0;
+    this.shortEnd = false;
     if (this.ranges) this.planFetch(cfg());
     else this.openReader(this.base);
   }
@@ -287,7 +295,26 @@ class Copy {
       }
       this.newWindow();
       got.on('data', (b) => this.append(b));
-      got.on('end', () => { this.eof = true; this.closeReader(); this.wake(); });
+      got.on('end', () => {
+        // `end` only means the file is finished when the read actually reached its end. The cushion
+        // pauses this reader at its bound to respect a TV's bitrate; TorrServer then closes the idle
+        // connection, and treating that as EOF told the player a 114 MB film ended at 23.8 MB. media3
+        // read the cut as a corrupt Matroska header ("No valid varint length mask found") and failed a
+        // copy that plays. A short close is remembered and reopened from `pos` by the body loop.
+        const known = Number.isFinite(this.fileSize) && this.fileSize > 0;
+        if (!known || this.pos >= this.fileSize) {
+          this.eof = true;
+        } else {
+          this.shortReads = (this.shortReads || 0) + 1;
+          this.shortEnd = true;
+          this.error = this.error || 'engine closed early at ' + this.pos + ' of ' + this.fileSize;
+          if (this.shortReads >= 4) this.givenUp = true;
+          log('READAHEAD SHORT END', this.tag(), 'pos=' + this.pos, 'size=' + this.fileSize,
+            'shortReads=' + this.shortReads);
+        }
+        this.closeReader();
+        this.wake();
+      });
       got.on('error', () => { this.closeReader(); this.wake(); });
       got.on('close', () => { if (this.up === got) { this.up = null; this.closeReader(); this.wake(); } });
     });
@@ -485,6 +512,9 @@ class Copy {
   append(buf) {
     if (!buf || !buf.length) return;
     this.everBytes = true;
+    // Bytes after a short close: the reader reopened and the host is answering again, so neither the
+    // shortfall nor its counter is the current truth about this copy.
+    if (this.shortEnd) { this.shortEnd = false; this.shortReads = 0; this.error = null; }
     if (this.ttfbMs === null) this.ttfbMs = Date.now() - this.openedAt;
     this.chunks.push({ start: this.cursor, buf });
     this.cursor += buf.length;
@@ -1370,6 +1400,10 @@ async function serve(req, res, who, opts = {}) {
       const ch = copy.find(cursor);
       if (!ch) {
         if (cursor < copy.base) { copy.seekTo(cursor); consumer.off = cursor; continue; }
+        // This reader has caught up with the window. Ask trim whether the cushion is still full before
+        // deciding the host is slow: trim counts what this screen has already read as free space, and a
+        // paused upstream stays paused forever if nothing calls it.
+        copy.trim(cfg());
         if (!copy.isActive() && !copy.eof) copy.ensureReader(cursor);
         await copy.waitFor(() => !!copy.find(cursor) || copy.base > cursor || copy.eof || copy.givenUp
           || closedByClient, BODY_WAIT_MS);
@@ -1388,6 +1422,12 @@ async function serve(req, res, who, opts = {}) {
       cursor += slice.length;
       consumer.off = cursor;
       delivered += slice.length;
+      // The cushion only shrinks when `trim` moves `base`, and nothing called trim while a screen was
+      // reading. So a cushion that filled to its bound stayed "full" for the whole film: trim kept the
+      // upstream paused, the engine closed the idle read, and the viewer ran into the end of a window
+      // that should have been refilling behind them. Releasing what this reader has passed is what
+      // resumes the read.
+      copy.trim(cfg());
       if (!res.write(slice)) {
         await new Promise((r) => { res.once('drain', r); res.once('close', r); });
         if (res.destroyed || closedByClient) { cause = 'client-disconnect'; break; }
