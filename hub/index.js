@@ -3947,12 +3947,18 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // to carry. A mixed output replaces the file's audio with one donor; this list is what lets the
   // Quality/Audio menu ask for another language without changing the picture copy.
   const audioOptions = [];
-  const optionByLang = new Map();
+  // Two keys, because the two kinds answer different questions. A "track" row is a stream inside
+  // the copy on screen and a language can hold several of them (the Bluey copy carries AC3 5.1 and
+  // AAC 2.0, both English) — keying those by language hid the AAC one, so a panel that refuses AC3
+  // was offered the very track it had already failed on. A "mix" row is a donor language the hub
+  // can remux, and there is only ever one of those per language.
+  const optionByKey = new Map();
   const optionScore = (o) => (o.kind === 'track' ? 4 : 0) + (o.confirmed ? 2 : 0)
     + (o.provider !== 'torrent' ? 1 : 0);
-  const addAudioOption = (raw, kind, sourceLabel, confirmed, trackId) => {
+  const addAudioOption = (raw, kind, sourceLabel, confirmed, trackId, codec, channels) => {
     const lang = media.langOf(raw);
     if (!lang || lang === 'und' || lang === 'mis') return;
+    const key = kind === 'track' ? 't:' + (trackId || lang) : 'm:' + lang;
     const next = {
       id: (kind === 'track' && trackId ? trackId : 'mix:' + lang),
       language: lang,
@@ -3960,12 +3966,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       kind,
       source: sourceLabel || null,
       confirmed: confirmed === true,
+      // What the stream is, so two rows in the same language read differently: "English · AC3 5.1"
+      // next to "English · AAC 2.0". Without this the menu showed two identical English rows.
+      codec: kind === 'track' ? (codec || null) : null,
+      channels: kind === 'track' ? (channels || null) : null,
       title: kind === 'track'
         ? (ranking.LANG_NAMES[lang] || lang) + ' · in this copy'
         : (ranking.LANG_NAMES[lang] || lang) + (sourceLabel ? ' · from ' + sourceLabel : ''),
     };
-    const before = optionByLang.get(lang);
-    if (!before || optionScore(next) > optionScore(before)) optionByLang.set(lang, next);
+    const before = optionByKey.get(key);
+    if (!before || optionScore(next) > optionScore(before)) optionByKey.set(key, next);
   };
   const pickedLabel = (out.picked && out.picked.label) || source.label || null;
   // When a donor is active the output carries only that track; the picture's original language is
@@ -3973,7 +3983,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   for (const t of out.audioTracks || []) {
     const mixed = t.kind === 'audio-mix';
     addAudioOption(t.language, mixed ? 'mix' : 'track',
-      mixed ? (donor && donor.source.label) : pickedLabel, true, mixed ? null : t.id);
+      mixed ? (donor && donor.source.label) : pickedLabel, true, mixed ? null : t.id,
+      mixed ? null : t.codec, mixed ? null : t.channels);
   }
   // The audio menu is a property of the TITLE, not of the copy the viewer happens to be watching.
   // Deriving it from the playable pool meant the language list changed with the resolution: a copy
@@ -3999,8 +4010,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const i = prefAudio.indexOf(media.langOf(o.language));
     return i < 0 ? 99 : i;
   };
-  out.audioOptions = [...optionByLang.values()]
-    .sort((a, b) => langRank(a) - langRank(b) || String(a.languageName).localeCompare(String(b.languageName)))
+  // A language the picture already carries is not a donor request. Keeping both a track row and a
+  // "mix from another copy" row for English made the menu offer to replace a track with itself.
+  const trackLangs = new Set([...optionByKey.values()]
+    .filter((o) => o.kind === 'track').map((o) => o.language));
+  out.audioOptions = [...optionByKey.values()]
+    .filter((o) => o.kind === 'track' || !trackLangs.has(o.language))
+    .sort((a, b) => langRank(a) - langRank(b)
+      || (a.kind === 'track' ? 0 : 1) - (b.kind === 'track' ? 0 : 1)
+      || String(a.languageName).localeCompare(String(b.languageName)))
     .slice(0, 12);
 
   const remuxNeeded = !!donor || (out.mode === 'gateway' && out.torrent

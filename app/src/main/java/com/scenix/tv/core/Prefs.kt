@@ -73,6 +73,23 @@ class Prefs(context: Context) {
     fun hevcBlocked(): Boolean = sp.getBoolean(KEY_HEVC_BLOCKED, false)
     fun setHevcBlocked(blocked: Boolean) = sp.edit().putBoolean(KEY_HEVC_BLOCKED, blocked).apply()
 
+    /**
+     * Audio codecs this panel advertised but could not actually open. A Sony BRAVIA lists AC3/EAC3
+     * decoders and answers `format_supported=YES`, then `AudioTrack` creation fails on the built-in
+     * speakers ("AudioTrack init failed 0 Config(48000, 252, 40000)") — the picture never starts even
+     * though the hub was told the codec is fine. Remember it once, stop advertising it, and pick
+     * another track in the same file instead of failing the copy.
+     */
+    fun audioBlockedCodecs(): Set<String> = sp.getString(KEY_AUDIO_BLOCKED, "")
+        .orEmpty().split(',').map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+
+    fun blockAudioCodec(codec: String) {
+        val c = codec.trim().lowercase()
+        if (c.isBlank()) return
+        val next = (audioBlockedCodecs() + c).sorted().joinToString(",")
+        sp.edit().putString(KEY_AUDIO_BLOCKED, next).apply()
+    }
+
     // ---- auto-update (core/Updates.kt) -----------------------------------------------------
     // On by default: a TV nobody thinks to update is a TV that quietly falls behind. The prompt
     // itself is still the person's decision — the check finds a build, the remote presses Install.
@@ -247,6 +264,7 @@ class Prefs(context: Context) {
         private const val KEY_DISCOVERED = "discovered_hubs"
         private const val KEY_THEME = "theme"
         private const val KEY_HEVC_BLOCKED = "hevc_blocked"
+        private const val KEY_AUDIO_BLOCKED = "audio_blocked_codecs"
         private const val KEY_AUTO_UPDATE = "auto_update"
         private const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         private const val KEY_TOKEN = "hub_token"

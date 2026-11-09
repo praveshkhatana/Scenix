@@ -185,6 +185,8 @@ class PlayerActivity : Activity() {
     private var pendingEpisodeFocus: EpisodeRowKey? = null
     private var selectedAudioId: String? = null
     private var selectedSubId: String? = null
+    /** How many times this session swapped audio tracks after the panel refused a codec. */
+    private var audioTrackSwitches = 0
     /** The language column's current filter in the subtitle sheet. */
     private var subLangFilter = ""
     private var audioChosen = false
@@ -718,8 +720,11 @@ class PlayerActivity : Activity() {
                         "video/x-vnd.on2.vp9" -> add("vp9")
                         "video/mp4v-es" -> add("mpeg4")
                         "audio/mp4a-latm" -> add("aac")
-                        "audio/ac3" -> add("ac3")
-                        "audio/eac3" -> add("eac3")
+                        // Only advertise a codec this panel actually opened. Sony's table lists
+                        // AC3/EAC3 while AudioTrack creation fails on the built-in speakers; telling
+                        // the hub otherwise is how a copy was chosen that could never make a sound.
+                        "audio/ac3" -> if (!audioCodecBlocked("ac3")) add("ac3")
+                        "audio/eac3" -> if (!audioCodecBlocked("eac3")) add("eac3")
                         "audio/opus" -> add("opus")
                     }
                 }
@@ -729,6 +734,93 @@ class PlayerActivity : Activity() {
             // hub filters nothing.
         }
         return out
+    }
+
+    private fun audioCodecBlocked(codec: String): Boolean =
+        app.prefs.audioBlockedCodecs().contains(codec.trim().lowercase())
+
+    /**
+     * The right-hand note for a track in this copy. Two tracks in the same language used to read as
+     * two identical "English · in this copy" rows; the codec and channel layout are what tell a
+     * viewer (and this activity) which one their panel can actually open.
+     */
+    private fun audioTrackNote(o: JSONObject): String {
+        val codec = str(o, "codec").lowercase()
+        val channels = o.optInt("channels", 0)
+        val shape = when {
+            channels >= 8 -> "7.1"
+            channels == 6 -> "5.1"
+            channels == 2 -> "2.0"
+            channels == 1 -> "mono"
+            channels > 0 -> channels.toString() + "ch"
+            else -> ""
+        }
+        val codecWords = when {
+            codec.startsWith("eac3") || codec == "ec-3" -> "EAC3"
+            codec.startsWith("ac3") || codec == "ac-3" -> "AC3"
+            codec.startsWith("aac") || codec.startsWith("mp4a") -> "AAC"
+            codec.startsWith("dts") -> "DTS"
+            codec.contains("truehd") -> "TrueHD"
+            codec.isNotBlank() -> codec.uppercase()
+            else -> ""
+        }
+        val detail = listOf(codecWords, shape).filter { it.isNotBlank() }.joinToString(" ")
+        val head = if (codec.isNotBlank() && audioCodecBlocked(codec)) "not supported here"
+        else "in this copy"
+        return if (detail.isBlank()) head else head + " · " + detail
+    }
+
+    /** The audio codec a media3 AudioTrack failure names, in the hub's short spelling. */
+    private fun audioCodecFromError(error: Throwable): String {
+        var cur: Throwable? = error
+        repeat(4) {
+            val m = Regex("audio/([a-z0-9._-]+)").find(cur?.message.orEmpty().lowercase())
+            if (m != null) {
+                val raw = m.groupValues[1]
+                return when {
+                    raw.startsWith("ac-3") || raw == "ac3" -> "ac3"
+                    raw.startsWith("ec-3") || raw == "eac3" -> "eac3"
+                    raw.startsWith("vnd.dts") -> "dts"
+                    raw.contains("truehd") -> "truehd"
+                    raw.contains("mp4a") -> "aac"
+                    raw.contains("opus") -> "opus"
+                    raw.contains("vorbis") -> "vorbis"
+                    raw.contains("flac") -> "flac"
+                    raw.contains("mpeg") -> "mp3"
+                    else -> raw.substringAfterLast('.')
+                }
+            }
+            cur = cur?.cause ?: return ""
+        }
+        return ""
+    }
+
+    /**
+     * The audio track this panel should start with: the hub's pick unless this panel already refused
+     * its codec, in which case the first track in the same file with a codec it has not refused.
+     * `null` keeps media3's own default, which is right when the hub named no track.
+     */
+    private fun decodableAudioId(preferred: String?): String? {
+        if (audioTracks.length() == 0) return preferred
+        val blocked = app.prefs.audioBlockedCodecs()
+        fun codecOf(id: String?): String {
+            if (id == null) return ""
+            for (i in 0 until audioTracks.length()) {
+                val t = audioTracks.optJSONObject(i) ?: continue
+                if (str(t, "id") == id) return str(t, "codec").lowercase()
+            }
+            return ""
+        }
+        if (preferred != null && codecOf(preferred) !in blocked) return preferred
+        // Nothing refused yet and the hub named no track: media3's own default is the honest choice.
+        if (preferred == null && blocked.isEmpty()) return null
+        for (i in 0 until audioTracks.length()) {
+            val t = audioTracks.optJSONObject(i) ?: continue
+            val id = str(t, "id")
+            if (id.isBlank()) continue
+            if (str(t, "codec").lowercase() !in blocked) return id
+        }
+        return preferred
     }
 
     private fun sameTitle(a: String, b: String): Boolean {
@@ -895,9 +987,9 @@ class PlayerActivity : Activity() {
             audioCatalogKey = catalogKey
             chosenSourceKey = ""
             pendingSourceKey = ""
+            audioTrackSwitches = 0
         }
         mergeAudioOptions(reply.optJSONArray("audioOptions") ?: JSONArray())
-        audioOptions = JSONArray(audioCatalog.values.toList())
         introStartMs = reply.optLong("introStartMs", 0L)
         introEndMs = reply.optLong("introEndMs", 0L)
         if (introEndMs <= 0L) skipChip?.visibility = View.GONE
@@ -956,7 +1048,10 @@ class PlayerActivity : Activity() {
         // new copy (matched by stream index/id, and left alone if the new copy cannot honour it).
         val answerAudio = str(reply, "selectedAudio").takeIf { it.isNotBlank() }
         val answerSub = str(reply, "selectedSub").takeIf { it.isNotBlank() }
-        if (!audioChosen) selectedAudioId = answerAudio
+        // A panel that already refused a codec must not be handed the same track again: the hub's
+        // pick is only a starting point, and a file with an AAC track next to the AC3 one can play
+        // without the viewer touching the Audio menu.
+        if (!audioChosen) selectedAudioId = decodableAudioId(answerAudio)
         if (!subChosen) selectedSubId = answerSub
 
         // Baseline UA first, then the answer's own headers on top: setDefaultRequestProperties REPLACES
@@ -1192,7 +1287,8 @@ class PlayerActivity : Activity() {
         // order, so the row's place in it is the group to select. The old `a:3` -> group 3 lookup
         // silently left a Hindi track unselected on a Telugu/Tamil/Hindi file.
         val ordered = if (type == C.TRACK_TYPE_AUDIO) audioTracks else embeddedSubs
-        val group = findGroup(groups, id, ordered) ?: return false
+        val group = findGroup(groups, id, ordered, preferPosition = type == C.TRACK_TYPE_AUDIO)
+            ?: return false
         b.setTrackTypeDisabled(type, false)
             .clearOverridesOfType(type)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(0)))
@@ -1218,19 +1314,36 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun findGroup(groups: List<Tracks.Group>, id: String, ordered: JSONArray?): Tracks.Group? {
+    private fun findGroup(
+        groups: List<Tracks.Group>,
+        id: String,
+        ordered: JSONArray?,
+        preferPosition: Boolean = false,
+    ): Tracks.Group? {
         // First: the language/label the hub recorded for the clicked row, matched against what media3
         // reports. The positional lookup below is only correct while the hub's list is EXACTLY the
         // container's stream list — commentary filtering, language dedupe or a cover-art stream media3
         // hides all shift it, and a positional hit then selects a silent wrong language.
-        val row = ordered?.optJSONObject(positionOf(ordered, id).takeIf { it >= 0 } ?: -1)
+        val position = positionOf(ordered, id)
+        val row = ordered?.optJSONObject(position.takeIf { it >= 0 } ?: -1)
         val rowLabel = row?.optString("label").orEmpty().ifBlank { row?.optString("name").orEmpty() }
         val rowLang = row?.optString("lang").orEmpty().ifBlank { row?.optString("language").orEmpty() }
         if (rowLabel.isNotBlank()) {
             groups.firstOrNull { g -> (0 until g.length).any { i -> g.getTrackFormat(i).label == rowLabel } }
                 ?.let { return it }
         }
-        val position = positionOf(ordered, id)
+        // Audio rows name the container's audio streams in order, so the row's position IS the
+        // stream. Trust it when the group there carries the row's language: this is the only handle
+        // that separates two tracks in one language (English AC3 and English AAC), which a
+        // language-only search always collapsed onto the first — the one this panel had refused.
+        if (preferPosition && position >= 0) {
+            val byPos = groups.getOrNull(position)
+            val langOk = byPos != null && (rowLang.isBlank() || (0 until byPos.length).any { i ->
+                val f = byPos.getTrackFormat(i)
+                f.language == rowLang || (f.language.isNullOrBlank() && rowLang == "und")
+            })
+            if (byPos != null && langOk) return byPos
+        }
         if (position >= 0 && rowLang.isBlank() && rowLabel.isBlank()) {
             groups.getOrNull(position)?.let { return it }
         } else if (position >= 0 && rowLang.isNotBlank()) {
@@ -1425,6 +1538,38 @@ class PlayerActivity : Activity() {
                 handler.postDelayed({
                     if (!isFinishing && gen == requestGen) answer?.let { start(it, pos, playWhenReady = true) }
                 }, 600)
+                return
+            }
+        }
+        // A panel that advertises AC3/EAC3 but cannot create the AudioTrack (Sony BRAVIA on its
+        // built-in speakers) reaches here with the picture prepared and no sound. The file often
+        // carries a second, decodable track; switch to it instead of failing an otherwise fine copy.
+        // The codec is remembered so the next copy starts on the working track.
+        if (error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED) {
+            val codec = audioCodecFromError(error)
+            if (codec.isNotBlank()) {
+                app.prefs.blockAudioCodec(codec)
+                Log.w(TAG, "audio codec blocked on this panel: $codec")
+            }
+            val alt = decodableAudioId(selectedAudioId)
+            if (alt != null && alt != selectedAudioId && audioTrackSwitches < 2) {
+                audioTrackSwitches++
+                // Deliberately NOT audioChosen: this is the panel rescuing itself, not a person
+                // choosing. The next copy still lets the hub's pick be tried (and `decodableAudioId`
+                // now refuses this codec anyway), so an automatic switch cannot pin every later
+                // file to a track id that may not exist there.
+                selectedAudioId = alt
+                pendingAudio = alt
+                audioApplied = false
+                val pos = player?.let { filmPosition(it) } ?: 0L
+                quietOrCenter("This copy's " + codecName(codec).ifBlank { "audio" }
+                    + " won't play here — switching audio track…")
+                val gen = requestGen
+                handler.postDelayed({
+                    if (!isFinishing && gen == requestGen) {
+                        answer?.let { start(it, pos, playWhenReady = true) }
+                    }
+                }, 450)
                 return
             }
         }
@@ -2315,15 +2460,34 @@ class PlayerActivity : Activity() {
         sourceCatalog[key] = JSONObject(o.toString())
     }
 
-    /** Add every language the hub offered, keeping the best evidence for each one. */
+    /**
+     * Add every option the hub offered. A "track" row belongs to the copy on screen, so it is rebuilt
+     * from each answer and never carried over: the same `a:1` in the next copy may be another
+     * language. Donor ("mix") rows describe the TITLE, so those are merged by language and survive a
+     * quality switch. Within a language the copy's own tracks come first; a donor row for that same
+     * language is dropped because replacing a track with itself is not a choice.
+     */
     private fun mergeAudioOptions(fresh: JSONArray) {
+        val tracks = LinkedHashMap<String, JSONObject>()
         for (i in 0 until fresh.length()) {
             val o = fresh.optJSONObject(i) ?: continue
+            if (str(o, "kind") == "track") {
+                val id = str(o, "id")
+                if (id.isBlank()) continue
+                val had = tracks[id]
+                if (had == null || audioOptionScore(o) > audioOptionScore(had)) tracks[id] = o
+                continue
+            }
             val key = str(o, "language").lowercase()
             if (key.isBlank()) continue
             val had = audioCatalog[key]
             if (had == null || audioOptionScore(o) > audioOptionScore(had)) audioCatalog[key] = o
         }
+        val trackLangs = tracks.values.map { str(it, "language").lowercase() }.toSet()
+        val out = ArrayList<JSONObject>(tracks.size + audioCatalog.size)
+        out.addAll(tracks.values)
+        for ((lang, o) in audioCatalog) if (lang !in trackLangs) out.add(o)
+        audioOptions = JSONArray(out)
     }
 
     /** A real track in the picture beats a claimed language; a confirmed donor beats a filename. */
@@ -2393,7 +2557,7 @@ class PlayerActivity : Activity() {
                         (if (confirmed) "mixed from " else "from ") +
                             source.ifBlank { "another copy" } +
                             if (confirmed) "" else " · verify before mixing"
-                    } else "in this copy",
+                    } else audioTrackNote(o),
                     selected,
                 ) {
                     if (mixed) reloadAudio(mix = true, language = lang, from = source)
