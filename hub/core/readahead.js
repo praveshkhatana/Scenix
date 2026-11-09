@@ -1173,6 +1173,10 @@ function sideRead(res, copy, want, t0) {
     req.on('timeout', () => { req.destroy(); });
     req.on('error', (e) => {
       if (res.headersSent) { finishSide(res); resolve(true); return; }
+      // The usual dead-tail shape: the engine never sends headers at all, so `finish` (which owns the
+      // failure memory) is not on this path. Record it here too, or the next retry pays 30 s again.
+      copy.sideFailRange = range;
+      copy.sideFailAt = Date.now();
       res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' });
       res.end(JSON.stringify({ error: 'warming', warming: true, detail: 'probe read failed: ' + (e.message || e.code) }));
       log('PROXY FAIL', copy.tag(), 'phase=headers', 'cause=probe-read-failed', String(e.message || e.code || ''),
