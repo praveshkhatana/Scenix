@@ -516,6 +516,18 @@ class Copy {
     // shortfall nor its counter is the current truth about this copy.
     if (this.shortEnd) { this.shortEnd = false; this.shortReads = 0; this.error = null; }
     if (this.ttfbMs === null) this.ttfbMs = Date.now() - this.openedAt;
+    // A sequential stream's next byte goes after the last byte it actually handed over. `cursor` is meant
+    // to say exactly that, and any bookkeeping that disagrees with the stream has to lose: file bytes at
+    // the wrong offsets and the window serves the film out of order, which the player reads as a broken
+    // container. Cheap to check, and it says so when it fires.
+    if (!this.ranges && this.chunks.length) {
+      const prev = this.chunks[this.chunks.length - 1];
+      const end = prev.start + prev.buf.length;
+      if (end !== this.cursor) {
+        log('READAHEAD ALIGN', this.tag(), 'cursor=' + this.cursor, 'windowEnd=' + end);
+        this.cursor = end;
+      }
+    }
     this.chunks.push({ start: this.cursor, buf });
     this.cursor += buf.length;
     this.pos = this.cursor;
@@ -663,7 +675,16 @@ class Copy {
     let guard = 0;
     while (this.held() > cap && this.chunks.length && guard++ < 256) {
       if (this.chunks[0].start >= low) {
-        const last = this.chunks.pop();
+        const last = this.chunks[this.chunks.length - 1];
+        // A sequential read has no ranges to re-request: its last chunk is the tail of the stream we are
+        // standing inside, and the next byte it hands over belongs after THAT, not after a rewound
+        // cursor. Measured tonight: the player's bandwidth estimate fell, `bound` fell with it from 96 MB
+        // to 23.6 MB, this loop popped the live tail and rewound the cursor, and the response kept
+        // streaming into a window filed at the wrong offsets — the TV then reported a source error on a
+        // file that plays, at a different byte every time. A ranged fill can rewind because it just asks
+        // for those bytes again; here the honest answer to "over the ceiling" is to pause the read below.
+        if (!this.ranges && this.isActive() && last.start < this.cursor) break;
+        this.chunks.pop();
         this.pos = this.cursor = Math.min(this.pos, last.start);
         // Out-of-order pieces past the new end are dead weight; the hole in front of them is where the
         // window is, so they would never be reachable from it.
