@@ -2737,7 +2737,12 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       // is this episode — the engine is told which file inside the pack the press means.
       const showAddr = item.streamId || item.identity;
       packCopies = (item.sources || [])
-        .filter((s) => s && s.kind === 'torrent')
+        // Only the copies that were published under the show address carry over. A list this hub
+        // addressed at a previous episode holds that episode's copies too, and re-inheriting them made
+        // the tile grow by a handful of copies on every press — measured at 160 rows for one children's
+        // show, with the seats drawn from a list mostly about other episodes. The tagged ones are what
+        // an earlier press of this branch kept from the show address.
+        .filter((s) => s && s.kind === 'torrent' && (s._streamId || !item.streamId || item.streamId === item.identity))
         .map((s) => Object.assign({}, s, { _streamId: showAddr }));
       item.streamId = epAddr;
       item.sources = [];
