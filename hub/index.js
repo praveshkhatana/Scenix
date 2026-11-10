@@ -3646,7 +3646,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       // season pack that is warm in metadata while its later episodes are unseeded is the measured case.
       // Record it so the next press seats the copy behind the ones that have not failed, instead of
       // spending the same four seconds proving the same thing again.
-      if (m.ms >= 3000) noteNoByte({ hash: r.hash, fileId: r.fileId }, m.ms);
+      if (m.ms >= 3000 && (m.windows || []).length >= 2) noteNoByte({ hash: r.hash, fileId: r.fileId }, m.ms);
       o.warming = true;
       o.measuredBytes = 0;
       o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
