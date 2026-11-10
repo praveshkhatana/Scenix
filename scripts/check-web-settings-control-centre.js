@@ -21,12 +21,13 @@ const between = (start, end, from = 0) => {
 };
 
 const rail = between('function availableSections()', 'function openSection(');
+// Sources is a second-level destination, the way it is on the television: the rail carries it only
+// after Access & safety has proved the household PIN this visit.
 const expectedRail = [
   "id: 'overview'",
   "id: 'watching'",
   "id: 'appearance'",
   "id: 'home'",
-  "id: 'sources'",
   "id: 'household'",
   "id: 'access'",
   "id: 'hub'",
@@ -37,6 +38,12 @@ for (const entry of expectedRail) {
   assert.ok(position > previous, `settings rail must keep ${entry} in control-centre order`);
   previous = position;
 }
+assert.ok(rail.indexOf("id: 'sources'") > rail.indexOf("id: 'home'"),
+  'Sources must sit after Home in the rail when the PIN gate has opened it');
+assert.ok(rail.indexOf("id: 'sources'") < rail.indexOf("id: 'household'"),
+  'Sources must stay before Household when it is present');
+assert.match(rail, /caps\.addonAdmin && sourcesOpen/,
+  'Sources must not appear in the everyday rail until Access & safety has proved the household PIN');
 assert.match(rail, /title: 'Access & safety'/,
   'the household lock must not be hidden behind a generic access bucket');
 assert.match(rail, /title: 'This Hub'/,
@@ -54,11 +61,25 @@ assert.match(overview, /openSection\(id\)/,
 assert.doesNotMatch(overview, /\bapi\./,
   'overview must remain read-only and avoid new network activity');
 
+const watching = between('function buildWatching(parent)', 'function buildAppearance(parent)');
+assert.match(watching, /Home shelves/,
+  'Watching must carry the television\'s Home shelves shortcut');
+assert.match(watching, /People profiles/,
+  'Watching must carry the television\'s People profiles shortcut');
+
 const appearance = between('function buildAppearance(parent)', '/* -------------------------------------------------------------- access */');
 assert.match(appearance, /group\('Theme'/,
   'theme selection belongs in Appearance');
 assert.match(appearance, /writeSettings\(\{ theme: id \}\)[\s\S]*?window\.location\.reload\(\)/,
   'theme changes must retain the acknowledged write-then-reload path');
+assert.match(appearance, /group\('Readability'[\s\S]*?Text size/,
+  'Appearance must carry the television\'s Text size control');
+
+const access = between('function buildAccess(parent)', '/* ------------------------------------------------------------------ paint */');
+assert.match(access, /ensureSettingsAdmin\(ctx, setting && setting\.lock, 'Enter the Settings PIN to manage sources'\)/,
+  'the Sources entry must prove the household PIN before opening the pane');
+assert.match(access, /sourcesOpen = true;/,
+  'and only then may the Sources section join the rail');
 
 const sources = between('function buildSources(parent)', 'function buildHub(');
 assert.match(sources, /buildAddons\(parent\)/,
@@ -66,9 +87,15 @@ assert.match(sources, /buildAddons\(parent\)/,
 assert.match(sources, /includeHub: false, includeSourcePacks: true, includeDiagnostics: false/,
   'owner-managed picture/audio packs must remain with sources, not Hub maintenance');
 
+const household = between('function buildHousehold(parent)', 'function buildSources(parent)');
+assert.match(household, /group\('Shared library'/,
+  'Household must carry the television\'s shared-library shortcuts');
+
 const hub = between('function buildHub(', 'function buildDiag(');
 assert.doesNotMatch(hub, /themeChoices|group\('Theme'/,
   'This Hub must not reintroduce the theme picker');
+assert.match(hub, /line\('Address'/,
+  'This Hub must name the address that reaches it, as the television\'s Hub connection row does');
 
 assert.match(source, /const previousSectionId = currentSectionId;[\s\S]*?findIndex\(\(section\) => section\.id === previousSectionId\)/,
   'an async repaint must retain the chosen section by identity, not stale index');

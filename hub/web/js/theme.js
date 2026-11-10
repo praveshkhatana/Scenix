@@ -61,6 +61,30 @@ const RADIUS_VARS = {
 const root = document.documentElement;
 let scale = 1;
 
+/* The television's Settings has a Text size row (100 / 115 / 130 / 150%) that grows type, tiles, gaps
+ * and hero together, because a person who needs bigger words also needs bigger targets. The browser
+ * shell carries the same choice: it multiplies `--s`, the one scale factor every length is derived
+ * from, so a laptop and a TV use the same control rather than a second, browser-only zoom. It is kept
+ * on this device (a household of four should not resize everyone's page), and read back on boot. */
+const TEXT_SCALE_KEY = 'scenix.textScale';
+const TEXT_SCALE_STEPS = [1, 1.15, 1.3, 1.5];
+
+export function textScale() {
+  let raw = 1;
+  try { raw = Number(localStorage.getItem(TEXT_SCALE_KEY)) || 1; } catch (e) { /* private mode */ }
+  const hit = TEXT_SCALE_STEPS.reduce((best, v) => (Math.abs(v - raw) < Math.abs(best - raw) ? v : best), 1);
+  return hit;
+}
+
+/** Store a text size for this browser and re-apply the scale it drives. Returns the value kept. */
+export function setTextScale(value) {
+  const want = Number(value) || 1;
+  const hit = TEXT_SCALE_STEPS.reduce((best, v) => (Math.abs(v - want) < Math.abs(best - want) ? v : best), 1);
+  try { localStorage.setItem(TEXT_SCALE_KEY, String(hit)); } catch (e) { /* private mode keeps the session value */ }
+  computeScale();
+  return hit;
+}
+
 function setVar(name, value) { root.style.setProperty(name, value); }
 
 function cssName(name) {
@@ -290,13 +314,16 @@ function applyTokens() {
   setLen('--panel-row-h', p.rowHeight);
 }
 
-/** min(w/1920, h/1080), floored so a phone browser is still readable and capped for very large panels. */
+/** min(w/1920, h/1080), floored so a phone browser is still readable and capped for very large panels.
+ *  The person's Text size multiplies that fit, so a bigger choice grows the whole rhythm the same way
+ *  the television's zoom does; the outer floor/ceiling keeps a 150% choice on a phone from overflowing. */
 export function computeScale() {
   const w = window.innerWidth || 1920;
   const h = window.innerHeight || 1080;
   const canvas = T.canvas || { width: 1920, height: 1080 };
-  const s = Math.min(w / canvas.width, h / canvas.height);
-  scale = Math.max(0.5, Math.min(1.2, s));
+  const fit = Math.min(w / canvas.width, h / canvas.height);
+  scale = Math.max(0.5, Math.min(1.2, fit)) * textScale();
+  scale = Math.max(0.5, Math.min(1.8, scale));
   setNum('--s', Number(scale.toFixed(4)));
   return scale;
 }

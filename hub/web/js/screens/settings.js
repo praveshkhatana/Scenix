@@ -36,9 +36,10 @@
 import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
-import { api, apiBase } from '/ui/js/api.js';
+import { api, apiBase, adminSessionActive } from '/ui/js/api.js';
 import { hubBuild, buildLabel } from '/ui/js/build.js';
 import { backendName } from '/ui/js/player.js';
+import { setTextScale, textScale } from '/ui/js/theme.js';
 import { session, isLocked } from '/ui/js/state.js';
 import { langList } from '/ui/js/format.js';
 import { withAdultProof } from '/ui/js/profileedit.js';
@@ -86,6 +87,11 @@ export function screen(ctx) {
   let sections = [];       // the rail: one entry per section this hub can answer for, built on every paint
   let current = 0;         // which section the pane is showing
   let currentSectionId = 'overview'; // preserve the owner’s place if an async write triggers a repaint
+  // Sources are a second-level destination, exactly as they are on the television: the entry lives in
+  // Access & safety, the household Settings PIN is asked before the pane opens, and the rail only
+  // carries the section once this visit has proved the PIN. That keeps a source list — addresses,
+  // tokens, packs — out of the everyday settings walk, where anyone holding the remote can see it.
+  let sourcesOpen = false;
   let diagOpen = false;    // the This Hub pane's advanced step; the readout costs a walk to reach otherwise
   let handler = null;      // the Back key, while this screen holds the stage
 
@@ -563,7 +569,10 @@ export function screen(ctx) {
     const hasRows = !!(rowList && rowList.length && caps.settingsAdmin);
     const hasCats = !!(setting && canHub && (Array.isArray(catalogOptions) || Array.isArray(setting.categories)));
     if (hasRows || hasCats) list.push({ id: 'home', icon: 'home', title: 'Home', build: buildHome });
-    if (caps.addonAdmin) list.push({ id: 'sources', icon: 'list', title: 'Sources', build: buildSources });
+    // Sources joins the rail only after Access & safety has proved the household PIN this visit. Until
+    // then the entry is the row inside Access, which is the only way in — a source list is not part of
+    // the everyday walk through settings.
+    if (caps.addonAdmin && sourcesOpen) list.push({ id: 'sources', icon: 'list', title: 'Sources', build: buildSources });
     const hasHouse = !!caps.profileEdit || !!(setting && setting.debrid);
     if (hasHouse) list.push({ id: 'household', icon: 'user', title: 'Household', build: buildHousehold });
     if (setting && canHub) list.push({ id: 'access', icon: 'lock', title: 'Access & safety', build: buildAccess });
@@ -620,6 +629,24 @@ export function screen(ctx) {
   function buildWatching(parent) {
     buildPlayback(parent);
     buildLive(parent);
+
+    // The television's Watching pane ends with the two household shortcuts a person reaches for while
+    // tuning playback: what Home shows, and who is watching. The web keeps them in the same place and
+    // the same order, so a person who learned one settings screen can walk the other.
+    const g = group('Home and people', 'The same shortcuts the television puts under Watching: what the home screen shows, and which person is watching.');
+    if (rowList && rowList.length && sections.some((section) => section.id === 'home')) {
+      const hidden = new Set(((setting && setting.rows && setting.rows.hidden) || []));
+      const visible = rowList.filter((entry) => !hidden.has(entry.id)).length;
+      openRow(g, 'Home shelves', 'Show, hide or reorder the rows the home screen draws.',
+        () => openSection('home'), { valueText: `${visible} of ${rowList.length} shown` });
+    }
+    if (Array.isArray(session.profiles) && session.profiles.length
+      && sections.some((section) => section.id === 'household')) {
+      openRow(g, 'People profiles', 'Add, rename or change who is watching.',
+        () => openSection('household'),
+        { valueText: `${session.profiles.length} ${session.profiles.length === 1 ? 'person' : 'people'}` });
+    }
+    if (g.querySelector('.li')) parent.appendChild(g);
   }
 
   function buildAppearance(parent) {
@@ -634,6 +661,17 @@ export function screen(ctx) {
         if (await writeSettings({ theme: id })) window.location.reload();
       });
     parent.appendChild(g);
+
+    // The television's Appearance pane has a Readability group under Theme. The web carries the same
+    // control because it drives the same thing — `--s`, the one scale factor every length in the shell
+    // is derived from — so type, tiles and gaps grow together. The choice is kept on this device.
+    const g2 = group('Readability', 'Make everything bigger or smaller on this browser. It grows type, tiles and gaps together, the way the television’s zoom does, and stays on this device.');
+    pickRow(g2, 'Text size', 'The size of every word and control on this browser.',
+      [1, 1.15, 1.3, 1.5], textScale(),
+      (v) => `${Math.round(Number(v) * 100)}%`,
+      (v) => { setTextScale(v); paint(); },
+      (v) => `${Math.round(Number(v) * 100)}%`);
+    parent.appendChild(g2);
   }
 
   /* -------------------------------------------------------------- access */
@@ -717,6 +755,26 @@ export function screen(ctx) {
       }, { valueText: 'Off' });
     }
     parent.appendChild(g);
+
+    // Sources live behind the same lock the television puts in front of them. The row is always here
+    // for an owner to see (it is how the PIN is discovered), but pressing it asks the household PIN
+    // first and only then opens the pane — add-ons, source packs and direct copies are addresses and
+    // tokens, not a shelf a child should be able to browse from the couch.
+    if (caps.addonAdmin) {
+      const active = (installed || []).filter((source) => source && source.enabled !== false).length;
+      const gS = group('Sources',
+        'Add-ons, reviewed and community directories, owner source packs and direct copies. The household Settings PIN is asked before the list opens.');
+      openRow(gS, 'Sources',
+        'Discover, install, enable or remove the sources this hub reads.',
+        async () => {
+          if (!await ensureSettingsAdmin(ctx, setting && setting.lock, 'Enter the Settings PIN to manage sources')) return;
+          sourcesOpen = true;
+          paint();
+          openSection('sources');
+        },
+        { valueText: sourcesOpen ? 'Open' : `${active} active · PIN` });
+      parent.appendChild(gS);
+    }
   }
 
   /* ------------------------------------------------------------------ paint */
@@ -1004,6 +1062,28 @@ export function screen(ctx) {
   }
 
   function buildHousehold(parent) {
+    // The television's Household pane starts with the shared library it owns: the hub's name and search
+    // limits, the shared Live TV playlist, and the categories built from catalogues. Each is a screen of
+    // its own here too, so this group points at them instead of restating their contents.
+    const gLib = group('Shared library', 'One library for the house: its name and search limits, the shared Live TV playlist, and the shelves you built from catalogues.');
+    if (setting) {
+      const nameRow = line('Library and search', 'The hub name every screen shows, and the limits search obeys.');
+      nameRow.appendChild(value(setting.hubName || 'this hub'));
+      gLib.appendChild(nameRow);
+    }
+    if (setting && setting.live && sections.some((section) => section.id === 'watching')) {
+      openRow(gLib, 'Live TV', 'The shared playlist and the channels this house keeps.',
+        () => openSection('watching'),
+        { valueText: setting.live.playlist ? 'playlist set' : 'no playlist' });
+    }
+    if (Array.isArray(setting && setting.categories) || Array.isArray(catalogOptions)) {
+      const cats = Array.isArray(setting && setting.categories) ? setting.categories : [];
+      openRow(gLib, 'Categories', 'Genre shelves drawn on Home, in your order.',
+        () => ctx.navigate('categories'),
+        { valueText: cats.length ? `${cats.length} made` : 'none yet' });
+    }
+    if (gLib.querySelector('.li')) parent.appendChild(gLib);
+
     if (caps.profileEdit) {
       const g = group('Profiles', 'Names and ages live in the hub’s profile file. A new profile starts with the house defaults and is renamed there, where a keyboard is comfortable.');
       for (const p of (session.profiles || [])) {
@@ -2188,6 +2268,12 @@ export function screen(ctx) {
       const name = line('Name', 'The word that appears on the splash screen and in the launcher.');
       name.appendChild(value(setting.hubName));
       g.appendChild(name);
+      // The television's This TV pane has a Hub connection row; on the web the equivalent fact is the
+      // address that reaches this hub. It is the same string the TV's Connect from phone QR encodes, so
+      // a person can type it into a second device without hunting for it in a terminal.
+      const address = line('Address', 'Open this on a phone or another device. The television shows the same address as a QR under This TV → Connect from phone.');
+      address.appendChild(value(apiBase()));
+      g.appendChild(address);
       // The build the household is looking at, stated on the page instead of only in a terminal.
       // It also answers the question a stale phone tab raises: a page that looks old with a current
       // commit behind it is the page, not the hub.
