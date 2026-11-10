@@ -10,6 +10,7 @@
  */
 
 import { api, apiBase, setApiBase } from '/ui/js/api.js';
+import { hubBuild, buildLabel } from '/ui/js/build.js';
 import { el, byId, clear, layer, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { initInput, pushHandler, popHandler, setDigitSink,
@@ -286,6 +287,15 @@ async function mount(route, _pushed) {
   nav.style.display = chromeless || homeOwnsNavigation ? 'none' : 'flex';
   setNavActive(route);
   syncSectionTabs();
+  // The build mark goes at the foot of Home, where the household actually looks at the interface. Each
+  // screen is its own scroll container, so it is appended inside the screen rather than to the stage —
+  // a line under the last shelf belongs to whichever pack drew that shelf.
+  if (route.name === 'home') {
+    const stamp = buildStamp();
+    if (stamp && stamp.parentNode !== node) node.appendChild(stamp);
+  } else if (stampEl && stampEl.parentNode) {
+    stampEl.parentNode.removeChild(stampEl);
+  }
   document.body.classList.toggle('watching', route.name === 'play');
 
   // The menu bar lives beside the screen in #stage. Scoping the ring to the screen alone made the
@@ -392,6 +402,30 @@ function buildNav() {
     nav.classList.toggle('solid', top > token('anim', 'navFadeAt', 50));
   }, { passive: true });
   return nav;
+}
+
+/*
+  The build mark at the foot of the page: which hub commit this interface is standing on.
+  The household's first question when a screen looks wrong is "am I looking at the newest one", and until
+  now that could only be answered from a terminal on the hub box. The page and the hub are two different
+  things — a phone can hold an old page while the hub is current — so the mark says which one is stale
+  instead of leaving it as a guess. It is one read of a fact the hub already reports.
+*/
+let stampEl = null;
+function buildStamp() {
+  if (stampEl) return stampEl;
+  stampEl = el('div', { class: 'hub-stamp', 'aria-hidden': 'true' });
+  hubBuild().then((s) => {
+    const label = buildLabel(s);
+    if (!label && stampEl.parentNode) stampEl.parentNode.removeChild(stampEl);
+    else if (label) {
+      stampEl.textContent = label;
+      if (s && s.measuredAt) {
+        stampEl.title = `The hub's own build, read ${new Date(s.measuredAt).toLocaleString()}`;
+      }
+    }
+  });
+  return stampEl;
 }
 
 /* A screen whose module is missing from the bundle has to leave the nav bar: on a remote, a focused item that

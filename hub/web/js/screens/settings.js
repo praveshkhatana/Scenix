@@ -37,6 +37,7 @@ import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { api, apiBase } from '/ui/js/api.js';
+import { hubBuild, buildLabel } from '/ui/js/build.js';
 import { backendName } from '/ui/js/player.js';
 import { session, isLocked } from '/ui/js/state.js';
 import { langList } from '/ui/js/format.js';
@@ -2187,6 +2188,18 @@ export function screen(ctx) {
       const name = line('Name', 'The word that appears on the splash screen and in the launcher.');
       name.appendChild(value(setting.hubName));
       g.appendChild(name);
+      // The build the household is looking at, stated on the page instead of only in a terminal.
+      // It also answers the question a stale phone tab raises: a page that looks old with a current
+      // commit behind it is the page, not the hub.
+      const build = line('Build', 'The commit this hub runs. If a screen looks like an older design, compare this mark with the one at the foot of Home — a page can be older than the hub serving it.');
+      const buildValue = value('checking…');
+      build.appendChild(buildValue);
+      g.appendChild(build);
+      hubBuild().then((s) => {
+        if (!buildValue.isConnected) return;
+        const label = buildLabel(s);
+        buildValue.textContent = label || 'not reported by this hub';
+      });
       if (Array.isArray(setting.languages)) {
         multiRow(g, 'Languages the addons search', 'Which audio and subtitle languages this hub asks its addons for.',
           Object.keys(names), setting.languages, (k) => names[k] || k,

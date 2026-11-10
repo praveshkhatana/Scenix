@@ -1598,3 +1598,14 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 }
 .card .art.has-logo + .ctitle { display: none; }
 .card.foc .art .clogo, .card.rank .art .clogo { opacity: 1; transform: none; }
+
+/* ==========================================================================
+   The build mark — which hub build this page is standing on
+   One quiet line at the foot of Home. When a screen looks wrong, the first question is whether the
+   page and the hub are the same vintage, and until now that answer only existed on the hub box.
+   ========================================================================== */
+.hub-stamp {
+  padding: calc(44px * var(--s)) var(--gutter) calc(34px * var(--s));
+  font-size: var(--t-meta); color: var(--ink2); opacity: .55;
+  letter-spacing: .06em; text-align: center;
+}
