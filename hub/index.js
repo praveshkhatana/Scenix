@@ -2651,9 +2651,48 @@ function listAlternatives(candidates, source, title, ep = null) {
   ));
 }
 
+/**
+ * Where a Play press spent its seconds, logged as one line per press.
+ *
+ * "Play takes a minute" is the complaint, and without the split every fix for it is a guess: this is the
+ * same wall clock the viewer waits, broken into the steps that cost it. Phases are summed across every
+ * copy a press walks, so the line reads as the press rather than as one candidate.
+ */
+function playClock(identity) {
+  const start = Date.now();
+  const phases = new Map();
+  const counts = { sources: 0, seats: 0, tries: 0 };
+  return {
+    counts,
+    mark(name, ms) { if (ms > 0) phases.set(name, (phases.get(name) || 0) + ms); },
+    /** Await one step and keep what it cost, without changing what it returns. */
+    async time(name, fn) {
+      const at = Date.now();
+      try { return await fn(); } finally { this.mark(name, Date.now() - at); }
+    },
+    report(answer) {
+      const parts = [...phases.entries()]
+        .filter(([, ms]) => ms >= 5)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, ms]) => name + '=' + ms + 'ms');
+      log('PLAY TIMING', identity, 'total=' + (Date.now() - start) + 'ms',
+        'status=' + ((answer && answer.status) || '?'),
+        'sources=' + counts.sources, 'seats=' + counts.seats, 'tries=' + counts.tries,
+        parts.join(' ').slice(0, 300));
+    },
+  };
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
+  const clock = playClock(identity);
+  const answer = await pickMeasured(identity, profile, wanted, type, opts, clock);
+  clock.report(answer);
+  return answer;
+}
+
+async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
-  const item = await ctx.resolve(identity, type);
+  const item = await clock.time('meta', () => ctx.resolve(identity, type));
   if (!item) {
     if (addons.pendingFor(identity)) {
       return { status: 503, body: {
@@ -2705,9 +2744,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     ? introdb.introFor(identity, ep.season, ep.episode, { timeoutMs: 1200 })
     : Promise.resolve(null);
   const drops = [];
-  const [kept] = await pipeline([item], ctx, drops); // rules rank sources and enforce the profile's scope
+  const [kept] = await clock.time('rules',
+    () => pipeline([item], ctx, drops)); // rules rank sources and enforce the profile's scope
   if (!kept) return { status: 403, body: ruleDropBody(identity, drops) };
   let sources = kept.sources || [];
+  clock.counts.sources = sources.length;
   if (process.env.PLAY_DEBUG) {
     log('PLAY SOURCES', identity, kept.type + ' x' + sources.length,
       sources.map((s) => (s._addon || '?') + ':' + String(s.label || s.name || '').slice(0, 28)).join(' | ').slice(0, 600));
@@ -2755,7 +2796,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     }
   }
   const open = sources.filter((s) => !isExcluded(s, skip));
-  await probePass(open.length ? open : sources, kept.streamId || identity, { force: opts.reprobe === true });
+  await clock.time('probe', () => probePass(open.length ? open : sources,
+    kept.streamId || identity, { force: opts.reprobe === true }));
   // A live channel that comes BACK to the hub (`/switch` with exclusions — the TV's own failover after
   // a stall or an error) is the freshest evidence that exists about this feed: a screen tried to watch
   // it and could not. The scheduled probe re-checks only every 30 minutes, so without this the dead
@@ -2880,6 +2922,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // refused below may wake one more copy from further down the same ranking (bounded by the retry count).
   const ranked = explicit ? [source] : seated.slice();
   const queue = ranked.slice(0, PLAY_MAX_TRIES);
+  clock.counts.seats = queue.length;
   // Then the copies this connection can actually feed. Once the hub has measured the engine's rate, a
   // 6 GB 4K copy stops competing with a 900 MB 720p one: the smaller is tried first because the bigger
   // one is known to stall. A source that is not a torrent gets the same standing as one that fits,
@@ -2977,6 +3020,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   let labelOverride = null; // set when a named pick plays despite its own release name
   let reminted = false; // one throw-away of the cached stream answer per play press
   for (const cand of queue) {
+    clock.counts.tries++;
     const addon = addonOf(cand);
     if (!addon || typeof addon.play !== 'function') continue;
     const left = deadline - Date.now();
@@ -3007,8 +3051,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         continue;
       }
     }
-    const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
-      Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
+    const o = await clock.time('mint', () => withBudget(
+      Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
+      Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id));
     if (!o || !o.url) {
       // The addon named this copy and then had no address for it. Saying which addon is the whole
       // diagnosis: one aggregator whose mint endpoint is failing looks nothing like a dead internet.
@@ -3189,7 +3234,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           slowGateway = slowGateway || { o, cand };
           continue;
         }
-        const md = await readahead.cushionUrl(o.url, o.headers || {}, {
+        const cushion = () => readahead.cushionUrl(o.url, o.headers || {}, {
           needMbps: needDirect,
           // Measure and pre-roll the HEAD of the file, even resuming mid-film. A resume looks as if it
           // wants the byte the viewer sits on — computed from size over runtime, the same arithmetic the
@@ -3201,6 +3246,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           at: 0,
           leftMs: deadline - Date.now(),
         });
+        const md = await clock.time('measure', cushion);
         const gotD = md && Number.isFinite(md.mbps) ? md.mbps : null;
         const realD = !!md && !!md.real && gotD != null;
         if (md && md.bufferedMB != null) o.bufferedMB = md.bufferedMB;
@@ -3295,6 +3341,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // The gateway is given the *resolved* source, not the ranked row: an addon's entry in the list is a
     // display shape (label, quality, size) and the actual magnet/hash only exists in the answer play()
     // just built. Reading the link out of `out` is the one place where the two are guaranteed to agree.
+    const gwAt = Date.now();
     const r = await gateway.resolve(
       { ...cand, url: o.url, infoHash: o.infoHash },
       // The prepare budget is clamped to the time left, not left at its own default: the app puts a
@@ -3307,6 +3354,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         // inside it this press means, or the biggest file wins and a Play on S01E04 plays S01E01.
         want: ep ? { season: ep.season, episode: ep.episode } : null },
     );
+    clock.mark('gateway', Date.now() - gwAt);
     if (!r.url) {
       // The reason comes from the gateway itself, so the log can tell an engine that is down from a
       // torrent whose metadata never resolved and an addon that never gave us a hash.
@@ -3367,6 +3415,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const buf = readahead.acquire({ hash: r.hash, fileId: r.fileId });
     if (buf) {
       readahead.noteNeed({ hash: r.hash, fileId: r.fileId }, needs);
+      const susAt = Date.now();
       m = await readahead.sustain(buf, {
         needMbps: needs,
         // The head of the file, not the byte the resume sits on: the same lesson the direct path
@@ -3381,11 +3430,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         budgetMs: Math.max(1000, Math.min(readahead.cfg().sustainMs,
           Math.floor(Math.max(0, deadline - Date.now() - 900) / Math.max(1, queue.length - queue.indexOf(cand))))),
       });
+      clock.mark('measure', Date.now() - susAt);
     } else {
+      const probeAt = Date.now();
       const p = await probe.probeUrl(r.url, o.headers || {}, {
         timeoutMs: Math.max(800, Math.min(GATEWAY_DELIVER_MS, deadline - Date.now())),
         force: true,
       });
+      clock.mark('measure', Date.now() - probeAt);
       // A sample that arrived faster than it can be timed is a floor, not a rate — and a floor taken out
       // of the engine's own cache is not even that. One 100 KB sample served from RAM divided by its own
       // millisecond of transfer once looked like 8388 kbps, and the picker then ordered a 6 GB copy that
@@ -3633,7 +3685,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // Enough to prove the copy is moving, not a six-second wait in front of a black screen. The
       // cushion keeps filling while the player reads it, so the rest of the pre-roll is free.
       const leftMs = Math.max(0, Math.min(1500, deadline - Date.now() - 400));
+      const preAt = Date.now();
       const pb = await readahead.preBuffer(buf, { budgetMs: leftMs });
+      clock.mark('prebuffer', Date.now() - preAt);
       const need = ranking.estimateMbps(source, kept);
       out.prebuffer = {
         ms: pb.ms,
@@ -3855,6 +3909,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // the playhead is where the film is. ffmpeg would otherwise fetch each of them itself at the front
       // of a 25 s first-byte budget, and on a host that rationes reads that wait is the difference
       // between switching language in a second and the viewer giving up.
+      const bufAt = Date.now();
       const head = await readahead.preBuffer(buf, {
         bytes: 8, sec: readahead.cfg().preSec, budgetMs: Math.max(500, Math.min(1500, deadline - Date.now())),
       });
@@ -3867,6 +3922,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         needMbps: Number.isFinite(out.neededMbps) ? out.neededMbps : 0,
         budgetMs: Math.max(500, Math.min(2000, deadline - Date.now())),
       }) : head;
+      clock.mark('prebuffer', Date.now() - bufAt);
       log('REMUX INPUT CUSHIONED', identity, labelOf(source), 't=' + tok, 'at=' + at,
         'headMB=' + (head && head.MB != null ? head.MB : '?'),
         'mbps=' + (warm && Number.isFinite(warm.mbps) ? warm.mbps.toFixed(1) : '?'),
@@ -3875,9 +3931,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }
   if (desiredLang && mixRequested && !hasAudioTrack(source, desiredLang)
       && /^https?:\/\//i.test(String(engineUrl || '')) && deadline - Date.now() > 1200) {
+    const audioProbeAt = Date.now();
     pictureProbe = await media.probeUrl(engineUrl, {
       timeoutMs: Math.max(700, Math.min(2000, deadline - Date.now() - 400)),
     });
+    clock.mark('audio-probe', Date.now() - audioProbeAt);
     if (!pictureProbe) {
       log('AUDIO PICTURE PROBE FAIL', identity, labelOf(source), String(out.url).slice(0, 70));
     }
@@ -3949,7 +4007,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     }
     for (const cand of list.slice(0, 6)) {
       if (Date.now() >= deadline) break;
-      const target = await resolveAudioDonor(cand, kept.streamId || identity, opts, deadline);
+      const target = await clock.time('audio',
+        () => resolveAudioDonor(cand, kept.streamId || identity, opts, deadline));
       if (!target) continue;
       // A donor measured a different length than the film is a different cut; mapping it would play
       // the right language over the wrong scene, silently. Only a measured disagreement refuses —
@@ -4387,9 +4446,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       }
       readahead.noteNeed({ url: out.url }, out.neededMbps);
       if (!out.prebuffer) {
+        const preAt2 = Date.now();
         const pb = await readahead.preBuffer(buf, {
           bytes: 6, sec: readahead.cfg().preSec, budgetMs: 1200,
         });
+        clock.mark('prebuffer', Date.now() - preAt2);
         out.prebuffer = {
           ms: pb.ms, bytes: pb.bytes, sec: pb.sec, MB: pb.MB,
           neededMbps: out.neededMbps, complete: pb.complete,
