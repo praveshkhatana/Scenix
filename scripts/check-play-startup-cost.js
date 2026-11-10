@@ -158,6 +158,10 @@ const server = http.createServer((req, res) => {
   assert.match(index, /queue\.indexOf\(cand\) === 0 \? 4000 : 2500/,
     'the copy at the front of the walk gets the long look, because it is the one this press is most '
       + 'likely to play');
+  assert.match(index, /_streamId: showAddr/,
+    'a series press must keep the show address\'s copies - the season packs a title page warmed - and '
+      + 'tag them with the address they were published under, or the walk only ever asks the engine '
+      + 'about per-episode magnets it has never met');
 
   server.close();
   console.log('PLAY STARTUP COST GATE OK');

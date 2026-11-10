@@ -1914,7 +1914,10 @@ function wantFromStreamId(streamId) {
 function magnetOf(streamId, s) {
   if (!s || s.kind !== 'torrent') return null;
   const a = registry.byId[s && s._addon];
-  return a && typeof a.magnetFor === 'function' ? a.magnetFor(streamId, s) : null;
+  // A copy keeps the address it was found at when that differs from the one this press is using —
+  // the season-pack copies a series press carries alongside the episode's own. Asking the addon to
+  // re-resolve a copy under an address it never published it under is a question it cannot answer.
+  return a && typeof a.magnetFor === 'function' ? a.magnetFor(s._streamId || streamId, s) : null;
 }
 
 function attachTracks(sources, want, streamId) {
@@ -2292,7 +2295,7 @@ function donorProbeAsync(url, headers) {
  * donor is already an HTTP stream. This is deliberately separate from the primary picker: the donor is
  * allowed to be an audio-only row, and it must never be used as the picture.
  */
-async function resolveAudioDonor(source, identity, opts, deadline) {
+async function resolveAudioDonor(source, identity, opts, deadline, want) {
   const addon = registry.byId[source && source._addon];
   if (!addon || typeof addon.play !== 'function') return null;
   const left = deadline - Date.now();
@@ -2315,7 +2318,10 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
     const r = await gateway.resolve(
       { ...source, url: o.url, infoHash: o.infoHash },
       { clientOrigin: opts.clientOrigin,
-        budgetMs: Math.max(1000, Math.min(2500, deadline - Date.now())) },
+        budgetMs: Math.max(1000, Math.min(2500, deadline - Date.now())),
+        // A season pack holding the donor language still has to be opened at *this* episode: mapping
+        // the audio of S02E12 over the picture of S02E35 is the silent wrong-film again.
+        want: want || null },
     );
     if (!r.url) return null;
     url = r.url;
@@ -2718,8 +2724,21 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     ep = episodeOf(item, opts.season, opts.episode);
   }
   const epAddr = ep ? episodeStreamId(item, ep) : null;
+  let packCopies = [];
   if (ep) {
     if (item.streamId !== epAddr) {
+      // The show address and the episode address answer with two different sets of copies: season
+      // packs and whole-season torrents answer `tt7678620`, per-episode files answer
+      // `tt7678620:2:35`. This branch used to throw the first set away, and the cost was measured on
+      // a cold episode: the engine already had the season pack open (`Torrent working`, 785 files,
+      // 186 peers) while the press spent its whole walk on per-episode magnets it had never met, and
+      // answered `warming`. Keep them, tagged with the address they were published under, and fetch
+      // the episode's own copies on top. The picker's episode tests below decide whether a pack copy
+      // is this episode — the engine is told which file inside the pack the press means.
+      const showAddr = item.streamId || item.identity;
+      packCopies = (item.sources || [])
+        .filter((s) => s && s.kind === 'torrent')
+        .map((s) => Object.assign({}, s, { _streamId: showAddr }));
       item.streamId = epAddr;
       item.sources = [];
     }
@@ -2741,6 +2760,13 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       item.streamId = null;
       ep = null;
       await clock.time('sources', () => contributeSources(item));
+    }
+    if (ep && packCopies.length) {
+      // The episode's own copies lead; the show-address packs sit behind them. `sourceKey` includes
+      // the label and size, so a pack never dedupes away an episode copy or the other way round,
+      // and `rankSources` preserves the `_streamId` tag because the objects themselves travel.
+      item.sources.push(...packCopies);
+      item.sources = merge.rankSources(item.sources, registry.priorities);
     }
   }
   // The intro window does not depend on which copy wins, so ask IntroDB while the sources rank. A
@@ -3074,7 +3100,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       }
     }
     const o = await clock.time('mint', () => withBudget(
-      Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
+      Promise.resolve().then(() => addon.play(cand._streamId || kept.streamId || identity, cand)),
       Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id));
     if (!o || !o.url) {
       // The addon named this copy and then had no address for it. Saying which addon is the whole
@@ -4049,7 +4075,8 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     for (const cand of list.slice(0, 6)) {
       if (Date.now() >= deadline) break;
       const target = await clock.time('audio',
-        () => resolveAudioDonor(cand, kept.streamId || identity, opts, deadline));
+        () => resolveAudioDonor(cand, cand._streamId || kept.streamId || identity, opts, deadline,
+          ep ? { season: ep.season, episode: ep.episode } : null));
       if (!target) continue;
       // A donor measured a different length than the film is a different cut; mapping it would play
       // the right language over the wrong scene, silently. Only a measured disagreement refuses —
