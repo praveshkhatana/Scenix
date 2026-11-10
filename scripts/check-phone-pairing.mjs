@@ -16,8 +16,15 @@ const settings = read('app/src/main/java/com/scenix/tv/SettingsActivity.kt');
 assert.match(settings, /Connect from phone/, 'Settings must expose the Connect from phone card');
 assert.match(settings, /private fun showPhonePairing\(\)/, 'Settings must paint the QR sheet');
 assert.match(settings, /requireAdmin \{ showPhonePairing\(\) \}/, 'QR must stay behind the Settings PIN gate');
-assert.match(settings, /PhonePairing\.renderQr\(url/, 'QR sheet must render via PhonePairing');
-assert.match(settings, /PhonePairing\.fallbackText\(url\)/, 'QR sheet must show the typed fallback URL');
+assert.match(settings, /PhonePairing\.settingsUrl\(url\)/,
+  'the pairing link must carry the web UI Settings route, not the bare origin');
+assert.match(settings, /PhonePairing\.renderQr\(qrUrl/, 'QR sheet must render via PhonePairing');
+assert.match(settings, /PhonePairing\.fallbackText\(qrUrl\)/,
+  'QR sheet must print the same URL the QR encodes');
+assert.match(settings, /The Settings PIN will be asked there/,
+  'the sheet must say when the hub does ask for a PIN');
+assert.match(settings, /no Settings PIN yet/,
+  'and when it does not, rather than promising a gate the hub never asks for');
 assert.match(settings, /phoneLayer/, 'Settings must track and trap the QR sheet');
 
 const pairing = read('app/src/main/java/com/scenix/tv/core/PhonePairing.kt');
@@ -25,6 +32,7 @@ assert.match(pairing, /STANDALONE_PORT = 8787/, 'standalone pairing must use :87
 assert.match(pairing, /fun normaliseOrigin\(/, 'hub origin normalisation must exist');
 assert.match(pairing, /fun standaloneUrl\(/, 'standalone URL builder must exist');
 assert.match(pairing, /fun pairingUrl\(standalone/, 'pairingUrl must branch hub/standalone');
+assert.match(pairing, /fun settingsUrl\(/, 'the link must deep-link the web UI Settings screen');
 assert.match(pairing, /QRCodeWriter/, 'QR must use ZXing QRCodeWriter (byte mode)');
 assert.match(pairing, /ErrorCorrectionLevel\.M/, 'QR must use error-correction M');
 assert.match(pairing, /fun lanIp\(\)/, 'LAN IP enumeration must exist');
