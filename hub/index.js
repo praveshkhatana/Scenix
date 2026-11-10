@@ -3620,6 +3620,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         'bufferedMB=' + m.bufferedMB, 'need=' + (needs == null ? '?' : needs.toFixed(1)));
       gateway.clearCold(r.hash);
       readahead.clearSlow(r.hash);
+      clearNoByte({ hash: r.hash, fileId: r.fileId });
     } else if (rateIsReal) {
       swarmMbps = swarmMbps ? swarmMbps * 0.6 + got * 0.4 : got;
       log('PLAY RATE MEASURED', identity, labelOf(cand),
@@ -3630,6 +3631,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       if (needs && got >= needs * speedBar) {
         gateway.clearCold(r.hash);
         readahead.clearSlow(r.hash);
+        clearNoByte({ hash: r.hash, fileId: r.fileId });
       }
     } else if (m && !m.bytes) {
       // Nothing arrived at all. That is a cold torrent still handshaking with its swarm, not a slow one,
@@ -3640,6 +3642,11 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         'seeders=' + (cand.seeders != null ? cand.seeders : '?'),
         'need=' + (needs == null ? '?' : needs.toFixed(1)));
       tried.push(labelOf(cand) + ': no byte of it arrived in ' + m.ms + 'ms (cold copy, still reading)');
+      // A look this long that produced nothing is evidence the file itself is not in the swarm — the
+      // season pack that is warm in metadata while its later episodes are unseeded is the measured case.
+      // Record it so the next press seats the copy behind the ones that have not failed, instead of
+      // spending the same four seconds proving the same thing again.
+      if (m.ms >= 3000) noteNoByte({ hash: r.hash, fileId: r.fileId }, m.ms);
       o.warming = true;
       o.measuredBytes = 0;
       o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;

@@ -184,6 +184,11 @@ const server = http.createServer((req, res) => {
   assert.match(index, /if \(warmPack\) \{[\s\S]*?const fill = Object\.assign\(\{\}, item, \{ sources: \[\] \}\)[\s\S]*?item\.sources = packCopies\.slice\(\);/,
     'and when it does, the press walks that copy now while the episode list fills in the background, '
       + 'on a separate item so the background fetch cannot mutate the list being walked');
+  assert.match(index, /if \(m\.ms >= 3000\) noteNoByte\(/,
+    'a copy that produced no byte over a real look must be recorded: the warm pack whose later '
+      + 'episodes are unseeded otherwise spends the same four seconds on every press');
+  assert.match(index, /clearNoByte\(\{ hash: r\.hash, fileId: r\.fileId \}\)/,
+    'and a copy that later measures or serves bytes must lose the strike');
   assert.match(read('hub/core/gateway.js'), /function holds\(source\)[\s\S]*?k\.startsWith\(hash \+ ':'\)/,
     'the engine must be asked about the torrent, not one episode of it: a pack resolved for S02E35 is '
       + 'still the pack a press for S02E36 can start from');
