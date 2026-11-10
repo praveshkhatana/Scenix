@@ -34,7 +34,7 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 //
 // TorrServer answers `/torrents {action:"get"}` in about a millisecond and `{action:"add"}` in ten to
 // twenty for a magnet it has not met. The fake copies that asymmetry, and counts what the hub does to it.
-const engine = { adds: 0, gets: 0, addInFlight: 0, addMax: 0, addDelayMs: 700, filesAfterMs: 400 };
+const engine = { adds: 0, gets: 0, addInFlight: 0, addMax: 0, addDelayMs: 700, filesAfterMs: 400, hang: new Set() };
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => { body += c; });
@@ -44,6 +44,11 @@ const server = http.createServer((req, res) => {
       return res.end('{"version":"fake-torrserver"}');
     }
     const q = JSON.parse(body || '{}');
+    if (q.action === 'get' && engine.hang.has(String(q.hash || ''))) {
+      // Busy engine: the question is accepted and nothing comes back. The hub may hang up; this
+      // server simply never answers, which is what a stalled TorrServer looks like from the outside.
+      return;
+    }
     if (q.action === 'add') {
       engine.adds++;
       engine.addInFlight++;
@@ -81,6 +86,7 @@ const server = http.createServer((req, res) => {
   process.env.GATEWAY = 'http';
   process.env.TORR_URL = 'http://127.0.0.1:' + port;
   process.env.GATEWAY_ADD_MS = '400';      // the fake's add is slower than this on purpose
+  process.env.GATEWAY_GET_MS = '500';      // and so is one poll of its file list
   const gateway = require('../hub/core/gateway');
 
   // ---- 1. one conversation per torrent -------------------------------------------
@@ -111,7 +117,21 @@ const server = http.createServer((req, res) => {
   assert.ok(second && second.fileId === 1,
     'and the retry has to get the answer the engine produced, got: ' + JSON.stringify(second));
 
-  // ---- 3. the engine is never stampeded -----------------------------------------
+  // ---- 3. an engine that says nothing is not a verdict on the copy ---------------
+  engine.seen = {};
+  engine.adds = 0; engine.filesAfterMs = 0;
+  const magnet3 = 'magnet:?xt=urn:btih:' + 'e'.repeat(40);
+  engine.hang.add('e'.repeat(40));   // the engine accepts the torrent and stops answering about it
+  const busy = await gateway.prepare({ kind: 'torrent', url: magnet3 }, 1200, null);
+  assert.ok(busy && busy.error, 'a press against a silent engine has to be told it got no answer');
+  engine.hang.delete('e'.repeat(40));
+  const after = await gateway.prepare({ kind: 'torrent', url: magnet3 }, 8000, null);
+  assert.strictEqual(engine.adds, 1,
+    'the press after a silent engine must join the conversation already running, saw ' + engine.adds + ' adds');
+  assert.ok(after && after.fileId === 1,
+    'and it must get the answer, not a blacklist the silent press wrote: ' + JSON.stringify(after));
+
+  // ---- 4. the engine is never stampeded -----------------------------------------
   engine.seen = {};
   engine.adds = 0; engine.addMax = 0; engine.addDelayMs = 300; engine.filesAfterMs = 0;
   await Promise.all([0, 1, 2, 3, 4, 5].map((i) =>

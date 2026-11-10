@@ -55,6 +55,10 @@ const WARM_BUDGET_MS = Number(process.env.GATEWAY_WARM_MS || 15000);
 // it whether or not anyone is still holding the socket. Giving up at three seconds — which is what
 // this used to be — made the hub abandon work it had started itself and call the copy unready.
 const ADD_WAIT_MS = Number(process.env.GATEWAY_ADD_MS || 12000);
+// How long one poll of the engine's file list may take. Idle, this engine answers `/torrents` in a
+// millisecond; while it is streaming a file for a viewer it takes seconds — and the file it is
+// streaming is usually the very one this press is waiting to be told about.
+const GET_POLL_MS = Number(process.env.GATEWAY_GET_MS || 4000);
 const PROBE_TIMEOUT_MS = 1500;
 
 // How long a torrent we could not prepare stays blacklisted. "Not yet" and "never" are different facts
@@ -488,10 +492,12 @@ async function prepareTorrent(source, hash, ckey, want) {
   const deadline = Date.now() + WARM_BUDGET_MS;
   let lastError = 'metadata not resolved';
   let sawFiles = 0;        // did the engine ever show us the contents of this torrent
+  let answered = false;    // did the engine reply to any question about this torrent at all
   let engineFailed = false; // did the engine itself stop answering mid-prepare
   do {
-    const r = await enginePost('/torrents', { action: 'get', hash }, 2000);
+    const r = await enginePost('/torrents', { action: 'get', hash }, GET_POLL_MS);
     if (r.json) {
+      answered = true;
       const files = filesOf(r.json);
       sawFiles = Math.max(sawFiles, files.length);
       const chosen = pickFile(files, want);
@@ -518,11 +524,25 @@ async function prepareTorrent(source, hash, ckey, want) {
       lastError = (r.json.stat_string || 'unknown') + ', ' + files.length + ' files';
     } else {
       lastError = r.error || 'engine said nothing';
-      if (/unreachable|timeout|bad TORR_URL/.test(lastError)) { engineFailed = true; break; }
+      // Only an engine that refuses the socket outright is a down engine. A poll that ran out of its
+      // own timeout means the engine is busy — most often serving a read this hub itself started —
+      // and the metadata this press is waiting on is the same torrent that read is pulling. Giving up
+      // on the first slow poll is what turned a busy engine into "engine has not read this copy" and
+      // a 45 s blacklist on a torrent whose files arrived ten seconds later.
+      if (/unreachable|bad TORR_URL/.test(lastError)) { engineFailed = true; break; }
     }
     await new Promise((res) => setTimeout(res, 600));
   } while (Date.now() < deadline);
 
+  // A conversation that never got one answer is not a verdict on the torrent — it is a fact about how
+  // busy the engine was while we were asking. It goes nowhere near the blacklist, because writing it
+  // there is what made the next press (the viewer's own retry, a second later) fail from memory while
+  // the engine was on its way to answering.
+  if (!answered && !engineFailed) {
+    log('GATEWAY SILENT', 'hash=' + String(hash).slice(0, 12),
+      'asked for ' + WARM_BUDGET_MS + 'ms and the engine said nothing', lastError);
+    return { hash, error: 'the engine is busy and said nothing about this copy', kind: 'busy' };
+  }
   // Classify before caching, because the cache entry decides whether the next press even tries.
   const kind = engineFailed ? 'engine' : (sawFiles === 0 ? 'waiting' : 'dead');
   const ttl = kind === 'engine' ? MISS_ENGINE_MS : (kind === 'waiting' ? MISS_WAITING_MS : MISS_DEAD_MS);
