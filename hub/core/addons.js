@@ -1057,6 +1057,13 @@ const LANG_NAME_TO_CODE = {
   chinese: 'chi', portuguese: 'por', persian: 'per', arabic: 'ara', turkish: 'tur', polish: 'pol',
 };
 
+/**
+ * Language words a release name states: "MULTi", "[Tamil + Telugu + Hindi + Eng]", "Dual Audio".
+ * Built from the table langCodes reads, so a language added there is recognised in names too. Read with
+ * String.match, which ignores `lastIndex` on a /g pattern, so this constant is safe to share.
+ */
+const LANGUAGE_WORDS = new RegExp('\\b(' + Object.keys(LANG_NAME_TO_CODE).join('|') + ')\\b', 'gi');
+
 
 /** Trim to usable text, or nothing: an empty string on a tile reads like a field that failed. */
 function cleanText(v) {
@@ -1150,7 +1157,11 @@ function parseStream(entry) {
 
   let sizeBytes = Number.isFinite(entry.videoSize) ? entry.videoSize : null;
   if (sizeBytes == null) {
-    const sm = /([\d.]+)\s*(GB|MB|KB)/i.exec(desc + ' ' + tag);
+    // "💾 1.22 GB" is the file size. The same line also states audio bitrates — "(DD+5.1 - 640Kbps)" —
+    // and reading one of those as the size files the copy as 640 KB, which is under the hub's
+    // minimum-size floor, so the copy was dropped from the list without a trace. That is how two of the
+    // best-seeded Hindi copies of a title disappeared while its English remuxes stayed.
+    const sm = /([\d.]+)\s*(GB|MB|KB)(?!p)/i.exec(desc + ' ' + tag);
     if (sm) sizeBytes = Math.round(parseFloat(sm[1]) * { GB: 1e9, MB: 1e6, KB: 1e3 }[sm[2].toUpperCase()]);
   }
   const seeds = /👤\s*([\d.,]+)/.exec(desc);
@@ -1175,9 +1186,13 @@ function parseStream(entry) {
     : ([quality || (torrent ? 'torrent' : 'stream'), humanSize(sizeBytes)].filter(Boolean).join(' · ')
       || firstLine.slice(0, 60) || 'stream');
 
-  // Audio language is rarely stated in the stream name; when it is, the ranking rule can use it.
-  const langs = langCodes(entry.lang || entry.language ||
-    (/\b(hindi|english|punjabi|tamil|telugu|malayalam|kannada|bengali|marathi|urdu)\b/i.exec(desc) || [])[1]);
+  // Audio language is rarely stated in the stream name; when it is, the ranking rule can use it. A
+  // multi-language release names the whole set ("[Tamil + Telugu + Hindi + Eng]"), and the copy that
+  // states the household's language is the one the audio donor search looks for — so take every language
+  // the name states, not just the first word of it. Reading one match off that string called a
+  // Tamil+Telugu+Hindi+English copy "Tamil" and hid the Hindi in it.
+  const stated = String(desc + ' ' + tag).match(LANGUAGE_WORDS) || [];
+  const langs = langCodes(entry.lang || entry.language || stated);
 
   return {
     kind: torrent ? 'torrent' : (/\.m3u8(\?|$)/i.test(String(direct || '')) ? 'hls' : 'http'),
@@ -1277,6 +1292,80 @@ function spreadAcrossBands(sources) {
     for (let i = taken.get(key) || 0; i < bands.get(key).length && out.length < MAX_SOURCES; i++) {
       out.push(bands.get(key)[i]);
       taken.set(key, i + 1);
+    }
+  }
+  return keepLanguageCopies(out, sources, MAX_SOURCES);
+}
+
+/**
+ * A copy whose name states one of this hub's languages keeps a slot of its own.
+ *
+ * The band spread chooses by sharpness and swarm health, which is what the picture picker needs. The
+ * audio donor search reads this same trimmed list, and a Hindi dub of a film is normally a seed-poor
+ * copy sitting under that film's English remuxes: on a 212-row title the 24 slots held none of the 11
+ * Hindi-named copies, so play() had no donor to mix and only said "audio: English stated". Paying for a
+ * language row with the weakest row that states none of this hub's languages costs a house nothing in
+ * picture choices and is the difference between a mix and a subtitle.
+ */
+const LANGUAGE_SLOTS = 2; // copies reserved per configured language, best-seeded first
+
+function keepLanguageCopies(out, sources, MAX_SOURCES) {
+  const wanted = langCodes(settings.get().languages) || [];
+  if (!wanted.length) return out;
+  const budget = Math.max(1, Math.floor(MAX_SOURCES / 4)); // language rows never own the whole list
+  const names = (s) => (Array.isArray(s._langs) ? s._langs : []).filter((l) => wanted.includes(l));
+  const health = (s) => (Number.isFinite(s.seeders) ? s.seeders : 0);
+  const covers = (list, lang) => list.filter((s) => names(s).includes(lang)).length;
+  /**
+   * The copy to hand over in exchange for a reserved one, in order of cost: one that states no language
+   * this hub serves, and only when every copy states one, a copy whose languages stay stated by another
+   * copy in the list. Reserving Hindi and then paying for English with the Hindi copy just reserved is
+   * how a rule like this cancels itself, so a copy already doing language work is never the payment.
+   */
+  const payFor = () => {
+    const weakest = (allowed) => {
+      let idx = -1;
+      let low = Infinity;
+      for (let i = 0; i < out.length; i++) {
+        if (!allowed(out[i])) continue;
+        if (health(out[i]) < low) {
+          low = health(out[i]);
+          idx = i;
+        }
+      }
+      return idx;
+    };
+    // Band spread exists so the picker can fall back a quality level; paying a language slot with the
+    // only copy of a band would undo that on purpose.
+    const spareBand = (s) => out.some((x) => x !== s && x.quality === s.quality);
+    const silent = weakest((s) => !names(s).length && spareBand(s));
+    if (silent >= 0) return silent;
+    const loose = weakest((s) => !names(s).length);
+    if (loose >= 0) return loose;
+    return weakest((s) => spareBand(s)
+      && !names(s).some((l) => covers(out.filter((x) => x !== s), l) === 0));
+  };
+  // The language with the fewest copies in the list is asked first: a hub that already has three Hindi
+  // copies spends nothing, and a hub that has none spends what it must.
+  const order = wanted.slice().sort((a, b) => covers(out, a) - covers(out, b));
+  let spent = 0;
+  for (const lang of order) {
+    if (spent >= budget || covers(out, lang) >= LANGUAGE_SLOTS) continue;
+    const fresh = sources.filter((s) => !out.includes(s) && names(s).includes(lang))
+      .sort((a, b) => health(b) - health(a));
+    for (const cand of fresh) {
+      if (spent >= budget || covers(out, lang) >= LANGUAGE_SLOTS) break;
+      if (out.length < MAX_SOURCES) {
+        out.push(cand);
+        spent++;
+        continue;
+      }
+      // A seed-poor dub is paid for with a healthy copy on purpose: that is what the mix needs, and one
+      // row out of a band's share is what the picture pays.
+      const payIdx = payFor();
+      if (payIdx < 0) break; // every copy here is doing language work already; spend nothing
+      out[payIdx] = cand;
+      spent++;
     }
   }
   return out;

@@ -3910,6 +3910,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const donorPool = (allExcluded ? sources : pool).filter((s) => s !== source && !isExcluded(s, skip));
     let list = donorPool.filter((s) =>
       audioEvidence(s, desiredLang).fromTracks || audioEvidence(s, desiredLang).fromClaims);
+    if (!list.length) {
+      // A missing mix with nothing said about it is the hardest thing to diagnose afterwards: the copy
+      // list the picker shows is a trimmed one, so "no donor" usually means "no donor was ever kept".
+      log('AUDIO DONOR NONE', identity, desiredLang,
+        'copies=' + donorPool.length,
+        'byName=' + donorPool.filter((s) => audioEvidence(s, desiredLang).fromClaims).length,
+        'byTrack=' + donorPool.filter((s) => audioEvidence(s, desiredLang).fromTracks).length);
+    }
     if (mixOpt && mixOpt.source) {
       const want = mixOpt.source;
       list = list.filter((s) => String(s.id) === String(want) || s.label === want
