@@ -77,6 +77,22 @@ object PhonePairing {
         }
     }
 
+    /**
+     * The Settings screen of the web UI, as a deep link on [url].
+     *
+     * The web front-end routes on the fragment (`#/settings`), so a bare origin drops a phone on the
+     * home board and makes the person hunt for the gear — while the row that printed this QR says
+     * "open Settings". One hash added here makes the sheet and the page agree. It is fragment-only,
+     * so neither server needs to know about it: the hub on :8788 and this TV's own :8787 answer the
+     * same `index.html` and the page moves itself to Settings.
+     */
+    @JvmStatic
+    fun settingsUrl(url: String?): String? {
+        val origin = url?.trim()?.trimEnd('/') ?: return null
+        if (origin.isEmpty() || origin.contains('#')) return origin.ifEmpty { null }
+        return "$origin/#/settings"
+    }
+
     /** Fallback typed address: the same URL the QR encodes, never a bare IP. */
     @JvmStatic
     fun fallbackText(url: String): String = url.trim()

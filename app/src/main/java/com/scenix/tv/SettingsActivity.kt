@@ -2405,7 +2405,10 @@ class SettingsActivity : Activity() {
                 },
             )
         } else {
-            val bitmap = PhonePairing.renderQr(url, app.theme.px(420f))
+            // The QR and the typed address below are the same string, and both carry the web UI's
+            // Settings route, so a phone that scans lands on the page the row promised.
+            val qrUrl = PhonePairing.settingsUrl(url) ?: url
+            val bitmap = PhonePairing.renderQr(qrUrl, app.theme.px(420f))
             if (bitmap != null) {
                 val whitePlate = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
@@ -2428,7 +2431,7 @@ class SettingsActivity : Activity() {
             }
             // Fallback typed address — always shown so a phone without a QR reader (or a
             // dim projector) can still type the URL. It is the exact value the QR encodes.
-            val fallback = PhonePairing.fallbackText(url)
+            val fallback = PhonePairing.fallbackText(qrUrl)
             panel.addView(
                 Views.text(app, "liMeta", 19f, app.theme.colorOr("panelValue", app.theme.brand),
                     fallback, bold = true, gravity = Gravity.CENTER, maxLines = 2),
@@ -2436,10 +2439,17 @@ class SettingsActivity : Activity() {
                     topMargin = app.theme.px(16f)
                 },
             )
+            // The sheet may not promise a gate the hub does not have. With the Settings lock off,
+            // the address the QR carries is enough for anyone on the Wi-Fi to change sources, and
+            // the honest line about that is also the one that points at how to close it.
+            val pinNote = if (lockInfo?.optBoolean("enabled") == true)
+                "Or type this address on your phone. Same Wi-Fi. The Settings PIN will be asked there."
+            else
+                "Or type this address on your phone. Same Wi-Fi. This Hub has no Settings PIN yet, so anyone here can change sources — set one under Access & safety."
             panel.addView(
                 Views.text(app, "meta", 16f, app.theme.ink2,
-                    "Or type this address on your phone. Same Wi-Fi. Settings PIN will be asked on the phone.",
-                    gravity = Gravity.CENTER, maxLines = 2),
+                    pinNote,
+                    gravity = Gravity.CENTER, maxLines = 3),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = app.theme.px(8f)
                 },
