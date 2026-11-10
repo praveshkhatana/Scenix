@@ -1155,6 +1155,22 @@ function sideRead(res, copy, want, t0) {
     try { u = new URL(copy.url); } catch (e) { resolve(false); return; }
     const mod = u.protocol === 'https:' ? https : http;
     const range = 'bytes=' + from + '-' + (to == null ? '' : to);
+    // The end of a torrent is the last thing the swarm has and the first thing a container asks for:
+    // Matroska keeps its seek head (Cues) there, MP4 its `moov`. Asking the engine for that short tail as
+    // a CLOSED range made it hang up without ever sending headers — measured on file 6 of 3eeb380d, where
+    // `bytes=114407314-114412495` produced nothing in 60 s, while the same start written as an OPEN read
+    // (`bytes=114407314-`) pulled those pieces and answered in 12 s, and answered in 20 ms on every read
+    // after that. So a probe that runs to the end of a known-length file is asked for the way the engine
+    // streams it, and the player still gets exactly the bytes it asked for: the engine's own content-range
+    // ends on the last byte of the file, which is exactly the end of this probe.
+    const size = Number(copy.fileSize);
+    const openTail = Number.isFinite(size) && size > 0 && to === size - 1 && (to - from) < 8 * MB;
+    const engineRange = openTail ? 'bytes=' + from + '-' : range;
+    // A cold tail is a swarm fetch, not a seek: give it longer than the 30 s a normal probe gets, or the
+    // screen pays that 30 s, gets nothing, re-tunes, and pays it again.
+    const probeTimeoutMs = openTail
+      ? Math.max(30000, Number(process.env.READAHEAD_TAIL_PROBE_MS || 75000))
+      : 30000;
     // A range the engine has just failed to answer is not worth another 30 s of the viewer's evening.
     // A player reloads the same tail probe (Matroska Cues / MP4 moov) on every retry, so a swarm that
     // could not produce those bytes once kept the screen black for minutes: 30 s here, then the
@@ -1171,9 +1187,9 @@ function sideRead(res, copy, want, t0) {
       return;
     }
     const req = mod.get(u, {
-      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...copy.originHeaders, Range: range },
+      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...copy.originHeaders, Range: engineRange },
       agent: false,
-      timeout: 30000,
+      timeout: probeTimeoutMs,
     }, (up) => {
       const cr = up.headers && up.headers['content-range'];
       if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) copy.fileSize = Number(m[1]); }
@@ -1188,7 +1204,8 @@ function sideRead(res, copy, want, t0) {
       res.writeHead(up.statusCode || 200, headers);
       res.flushHeaders();
       log('PROXY TTFB', copy.tag(), 'ms=' + (Date.now() - t0), 'status=' + up.statusCode,
-        'range=' + range, 'note=probe', 'windowMB=' + Math.round(copy.held() / MB));
+        'range=' + range, openTail ? 'note=probe-open-tail' : 'note=probe',
+        'windowMB=' + Math.round(copy.held() / MB));
       let bytes = 0;
       let done = false;
       const finish = (cause) => {
