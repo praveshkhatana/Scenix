@@ -182,6 +182,16 @@ const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 8000);
 // How long a warming title asks the player to wait before pressing again. The hub says it rather than
 // the client guessing, because only the hub knows whether it is talking to an engine that is awake.
 const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 2000);
+// How many presses in a row a gateway copy may answer with not one byte before the hub stops calling it
+// "still being prepared" and says what it actually knows. Measured on this box: a 720p copy measured 0
+// Mbps over 4 s and produced nothing in the 1.5 s pre-roll either, so the hub answered `warming` and the
+// television pressed again every 7.6 s — nine identical refusals, ~70 s of "the hub is preparing this
+// copy", in front of a copy that had never handed over a single byte. The retry is what warms a cold
+// torrent, so it is allowed twice; after that the same open read hearing nothing again is evidence.
+const PLAY_NOBYTE_TRIES = Number(process.env.PLAY_NOBYTE_TRIES || 2);
+// Presses further apart than this are separate attempts rather than one retry loop, so each gets its
+// evidence again: a swarm can gain a peer at any moment.
+const PLAY_NOBYTE_WINDOW_MS = Number(process.env.PLAY_NOBYTE_WINDOW_MS || 90000);
 const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 1500);
 // A direct/adaptive addon can mint its playable URL at play time, so the hub has no measurement of that
 // exact link and cannot rank it honestly. One short check catches a service page answering 200 before a
@@ -2591,6 +2601,37 @@ function statesTheEpisode(label, ep) {
   return episodeInLabel(text, ep);
 }
 
+/**
+ * Presses in a row, per gateway copy, on which the hub's own read produced not one byte.
+ *
+ * The retry the player makes is what warms a cold torrent, so one or two zero-byte presses mean
+ * nothing — they are the hub's own reader still open on the copy, still waiting. What they add up to is
+ * the point: a third press that finds the same open read having heard nothing is the hub watching a copy
+ * that is not answering, and the viewer has been told "preparing" for a minute. A copy that hands over a
+ * byte clears this, and so does pressing again after the window closes.
+ */
+const noByte = new Map(); // hash:file -> { streak, at, waitedMs }
+function noByteKey(who) {
+  return who && who.hash ? String(who.hash) + ':' + who.fileId : '';
+}
+function noteNoByte(who, waitedMs) {
+  const k = noByteKey(who);
+  if (!k) return 0;
+  const now = Date.now();
+  const prev = noByte.get(k);
+  if (prev && prev.at + PLAY_NOBYTE_WINDOW_MS < now) noByte.delete(k);
+  const streak = ((noByte.get(k) || {}).streak || 0) + 1;
+  noByte.set(k, { streak, at: now, waitedMs: Math.round(waitedMs || 0) });
+  // Entries are only ever added here and expire when the copy is asked about again, so a hub that met a
+  // handful of dead torrents does not carry them forever.
+  if (noByte.size > 200) for (const [k2, v] of noByte) if (v.at + PLAY_NOBYTE_WINDOW_MS < now) noByte.delete(k2);
+  return streak;
+}
+function clearNoByte(who) {
+  const k = noByteKey(who);
+  if (k) noByte.delete(k);
+}
+
 function listAlternatives(candidates, source, title, ep = null) {
   const others = candidates.filter((s) => s !== source);
   // A copy whose parenthetical names a different title, or whose own SxxEyy is another episode,
@@ -3316,8 +3357,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const frozen = gateway.isCold(r.hash);
     if (frozen && queue.length > 1) {
       tried.push(labelOf(cand) + ': the engine has not answered for this copy for '
-        + Math.round((frozen.until - Date.now()) / 1000) + 's (no header ' + (frozen.tries || 1)
-        + 'x, last after ' + frozen.waitedMs + 'ms)');
+        + Math.round((frozen.until - Date.now()) / 1000) + 's ('
+        + (frozen.reason || 'no header ' + (frozen.tries || 1) + 'x, last after ' + frozen.waitedMs + 'ms') + ')');
       o.cold = true;
       slowGateway = slowGateway || { o, cand };
       continue;
@@ -3610,7 +3651,30 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // and finds the head already in RAM. A 200 here is what produced "This copy has not started moving
       // yet" on the TV after a twelve-second wait.
       if (!pb.complete && !(Number(out.measuredBytes) > 0) && out.warming !== false) {
-        log('PLAY WARMING', identity, labelOf(source), 'prebuffer incomplete, no measured byte');
+        const strikes = noteNoByte(bufWho, pb.ms);
+        // Twice the retry is the bargain a cold torrent is owed — its first byte has been measured
+        // arriving seventeen seconds after we asked. Past that, with this same buffer never having taken
+        // a byte of the copy, "still preparing" is a guess the hub has now watched fail, and the viewer
+        // has spent a minute being asked to wait for a copy that is not answering. Say which copy was
+        // tried and that another is likelier, and stop offering this one first while one exists.
+        if (strikes >= PLAY_NOBYTE_TRIES && !buf.everBytes) {
+          gateway.noteCold(out.torrent.hash, pb.ms, 'not one byte in ' + strikes + ' presses of an open read');
+          log('PLAY COPY SILENT', identity, labelOf(source), 'presses=' + strikes, 'ms=' + pb.ms,
+            'the hub has had this copy open and never received a byte of it');
+          return {
+            status: 404,
+            body: {
+              identity, title: kept.title || null, tried,
+              error: 'this copy has not handed the hub a single byte, ' + strikes + ' presses in a row',
+              detail: 'This copy has not sent the hub one byte, ' + strikes
+                + ' presses in a row, while the hub was reading it. Another copy of this title is likelier to play.',
+              silent: true, strikes,
+              alternatives: listAlternatives(candidates, source, kept.title, ep),
+            },
+          };
+        }
+        log('PLAY WARMING', identity, labelOf(source), 'prebuffer incomplete, no measured byte',
+          'presses=' + strikes);
         return {
           status: 503,
           body: {
@@ -3621,6 +3685,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           },
         };
       }
+      // A byte is a byte: the copy is answering, so the count that would have condemned it starts over.
+      if (Number(pb.bytes) > 0 || Number(out.measuredBytes) > 0) clearNoByte(bufWho);
     }
   }
 

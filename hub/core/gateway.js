@@ -294,7 +294,7 @@ const COLD_MS = Number(process.env.GATEWAY_COLD_MS || 90000);
  * household's description of the product. The ceiling stays well short of a day because a swarm can gain
  * a peer at any moment, and nothing here forbids the copy: it stops it being chosen automatically.
  */
-function noteCold(hash, waitedMs) {
+function noteCold(hash, waitedMs, reason) {
   if (!hash) return;
   const key = String(hash);
   const prev = cold.get(key);
@@ -303,6 +303,9 @@ function noteCold(hash, waitedMs) {
   cold.set(key, {
     until: Date.now() + penalty, waitedMs: Math.round(waitedMs || 0), at: Date.now(),
     tries: tries, penaltyMs: penalty,
+    // Which kind of no-answer this was, in the words the play picker quotes. `null` is the common case:
+    // the engine would not answer the request at all.
+    reason: reason ? String(reason) : null,
   });
 }
 /** A torrent that has produced bytes since is not cold, and the next press should not be told it is. */
