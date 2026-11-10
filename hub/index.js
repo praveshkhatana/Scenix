@@ -3004,6 +3004,15 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     // to hand over a byte is the one exception, and is pushed behind everything that has not.
     - (engineHas(s) ? 1 : 0)
     + (provenDead(s) ? 2 : 0);
+  // When every copy measured down, the fallback is not the first one the walk happened to meet: it is
+  // the copy that asks the least of the link. An adult HLS source hands the hub four separate rungs
+  // (1080p/720p/480p/240p); the 1080p one needs ~8 Mbps, measured 0 in its window, and was handed to
+  // the player anyway while a 240p rung of the same title was in the list. The low rung is the one
+  // that can actually start on a slow night.
+  const fallbackNeed = (s) => {
+    const n = Number(ranking.estimateMbps(s, kept));
+    return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
+  };
   // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
   // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
   // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
@@ -3239,7 +3248,9 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       if (rankDown(cand) && queue.length > 1) {
         const down = (cand.probe && cand.probe.error) || 'no bytes';
         tried.push(labelOf(cand) + ': measured down (' + down + ')');
-        lastResort = lastResort || { o, cand };
+        // Keep the least demanding down copy as the fallback, not the first one met: the rungs of an
+        // adaptive source arrive sharpest-first, and the sharpest is the one that just failed.
+        if (!lastResort || fallbackNeed(cand) < fallbackNeed(lastResort.cand)) lastResort = { o, cand };
         // A measured 4xx proves the link the hub cached is dead, not that the title is — and the
         // cached answer is exactly what the next press reads back for six hours. Once per press,
         // drop the addon's stream answer for this title and give this copy one fresh mint at the
@@ -3483,7 +3494,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       tried.push(labelOf(cand) + ': ' + r.reason);
       if (gateway.MODE === 'http') log('GATEWAY MISS', identity, r.reason);
       o.mode = 'direct';
-      lastResort = lastResort || { o, cand };
+      if (!lastResort || fallbackNeed(cand) < fallbackNeed(lastResort.cand)) lastResort = { o, cand };
       // One cold copy is a fact about that copy. Two of them is a fact about this press: the engine is
       // behind on the swarms and asking it about a third, fourth and fifth torrent in turn is how a
       // 24 s press with nothing to show for it happens. Stop, answer honestly, and let the engine
@@ -5199,6 +5210,12 @@ async function handle(req, res) {
       // refuses to hold the half-state at all.
       if ('pin' in patch) {
         const v = patch.pin == null ? '' : String(patch.pin).trim().slice(0, 12);
+        // The television, the web pad and the hub all promise the same thing: a profile PIN is 4 to 8
+        // digits. A shorter number stored by an older client left a profile its own gate could never
+        // accept, so new numbers are held to the rule even when a client forgets to ask.
+        if (v && (v.length < 4 || v.length > 8)) {
+          return send(res, 400, { error: 'a profile PIN is 4 to 8 digits' });
+        }
         // The client sends digits; the box keeps a scrypt hash and a per-profile salt, never the digits.
         patch.pinHash = v ? hashPin(v) : null;
         patch.pin = null;

@@ -50,8 +50,12 @@ assert.match(tv, /private fun selectLane\(lane: SourceLane\)/,
   'TV must provide direct primary lane selection without a modal detour');
 assert.match(tv, /private fun createSourceTabChip\(\): SourceTabChip/,
   'the visible source lanes must be real remote-focusable chips');
-assert.match(tv, /wireTabFocus\(discover, installed, advanced\)/,
-  'Discover, Installed, and Advanced must have explicit left/right remote traversal');
+assert.match(tv, /wireTabFocus\(installed, discover, advanced\)/,
+  'Installed, Discover, and Advanced must have explicit left/right remote traversal');
+assert.match(tv, /private var activeLane = SourceLane\.INSTALLED/,
+  'the source page must open on what the house already reads, as Stremio does, not on a catalogue');
+assert.match(tv, /title = "Install a source"/,
+  'the installed lane must keep the one action a person opens the page for');
 assert.match(tv, /when \(activeLane\)/,
   'only the selected lane should be rendered at a time');
 assert.match(tv, /Curated sources and a separate non-endorsed Community directory/,

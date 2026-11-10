@@ -94,7 +94,9 @@ export async function adultProof(ctx, act) {
     await refreshProfiles();
     return null;
   }
-  const digits = await ctx.enterPin(holder, `An adult PIN is needed to ${act}`);
+  // 1 to 8: a number stored by an older client may be shorter than today's rule, and it still
+  // has to be enterable so the adult can replace it.
+  const digits = await ctx.enterPin(holder, `An adult PIN is needed to ${act}`, { minLength: 1, maxLength: 8 });
   if (!digits) return null;
   try {
     const out = await api.unlockProfile(holder.id, digits);
@@ -154,7 +156,7 @@ export async function refreshProfiles() {
  */
 export async function proofOfLock(ctx, p) {
   if (!isLocked(p)) return '';
-  const current = await ctx.enterPin(p, `Enter ${p.name}’s current PIN`);
+  const current = await ctx.enterPin(p, `Enter ${p.name}’s current PIN`, { minLength: 1, maxLength: 8 });
   if (!current) return null;
   try {
     const out = await api.unlockProfile(p.id, current);
@@ -294,7 +296,7 @@ export function profileEditor(ctx, profile, opts = {}) {
   async function setPin() {
     const current = await ensureProof();
     if (current === null) return false;
-    const digits = await ctx.enterPin(profile, current ? 'Choose a new PIN' : 'Choose a PIN');
+    const digits = await ctx.enterPin(profile, current ? 'Choose a new PIN' : 'Choose a PIN', { minLength: 4, maxLength: 8 });
     if (!digits) return false;
     // The hub keeps a PIN and the wish to be asked for one as one decision, so both go in one request.
     return patch({ pin: digits, pinRequired: true }, `${profile.name} now needs that PIN`);

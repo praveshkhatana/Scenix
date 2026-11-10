@@ -33,7 +33,7 @@ import java.util.concurrent.Executors
 /**
  * The Hub's reviewed directory plus installed sources; manual manifests stay in an advanced lane.
  *
- * Reached only from Settings → Access & safety, and the household Settings PIN is asked again at
+ * Reached only from Settings → Sources, and the household Settings PIN is asked again at
  * entry so the directory cannot be drawn by a stale intent that skipped that gate.
  */
 class AddonsActivity : Activity() {
@@ -68,7 +68,9 @@ class AddonsActivity : Activity() {
     private var communityType = COMMUNITY_DEFAULT_TYPE
     private var communityQuery = ""
     private var communityRequestVersion = 0
-    private var activeLane = SourceLane.DISCOVER
+    // Stremio opens its add-on page on what the house already reads; discovery is the second tab.
+    // The TV did the opposite, so a person arriving to check a source landed on a catalogue instead.
+    private var activeLane = SourceLane.INSTALLED
     private var picker: View? = null
     // The row that opened the last picker; it takes focus back when the picker
     // closes, so the remote never lands on the page's back control by accident.
@@ -104,7 +106,7 @@ class AddonsActivity : Activity() {
         app = (application as ScenixApp).ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty().trim()
         settingsProvedByCaller = intent?.getBooleanExtra(EXTRA_SETTINGS_PROVED, false) == true
-        // Sources is a household control, reached only from Settings → Access & safety. A missing
+        // Sources is a household control, reached only from Settings → Sources. A missing
         // profile still fails closed: a kids/unknown route must not render the source directory at all.
         if (profileId.isBlank()) {
             finish()
@@ -387,11 +389,24 @@ class AddonsActivity : Activity() {
             }
             SourceLane.INSTALLED -> {
                 items.add(SectionRow("installed", "Installed", libraryHealth(installedSources).summary))
+                // The one action a person opens this page for. Stremio keeps its Install button at the
+                // top of the installed list; the TV buried discovery behind a tab a person had to know
+                // about, so it gets the first row here.
+                items.add(SourceRow(
+                    key = "installed:add",
+                    title = "Install a source",
+                    kind = "Reviewed and community directories",
+                    badges = listOf("Add"),
+                    detail = "Browse curated sources, or add a public manifest you trust.",
+                    capabilities = "",
+                    actionLabel = "Open Discover",
+                    action = { selectLane(SourceLane.DISCOVER) },
+                ))
                 if (installedSources.length() == 0) {
                     items.add(NoticeRow(
                         key = "installed:empty",
                         title = "No installed sources",
-                        message = "Use Discover for a reviewed source, or Advanced for a public manifest you trust.",
+                        message = "Use Install a source for a reviewed one, or Advanced for a public manifest you trust.",
                     ))
                 } else {
                     for (i in 0 until installedSources.length()) {
@@ -829,13 +844,13 @@ class AddonsActivity : Activity() {
             val discover = createSourceTabChip()
             val installed = createSourceTabChip()
             val advanced = createSourceTabChip()
-            val chips = listOf(discover, installed, advanced)
+            val chips = listOf(installed, discover, advanced)
             for ((index, chip) in chips.withIndex()) {
                 lanes.addView(chip.root, LinearLayout.LayoutParams(0, app.theme.px(44f), 1f).apply {
                     if (index > 0) leftMargin = app.theme.px(6f)
                 })
             }
-            wireTabFocus(discover, installed, advanced)
+            wireTabFocus(installed, discover, advanced)
             root.addView(lanes, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             return LaneControlHolder(root, discover, installed, advanced)
         }
@@ -2004,7 +2019,7 @@ class AddonsActivity : Activity() {
         showPicker(
             "Finish setup on web",
             listOf("check" to "Check setup status", "back" to "Back"),
-            "Code: $code\nOn a phone or computer: Settings → Access & safety → Sources → Finish a source setup code. Enter this code, complete setup, then choose Check setup status. The TV never receives configuration details.$acknowledgement",
+            "Code: $code\nOn a phone or computer: Settings → Sources → Finish a source setup code. Enter this code, complete setup, then choose Check setup status. The TV never receives configuration details.$acknowledgement",
         ) { action ->
             if (action == "check") checkSourceSetup(code, name)
         }
@@ -2421,7 +2436,7 @@ class AddonsActivity : Activity() {
         /** Required trusted-adult identity for every source-directory entry point. */
         const val EXTRA_PROFILE = "profile"
         /**
-         * Set by Settings → Access & safety once it has asked the household Settings PIN in this
+         * Set by Settings → Sources once it has asked the household Settings PIN in this
          * visit. It is not an authority of its own: the Hub still refuses every write without its
          * admin session, and this only saves a second identical prompt in the common case.
          */

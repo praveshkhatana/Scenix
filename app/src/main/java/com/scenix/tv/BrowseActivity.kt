@@ -1367,7 +1367,7 @@ class BrowseActivity : Activity() {
             // is a browser control centre.  Sending an owner to the TV address produced a JSON 404 and
             // made a working native Sources screen look broken.
             "Scenix is the backend on this TV. If its shelves are still empty, check the add-on list " +
-                "and network in Settings → Access & safety → Sources. Standalone does not host browser management; pair " +
+                "and network in Settings → Sources. Standalone does not host browser management; pair " +
                 "a Hub when you want to manage this household from a phone or computer."
         }
         else

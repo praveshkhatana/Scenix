@@ -316,14 +316,24 @@ function applyTokens() {
 
 /** min(w/1920, h/1080), floored so a phone browser is still readable and capped for very large panels.
  *  The person's Text size multiplies that fit, so a bigger choice grows the whole rhythm the same way
- *  the television's zoom does; the outer floor/ceiling keeps a 150% choice on a phone from overflowing. */
+ *  the television's zoom does; the outer floor/ceiling keeps a 150% choice on a phone from overflowing.
+ *
+ *  A phone is not a small television: every length here is authored against a 1920×1080 canvas, and
+ *  `w/1920` on a 390 px screen is 0.2 — the old 0.5 floor drew 26 px rows at 13 px, which is why the
+ *  QR settings page was unreadable. Narrow screens get their own fit (≈1 at 700 px) with a floor high
+ *  enough to read, and the mobile stylesheet re-cuts the two-pane shapes that remain. */
 export function computeScale() {
   const w = window.innerWidth || 1920;
   const h = window.innerHeight || 1080;
   const canvas = T.canvas || { width: 1920, height: 1080 };
-  const fit = Math.min(w / canvas.width, h / canvas.height);
-  scale = Math.max(0.5, Math.min(1.2, fit)) * textScale();
-  scale = Math.max(0.5, Math.min(1.8, scale));
+  if (w <= 760) {
+    const phone = Math.min(1, Math.max(0.72, w / 700));
+    scale = Math.max(0.5, Math.min(1.8, phone * textScale()));
+  } else {
+    const fit = Math.min(w / canvas.width, h / canvas.height);
+    scale = Math.max(0.5, Math.min(1.2, fit)) * textScale();
+    scale = Math.max(0.5, Math.min(1.8, scale));
+  }
   setNum('--s', Number(scale.toFixed(4)));
   return scale;
 }

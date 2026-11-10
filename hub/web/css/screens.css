@@ -1069,6 +1069,59 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
   .source-directory-lanes { grid-template-columns: 1fr; }
 }
 
+/* A phone opens Settings from the QR code, not a television: the two-pane control centre has to
+   become one column with a chip rail, or the 300 px rail leaves the pane zero width. The rail
+   becomes a sticky horizontal strip, the pane scrolls with the page, and the rows keep their
+   name/value shape at a readable size. */
+@media (max-width: 760px) {
+  .screen.settings { display: block; overflow: visible; }
+  .screen.settings .context-strip { display: none; }
+  .settings-shell { display: block; }
+  .settings-rail {
+    position: sticky; top: var(--nav-h); z-index: 20;
+    flex-direction: row; flex-wrap: nowrap; align-items: center;
+    overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+    gap: calc(8px * var(--s));
+    padding: calc(8px * var(--s)) var(--gutter);
+    margin: 0 0 calc(6px * var(--s));
+    background: linear-gradient(180deg, rgba(10, 10, 12, .96), rgba(10, 10, 12, .88));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  .settings-rail::-webkit-scrollbar { display: none; }
+  .settings-rail .sitem {
+    width: auto; flex: none; white-space: nowrap;
+    gap: calc(8px * var(--s));
+    padding: calc(9px * var(--s)) calc(14px * var(--s));
+    border: 1px solid var(--border); border-radius: 999px;
+    font-size: calc(15px * var(--s));
+  }
+  .settings-rail .sitem .ico { width: calc(20px * var(--s)); height: calc(20px * var(--s)); }
+  .settings-pane {
+    overflow: visible;
+    padding: calc(14px * var(--s)) var(--gutter) calc(80px * var(--s));
+  }
+  .settings-pane .pane-head { margin-bottom: calc(12px * var(--s)); }
+  .settings-pane .sgroup { margin-bottom: calc(26px * var(--s)); }
+  .settings-pane .sgroup > h3 { font-size: calc(16px * var(--s)); }
+  .settings-pane .li { min-height: calc(54px * var(--s)); padding: calc(10px * var(--s)) calc(12px * var(--s)); }
+  .settings-pane .li .lname { font-size: calc(17px * var(--s)); }
+  .settings-pane .li .note {
+    font-size: calc(13px * var(--s)); line-height: 1.35;
+    /* On a phone a one-line clamp turns every explanation into an ellipsis. Two lines is enough for
+       the sentence a row carries, and the row grows instead of hiding the reason. */
+    -webkit-line-clamp: 2;
+  }
+  .settings-pane .li .lv { font-size: calc(13px * var(--s)); }
+  .settings-pane .li .chev .ico { width: calc(18px * var(--s)); height: calc(18px * var(--s)); }
+  /* The wheel and checklist modals are authored for a 1920 canvas; on a phone they must fit the
+     viewport instead of hanging off its edges. */
+  .mbox.wheel, .mbox.check, .mbox.pin { width: min(92vw, calc(720px * var(--s))); max-height: 90vh; }
+  .p9 .key { font-size: calc(26px * var(--s)); }
+}
+
 /* ==========================================================================
    My list (js/screens/list.js)
 

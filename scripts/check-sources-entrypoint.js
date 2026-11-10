@@ -26,13 +26,18 @@ assert.doesNotMatch(
 // Settings owns the entry, and it lives inside Access & safety next to the lock it depends on.
 assert.match(
   settings,
-  /private fun paintAccess\(\)[\s\S]*?addGroup\("Sources"\)[\s\S]*?addRow\("Sources",/,
-  'Access & safety must carry the only visible Sources entry',
+  /private fun paintSources\(\)[\s\S]*?addRow\("Sources",/,
+  'the Settings rail must carry the only visible Sources entry, in its own PIN-gated area',
 );
 assert.match(
   settings,
-  /if \(isSourcesUnlocked\(\)\) \{\s*addSourcesRows\(\)[\s\S]*?\} else \{[\s\S]*?requireSources \{ paint\(\) \}/,
-  'the Sources entry must ask the household Settings PIN before revealing the rows',
+  /private fun paintSources\(\)[\s\S]*?requireSources \{ paint\(\) \}/,
+  'opening Sources must prove (or create) the household Settings PIN first',
+);
+assert.match(
+  settings,
+  /if \(isSourcesUnlocked\(\)\) \{\s*addSourcesRows\(\)/,
+  'the Sources rows must appear only after the household Settings PIN has been proved',
 );
 assert.match(
   settings,

@@ -87,11 +87,13 @@ class SettingsActivity : Activity() {
      */
     private enum class SettingsSection(val label: String) {
         HOME("Overview"),
-        WATCHING("Watching"),
+        PLAYBACK("Playback"),
+        HOME_ROWS("Home"),
         APPEARANCE("Appearance"),
+        SOURCES("Sources"),
+        PEOPLE("People"),
         DEVICE("This TV"),
-        HOUSEHOLD("Household"),
-        ACCESS("Access & safety"),
+        ACCESS("Security"),
     }
 
     private var activeSection = SettingsSection.HOME
@@ -321,14 +323,16 @@ class SettingsActivity : Activity() {
     private fun isTrustedAdult(): Boolean = profileKind == "adult"
 
     private fun needsHouseholdAccess(section: SettingsSection): Boolean = section in setOf(
+        SettingsSection.HOME_ROWS,
         SettingsSection.APPEARANCE,
-        SettingsSection.HOUSEHOLD,
+        SettingsSection.SOURCES,
+        SettingsSection.PEOPLE,
         SettingsSection.ACCESS,
     )
 
     private fun isChildRoute(section: SettingsSection): Boolean = section !in setOf(
         SettingsSection.HOME,
-        SettingsSection.WATCHING,
+        SettingsSection.PLAYBACK,
         SettingsSection.DEVICE,
     )
 
@@ -382,10 +386,12 @@ class SettingsActivity : Activity() {
         paintSectionRail()
         when (activeSection) {
             SettingsSection.HOME -> paintHome(p)
-            SettingsSection.WATCHING -> paintWatching(p)
+            SettingsSection.PLAYBACK -> paintPlayback(p)
+            SettingsSection.HOME_ROWS -> paintHomeRows()
             SettingsSection.APPEARANCE -> paintAppearance()
+            SettingsSection.SOURCES -> paintSources()
+            SettingsSection.PEOPLE -> paintPeople()
             SettingsSection.DEVICE -> paintDevice()
-            SettingsSection.HOUSEHOLD -> paintHousehold()
             SettingsSection.ACCESS -> paintAccess()
         }
         renderedSection = activeSection
@@ -425,29 +431,39 @@ class SettingsActivity : Activity() {
                 "Audio $audio · ${backendSummary()}",
                 if (isTrustedAdult()) if (locked) "PIN ON" else "PIN OFF" else "CHILD PROFILE",
             )
-            SettingsSection.WATCHING -> ControlHeader(
-                "WATCHING",
+            SettingsSection.PLAYBACK -> ControlHeader(
+                "PLAYBACK",
                 "Audio $audio · Subtitles ${languageName(firstOf(p, "subtitleLanguages"))}",
                 qualityLabel(p.optString("qualityCap", "auto")),
+            )
+            SettingsSection.HOME_ROWS -> ControlHeader(
+                "HOME",
+                "Shelves, categories and the shared live-TV playlist",
+                "ADMIN",
             )
             SettingsSection.APPEARANCE -> ControlHeader(
                 "APPEARANCE",
                 themeName(),
                 zoomLabel(),
             )
+            SettingsSection.SOURCES -> ControlHeader(
+                "SOURCES",
+                "Add-ons, source packs and cached copies",
+                if (isSourcesUnlocked()) "UNLOCKED" else "PIN",
+            )
+            SettingsSection.PEOPLE -> ControlHeader(
+                "PEOPLE",
+                "Who watches, and what each person may see",
+                if (locked) "PIN ON" else "ADMIN",
+            )
             SettingsSection.DEVICE -> ControlHeader(
                 "THIS TV",
                 backendSummary(),
                 controllersSummary(),
             )
-            SettingsSection.HOUSEHOLD -> ControlHeader(
-                "HOUSEHOLD",
-                "Library, live TV and people",
-                if (locked) "PIN ON" else "ADMIN",
-            )
             SettingsSection.ACCESS -> ControlHeader(
-                "ACCESS & SAFETY",
-                "Settings lock and Sources",
+                "SECURITY",
+                "Settings lock and the Sources gate",
                 if (locked) "PIN ON" else "PIN OFF",
             )
         }
@@ -494,13 +510,18 @@ class SettingsActivity : Activity() {
     private fun accessibleSections(): List<SettingsSection> {
         val sections = ArrayList<SettingsSection>()
         sections.add(SettingsSection.HOME)
-        sections.add(SettingsSection.WATCHING)
+        sections.add(SettingsSection.PLAYBACK)
         if (isTrustedAdult() && householdSettingsReady) {
+            // Content and household controls, in the order an owner thinks about them: what the house
+            // shows (Home), how it looks (Appearance), where titles come from (Sources), who watches
+            // (People). This TV and the lock that guards it close the list.
+            sections.add(SettingsSection.HOME_ROWS)
             sections.add(SettingsSection.APPEARANCE)
+            sections.add(SettingsSection.SOURCES)
+            sections.add(SettingsSection.PEOPLE)
         }
         sections.add(SettingsSection.DEVICE)
         if (isTrustedAdult() && householdSettingsReady) {
-            sections.add(SettingsSection.HOUSEHOLD)
             sections.add(SettingsSection.ACCESS)
         }
         return sections
@@ -678,7 +699,7 @@ class SettingsActivity : Activity() {
         if (isTrustedAdult() && householdSettingsReady) {
             summaryRow(
                 "Sources",
-                "Access & safety",
+                if (isSourcesUnlocked()) "Unlocked this visit" else "PIN protected",
                 "Add-ons and source packs sit behind the Settings PIN",
             )
             addAvailabilityNotice(
@@ -706,7 +727,8 @@ class SettingsActivity : Activity() {
         }
     }
 
-    private fun paintWatching(p: JSONObject) {
+    /** What this person hears and sees. Per-profile, so a child may keep their own language order. */
+    private fun paintPlayback(p: JSONObject) {
         addGroup("Language & captions")
         addRow("Audio language", languageName(firstOf(p, "audioLanguages")), "Mix this language first") {
             showLanguagePicker("Audio language", "audioLanguages")
@@ -714,11 +736,22 @@ class SettingsActivity : Activity() {
         addRow("Subtitles", languageName(firstOf(p, "subtitleLanguages")), "Preferred subtitle language") {
             showLanguagePicker("Subtitles", "subtitleLanguages")
         }
-        addGroup("Playback")
+        addGroup("Quality")
         addRow("Video quality", qualityLabel(p.optString("qualityCap", "auto")), "Best quality to offer") {
             showQualityPicker()
         }
-        addGroup("Home and people")
+        addGroup("Live TV")
+        addRow("Live TV channels", "This person's channels", "Channels and order", chevron = true) {
+            startActivity(
+                Intent(this, LiveChannelsActivity::class.java)
+                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
+            )
+        }
+    }
+
+    /** What the house shows: shelves, categories, the shared playlist, the library's name. */
+    private fun paintHomeRows() {
+        addGroup("Home shelves")
         val shelfRows = rowList
         if (shelfRows != null && shelfRows.length() > 0) {
             val hidden = effectiveHidden()
@@ -726,14 +759,32 @@ class SettingsActivity : Activity() {
             addRow("Home shelves", "${visible.count { it !in hidden }} of ${visible.size} shown",
                 "Show, hide or reorder shelves", chevron = true) { showHomeRows() }
         }
-        addRow("Live TV", "This person's channels", "Channels and order", chevron = true) {
-            startActivity(
-                Intent(this, LiveChannelsActivity::class.java)
-                    .putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId)
-            )
+        addRow("Categories", "Home shelves", "Genre shelves drawn on Home", chevron = true) {
+            requireAdmin { startActivity(Intent(this, CategoriesActivity::class.java)) }
         }
-        addRow("People profiles", "Change person", "Switch who is watching", chevron = true) {
+        addGroup("Shared library")
+        addRow("Library and search", "Name and search limits", "Hub name and search limits", chevron = true) {
+            requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
+        }
+        addRow("Live TV playlist", "Shared playlist and groups", "The M3U every profile tunes", chevron = true) {
+            requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
+        }
+    }
+
+    /** The people who watch, and the editor that adds, renames and limits them. */
+    private fun paintPeople() {
+        addGroup("People")
+        addRow("People", "Adults and children", "Add, rename or change who is watching", chevron = true) {
+            requireAdmin { startActivity(Intent(this, ManageProfilesActivity::class.java)) }
+        }
+        addRow("Switch person", "Who's watching", "Change the active profile", chevron = true) {
             startActivity(Intent(this, ProfilesActivity::class.java))
+        }
+        if (isTrustedAdult() && householdSettingsReady) {
+            addAvailabilityNotice(
+                "Each person keeps their own ceiling",
+                "Kids profiles are held to the hub's age band; a profile PIN protects its own settings.",
+            )
         }
     }
 
@@ -908,28 +959,41 @@ class SettingsActivity : Activity() {
         }
     }
 
-    private fun paintHousehold() {
-        addGroup("Shared library")
-        addRow("Library and search", "Name and search limits", "Hub name and search limits", chevron = true) {
-            requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
+    /**
+     * Sources is the discoverable door behind the Settings PIN: the row is visible to an adult (so
+     * the lock is something you can find, not something you have to know about), and the destinations
+     * appear only after requireSources has proved — or created — the number.
+     */
+    private fun paintSources() {
+        val adminOn = lockInfo?.optBoolean("enabled") == true
+        val pinSet = lockInfo?.optBoolean("pinSet") == true
+        if (isSourcesUnlocked()) {
+            addSourcesRows()
+            addAvailabilityNotice(
+                "Sources unlocked for this visit",
+                "They lock again when Settings closes.",
+            )
+            return
         }
-        addRow("Live TV", "Playlist address", "Shared playlist and groups", chevron = true) {
-            requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
+        addGroup("Sources")
+        val needsSetup = !pinSet && !adminOn
+        addRow("Sources",
+            if (needsSetup) "🔒 Set a PIN" else "🔒 PIN required",
+            if (needsSetup) "Create a PIN to manage Sources" else "Enter the household Settings PIN",
+            chevron = true) {
+            requireSources { paint() }
         }
-        addRow("Categories", "Home shelves", "Genre shelves on Home", chevron = true) {
-            requireAdmin { startActivity(Intent(this, CategoriesActivity::class.java)) }
-        }
-        addGroup("People")
-        addRow("People", "Adults and children", "Add or change people", chevron = true) {
-            requireAdmin { startActivity(Intent(this, ManageProfilesActivity::class.java)) }
-        }
+        addAvailabilityNotice(
+            "One PIN for the household",
+            "Add-ons, source packs and cached copies change what every profile can watch.",
+        )
     }
 
     /**
-     * Sources are no longer a top-level section. The entry lives in Access & safety so the lock
-     * is always seen first: if no PIN exists yet, the first entry creates one, and afterwards the
-     * PIN is asked each session through the shared unlock. The revealed rows keep the same
-     * destinations as the old Sources page — Source packs, Add-ons, Debrid — so nothing else moves.
+     * Sources is an area of its own, and the first thing it shows is the lock. If no PIN exists yet,
+     * the first entry creates one; afterwards the PIN is asked once per visit through the shared
+     * unlock. The revealed rows keep the same destinations as the old Sources page — Source packs,
+     * Add-ons, Debrid — so nothing else moves.
      */
     private fun isSourcesUnlocked(): Boolean {
         if (!householdSettingsReady || householdRefreshPending) return false
@@ -1003,12 +1067,12 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /** The lock itself, and the one number it keeps. Sources has its own area, already gated. */
     private fun paintAccess() {
         val adminOn = lockInfo?.optBoolean("enabled") == true
-        val pinSet = lockInfo?.optBoolean("pinSet") == true
         addGroup("Settings lock")
         addRow("Settings lock", if (adminOn) "On" else "Off",
-            "PIN for shared settings and Sources") {
+            "One PIN for household settings and Sources") {
             changeLock()
         }
         if (adminOn) {
@@ -1016,24 +1080,16 @@ class SettingsActivity : Activity() {
                 changePin()
             }
         }
-        if (isSourcesUnlocked()) {
-            addSourcesRows()
-            // Say why these rows are suddenly here, so an owner does not mistake the unlock for a
-            // settings screen that lost its lock.
-            addAvailabilityNotice(
-                "Sources unlocked for this visit",
-                "They lock again when Settings closes.",
-            )
-        } else {
-            addGroup("Sources")
-            val needsSetup = !pinSet && !adminOn
-            addRow("Sources",
-                if (needsSetup) "🔒 Set a PIN" else "🔒 PIN required",
-                if (needsSetup) "Create a PIN to manage Sources" else "Protected — enter the household PIN",
-                chevron = true) {
-                requireSources { paint() }
-            }
+        addGroup("Protected areas")
+        addRow("Sources", if (isSourcesUnlocked()) "Unlocked this visit" else "PIN protected",
+            "Add-ons, source packs and cached copies", chevron = true) {
+            openSection(SettingsSection.SOURCES)
         }
+        addAvailabilityNotice(
+            if (adminOn) "The lock is on" else "The lock is off",
+            if (adminOn) "Household changes and Sources ask for the PIN. It is asked once per visit."
+            else "Set a PIN here so a child cannot change what the house can watch.",
+        )
     }
 
     private fun themeName(): String {

@@ -206,7 +206,7 @@ export function screen(ctx) {
     // half-set gate to explain.
     let digits = null;
     if (wantPin) {
-      digits = await ctx.enterPin({ name }, 'Choose a PIN');
+      digits = await ctx.enterPin({ name }, 'Choose a 4 to 8 digit PIN', { minLength: 4, maxLength: 8 });
       if (!digits) return;
     }
     busy = true;

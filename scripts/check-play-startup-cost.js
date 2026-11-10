@@ -190,6 +190,10 @@ const server = http.createServer((req, res) => {
       + 'windows are required, so a busy engine\'s single silent glance is not mistaken for a dead file');
   assert.match(index, /clearNoByte\(\{ hash: r\.hash, fileId: r\.fileId \}\)/,
     'and a copy that later measures or serves bytes must lose the strike');
+  assert.match(index, /if \(!lastResort \|\| fallbackNeed\(cand\) < fallbackNeed\(lastResort\.cand\)\) lastResort = \{ o, cand \};/,
+    'when every direct copy measured down, the fallback must be the least demanding rung, not the '
+      + 'sharpest one the walk met first: an adaptive source hands over 1080p..240p and the 240p rung '
+      + 'is the one that can start on a slow night');
   assert.match(read('hub/core/gateway.js'), /function holds\(source\)[\s\S]*?k\.startsWith\(hash \+ ':'\)/,
     'the engine must be asked about the torrent, not one episode of it: a pack resolved for S02E35 is '
       + 'still the pack a press for S02E36 can start from');

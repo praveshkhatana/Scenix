@@ -137,7 +137,9 @@ const ctx = {
   closeModals,
   askPin,
   /** Ask for a new PIN rather than checking one: resolves the digits, or null when the viewer backs out. */
-  enterPin: (profile, reason = 'Choose a PIN') => askPin(profile, { reason, mode: 'set' }),
+  enterPin: (profile, reason = 'Choose a PIN', length = {}) => askPin(profile, {
+    reason, mode: 'set', ...length,
+  }),
   /** The household Settings PIN is deliberately independent of profile-theme PIN length: the hub accepts 4–8 digits. */
   enterSettingsPin: (reason = 'Enter the household Settings PIN') => askPin(
     { name: 'Settings PIN' }, { reason, mode: 'set', minLength: 4, maxLength: 8 },

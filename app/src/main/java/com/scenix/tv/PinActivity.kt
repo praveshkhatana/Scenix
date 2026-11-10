@@ -153,6 +153,7 @@ class PinActivity : Activity() {
         ))
         setContentView(frame)
         Motion.enter(theme, frame, listOf(gate))
+        show()
         val firstRow = keys.getChildAt(0) as? ViewGroup
         (firstRow?.getChildAt(0) ?: keys)?.requestFocus()
     }
@@ -163,10 +164,13 @@ class PinActivity : Activity() {
             "CLEAR" -> { pin.setLength(0); show() }
             "OK" -> submit()
             else -> if (label.length == 1) {
-                if (pin.length < 4) pin.append(label)
+                // 4 to 8 digits is the household rule, but an older hub may hold a shorter number —
+                // one profile was left with a single digit by an older web pad and could never be
+                // opened again because this gate stopped at four. Accept up to eight and let OK be
+                // the only thing that submits, so both lengths work.
+                if (pin.length < 8) pin.append(label)
                 show()
                 popDots()
-                if (pin.length == 4) submit()
             }
         }
     }
@@ -190,13 +194,16 @@ class PinActivity : Activity() {
     }
 
     private fun show() {
-        dots.text = (0 until 4).joinToString(" ") { if (it < pin.length) "•" else "○" }
-        hint.text = "Use the number keys or the pad"
+        val n = pin.length.coerceIn(4, 8)
+        dots.text = (0 until n).joinToString(" ") { if (it < pin.length) "•" else "○" }
+        hint.text = if (pin.isEmpty()) "4 to 8 digits · OK to confirm" else "OK to confirm"
         hint.setTextColor(app.theme.ink3)
     }
 
     private fun submit() {
-        if (pin.length != 4 || busy) return
+        // One to eight: the household rule is four to eight, and a stored shorter number (written by
+        // an older client) still has to open its profile so it can be replaced with a valid one.
+        if (pin.isEmpty() || pin.length > 8 || busy) return
         busy = true
         hint.text = "Checking…"
         hint.setTextColor(app.theme.ink2)
