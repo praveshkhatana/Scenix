@@ -162,6 +162,11 @@ const server = http.createServer((req, res) => {
     'a series press must keep the show address\'s copies - the season packs a title page warmed - and '
       + 'tag them with the address they were published under, or the walk only ever asks the engine '
       + 'about per-episode magnets it has never met');
+  assert.match(index, /- \(engineHas\(s\) \? 1 : 0\)/,
+    'a copy the engine has already read must lead the seats; seated behind cold magnets it is never '
+      + 'walked, because the walk stops after two copies the engine has not read');
+  assert.match(index, /Number\(r\.fileSize\) < Number\(cand\.sizeBytes\)/,
+    'the bitrate a link must carry is the file the engine named, not the whole season pack it lives in');
 
   server.close();
   console.log('PLAY STARTUP COST GATE OK');

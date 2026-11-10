@@ -2931,6 +2931,14 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     const codec = codecFromName(name);
     if (codec) s.videoCodec = codec;
   }
+  // What the engine knows about this copy already. Both the seat order and the fit arithmetic ask
+  // it, and it is a memory read: `prepared` is filled by the title page's warm and by every earlier
+  // press, and `pickFile` inside it was given the very episode this press means.
+  const engineInfo = (s) => (s && s.kind === 'torrent' && gateway.MODE === 'http')
+    ? gateway.peekPrepared({ ...s, url: magnetOf(s._streamId || kept.streamId || identity, s) },
+      ep ? { season: ep.season, episode: ep.episode } : null)
+    : null;
+  const engineHas = (s) => { const i = engineInfo(s); return !!(i && i.fileId !== undefined); };
   const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
     + (decodable.length && s && s.videoCodec
       && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0)
@@ -2941,7 +2949,12 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     // a copy that states the wanted episode is not treated as another film).
     + (s && kept.type !== 'channel' && !kept.live
       && !statesTheEpisode(labelOf(s), ep)
-      && nameIsntTheTitle(labelOf(s), kept.title) ? 4 : 0);
+      && nameIsntTheTitle(labelOf(s), kept.title) ? 4 : 0)
+    // A copy the engine has already read is the one this press can start now: its file list costs a
+    // millisecond, a cold magnet costs the engine ten to twenty seconds of metadata. Seated behind
+    // cold copies, the season pack this hub had warmed never got a press — the walk gave up after
+    // two cold per-episode magnets with the warm pack still untried.
+    - (engineHas(s) ? 1 : 0);
   // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
   // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
   // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
@@ -2976,9 +2989,15 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   // quality and gets the top quality that plays — which is what "Auto" means in a paid app.
   const fitRank = (s) => {
     if (!swarmMbps || !s || s.kind !== 'torrent') return -1;
-    // `kept` is the merged item itself (pipeline returns the items it kept), so the runtime this
-    // arithmetic needs comes off it directly.
-    const need = ranking.estimateMbps(s, kept);
+    // A season pack's `sizeBytes` is the whole season, while this press plays one file inside it.
+    // Judged on that number a 2.4 GB pack needs 45 Mbps against this swarm's 2 and sorts behind every
+    // per-episode copy — which is how the pack the engine already had open never took a seat. The
+    // file this episode actually plays is the one that has to be carried: the engine knows its size
+    // once it has resolved the pack, and an unknown size is not a reason to seat a copy last.
+    const inside = s._streamId ? Number((engineInfo(s) || {}).fileSize) || 0 : 0;
+    const need = inside > 0
+      ? ranking.estimateMbps({ ...s, sizeBytes: inside }, kept)
+      : (s._streamId ? null : ranking.estimateMbps(s, kept));
     if (!need) return -1; // an adaptive ladder has no fixed bitrate; it adjusts itself
     return need <= swarmMbps * fitCeiling ? 0 : need;
   };
@@ -3463,7 +3482,12 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     //     all. Playback dies in the worst window, so the worst window is the verdict. The bytes this
     //     read pulls are not thrown away afterwards — they are the pre-roll the film starts with.
     //   · Read-ahead off: the old 256 KB probe, which can only ever produce a floor.
-    const needs = ranking.estimateMbps(cand, kept);
+    // What the link has to carry is the FILE this press plays, not the torrent it lives in: a season
+    // pack's `sizeBytes` is the whole season, and judging a 110 MB episode by it demands 45 Mbps and
+    // fails every measurement. The engine has just named the file, so its size is the honest number.
+    const needs = ranking.estimateMbps(
+      Number(r.fileSize) > 0 && (!Number(cand.sizeBytes) || Number(r.fileSize) < Number(cand.sizeBytes))
+        ? { ...cand, sizeBytes: Number(r.fileSize) } : cand, kept);
     // The engine has recently failed to answer for this torrent at all. Asking it again on the very next
     // press spends the viewer's whole patience budget finding that out again, so while any other copy is
     // on the list this one waits for its turn.
