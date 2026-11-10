@@ -2726,6 +2726,10 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   const epAddr = ep ? episodeStreamId(item, ep) : null;
   let packCopies = [];
   if (ep) {
+    if (process.env.PLAY_DEBUG) {
+      log('PLAY EP ADDR', identity, 'tile=' + String(item.streamId || item.identity).slice(0, 30),
+        'want=' + String(epAddr).slice(0, 30), 'had=' + (item.sources || []).length);
+    }
     if (item.streamId !== epAddr) {
       // The show address and the episode address answer with two different sets of copies: season
       // packs and whole-season torrents answer `tt7678620`, per-episode files answer
