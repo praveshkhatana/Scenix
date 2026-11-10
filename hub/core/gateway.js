@@ -476,16 +476,31 @@ async function prepareTorrent(source, hash, ckey, want) {
   // Prefer the magnet when the addon gave us one (it carries trackers), and fall back to the bare
   // hash, which the engine resolves over the DHT — slower, but it works.
   const link = String(source.url || source.link || source.magnet || '').trim() || hash;
-  // Adding is idempotent; doing it again on a live torrent is free. The wait is generous because the
-  // engine's own answer is slow for a magnet it has not met (measured 10-20 s on this box) and the
-  // work continues whether or not we are still watching the socket: a three-second patience here used
-  // to make the hub give up on an add it had started itself.
-  const releaseAdd = await addSlot();
-  try {
-    await enginePost('/torrents', { action: 'add', link, save_to_db: true }, ADD_WAIT_MS);
-  } finally {
-    releaseAdd();
-  }
+  // Whether the engine already holds this torrent. `prepared` is keyed by the episode a pack was
+  // resolved for, so any key that starts with this hash is an answer about the same torrent.
+  let known = prepared.has(hash);
+  if (!known) for (const k of prepared.keys()) if (k.startsWith(hash + ':')) { known = true; break; }
+  // `add` is fired, never awaited. It is the engine's slowest call by far — a cold magnet takes ten to
+  // twenty seconds to answer, and a torrent this engine already holds was measured holding the socket
+  // open for thirty while `/torrents {action:get}` answered about it in four milliseconds. Waiting for
+  // the add before the first poll is what made a warm pack look unreachable: the press's whole gateway
+  // budget went into a call whose answer the poll below does not need.
+  let addFired = false;
+  const fireAdd = () => {
+    if (addFired) return;
+    addFired = true;
+    (async () => {
+      const releaseAdd = await addSlot();
+      try {
+        await enginePost('/torrents', { action: 'add', link, save_to_db: true }, ADD_WAIT_MS);
+      } catch (e) {
+        log('GATEWAY ADD FAIL', 'hash=' + String(hash).slice(0, 12), e.message);
+      } finally {
+        releaseAdd();
+      }
+    })();
+  };
+  if (!known) fireAdd();
 
   // The engine's clock, not the press's: this is where the metadata actually lands, and a Play press
   // that gave up two seconds ago should find the answer here rather than start a third add.
@@ -495,6 +510,9 @@ async function prepareTorrent(source, hash, ckey, want) {
   let answered = false;    // did the engine reply to any question about this torrent at all
   let engineFailed = false; // did the engine itself stop answering mid-prepare
   do {
+    // An entry in `prepared` can outlive what the engine remembers (a restart between two presses).
+    // If the first polls show it has no file list, ask it to add the torrent after all — once.
+    if (!addFired && !sawFiles && Date.now() > deadline - WARM_BUDGET_MS + 1500) fireAdd();
     const r = await enginePost('/torrents', { action: 'get', hash }, GET_POLL_MS);
     if (r.json) {
       answered = true;

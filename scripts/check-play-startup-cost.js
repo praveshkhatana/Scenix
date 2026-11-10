@@ -137,6 +137,9 @@ const server = http.createServer((req, res) => {
   await Promise.all([0, 1, 2, 3, 4, 5].map((i) =>
     gateway.prepare({ kind: 'torrent', url: 'magnet:?xt=urn:btih:' + String(i).repeat(40) },
       6000, null)));
+  // The adds are fired in the background and never delay the poll, so give the semaphore a moment to
+  // drain before counting them: that is the point of the change, not an accident of the test.
+  await new Promise((r) => setTimeout(r, 1600));
   assert.strictEqual(engine.adds, 6, 'every torrent still gets its add');
   assert.ok(engine.addMax <= 2,
     'but no more than two adds run at once — the engine serialises them anyway; saw ' + engine.addMax);
@@ -167,6 +170,12 @@ const server = http.createServer((req, res) => {
       + 'walked, because the walk stops after two copies the engine has not read');
   assert.match(index, /Number\(r\.fileSize\) < Number\(cand\.sizeBytes\)/,
     'the bitrate a link must carry is the file the engine named, not the whole season pack it lives in');
+  const gw = read('hub/core/gateway.js');
+  assert.match(gw, /if \(!known\) fireAdd\(\);/,
+    'the engine add has to be fired, not awaited: it can hold a socket for thirty seconds while the '
+      + 'poll that answers in milliseconds waits behind it');
+  assert.match(gw, /if \(!addFired && !sawFiles/,
+    'and the poll has to re-fire it when a cached preparation outlived what the engine remembers');
 
   server.close();
   console.log('PLAY STARTUP COST GATE OK');
