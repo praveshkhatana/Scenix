@@ -75,6 +75,14 @@ assert.match(appearance, /writeSettings\(\{ theme: id \}\)[\s\S]*?window\.locati
 assert.match(appearance, /group\('Readability'[\s\S]*?Text size/,
   'Appearance must carry the television\'s Text size control');
 
+// The control has to drive the same scale factor the rest of the shell derives every length from, or
+// it is a second, browser-only zoom that does not grow tiles and gaps with the words.
+const theme = fs.readFileSync(path.join(root, 'hub', 'web', 'js', 'theme.js'), 'utf8');
+assert.match(theme, /TEXT_SCALE_STEPS = \[1, 1\.15, 1\.3, 1\.5\]/,
+  'the browser must offer the television\'s four Text size steps');
+assert.match(theme, /Math\.min\(1\.2, fit\)\) \* textScale\(\)/,
+  'the chosen Text size must multiply --s, the one scale factor every shell length derives from');
+
 const access = between('function buildAccess(parent)', '/* ------------------------------------------------------------------ paint */');
 assert.match(access, /ensureSettingsAdmin\(ctx, setting && setting\.lock, 'Enter the Settings PIN to manage sources'\)/,
   'the Sources entry must prove the household PIN before opening the pane');

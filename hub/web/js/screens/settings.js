@@ -36,7 +36,7 @@
 import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
-import { api, apiBase, adminSessionActive } from '/ui/js/api.js';
+import { api, apiBase } from '/ui/js/api.js';
 import { hubBuild, buildLabel } from '/ui/js/build.js';
 import { backendName } from '/ui/js/player.js';
 import { setTextScale, textScale } from '/ui/js/theme.js';
@@ -565,7 +565,9 @@ export function screen(ctx) {
     const canHub = !!caps.settingsAdmin;
     const list = [{ id: 'overview', icon: 'home', title: 'Overview', build: buildOverview }];
     if (prefs || (setting && setting.live)) list.push({ id: 'watching', icon: 'play', title: 'Watching', build: buildWatching });
-    if (themeChoices.length) list.push({ id: 'appearance', icon: 'sliders', title: 'Appearance', build: buildAppearance });
+    // Appearance is always present: even a hub that reports no shared themes still has the browser's own
+    // Text size, which is the same control the television keeps beside its theme.
+    list.push({ id: 'appearance', icon: 'sliders', title: 'Appearance', build: buildAppearance });
     const hasRows = !!(rowList && rowList.length && caps.settingsAdmin);
     const hasCats = !!(setting && canHub && (Array.isArray(catalogOptions) || Array.isArray(setting.categories)));
     if (hasRows || hasCats) list.push({ id: 'home', icon: 'home', title: 'Home', build: buildHome });
@@ -650,17 +652,18 @@ export function screen(ctx) {
   }
 
   function buildAppearance(parent) {
-    if (!themeChoices.length) return;
-    const g = group('Theme', 'Choose a look this browser and connected TV both ship. TV-only layouts stay on that television.');
-    pickRow(g, 'Theme', 'Only layouts with synchronized shared tokens appear here. Changing it reloads the browser.', themeChoices.map((theme) => theme.id),
-      (setting && setting.theme) || 'scenix-dark',
-      (id) => { const theme = themeChoices.find((choice) => choice.id === id); return theme ? theme.name : id; },
-      async (id) => {
-        // A refresh is how the web shell applies a new token file. It must follow the Hub's
-        // acknowledgement, never a cancelled PIN pad or a rejected TV-only choice.
-        if (await writeSettings({ theme: id })) window.location.reload();
-      });
-    parent.appendChild(g);
+    if (themeChoices.length) {
+      const g = group('Theme', 'Choose a look this browser and connected TV both ship. TV-only layouts stay on that television.');
+      pickRow(g, 'Theme', 'Only layouts with synchronized shared tokens appear here. Changing it reloads the browser.', themeChoices.map((theme) => theme.id),
+        (setting && setting.theme) || 'scenix-dark',
+        (id) => { const theme = themeChoices.find((choice) => choice.id === id); return theme ? theme.name : id; },
+        async (id) => {
+          // A refresh is how the web shell applies a new token file. It must follow the Hub's
+          // acknowledgement, never a cancelled PIN pad or a rejected TV-only choice.
+          if (await writeSettings({ theme: id })) window.location.reload();
+        });
+      parent.appendChild(g);
+    }
 
     // The television's Appearance pane has a Readability group under Theme. The web carries the same
     // control because it drives the same thing — `--s`, the one scale factor every length in the shell
