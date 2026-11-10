@@ -246,6 +246,16 @@ class PlayerActivity : Activity() {
     private var cushionFalling = 0
     private var cushionSwitches = 0
     /**
+     * The last cushion evidence taken while a frame was actually moving, kept across the freeze that
+     * follows it. [cushionAheadMs] is cleared the moment playback stops, so by the time the 12 s stall
+     * clock fires the only record of WHY the picture froze has been erased — and a copy that was being
+     * outrun by its own film then gets the same patience as one the hub merely reopened behind the scenes.
+     */
+    private var lastLiveCushionMs = -1L
+    private var lastLiveFallingTicks = 0
+    /** True when this buffering spell began with the picture already running out. */
+    private var ranDry = false
+    /**
      * A copy that is still filling is not a copy that failed. The watchdog waits before spending the
      * retry/failover budget; an ExoPlayer error still gets its own two soft reloads first.
      */
@@ -257,7 +267,10 @@ class PlayerActivity : Activity() {
             return@Runnable
         }
         val pos = filmPosition(p)
-        if (sameCopyRetries < 2) {
+        // A freeze that began with a thin cushion is a copy losing the rate race, not a hiccup on a copy
+        // that is keeping pace. The second twelve-second reload of the same starved stream is twelve more
+        // seconds of loading card, so a copy that ran dry gets one retry before the viewer is moved.
+        if (sameCopyRetries < (if (ranDry) 1 else 2)) {
             sameCopyRetries++
             showCenter("Still loading this copy…", true)
             // Gen-guarded like every HTTP path: a switch or an episode jump that resolved while this
@@ -588,7 +601,29 @@ class PlayerActivity : Activity() {
                     if (bufferingSince == 0L) {
                         bufferingSince = System.currentTimeMillis()
                         handler.removeCallbacks(stallCheck)
-                        handler.postDelayed(stallCheck, STALL_AFTER_MS)
+                        // The freeze says nothing on its own; what the cushion was doing a second earlier
+                        // does. A thin cushion that had already been shrinking for seconds is a copy being
+                        // outrun by its own film, and twelve seconds of "Buffering…" plus two same-copy
+                        // reloads on top of it only postpones the switch the viewer needs. A cushion that
+                        // was full and vanished is the hub reopening behind the scenes, and that one has
+                        // earned the patience the stall clock gives it.
+                        ranDry = lastLiveFallingTicks >= CUSHION_FALL_TICKS - 2 ||
+                            (lastLiveCushionMs in 0L until CUSHION_FLOOR_MS)
+                        if (lastLiveFallingTicks >= CUSHION_FALL_TICKS - 2 && !live && !recoveryScheduled
+                            && cushionSwitches < CUSHION_SWITCHES_MAX
+                        ) {
+                            cushionSwitches++
+                            recoveryScheduled = true
+                            Log.i(TAG, "picture ran dry on a falling cushion: last " + lastLiveCushionMs
+                                + "ms ahead after " + lastLiveFallingTicks + " falling ticks")
+                            quietOrCenter(
+                                if (lowerAlternative() != null) "This copy fell behind — moving to a lighter one…"
+                                else "This copy fell behind — trying another one…"
+                            )
+                            failoverToNext(preferLower = true)
+                        } else {
+                            handler.postDelayed(stallCheck, STALL_AFTER_MS)
+                        }
                     }
                     updatePlayLabel()
                 }
@@ -623,6 +658,25 @@ class PlayerActivity : Activity() {
                     handler.removeCallbacks(stallCheck)
                     updatePlayLabel()
                 }
+            }
+        }
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            // A seek empties the buffer by definition, so what the cushion was doing before it says
+            // nothing about the copy. Without this, pressing >> on a copy that is keeping pace would be
+            // read as a copy that just ran dry, and the viewer would get swapped to a different source.
+            if (reason == Player.DISCONTINUITY_REASON_SEEK
+                || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT
+            ) {
+                lastLiveCushionMs = -1L
+                lastLiveFallingTicks = 0
+                cushionAheadMs = -1L
+                cushionFalling = 0
+                ranDry = false
             }
         }
 
@@ -939,6 +993,9 @@ class PlayerActivity : Activity() {
     private fun start(reply: JSONObject, positionMs: Long, playWhenReady: Boolean) {
         pendingSeekTarget = -1L
         bufferingSince = 0L
+        ranDry = false
+        lastLiveCushionMs = -1L
+        lastLiveFallingTicks = 0
         handler.removeCallbacks(stallCheck)
         // A hub answer must belong to the title this screen opened. If a provider or a stale route
         // answers another identity, refuse it instead of putting a different film on screen.
@@ -4839,11 +4896,17 @@ class PlayerActivity : Activity() {
         cushionAheadMs = ahead
         if (prev < 0L || ahead > CUSHION_FLOOR_MS) {
             cushionFalling = 0
+            lastLiveCushionMs = ahead
+            lastLiveFallingTicks = 0
             return
         }
         // Only a real decline counts. Half a second of playback consumes 500 ms of cushion, so a source
         // keeping pace shows a roughly flat line and a source winning it shows a rising one.
         if (ahead < prev - 150L) cushionFalling++ else cushionFalling = 0
+        // Kept across the freeze this ends in: once the picture stops, [cushionAheadMs] is cleared, and
+        // this is the only surviving record of whether the copy was losing the race before it froze.
+        lastLiveCushionMs = ahead
+        lastLiveFallingTicks = cushionFalling
         if (cushionFalling < CUSHION_FALL_TICKS) return
         cushionFalling = 0
         cushionAheadMs = -1L
