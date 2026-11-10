@@ -2709,7 +2709,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     // The wanted number is not in the list this tile carries — typical of a thin cached tile
     // ("one episode, numbered 4863") that predates the full-list adoption. A sibling that indexes
     // the complete run may hold this very number: adopt before treating the episode as absent.
-    await adoptEpisodeSibling(item, ctx, opts);
+    await clock.time('adopt', () => adoptEpisodeSibling(item, ctx, opts));
     ep = episodeOf(item, opts.season, opts.episode);
   }
   const epAddr = ep ? episodeStreamId(item, ep) : null;
@@ -2718,7 +2718,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       item.streamId = epAddr;
       item.sources = [];
     }
-    if (!(item.sources || []).length) await fetchEpisodeSources(item); // cheap when resolve already asked
+    if (!(item.sources || []).length) await clock.time('sources', () => fetchEpisodeSources(item)); // cheap when resolve already asked
     // "Sources answered, but not one of them is this title" — the walk below would reject every copy
     // with `its name is not <title>` — is the same dead end as silence, and must not block the join
     // that exists for it: an aggregator that replies to an episode address with some other show's
@@ -2735,7 +2735,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       log('EPISODE MISS', item.streamId, 'falling back to the show address');
       item.streamId = null;
       ep = null;
-      await contributeSources(item);
+      await clock.time('sources', () => contributeSources(item));
     }
   }
   // The intro window does not depend on which copy wins, so ask IntroDB while the sources rank. A
@@ -2773,7 +2773,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     addons.forgetStreams(kept.streamId || identity);
     log('PLAY REMINT', identity, sources.length + ' saved copies all named another title',
       'asking the addons for fresh ones');
-    await contributeSources(kept);
+    await clock.time('sources', () => contributeSources(kept));
     sources = kept.sources || [];
     if (!sources.length) return { status: 404, body: { error: 'no sources', identity } };
   }
@@ -2817,7 +2817,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   // that when the files themselves stated a language, ranking on that is worth the pass, and the rule
   // still refuses to invent a status or tagline without a measurement.
   if (probe.ENABLED || attached) {
-    await rerank(kept, ctx);
+    await clock.time('rerank', () => rerank(kept, ctx));
     sources = kept.sources || sources;
   }
 
@@ -3019,6 +3019,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
 
   let labelOverride = null; // set when a named pick plays despite its own release name
   let reminted = false; // one throw-away of the cached stream answer per play press
+  const walkAt = Date.now();
   for (const cand of queue) {
     clock.counts.tries++;
     const addon = addonOf(cand);
@@ -3566,6 +3567,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     }
     out = o; source = cand; break;
   }
+  clock.mark('walk', Date.now() - walkAt);
 
   // A copy that is merely slow is a better answer than one that never answered, which is better than a
   // magnet this TV cannot open at all.
@@ -3796,13 +3798,13 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     && (settings.get().adaptive || {}).transcode !== false
     && out.kind !== 'hls' && !out.remuxed && !out.audioMix;
   const tracks = playHash
-    ? await media.tracksFor(out.torrent.hash, out.torrent.fileId, null,
-      { waitMs: Math.max(0, Math.min(1200, deadline - Date.now())) })
+    ? await clock.time('picture', () => media.tracksFor(out.torrent.hash, out.torrent.fileId, null,
+      { waitMs: Math.max(0, Math.min(1200, deadline - Date.now())) }))
     : null;
   const probed = (!tracks && adaptiveWanted && /^https?:\/\//i.test(out.url))
-    ? await media.probeUrl(out.url, {
+    ? await clock.time('picture', () => media.probeUrl(out.url, {
       timeoutMs: Math.max(700, Math.min(3000, deadline - Date.now() - 300)),
-    })
+    }))
     : null;
   const picture = tracks || probed;
   const pictureHeight = picture && picture.video && Number(picture.video.height) > 0
@@ -4002,7 +4004,8 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     if (!pictureMs && list.length && out && out.url && source.kind !== 'torrent'
         && /^https?:/i.test(out.url) && deadline - Date.now() > 1400) {
       const hit = donorPeek(out.url);
-      const p = hit || await probeDonorUrl(out.url, out.headers || {}, 1200);
+      const p = hit || await clock.time('audio',
+        () => probeDonorUrl(out.url, out.headers || {}, 1200));
       if (p && Number(p.durationMs) > 0) pictureMs = Number(p.durationMs);
     }
     for (const cand of list.slice(0, 6)) {
@@ -4342,7 +4345,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       || eps.find((x) => x.season === ep.season + 1) || null;
     out.nextEpisode = nx ? { season: nx.season, episode: nx.episode, title: nx.title || null } : null;
   }
-  const intro = await introPromise;
+  const intro = await clock.time('intro', () => introPromise);
   if (intro) {
     out.introStartMs = intro.startMs;
     out.introEndMs = intro.endMs;
@@ -4363,7 +4366,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         ? out.audioTracks.filter((t) => t && t.streamIndex != null)
         : [];
       const chosen = sourceTracks.find((t) => t && t.id === out.selectedAudio) || sourceTracks[0] || null;
-      const built = await ladder.create({
+      const built = await clock.time('ladder', () => ladder.create({
         url: out.url,
         headers: out.headers || {},
         quality: out.picked && out.picked.quality,
@@ -4381,7 +4384,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         // the playhead, and the player carries `startMs` so the timeline still reads in film time.
         positionMs: Number(opts.positionMs || 0),
         sourceDurationMs: picture && Number(picture.durationMs) > 0 ? Number(picture.durationMs) : 0,
-      });
+      }));
       if (built && built.ready) {
         const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
         out.url = base + built.path;
