@@ -2758,11 +2758,8 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       // round trip to the addons before the walk may begin (measured: `sources=3564ms` on a press whose
       // winning copy was the season pack). When such a copy exists, walk it now and fetch the episode
       // list in the background, so the NEXT press has it cached instead of paying for it twice.
-      const warmPack = packCopies.some((s) => {
-        const info = gateway.peekPrepared({ ...s, url: magnetOf(s._streamId, s) },
-          { season: ep.season, episode: ep.episode });
-        return !!(info && info.fileId !== undefined);
-      });
+      const warmPack = packCopies.some((s) => episodeInLabel(labelOf(s), ep)
+        && gateway.holds({ ...s, url: magnetOf(s._streamId, s) }));
       if (warmPack) {
         // A separate item so the background fetch cannot mutate the list this press is walking.
         fetchEpisodeSources(Object.assign({}, item, { sources: [] })).catch(() => {});

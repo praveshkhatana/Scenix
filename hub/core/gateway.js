@@ -613,9 +613,25 @@ function parsePlayUrl(u) {
   return m ? { hash: m[1].toLowerCase(), fileId: Number(m[2]) } : { hash: null, fileId: null };
 }
 
+/**
+ * Does the engine already hold this torrent — any file of it?
+ *
+ * A season pack is resolved per episode (`hash:2:35`), so `peekPrepared` for a different episode misses
+ * a pack the engine is serving right now. The metadata is the expensive part and it is shared by every
+ * file in the torrent; naming the file for a new episode costs one `get`. This answers the cheap
+ * question the picker needs before it decides whether to wait for an addon round trip.
+ */
+function holds(source) {
+  if (MODE !== 'http' || !source) return false;
+  const hash = hashOf(source);
+  if (!hash) return false;
+  if (prepared.has(hash)) return true;
+  for (const k of prepared.keys()) if (k.startsWith(hash + ':')) return true;
+  return false;
+}
+
 /** The prepared answer for a source, from the cache only: never asks the engine, never waits. */
-function peekPrepared(source, want) {
-  if (MODE !== 'http' || !source) return null;
+function peekPrepared(source, want) {  if (MODE !== 'http' || !source) return null;
   const hash = hashOf(source);
   if (!hash) return null;
   const ws = Number(want && want.season);
@@ -815,6 +831,7 @@ module.exports = {
   enginePlayUrl,
   parsePlayUrl,
   peekPrepared,
+  holds,
   readBegin,
   readEnd,
   isReading,
