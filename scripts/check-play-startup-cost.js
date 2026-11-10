@@ -1,0 +1,144 @@
+#!/usr/bin/env node
+'use strict';
+/*
+ * What a Play press may not do is spend the viewer's seconds twice on the same question.
+ *
+ * Measured on the hub, one cold press on a series episode took 24 s: 12.7 s of it asking the installed
+ * addons for the episode's copy list one addon at a time, and most of the rest asking the torrent engine
+ * about three copies in turn — three separate `add` calls for three torrents, each with a few seconds of
+ * patience, each timing out while the engine was still reading the magnet it had been asked to add. The
+ * press then blacklisted those copies for half a minute, so the viewer's own retry was answered from
+ * memory instead of from the engine that had, by then, finished.
+ *
+ * This gate runs a fake engine and the real gateway against it, and holds the line on the four things
+ * that fix cost:
+ *
+ *   1. one engine conversation per torrent, however many callers want it (a warm and a press must not
+ *      each open their own add);
+ *   2. a caller that runs out of patience gets an honest "still reading", not a blacklist the next press
+ *      has to wait out;
+ *   3. the engine is never stampeded: at most `GATEWAY_ADD_CONCURRENCY` adds at a time;
+ *   4. the picker's own shape — the copies it will walk are warmed before it walks them, the addons are
+ *      asked together, the walk stops after two cold copies, and every press names where its time went.
+ */
+
+const assert = require('assert');
+const fs = require('fs');
+const http = require('http');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+
+// ---------------------------------------------------------------- the fake engine
+//
+// TorrServer answers `/torrents {action:"get"}` in about a millisecond and `{action:"add"}` in ten to
+// twenty for a magnet it has not met. The fake copies that asymmetry, and counts what the hub does to it.
+const engine = { adds: 0, gets: 0, addInFlight: 0, addMax: 0, addDelayMs: 700, filesAfterMs: 400 };
+const server = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', async () => {
+    if (req.method !== 'POST') { // the hub checks the engine is alive with one GET /
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('{"version":"fake-torrserver"}');
+    }
+    const q = JSON.parse(body || '{}');
+    if (q.action === 'add') {
+      engine.adds++;
+      engine.addInFlight++;
+      engine.addMax = Math.max(engine.addMax, engine.addInFlight);
+      await new Promise((r) => setTimeout(r, engine.addDelayMs));
+      engine.addInFlight--;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('{}');
+    }
+    if (q.action === 'get') {
+      engine.gets++;
+      const hash = String(q.hash || '');
+      const ready = engine.seen[hash] !== undefined && Date.now() - engine.seen[hash] >= engine.filesAfterMs;
+      if (engine.seen[hash] === undefined) engine.seen[hash] = Date.now();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(ready
+        ? {
+          stat_string: 'Torrent working',
+          total_peers: 12,
+          torrent_size: 500e6,
+          file_stats: [{ id: 1, path: 'Bluey - S02E31 - Barky Boats.mkv', size: 500e6 }],
+        }
+        : { stat_string: 'Torrent getting info', total_peers: 1, file_stats: [] }));
+    }
+    res.writeHead(400).end('{}');
+  });
+});
+
+(async () => {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+
+  const data = fs.mkdtempSync(path.join(require('os').tmpdir(), 'scenix-startup-'));
+  process.env.DATA_DIR = data;
+  process.env.GATEWAY = 'http';
+  process.env.TORR_URL = 'http://127.0.0.1:' + port;
+  process.env.GATEWAY_ADD_MS = '400';      // the fake's add is slower than this on purpose
+  const gateway = require('../hub/core/gateway');
+
+  // ---- 1. one conversation per torrent -------------------------------------------
+  // A title page's warm and the viewer's press arrive together. They must not each open an add.
+  engine.seen = {};
+  engine.adds = 0;
+  const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40);
+  const warm = gateway.prepare({ kind: 'torrent', url: magnet }, 5000, null);
+  const press = gateway.resolve({ kind: 'torrent', url: magnet }, { budgetMs: 5000 });
+  const [one, two] = await Promise.all([warm, press]);
+  assert.strictEqual(engine.adds, 1,
+    'a warm and a Play press on the same torrent must share one engine conversation, saw ' + engine.adds + ' adds');
+  assert.strictEqual(one.fileId, 1, 'the warm has to answer with the file inside the torrent');
+  assert.ok(two.url && /\/play\/a{40}\/1$/.test(two.url), 'the press must get the served URL: ' + two.url);
+
+  // ---- 2. a caller that runs out of patience must not blacklist the copy ---------
+  engine.seen = {};
+  engine.adds = 0;
+  engine.filesAfterMs = 2500;   // the engine is slower than this press may be
+  const magnet2 = 'magnet:?xt=urn:btih:' + 'b'.repeat(40);
+  const first = await gateway.prepare({ kind: 'torrent', url: magnet2 }, 600, null);
+  assert.ok(first && first.error, 'a press shorter than the engine answer has to be refused, not invented');
+  assert.ok(/still arriving/i.test(first.error),
+    'and it must be refused as "the engine is still working", got: ' + first.error);
+  const second = await gateway.prepare({ kind: 'torrent', url: magnet2 }, 6000, null);
+  assert.strictEqual(engine.adds, 1,
+    'the retry must join the conversation that was already running, saw ' + engine.adds + ' adds');
+  assert.ok(second && second.fileId === 1,
+    'and the retry has to get the answer the engine produced, got: ' + JSON.stringify(second));
+
+  // ---- 3. the engine is never stampeded -----------------------------------------
+  engine.seen = {};
+  engine.adds = 0; engine.addMax = 0; engine.addDelayMs = 300; engine.filesAfterMs = 0;
+  await Promise.all([0, 1, 2, 3, 4, 5].map((i) =>
+    gateway.prepare({ kind: 'torrent', url: 'magnet:?xt=urn:btih:' + String(i).repeat(40) },
+      6000, null)));
+  assert.strictEqual(engine.adds, 6, 'every torrent still gets its add');
+  assert.ok(engine.addMax <= 2,
+    'but no more than two adds run at once — the engine serialises them anyway; saw ' + engine.addMax);
+
+  // ---- 4. the picker's shape -----------------------------------------------------
+  const index = read('hub/index.js');
+  assert.match(index, /await Promise\.all\(askers\.map\(async \(p\) =>/,
+    'the addons must be asked for an episode copies together; asking them one after another costs the '
+      + 'viewer the sum of their round trips');
+  assert.match(index, /gateway\.prewarm\(queue\.map\(/,
+    'the press must warm the engine on the copies it is about to walk, not only on the list the title '
+      + 'page happened to show');
+  assert.match(index, /coldEngine >= 2/,
+    'two copies the engine has not read is a fact about the press; it must stop rather than ask the '
+      + 'engine about every seat');
+  assert.match(index, /log\('PLAY TIMING'/,
+    'every press reports where its seconds went, so the next argument about startup cost is settled '
+      + 'by the log');
+  assert.match(index, /queue\.indexOf\(cand\) === 0 \? 4000 : 2500/,
+    'the copy at the front of the walk gets the long look, because it is the one this press is most '
+      + 'likely to play');
+
+  server.close();
+  console.log('PLAY STARTUP COST GATE OK');
+})().catch((e) => { server.close(); console.error(e); process.exit(1); });

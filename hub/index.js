@@ -2982,6 +2982,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   let lastResort = null; // a torrent the gateway could not serve: unplayable here, fine on an engine client
   let slowGateway = null; // a gateway link that resolved but has not proved it can carry this file
   let tooSlow = null; // a gateway link that produced bytes, just not fast enough for this file
+  let coldEngine = 0; // copies the engine has not read yet this press
 
   /**
    * The optional paid resolver, tried before the gateway. It only ever *adds* an answer: disabled, slow
@@ -3370,7 +3371,13 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       { clientOrigin: opts.clientOrigin,
         // A cold torrent's metadata can take much longer than a Play press may. One press gets a short
         // look; the engine keeps the torrent, so the client's own retry finds it already resolved.
-        budgetMs: Math.max(1200, Math.min(2500, deadline - Date.now() - 1200)),
+        // The seat at the front of the walk gets the long look, because it is the copy this press is
+        // most likely to play: measured on a cold episode, three copies handed two and a half seconds
+        // each produced three failures and a 24 s press, while the metadata the engine was fetching
+        // arrived a second or two after the last one gave up.
+        budgetMs: Math.max(1200, Math.min(
+          queue.indexOf(cand) === 0 ? 4000 : 2500,
+          deadline - Date.now() - 1200)),
         // A season pack is one torrent holding the whole season. The engine has to be told which file
         // inside it this press means, or the biggest file wins and a Play on S01E04 plays S01E01.
         want: ep ? { season: ep.season, episode: ep.episode } : null },
@@ -3383,6 +3390,17 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       if (gateway.MODE === 'http') log('GATEWAY MISS', identity, r.reason);
       o.mode = 'direct';
       lastResort = lastResort || { o, cand };
+      // One cold copy is a fact about that copy. Two of them is a fact about this press: the engine is
+      // behind on the swarms and asking it about a third, fourth and fifth torrent in turn is how a
+      // 24 s press with nothing to show for it happens. Stop, answer honestly, and let the engine
+      // catch up on the conversations this press already started — the client's retry lands on them.
+      if (/metadata still arriving|has not read this copy/.test(r.reason)) coldEngine++;
+      if (coldEngine >= 2 && queue.indexOf(cand) < queue.length - 1) {
+        tried.push('the engine is still reading two copies, so the walk stopped and left it catching up');
+        log('PLAY COLD ENGINE', identity, coldEngine + ' copies not read yet',
+          'stopping the walk with ' + (queue.length - queue.indexOf(cand) - 1) + ' copies untried');
+        break;
+      }
       continue;
     }
     o.mode = 'gateway';

@@ -50,6 +50,11 @@ const PUBLIC_ENGINE = process.env.TORR_PUBLIC_URL ? String(process.env.TORR_PUBL
 const PREPARE_BUDGET_MS = Number(process.env.GATEWAY_BUDGET_MS || 6000);
 // A title page has all the time in the world; the Play button has none, so warming runs long.
 const WARM_BUDGET_MS = Number(process.env.GATEWAY_WARM_MS || 15000);
+// How long to wait for the engine's answer to `add` itself. Different from the metadata wait above:
+// on this engine a cold magnet takes 10-20 s just to answer the add, and the engine keeps working on
+// it whether or not anyone is still holding the socket. Giving up at three seconds — which is what
+// this used to be — made the hub abandon work it had started itself and call the copy unready.
+const ADD_WAIT_MS = Number(process.env.GATEWAY_ADD_MS || 12000);
 const PROBE_TIMEOUT_MS = 1500;
 
 // How long a torrent we could not prepare stays blacklisted. "Not yet" and "never" are different facts
@@ -378,6 +383,37 @@ function pump(hash, fileId, fileSize) {
  * And a torrent that contains a folder numbers its files from 1, because index 0 is the folder —
  * asking `/play/<hash>/0` on such a torrent is a 404, so the file id always comes from the engine.
  */
+/**
+ * One engine conversation per torrent, shared by everyone who asks.
+ *
+ * Without this the hub stampededed its own engine. A Play press that finds the metadata not there
+ * yet calls prepare() again, the title page's warm calls it at the same moment, and each call opened
+ * its own `add` — which is the one engine call that is slow (a cold magnet takes the engine 10-20 s
+ * to answer, and it answers its other endpoints in a millisecond). Four seats, a warm and a retry
+ * was six concurrent adds for the same torrent, each with a three-second patience of its own, and
+ * every one of them timed out and blacklisted a copy the engine was still reading.
+ */
+const preparing = new Map(); // ckey -> promise of the engine conversation
+/** How many different torrents may be `add`ed to the engine at once. */
+const ADD_CONCURRENCY = Math.max(1, Number(process.env.GATEWAY_ADD_CONCURRENCY || 2));
+let addBusy = 0;
+const addWaiting = [];
+/** Take one of the engine's add slots; the returned function gives it back. */
+function addSlot() {
+  return new Promise((grant) => {
+    const take = () => {
+      addBusy++;
+      grant(() => {
+        addBusy--;
+        const next = addWaiting.shift();
+        if (next) next(); // hand the slot straight to whoever was waiting for it
+      });
+    };
+    if (addBusy < ADD_CONCURRENCY) take();
+    else addWaiting.push(take);
+  });
+}
+
 async function prepare(source, budgetMs, want) {
   const hash = hashOf(source);
   if (!hash) return null;
@@ -402,13 +438,54 @@ async function prepare(source, budgetMs, want) {
   // The blacklist expires by kind of failure, not by one global timer.
   if (failed && Date.now() - failed.at < (failed.ttl || MISS_DEAD_MS)) return null;
 
-  // Adding is idempotent; doing it again on a live torrent is free. Prefer the magnet when the addon
-  // gave us one (it carries trackers), and fall back to the bare hash, which the engine resolves over
-  // the DHT — slower, but it works.
-  const link = String(source.url || source.link || source.magnet || '').trim() || hash;
-  await enginePost('/torrents', { action: 'add', link, save_to_db: true }, 3000);
+  // One conversation with the engine per torrent, whatever number of callers want it.
+  let job = preparing.get(ckey);
+  if (!job) {
+    job = prepareTorrent(source, hash, ckey, want);
+    preparing.set(ckey, job);
+    job.finally(() => { if (preparing.get(ckey) === job) preparing.delete(ckey); });
+  }
+  // Each caller waits only as long as it is allowed to. The conversation carries on either way, so a
+  // press that ran out of time is not a verdict on the torrent: the next one — the viewer's own retry,
+  // a second and a half later — joins the same conversation and reads its answer instead of being told
+  // the engine had already failed. That mislabel was costing a whole extra press per cold copy.
+  const mine = Math.max(300, budgetMs || PREPARE_BUDGET_MS);
+  const settled = await Promise.race([
+    job.then((v) => ({ done: true, v })).catch(() => ({ done: true, v: null })),
+    new Promise((res) => {
+      const t = setTimeout(() => res({ done: false }), mine);
+      if (t.unref) t.unref();
+    }),
+  ]);
+  if (settled.done) return settled.v;
+  // Not a failure and not a success: the engine is answering this torrent, this press just is not
+  // allowed to keep waiting. Deliberately not written to the miss blacklist — the conversation below
+  // records the real outcome when the engine gives one.
+  return { hash, error: 'metadata still arriving', kind: 'waiting' };
+}
 
-  const deadline = Date.now() + (budgetMs || PREPARE_BUDGET_MS);
+/**
+ * Add this torrent to the engine and wait for it to name the files inside, then record what the
+ * engine said — the good answer in `prepared`, the bad one in the miss blacklist, once per torrent.
+ */
+async function prepareTorrent(source, hash, ckey, want) {
+  // Prefer the magnet when the addon gave us one (it carries trackers), and fall back to the bare
+  // hash, which the engine resolves over the DHT — slower, but it works.
+  const link = String(source.url || source.link || source.magnet || '').trim() || hash;
+  // Adding is idempotent; doing it again on a live torrent is free. The wait is generous because the
+  // engine's own answer is slow for a magnet it has not met (measured 10-20 s on this box) and the
+  // work continues whether or not we are still watching the socket: a three-second patience here used
+  // to make the hub give up on an add it had started itself.
+  const releaseAdd = await addSlot();
+  try {
+    await enginePost('/torrents', { action: 'add', link, save_to_db: true }, ADD_WAIT_MS);
+  } finally {
+    releaseAdd();
+  }
+
+  // The engine's clock, not the press's: this is where the metadata actually lands, and a Play press
+  // that gave up two seconds ago should find the answer here rather than start a third add.
+  const deadline = Date.now() + WARM_BUDGET_MS;
   let lastError = 'metadata not resolved';
   let sawFiles = 0;        // did the engine ever show us the contents of this torrent
   let engineFailed = false; // did the engine itself stop answering mid-prepare
