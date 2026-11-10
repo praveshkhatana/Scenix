@@ -84,7 +84,9 @@ assert.match(theme, /Math\.min\(1\.2, fit\)\) \* textScale\(\)/,
   'the chosen Text size must multiply --s, the one scale factor every shell length derives from');
 
 const access = between('function buildAccess(parent)', '/* ------------------------------------------------------------------ paint */');
-assert.match(access, /ensureSettingsAdmin\(ctx, setting && setting\.lock, 'Enter the Settings PIN to manage sources'\)/,
+assert.match(access, /if \(!hasPin\) \{/,
+  'a household with no Settings PIN must be asked to create one before Sources opens, as the TV does');
+assert.match(access, /ensureSettingsAdmin\(ctx, lockNow, 'Enter the Settings PIN to manage sources'\)/,
   'the Sources entry must prove the household PIN before opening the pane');
 assert.match(access, /sourcesOpen = true;/,
   'and only then may the Sources section join the rail');

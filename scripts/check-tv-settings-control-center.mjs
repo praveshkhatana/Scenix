@@ -41,8 +41,18 @@ assert.match(
 );
 assert.match(
   source,
-  /private fun addAreaGrid\(areas: List<ControlArea>\)[\s\S]*?card\.nextFocusLeftId[\s\S]*?card\.nextFocusRightId[\s\S]*?card\.nextFocusDownId/,
-  'overview cards must have explicit two-column D-pad links rather than relying on geometry',
+  /private fun paintHome\(p: JSONObject\)[\s\S]*?addGroup\("At a glance"\)[\s\S]*?summaryRow\(/,
+  'the Overview must be a read-only summary of the active profile and household',
+);
+assert.doesNotMatch(
+  source,
+  /addAreaGrid|ControlArea/,
+  'the Overview must not redraw the area rail as a second menu of cards',
+);
+assert.match(
+  source,
+  /private fun summaryRow\(label: String, value: String, note: String\)[\s\S]*?isFocusable = false[\s\S]*?contentDescription = listOf\(label, value, note\)/,
+  'summary rows must stay off the remote path while announcing their label, value and reason',
 );
 assert.match(
   source,
@@ -51,13 +61,13 @@ assert.match(
 );
 assert.match(
   source,
-  /pendingGridDown[\s\S]*?card\.nextFocusDownId = row\.id/,
-  'a recovery row below the overview grid must remain reachable by pressing Down',
+  /private fun wireControlCentreFocus\(\)[\s\S]*?val first = firstRow \?: run \{[\s\S]*?tab\.nextFocusDownId = tab\.id[\s\S]*?return/,
+  'a summary-only area must keep the remote on its rail chip instead of jumping into another area',
 );
 assert.match(
   source,
-  /contentDescription = listOf\(area\.label, area\.value, area\.note\)[\s\S]*?joinToString\("\. "\)/,
-  'a control-centre card must announce its label, selected value and explanation together',
+  /contentDescription = listOf\(label, value, note\)[\s\S]*?joinToString\("\. "\)/,
+  'a summary row must announce its label, value and explanation together',
 );
 assert.match(
   source,

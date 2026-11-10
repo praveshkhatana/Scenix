@@ -558,15 +558,9 @@ class BrowseActivity : Activity() {
                 startActivity(Intent(this, LiveChannelsActivity::class.java).putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
             }
         }
-        // Sources are a first-class household destination, not a deep Settings row. Keep this in
-        // the left rail rather than crowding the playback-oriented top bar; AddonsActivity receives
-        // the active profile and fails closed unless it has independently confirmed an adult.
-        entries += LeftRail.Entry("Sources", R.drawable.ic_chip_globe, "sources") {
-            startActivity(
-                Intent(this, AddonsActivity::class.java)
-                    .putExtra(AddonsActivity.EXTRA_PROFILE, profileId)
-            )
-        }
+        // Sources are a household control, not an everyday destination: the only door is Settings →
+        // Access & safety, where the household Settings PIN is asked before the directory is drawn.
+        // A left-rail entry here bypassed that gate for every adult profile.
         entries += LeftRail.Entry("Settings", R.drawable.ic_nav_settings, "settings") {
             startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
         }

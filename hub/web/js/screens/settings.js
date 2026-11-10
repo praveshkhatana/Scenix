@@ -765,17 +765,29 @@ export function screen(ctx) {
     // tokens, not a shelf a child should be able to browse from the couch.
     if (caps.addonAdmin) {
       const active = (installed || []).filter((source) => source && source.enabled !== false).length;
+      const lockNow = (setting && setting.lock) || { enabled: false, pinSet: false };
+      const hasPin = lockNow.enabled === true || lockNow.pinSet === true;
       const gS = group('Sources',
         'Add-ons, reviewed and community directories, owner source packs and direct copies. The household Settings PIN is asked before the list opens.');
       openRow(gS, 'Sources',
         'Discover, install, enable or remove the sources this hub reads.',
         async () => {
-          if (!await ensureSettingsAdmin(ctx, setting && setting.lock, 'Enter the Settings PIN to manage sources')) return;
+          if (!hasPin) {
+            // No PIN yet means no one to ask. Creating one here is what the television does before
+            // its Sources rows appear: the directory is a household control, not a shelf a child can
+            // browse because the household never got round to setting a number.
+            const fresh = await ctx.enterSettingsPin('Choose a 4 to 8 digit Settings PIN to protect Sources');
+            if (!fresh) return;
+            try { await saveSettingsLock({ enabled: true, pin: fresh }, 'Settings lock turned on; Sources is now protected'); }
+            catch (error) { ctx.toast(lockError(error, 'The hub would not store that Settings PIN')); return; }
+          } else if (!await ensureSettingsAdmin(ctx, lockNow, 'Enter the Settings PIN to manage sources')) {
+            return;
+          }
           sourcesOpen = true;
           paint();
           openSection('sources');
         },
-        { valueText: sourcesOpen ? 'Open' : `${active} active · PIN` });
+        { valueText: sourcesOpen ? 'Open' : (hasPin ? `${active} active · PIN` : 'Set a PIN') });
       parent.appendChild(gS);
     }
   }

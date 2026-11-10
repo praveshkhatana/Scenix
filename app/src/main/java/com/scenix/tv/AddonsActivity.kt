@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.Screens
@@ -29,7 +30,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
-/** The Hub's reviewed directory plus installed sources; manual manifests stay in an advanced lane. */
+/**
+ * The Hub's reviewed directory plus installed sources; manual manifests stay in an advanced lane.
+ *
+ * Reached only from Settings → Access & safety, and the household Settings PIN is asked again at
+ * entry so the directory cannot be drawn by a stale intent that skipped that gate.
+ */
 class AddonsActivity : Activity() {
 
     private lateinit var app: AppContext
@@ -39,6 +45,10 @@ class AddonsActivity : Activity() {
     private lateinit var status: TextView
     private var installed: JSONArray? = null
     private var profileVerified = false
+    // The Settings PIN gates the directory itself, not only its writes. Proved once per visit —
+    // either by this screen's own pad or by Settings, which passes the fact along when it opens us.
+    private var settingsGatePassed = false
+    private var settingsProvedByCaller = false
     private var reviewed: JSONArray? = null
     // The reviewed directory is an optional Hub capability. Keep its loading state distinct from an
     // empty result so the first render never claims a directory is unavailable while it is in flight.
@@ -93,8 +103,9 @@ class AddonsActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         app = (application as ScenixApp).ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty().trim()
-        // This page is also reachable from the Browse rail. Never infer an adult identity from a
-        // missing extra: a kids/unknown route must not render the household source directory at all.
+        settingsProvedByCaller = intent?.getBooleanExtra(EXTRA_SETTINGS_PROVED, false) == true
+        // Sources is a household control, reached only from Settings → Access & safety. A missing
+        // profile still fails closed: a kids/unknown route must not render the source directory at all.
         if (profileId.isBlank()) {
             finish()
             return
@@ -104,7 +115,7 @@ class AddonsActivity : Activity() {
             val wall = Screens.wall(app)
             if (wall != null) background = wall else setBackgroundColor(app.theme.bg)
         }
-        val (bar, barStatus) = Screens.topBar(this, app, "Source library") { finish() }
+        val (bar, barStatus) = Screens.topBar(this, app, "Sources") { finish() }
         status = barStatus
         root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(88f)))
 
@@ -146,8 +157,49 @@ class AddonsActivity : Activity() {
                 return@profiles
             }
             profileVerified = true
-            load()
+            requireSettingsGate()
         }
+    }
+
+    /**
+     * The Settings PIN guards the source directory itself, not only the writes. Settings already asks
+     * it before its Sources rows, but this screen is an Activity and a stale intent, a deep link or a
+     * future entry point must not be able to draw the household's sources without the number. A live
+     * admin capability from this visit passes without asking again; a hub with no PIN set has no
+     * secret to check, and its first protected write still creates the same gate in Settings.
+     */
+    private fun requireSettingsGate() {
+        if (settingsGatePassed) { load(); return }
+        status.text = "Checking the Settings lock…"
+        api.settings { root, error ->
+            if (isFinishing || isDestroyed) return@settings
+            if (root == null) {
+                status.text = error ?: "The hub is not answering"
+                return@settings
+            }
+            val household = root.optJSONObject("settings")
+            val lock = household?.optJSONObject("lock")
+            val enabled = lock?.optBoolean("enabled") == true
+            val pinSet = lock?.optBoolean("pinSet") == true
+            val session = app.prefs.adminSessionFor(HubEndpoint.base(this)).isNotBlank()
+            if ((!enabled && !pinSet) || session || settingsProvedByCaller) {
+                settingsGatePassed = true
+                load()
+                return@settings
+            }
+            askSettingsPin()
+        }
+    }
+
+    private fun askSettingsPin() {
+        status.text = "Settings PIN required"
+        startActivityForResult(
+            Intent(this, TextEntryActivity::class.java)
+                .putExtra(TextEntryActivity.EXTRA_TITLE, "Settings PIN required")
+                .putExtra(TextEntryActivity.EXTRA_HINT, "Enter the 4 to 8 digit household Settings PIN")
+                .putExtra(TextEntryActivity.EXTRA_NUMERIC_PIN, true),
+            REQ_SETTINGS_GATE,
+        )
     }
 
     private fun load() {
@@ -2273,6 +2325,31 @@ class AddonsActivity : Activity() {
     @Deprecated("Activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_SETTINGS_GATE) {
+            if (resultCode != RESULT_OK) {
+                // Back from the PIN pad is a decision not to open the household's sources.
+                finish()
+                return
+            }
+            val pin = data?.getStringExtra(TextEntryActivity.EXTRA_RESULT).orEmpty().trim()
+            if (!pin.matches(Regex("^\\d{4,8}$"))) {
+                status.text = "Use 4 to 8 digits for the Settings PIN"
+                askSettingsPin()
+                return
+            }
+            status.text = "Checking Settings PIN…"
+            api.unlockSettings(pin) { ok, error ->
+                if (isFinishing || isDestroyed) return@unlockSettings
+                if (ok) {
+                    settingsGatePassed = true
+                    load()
+                    return@unlockSettings
+                }
+                status.text = error ?: "That Settings PIN is not right"
+                if (error?.contains("too many", ignoreCase = true) != true) askSettingsPin()
+            }
+            return
+        }
         if (requestCode == REQ_SETTINGS_PIN) {
             val retry = pendingSettingsRetry
             pendingSettingsRetry = null
@@ -2343,6 +2420,12 @@ class AddonsActivity : Activity() {
     companion object {
         /** Required trusted-adult identity for every source-directory entry point. */
         const val EXTRA_PROFILE = "profile"
+        /**
+         * Set by Settings → Access & safety once it has asked the household Settings PIN in this
+         * visit. It is not an authority of its own: the Hub still refuses every write without its
+         * admin session, and this only saves a second identical prompt in the common case.
+         */
+        const val EXTRA_SETTINGS_PROVED = "settingsProved"
         private const val ROW_LANE_CONTROL = 1
         private const val ROW_SECTION = 2
         private const val ROW_DIRECTORY_CONTROL = 3
@@ -2354,6 +2437,7 @@ class AddonsActivity : Activity() {
         private const val REQ_SETTINGS_PIN = 43
         private const val REQ_DIRECTORY_SEARCH = 44
         private const val REQ_COMMUNITY_SEARCH = 45
+        private const val REQ_SETTINGS_GATE = 46
         private const val COMMUNITY_DEFAULT_TYPE = "movie"
         private const val COMMUNITY_QUERY_MAX = 80
         private const val COMMUNITY_NOTICE_MAX = 280

@@ -64,6 +64,9 @@ class SettingsActivity : Activity() {
     // Settings has household-level routes, so a profile lookup must fail closed.  A profile is
     // allowed to see them only after this screen has positively identified it as an adult.
     private var profileKind = "unknown"
+    // The name shown on the Overview summary. Kept beside `profileKind` because both come from the
+    // same trusted profile snapshot and both must clear when that snapshot fails.
+    private var profileName = ""
     private var pinLayer: FrameLayout? = null
     private var phoneLayer: FrameLayout? = null
     private var pinIsGate = false
@@ -99,9 +102,6 @@ class SettingsActivity : Activity() {
      */
     private val controlsByKey = LinkedHashMap<String, View>()
     private val entryControls = ArrayList<View>()
-    // A two-column overview can be followed by a recovery action (for example, reconnecting
-    // household access). Hold its bottom row until that action is appended, so DOWN remains total.
-    private val pendingGridDown = ArrayList<View>()
     private var activeSectionTab: View? = null
     // The first onResume follows onCreate and the initial load below. Later resumes are returns from
     // child administration screens, where another device may have changed or expired the Settings
@@ -233,6 +233,7 @@ class SettingsActivity : Activity() {
                 // cannot keep an old adult/household assertion alive. On first entry there is no
                 // snapshot to retain, so reveal the existing status line instead of a blank wall.
                 profileKind = "unknown"
+                profileName = ""
                 householdSettingsReady = false
                 lockInfo = null
                 val safeSection = allowedSection(activeSection)
@@ -252,6 +253,7 @@ class SettingsActivity : Activity() {
             // the fresh snapshot actually revokes the section that was open; normal adult returns
             // retain their section, scroll position and focused control.
             profileKind = if (profile != null && !profile.kids) "adult" else "kids"
+            profileName = profile?.name.orEmpty()
             val root = nextSettings
             if (root != null) {
                 val household = root.optJSONObject("settings")
@@ -373,7 +375,6 @@ class SettingsActivity : Activity() {
         firstRow = null
         controlsByKey.clear()
         entryControls.clear()
-        pendingGridDown.clear()
         activeSectionTab = null
         val p = prefs ?: return
 
@@ -390,7 +391,10 @@ class SettingsActivity : Activity() {
         renderedSection = activeSection
         wireControlCentreFocus()
 
-        val target = if (keepFocus) controlsByKey[keepKey] ?: firstRow else firstRow
+        // Overview is read-only, so it may have no control of its own. The remote then starts on the
+        // area chip it is already looking at, which is also the only way to leave that summary.
+        val target = if (keepFocus) controlsByKey[keepKey] ?: firstRow ?: activeSectionTab
+            else firstRow ?: activeSectionTab
         rows.post {
             if (isFinishing || isDestroyed) return@post
             contentScroll.scrollTo(0, keepScrollY.coerceAtLeast(0))
@@ -399,14 +403,6 @@ class SettingsActivity : Activity() {
     }
 
     // ---- control-centre shell --------------------------------------------------------------
-
-    private data class ControlArea(
-        val key: String,
-        val label: String,
-        val value: String,
-        val note: String,
-        val action: () -> Unit,
-    )
 
     private fun controlKey(key: String): String = activeSection.name.lowercase() + ":" + key
 
@@ -588,7 +584,12 @@ class SettingsActivity : Activity() {
     /** The first actionable row returns UP to the active rail chip; rail DOWN returns to content. */
     private fun wireControlCentreFocus() {
         val tab = activeSectionTab ?: return
-        val first = firstRow ?: return
+        val first = firstRow ?: run {
+            // A summary section has nothing below the rail. Keep DOWN where it is instead of letting
+            // the focus finder jump into a row that does not belong to this area.
+            tab.nextFocusDownId = tab.id
+            return
+        }
         tab.nextFocusDownId = first.id
         for (entry in entryControls) entry.nextFocusUpId = tab.id
     }
@@ -636,164 +637,62 @@ class SettingsActivity : Activity() {
         )
     }
 
-    private fun addAreaGrid(areas: List<ControlArea>) {
-        if (areas.isEmpty()) return
-        val grid = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            clipChildren = false
-            clipToPadding = false
-        }
-        val cards = ArrayList<View>()
-        for (start in areas.indices step 2) {
-            val line = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                clipChildren = false
-                clipToPadding = false
-            }
-            val last = minOf(start + 2, areas.size)
-            for (index in start until last) {
-                val area = areas[index]
-                val card = areaCard(area)
-                cards.add(card)
-                registerControl(area.key, card, entry = start == 0)
-                if (firstRow == null) firstRow = card
-                line.addView(
-                    card,
-                    LinearLayout.LayoutParams(0, app.theme.px(112f), 1f).apply {
-                        if (index % 2 == 0 && index + 1 < areas.size) rightMargin = app.theme.px(10f)
-                    },
-                )
-            }
-            if (last - start == 1) {
-                line.addView(View(this), LinearLayout.LayoutParams(0, app.theme.px(112f), 1f))
-            }
-            grid.addView(
-                line,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(112f)).apply {
-                    if (last < areas.size) bottomMargin = app.theme.px(10f)
-                },
+    /**
+     * The Overview is a summary, not a second copy of the area rail. The rail above is the one and
+     * only way to switch areas; drawing the same six destinations again as a card grid made the page
+     * look like two menus stacked on top of each other. These rows are read-only on purpose: nothing
+     * here can be changed by accident, and every number restates what its area already owns.
+     */
+    private fun paintHome(p: JSONObject) {
+        val locked = lockInfo?.optBoolean("enabled") == true
+        addGroup("At a glance")
+        summaryRow(
+            "Watching as",
+            profileName.ifBlank { if (isTrustedAdult()) "Adult profile" else "Child profile" },
+            "The person whose audio, subtitles and quality these are",
+        )
+        summaryRow(
+            "Audio language",
+            languageName(firstOf(p, "audioLanguages")),
+            "First track the hub looks for",
+        )
+        summaryRow(
+            "Video quality",
+            qualityLabel(p.optString("qualityCap", "auto")),
+            "Best copy this profile is offered",
+        )
+        summaryRow(
+            "This TV",
+            backendSummary(),
+            "Where this television gets its library",
+        )
+        summaryRow(
+            "Settings lock",
+            when {
+                !isTrustedAdult() -> "Adult only"
+                locked -> "PIN on"
+                else -> "PIN off"
+            },
+            "Protects household controls and Sources",
+        )
+        if (isTrustedAdult() && householdSettingsReady) {
+            summaryRow(
+                "Sources",
+                "Access & safety",
+                "Add-ons and source packs sit behind the Settings PIN",
+            )
+            addAvailabilityNotice(
+                "Nothing here changes a setting",
+                "Left and Right switch areas above; this page stays a summary.",
             )
         }
-        for (index in cards.indices) {
-            val card = cards[index]
-            val column = index % 2
-            val rowStart = index - column
-            val left = cards.getOrNull(rowStart)
-            val right = cards.getOrNull(rowStart + 1)?.takeIf { (rowStart + 1) / 2 == rowStart / 2 }
-            card.nextFocusLeftId = if (column == 1) left?.id ?: card.id else card.id
-            card.nextFocusRightId = if (column == 0) right?.id ?: card.id else card.id
-            card.nextFocusUpId = cards.getOrNull(index - 2)?.id ?: card.id
-            // If the final grid line has one card, DOWN from the card above its empty column lands
-            // on that real final card rather than becoming a dead edge.
-            val below = cards.getOrNull(index + 2) ?: cards.getOrNull(rowStart + 2)
-            card.nextFocusDownId = below?.id ?: card.id
-            if (below == null) pendingGridDown.add(card)
-        }
-        rows.addView(
-            grid,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = Screens.listGap(app)
-            },
-        )
-    }
-
-    private fun areaCard(area: ControlArea): View {
-        val radius = app.theme.radius("card", Screens.listRadius(app).toFloat())
-        val base = Screens.rowFill(app)
-        val focused = Views.rounded(
-            app.theme.colorOr("listFillFocused", app.theme.surface2),
-            radius,
-            maxOf(1, app.theme.focusRingPx),
-            app.theme.focusRingColor,
-        )
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(app.theme.px(18f), app.theme.px(13f), app.theme.px(18f), app.theme.px(12f))
-            background = base
-            isFocusable = true
-            isClickable = true
-            contentDescription = listOf(area.label, area.value, area.note).filter { it.isNotBlank() }.joinToString(". ")
-            setOnClickListener { area.action() }
-        }
-        val headline = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val title = Views.text(app, "li", 23f, app.theme.ink, area.label, bold = true, maxLines = 1)
-        headline.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val value = Views.text(app, "liMeta", 17f, app.theme.colorOr("panelValue", app.theme.brand), area.value,
-            bold = true, gravity = Gravity.END, maxLines = 1)
-        headline.addView(value, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        headline.addView(
-            Views.text(app, "li", 24f, app.theme.ink3, "›", gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(app.theme.px(20f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                leftMargin = app.theme.px(8f)
-            },
-        )
-        card.addView(headline)
-        val note = Views.text(app, "meta", 16f, app.theme.ink2, area.note, maxLines = 1)
-        card.addView(
-            note,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(5f)
-            },
-        )
-        Focus.attach(
-            card,
-            card,
-            app,
-            radius,
-            scale = false,
-            elevate = false,
-            glowInset = app.theme.focusGlowInsetSm,
-            control = true,
-            onFocus = { hasFocus ->
-                card.background = if (hasFocus) focused else base
-                title.setTextColor(if (hasFocus) app.theme.colorOr("wallInk", app.theme.ink) else app.theme.ink)
-                value.setTextColor(if (hasFocus) app.theme.colorOr("wallInk2", app.theme.ink2) else app.theme.colorOr("panelValue", app.theme.brand))
-                note.setTextColor(if (hasFocus) app.theme.colorOr("wallInk2", app.theme.ink2) else app.theme.ink2)
-            },
-        )
-        return card
-    }
-
-    /** The concise first screen: each card is a setting scope, not another hidden sub-menu. */
-    private fun paintHome(p: JSONObject) {
-        addGroup("Settings sections")
-        val areas = ArrayList<ControlArea>()
-        areas.add(ControlArea(
-            "watching",
-            "Watching",
-            languageName(firstOf(p, "audioLanguages")),
-            "Audio, subtitles and quality",
-        ) { openSection(SettingsSection.WATCHING) })
 
         if (!isTrustedAdult()) {
-            // These were already available from a child profile: controllers and app updates are
-            // device conveniences, not household configuration. The device section itself still
-            // omits Hub and local-library controls for a child.
-            areas.add(ControlArea(
-                "device",
-                "This TV",
-                "Controllers and updates",
-                "Controllers and updates",
-            ) { openSection(SettingsSection.DEVICE) })
-            addAreaGrid(areas)
             addAvailabilityNotice(
                 "Household areas are protected",
                 "Adult profile required for household controls.",
             )
-            return
-        }
-
-        if (!householdSettingsReady) {
-            areas.add(ControlArea(
-                "device",
-                "This TV",
-                "Controllers and updates",
-                "Controllers and updates",
-            ) { openSection(SettingsSection.DEVICE) })
-            addAreaGrid(areas)
+        } else if (!householdSettingsReady) {
             addAvailabilityNotice(
                 "Household controls are reconnecting",
                 "Waiting for Hub confirmation.",
@@ -804,35 +703,7 @@ class SettingsActivity : Activity() {
                 "Get a current Hub snapshot",
                 chevron = true,
             ) { load() }
-            return
         }
-
-        areas.add(ControlArea(
-            "appearance",
-            "Appearance",
-            themeName(),
-            "Theme and readable size",
-        ) { openSection(SettingsSection.APPEARANCE) })
-        areas.add(ControlArea(
-            "device",
-            "This TV",
-            backendSummary(),
-            "Hub, controllers, files and updates",
-        ) { openSection(SettingsSection.DEVICE) })
-        areas.add(ControlArea(
-            "household",
-            "Household",
-            "Shared controls",
-            "People, library and live TV",
-        ) { openSection(SettingsSection.HOUSEHOLD) })
-        val adminOn = lockInfo?.optBoolean("enabled") == true
-        areas.add(ControlArea(
-            "access",
-            "Access & safety",
-            if (adminOn) "PIN on" else "PIN off",
-            "PIN lock and Sources",
-        ) { openSection(SettingsSection.ACCESS) })
-        addAreaGrid(areas)
     }
 
     private fun paintWatching(p: JSONObject) {
@@ -1122,6 +993,8 @@ class SettingsActivity : Activity() {
             startActivity(
                 Intent(this, AddonsActivity::class.java)
                     .putExtra(AddonsActivity.EXTRA_PROFILE, profileId)
+                    // The PIN was just proved here; carry that so the directory does not ask twice.
+                    .putExtra(AddonsActivity.EXTRA_SETTINGS_PROVED, true)
             )
         }
         addGroup("Cached copies")
@@ -1145,6 +1018,12 @@ class SettingsActivity : Activity() {
         }
         if (isSourcesUnlocked()) {
             addSourcesRows()
+            // Say why these rows are suddenly here, so an owner does not mistake the unlock for a
+            // settings screen that lost its lock.
+            addAvailabilityNotice(
+                "Sources unlocked for this visit",
+                "They lock again when Settings closes.",
+            )
         } else {
             addGroup("Sources")
             val needsSetup = !pinSet && !adminOn
@@ -1283,12 +1162,6 @@ class SettingsActivity : Activity() {
         val isEntry = firstRow == null
         val row = controlRow(label, value, note, chevron, action)
         if (row.id == View.NO_ID) row.id = View.generateViewId()
-        // A grid is nested inside its visual container, while rows are direct children. Make any
-        // last grid cards name this new row before linking the normal one-column sequence.
-        if (pendingGridDown.isNotEmpty()) {
-            for (card in pendingGridDown) card.nextFocusDownId = row.id
-            pendingGridDown.clear()
-        }
         // Group labels and availability explanations are never remote stops. Link only real
         // controls so DOWN walks every setting and does not jump into the fixed top chrome.
         var previous: View? = null
@@ -1312,6 +1185,60 @@ class SettingsActivity : Activity() {
         )
         if (firstRow == null) firstRow = row
         registerControl("row:$label", row, entry = isEntry)
+    }
+
+    /**
+     * A read-only line: label, value, and a one-sentence reason. It is deliberately not focusable —
+     * a summary that the remote can land on is a promise of an action, and there is none here.
+     */
+    private fun summaryRow(label: String, value: String, note: String) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = app.theme.px(64f)
+            setPadding(app.theme.px(20f), app.theme.px(8f), app.theme.px(18f), app.theme.px(8f))
+            background = Screens.rowFill(app)
+            isFocusable = false
+            isClickable = false
+            contentDescription = listOf(label, value, note)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString(". ")
+        }
+        val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        copy.addView(Views.text(app, "li", 21f, app.theme.ink, label, bold = true, maxLines = 1))
+        if (note.isNotBlank()) {
+            copy.addView(
+                Views.text(app, "meta", 15f, app.theme.ink2, note, maxLines = 1),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = app.theme.px(2f)
+                },
+            )
+        }
+        row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (value.isNotBlank()) {
+            row.addView(
+                Views.text(
+                    app,
+                    "liMeta",
+                    18f,
+                    app.theme.colorOr("panelValue", app.theme.brand),
+                    value,
+                    bold = true,
+                    gravity = Gravity.END,
+                    maxLines = 1,
+                ),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    leftMargin = app.theme.px(18f)
+                },
+            )
+        }
+        rows.addView(
+            row,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = Screens.listGap(app)
+            },
+        )
     }
 
     /** Dense operational row: current value stays visible without opening a second screen. */
