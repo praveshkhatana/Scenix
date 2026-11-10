@@ -3515,9 +3515,16 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         // A fair share of the time that is left, not all of it: three copies inside eleven seconds means
         // the copy tested third must not be judged on a 1.5 s glance while the first had four. The reader
         // is left open either way, so a copy passed over keeps warming in the background and the next
-        // press finds its bytes already in RAM.
+        // press finds its bytes already in RAM. The front seat is the exception: it is the copy this
+        // press is about to play (and, since seats are ordered by what the engine has already read,
+        // usually the warm one), and a sixth of the budget was measured to be less than this engine's
+        // own first-byte time on a season pack — six copies at 1.1 s each proved nothing about any of
+        // them, while one copy given four seconds proved everything.
         budgetMs: Math.max(1000, Math.min(readahead.cfg().sustainMs,
-          Math.floor(Math.max(0, deadline - Date.now() - 900) / Math.max(1, queue.length - queue.indexOf(cand))))),
+          queue.indexOf(cand) === 0
+            ? Math.max(0, deadline - Date.now() - 900)
+            : Math.floor(Math.max(0, deadline - Date.now() - 900)
+              / Math.max(1, queue.length - queue.indexOf(cand))))),
       });
       clock.mark('measure', Date.now() - susAt);
     } else {

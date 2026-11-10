@@ -161,6 +161,9 @@ const server = http.createServer((req, res) => {
   assert.match(index, /queue\.indexOf\(cand\) === 0 \? 4000 : 2500/,
     'the copy at the front of the walk gets the long look, because it is the one this press is most '
       + 'likely to play');
+  assert.match(index, /queue\.indexOf\(cand\) === 0\s*\? Math\.max\(0, deadline - Date\.now\(\) - 900\)/,
+    'and the front seat keeps the walk\'s time to measure with: six copies at a sixth of the budget '
+      + 'each is less than this engine\'s first-byte time, so nothing gets proved about any of them');
   assert.match(index, /_streamId: showAddr/,
     'a series press must keep the show address\'s copies - the season packs a title page warmed - and '
       + 'tag them with the address they were published under, or the walk only ever asks the engine '
