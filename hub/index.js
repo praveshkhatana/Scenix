@@ -2007,11 +2007,16 @@ function episodeStreamId(item, ep) {
 async function fetchEpisodeSources(item) {
   const askers = registry.providers.filter((p) => typeof p.fetchStreams === 'function');
   const ask = async () => {
-    for (const p of askers) {
+    // Every addon at once. Asked one after another — which is how this read until it was measured — a
+    // press waited on the SUM of their round trips: four addons at this hub each get three seconds,
+    // and a Play on a series episode spent 12.7 s of a 8 s budget collecting a copy list before it
+    // looked at a single copy. The calls are independent, `withBudget` caps each one on its own, and
+    // the list is re-ranked below whatever order they land in.
+    await Promise.all(askers.map(async (p) => {
       const extra = await withBudget(Promise.resolve().then(() => p.fetchStreams(item.streamId)),
         META_BUDGET_MS, [], 'episode streams ' + p.id);
       if (extra && extra.length) item.sources.push(...extra);
-    }
+    }));
   };
   await ask();
   // The episode question was the right one and an addon is still fetching that very stream. Say
@@ -2923,6 +2928,21 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   const ranked = explicit ? [source] : seated.slice();
   const queue = ranked.slice(0, PLAY_MAX_TRIES);
   clock.counts.seats = queue.length;
+  // Ask the engine about every seated copy at once, before the walk starts.
+  //
+  // A cold torrent costs the press a couple of seconds of metadata wait each, and the walk used to pay
+  // that one copy at a time: a measured press spent 7.8 s of its 24 s asking the engine about three
+  // copies in turn. The title page already warms the top four of the list it was showing, but a series
+  // press addresses the EPISODE, whose copies are a different set of torrents — so that warm lands on
+  // hashes this press never asks about. Firing the same warm here, over the seats this press will
+  // actually walk, waits on nothing and makes the second and third copies arrive already resolved.
+  if (gateway.MODE === 'http' && queue.length > 1) {
+    gateway.prewarm(queue.map((s) => {
+      if (!s || s.kind !== 'torrent') return s;
+      const magnet = magnetOf(kept.streamId || identity, s);
+      return magnet ? Object.assign({}, s, { url: magnet }) : s;
+    }), ep ? { season: ep.season, episode: ep.episode } : null);
+  }
   // Then the copies this connection can actually feed. Once the hub has measured the engine's rate, a
   // 6 GB 4K copy stops competing with a 900 MB 720p one: the smaller is tried first because the bigger
   // one is known to stall. A source that is not a torrent gets the same standing as one that fits,
