@@ -3501,6 +3501,11 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       continue;
     }
     let m = null;
+    // Before measuring, give this file the torrent's whole pipe: the title page's warm, an earlier
+    // press and this one can all be holding readers on the same torrent at different files, and a
+    // sample taken while the swarm is feeding those sees nothing arrive and calls a working copy dead.
+    try { readahead.dropSiblings(r.hash, r.fileId, 'this file is being measured now'); }
+    catch (e) { /* nothing open is nothing to close */ }
     const buf = readahead.acquire({ hash: r.hash, fileId: r.fileId });
     if (buf) {
       readahead.noteNeed({ hash: r.hash, fileId: r.fileId }, needs);
@@ -3714,6 +3719,13 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     out = fallback.o;
     source = fallback.cand;
     tried.push('nothing better than ' + labelOf(source));
+  }
+  // One torrent, one pipe. The readers this box keeps open for other files of the same torrent split
+  // whatever the swarm delivers, and a measured press then sees nothing arrive for the very file it is
+  // judging. The copy that won keeps its cushion; its siblings in the same torrent are closed.
+  if (out && out.mode === 'gateway' && out.torrent) {
+    try { readahead.dropSiblings(out.torrent.hash, out.torrent.fileId, 'press picked another file of this torrent'); }
+    catch (e) { /* a buffer that is already gone is not a reason to fail a press */ }
   }
   if (!out || !out.url) {
     // The viewer sees "nothing played" either way; the difference is whether the log can say why.

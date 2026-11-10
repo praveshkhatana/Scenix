@@ -940,6 +940,28 @@ function drop(copy, why) {
   log('READAHEAD DROP', copy.tag(), 'heldMB=' + Math.round(copy.held() / MB), 'reason=' + why);
 }
 
+/**
+ * Close every buffer of one torrent except the file that is about to play.
+ *
+ * A torrent is one pipe: whatever the swarm can deliver is split between the readers this box keeps
+ * open. Measured on a season pack with three readers at once — the title page's warm, an earlier press,
+ * and this one — the file being measured received nothing in four seconds while the swarm was carrying
+ * 1.5 Mbps to another file of the same torrent, and the press answered "warming" for a show that plays.
+ * Only the file the viewer is about to watch keeps its cushion; the others cost the film the bandwidth
+ * they hold.
+ */
+function dropSiblings(hash, fileId, why) {
+  if (!hash) return 0;
+  const keep = String(hash) + ':' + String(fileId);
+  let dropped = 0;
+  for (const [k, copy] of [...copies]) {
+    if (k === keep || !k.startsWith(String(hash) + ':')) continue;
+    drop(copy, why || 'another file of this torrent is the one playing');
+    dropped++;
+  }
+  return dropped;
+}
+
 /** Tell a buffer what bitrate its copy needs, so "slow" can mean something other than a guess. */
 function noteNeed(who, needMbps) {
   const copy = get(who);
@@ -1658,7 +1680,7 @@ async function cushionUrl(url, headers, opts = {}) {
 }
 
 module.exports = {
-  cfg, acquire, get, drop, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
+  cfg, acquire, get, drop, dropSiblings, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
   markDeadHost, deadHostFor, originRefusal,
   sustain, preBuffer, prime, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
   statsFor, cushionUrl,
