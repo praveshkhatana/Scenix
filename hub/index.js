@@ -2741,12 +2741,15 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       // is this episode — the engine is told which file inside the pack the press means.
       const showAddr = item.streamId || item.identity;
       packCopies = (item.sources || [])
-        // Only the copies that were published under the show address carry over. A list this hub
-        // addressed at a previous episode holds that episode's copies too, and re-inheriting them made
-        // the tile grow by a handful of copies on every press — measured at 160 rows for one children's
-        // show, with the seats drawn from a list mostly about other episodes. The tagged ones are what
-        // an earlier press of this branch kept from the show address.
-        .filter((s) => s && s.kind === 'torrent' && (s._streamId || !item.streamId || item.streamId === item.identity))
+        // Only copies that could be THIS episode carry over. A list this hub addressed at a previous
+        // episode holds that episode's own copies too, and re-inheriting them made the tile grow by a
+        // handful of copies on every press — measured at 160 rows for one children's show, with the
+        // seats drawn from a list mostly about other episodes. Tagged copies and the untagged list of a
+        // tile addressed at the show itself pass, and so does a season pack: its label names no
+        // episode (`1080p · 2.4 GB`), and it is the copy the engine is most likely to have open.
+        .filter((s) => s && s.kind === 'torrent'
+          && (s._streamId || !item.streamId || item.streamId === item.identity
+            || episodeInLabel(labelOf(s), ep)))
         .map((s) => Object.assign({}, s, { _streamId: showAddr }));
       item.streamId = epAddr;
       item.sources = [];
@@ -2762,7 +2765,14 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         && gateway.holds({ ...s, url: magnetOf(s._streamId, s) }));
       if (warmPack) {
         // A separate item so the background fetch cannot mutate the list this press is walking.
-        fetchEpisodeSources(Object.assign({}, item, { sources: [] })).catch(() => {});
+        const fill = Object.assign({}, item, { sources: [] });
+        fetchEpisodeSources(fill).then(() => {
+          // Keep what it found on the tile for the next press — the addons' own cache already has it,
+          // but a tile whose list is non-empty never asks again, so the copies have to land here too.
+          if (item.streamId !== epAddr) return; // the tile moved on to another address while it ran
+          const have = new Set((item.sources || []).map((s) => merge.sourceKey(s)));
+          for (const s of fill.sources || []) if (!have.has(merge.sourceKey(s))) item.sources.push(s);
+        }).catch(() => {});
         item.sources = packCopies.slice();
         usedWarmPack = true;
       }

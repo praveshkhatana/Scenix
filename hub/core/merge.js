@@ -175,4 +175,4 @@ function mergeItems(items, priorities = {}) {
   return merged[0] || null;
 }
 
-module.exports = { dedupe, mergeItems, rankSources, blankItem, unionEpisodes, normalizeArt, FIELDS };
+module.exports = { dedupe, mergeItems, rankSources, blankItem, unionEpisodes, normalizeArt, FIELDS, sourceKey };

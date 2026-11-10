@@ -168,6 +168,10 @@ const server = http.createServer((req, res) => {
     'a series press must keep the show address\'s copies - the season packs a title page warmed - and '
       + 'tag them with the address they were published under, or the walk only ever asks the engine '
       + 'about per-episode magnets it has never met');
+  assert.match(index, /episodeInLabel\(labelOf\(s\), ep\)\)\)/,
+    'a season pack whose label names no episode must carry over from an episode-addressed tile: it is '
+      + 'the copy the engine is most likely to have open, and dropping it sends the press back to the '
+      + 'addons for a list it already had');
   assert.match(index, /- \(engineHas\(s\) \? 1 : 0\)/,
     'a copy the engine has already read must lead the seats; seated behind cold magnets it is never '
       + 'walked, because the walk stops after two copies the engine has not read');
@@ -177,7 +181,7 @@ const server = http.createServer((req, res) => {
     'a series press must ask the engine whether it already holds a show-address copy before spending '
       + 'the addon round trip on per-episode streams, and must not count a copy that names another '
       + 'episode as that warm copy');
-  assert.match(index, /if \(warmPack\) \{[\s\S]*?fetchEpisodeSources\(Object\.assign\(\{\}, item, \{ sources: \[\] \}\)\)[\s\S]*?item\.sources = packCopies\.slice\(\);/,
+  assert.match(index, /if \(warmPack\) \{[\s\S]*?const fill = Object\.assign\(\{\}, item, \{ sources: \[\] \}\)[\s\S]*?item\.sources = packCopies\.slice\(\);/,
     'and when it does, the press walks that copy now while the episode list fills in the background, '
       + 'on a separate item so the background fetch cannot mutate the list being walked');
   assert.match(read('hub/core/gateway.js'), /function holds\(source\)[\s\S]*?k\.startsWith\(hash \+ ':'\)/,
