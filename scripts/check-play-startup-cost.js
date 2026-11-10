@@ -173,6 +173,12 @@ const server = http.createServer((req, res) => {
       + 'walked, because the walk stops after two copies the engine has not read');
   assert.match(index, /Number\(r\.fileSize\) < Number\(cand\.sizeBytes\)/,
     'the bitrate a link must carry is the file the engine named, not the whole season pack it lives in');
+  assert.match(index, /const warmPack = packCopies\.some/,
+    'a series press must ask the engine whether it already holds a show-address copy before spending '
+      + 'the addon round trip on per-episode streams');
+  assert.match(index, /if \(warmPack\) \{[\s\S]*?fetchEpisodeSources\(Object\.assign\(\{\}, item, \{ sources: \[\] \}\)\)[\s\S]*?item\.sources = packCopies\.slice\(\);/,
+    'and when it does, the press walks that copy now while the episode list fills in the background, '
+      + 'on a separate item so the background fetch cannot mutate the list being walked');
   const gw = read('hub/core/gateway.js');
   assert.match(gw, /if \(!known\) fireAdd\(\);/,
     'the engine add has to be fired, not awaited: it can hold a socket for thirty seconds while the '

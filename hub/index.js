@@ -2751,7 +2751,28 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       item.streamId = epAddr;
       item.sources = [];
     }
-    if (!(item.sources || []).length) await clock.time('sources', () => fetchEpisodeSources(item)); // cheap when resolve already asked
+    let usedWarmPack = false;
+    if (!(item.sources || []).length && packCopies.length && gateway.MODE === 'http') {
+      // A show-address copy the engine has already resolved is the fastest start this press can get:
+      // its file list costs a millisecond, while the episode's own addresses cost the hub a three-second
+      // round trip to the addons before the walk may begin (measured: `sources=3564ms` on a press whose
+      // winning copy was the season pack). When such a copy exists, walk it now and fetch the episode
+      // list in the background, so the NEXT press has it cached instead of paying for it twice.
+      const warmPack = packCopies.some((s) => {
+        const info = gateway.peekPrepared({ ...s, url: magnetOf(s._streamId, s) },
+          { season: ep.season, episode: ep.episode });
+        return !!(info && info.fileId !== undefined);
+      });
+      if (warmPack) {
+        // A separate item so the background fetch cannot mutate the list this press is walking.
+        fetchEpisodeSources(Object.assign({}, item, { sources: [] })).catch(() => {});
+        item.sources = packCopies.slice();
+        usedWarmPack = true;
+      }
+    }
+    if (!usedWarmPack && !(item.sources || []).length) {
+      await clock.time('sources', () => fetchEpisodeSources(item)); // cheap when resolve already asked
+    }
     // "Sources answered, but not one of them is this title" — the walk below would reject every copy
     // with `its name is not <title>` — is the same dead end as silence, and must not block the join
     // that exists for it: an aggregator that replies to an episode address with some other show's
@@ -2770,7 +2791,7 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       ep = null;
       await clock.time('sources', () => contributeSources(item));
     }
-    if (ep && packCopies.length) {
+    if (ep && packCopies.length && !usedWarmPack) {
       // The episode's own copies lead; the show-address packs sit behind them. `sourceKey` includes
       // the label and size, so a pack never dedupes away an episode copy or the other way round,
       // and `rankSources` preserves the `_streamId` tag because the objects themselves travel.
