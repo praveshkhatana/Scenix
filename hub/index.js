@@ -2939,6 +2939,16 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       ep ? { season: ep.season, episode: ep.episode } : null)
     : null;
   const engineHas = (s) => { const i = engineInfo(s); return !!(i && i.fileId !== undefined); };
+  // A copy that handed over nothing on an earlier press must not spend this press's front seat on a
+  // repeat of that. The pack that is warm in metadata but whose pieces nobody in the swarm has
+  // measured 0 Mbps for four seconds, twice, while per-episode copies of the same episode played.
+  // The end of a press already records these strikes; the seat order is where they belong.
+  const provenDead = (s) => {
+    const i = engineInfo(s);
+    if (!i || i.fileId === undefined) return false;
+    const hit = noByte.get(noByteKey({ hash: i.hash, fileId: i.fileId }));
+    return !!(hit && hit.streak > 0 && hit.at + PLAY_NOBYTE_WINDOW_MS > Date.now());
+  };
   const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
     + (decodable.length && s && s.videoCodec
       && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0)
@@ -2953,8 +2963,10 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     // A copy the engine has already read is the one this press can start now: its file list costs a
     // millisecond, a cold magnet costs the engine ten to twenty seconds of metadata. Seated behind
     // cold copies, the season pack this hub had warmed never got a press — the walk gave up after
-    // two cold per-episode magnets with the warm pack still untried.
-    - (engineHas(s) ? 1 : 0);
+    // two cold per-episode magnets with the warm pack still untried. A copy that has already failed
+    // to hand over a byte is the one exception, and is pushed behind everything that has not.
+    - (engineHas(s) ? 1 : 0)
+    + (provenDead(s) ? 2 : 0);
   // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
   // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
   // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
