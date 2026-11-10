@@ -1176,7 +1176,9 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   .detail-cols { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
-  :root { --gutter: calc(20px * var(--s)); --card-w: calc(190px * var(--s)); --card-h: calc(285px * var(--s)); --billboard-h: calc(560px * var(--s)); }
+  /* theme.js writes --gutter as an inline custom property, so a phone override has to be !important;
+     at the token's 76 px the 390 px screen lost 110 px to margins on both sides. */
+  :root { --gutter: calc(18px * var(--s)) !important; --card-w: calc(190px * var(--s)); --card-h: calc(285px * var(--s)); --billboard-h: calc(560px * var(--s)); }
   .nav-items { gap: 0; }
   .bb h1 { font-size: calc(56px * var(--s)); }
   .detail-body h1 { font-size: calc(34px * var(--s)); }
@@ -1212,10 +1214,13 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   .avatar .pc { font-size: calc(13px * var(--s)); }
   /* A phone should see a shelf, not one poster per screen: two to three columns is the shape a
      vertical scroll expects, and the deeper See-all grid gets the same density. */
-  .cards.poster { --card-w: calc(168px * var(--s)); --card-h: calc(252px * var(--s)); --gap: calc(12px * var(--s)); }
-  .cards.landscape { --card-w: calc(230px * var(--s)); --card-h: calc(130px * var(--s)); --gap: calc(12px * var(--s)); }
-  .grid { gap: calc(12px * var(--s)); }
-  .grid .card { width: calc(168px * var(--s)); }
+  .cards.poster { --card-w: calc(150px * var(--s)); --card-h: calc(225px * var(--s)); --gap: calc(10px * var(--s)); }
+  .cards.landscape { --card-w: calc(220px * var(--s)); --card-h: calc(124px * var(--s)); --gap: calc(10px * var(--s)); }
+  .grid { gap: calc(10px * var(--s)); }
+  .grid .card { width: calc(150px * var(--s)); }
+  /* The results pane already applies the page gutter, so the grid must not add a second one or the
+     third column falls four pixels over the edge and the phone shows two. */
+  .search-results .grid, .browse .grid { padding: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
