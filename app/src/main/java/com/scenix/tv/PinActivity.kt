@@ -239,10 +239,15 @@ class PinActivity : Activity() {
                 setResult(RESULT_OK, Intent().putExtra(EXTRA_PROFILE, profileId))
                 finish()
             } else {
-                pin.setLength(0)
+                // A household PIN is 4–8 digits, but the gate only knows the pack's four. Clearing a
+                // four-digit attempt would leave a five-to-eight digit profile permanently locked out,
+                // so a wrong automatic check keeps the digits: the owner can add the rest and press
+                // OK, while a plain four-digit mistake starts over with CLEAR.
+                val keep = entered.length == pinLength && pinLength < 8
+                if (!keep) pin.setLength(0)
                 show()
                 shakePanel()
-                hint.text = failureMessage(error)
+                hint.text = if (keep) "Wrong PIN — add the rest, or CLEAR" else failureMessage(error)
                 hint.setTextColor(app.theme.color("warn", "#F2C33A"))
                 keepKeypadFocus()
             }

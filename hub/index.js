@@ -2845,7 +2845,17 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         detail: 'the hub is still fetching sources for this title',
       } };
     }
-    return { status: 404, body: { error: 'no sources', identity } };
+    // No addon offered a copy for this title. That is a verdict, not a spinner: answer once in the
+    // same terminal shape the app's error card reads (code/detail/nextAction), so the press ends in
+    // a card instead of a retry loop that can learn nothing new.
+    return { status: 404, body: {
+      error: 'no playable source',
+      code: 'no-copy',
+      identity, title: kept.title || null,
+      detail: 'No add-on returned a copy of this title for this household.',
+      nextAction: 'Add a source that carries this title, or try another copy from Quality.',
+      tried: [],
+    } };
   }
   if (kept.type !== 'channel' && sources.length
       && sources.every((s) => labelNamesOtherTitle(labelOf(s), kept.title))) {
@@ -2858,7 +2868,16 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       'asking the addons for fresh ones');
     await clock.time('sources', () => contributeSources(kept));
     sources = kept.sources || [];
-    if (!sources.length) return { status: 404, body: { error: 'no sources', identity } };
+    if (!sources.length) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'no-copy',
+        identity, title: kept.title || null,
+        detail: 'The saved copies for this id named another title, and a fresh ask returned nothing.',
+        nextAction: 'Add a source that carries this title, or try another copy from Quality.',
+        tried: [],
+      } };
+    }
   }
   for (const s of sources) s.id = probe.sourceId(s); // the handle `exclude` names, assigned before filtering
 
