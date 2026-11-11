@@ -1074,7 +1074,17 @@ body.booted .prows .mrow { animation: fadeIn 380ms ease backwards; animation-del
    becomes a sticky horizontal strip, the pane scrolls with the page, and the rows keep their
    name/value shape at a readable size. */
 @media (max-width: 760px) {
-  .screen.settings { display: block; overflow: visible; }
+  /* #stage is position:fixed with overflow:hidden, so a `visible` Settings screen had no scroll
+     container at all: the page grew past the viewport and the phone could not reach the bottom.
+     The screen itself is the scroller now, while the rail stays sticky at the nav edge. */
+  .screen.settings {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
   .screen.settings .context-strip { display: none; }
   .settings-shell { display: block; }
   .settings-rail {

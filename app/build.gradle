@@ -270,9 +270,6 @@ dependencies {
     // MIT; `LiquidGlassKit.kt` is the only file that imports it, so the pack's numbers stay in tokens.
     implementation 'com.github.QWEA0:liquidglass:v2.0.11'
 
-    // Phone-pairing QR: ZXing core only (byte mode, error-correction M). Rendered to a
-    // Bitmap manually in PhonePairing.kt, so no Android scanner dependency is needed.
-    implementation 'com.google.zxing:core:3.5.3'
-
+    // Phone-pairing QR is drawn by core/QrCode.kt: byte mode, error-correction M, no barcode library.
     testImplementation 'junit:junit:4.13.2'
 }

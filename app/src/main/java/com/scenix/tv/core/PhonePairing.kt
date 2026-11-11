@@ -2,30 +2,23 @@ package com.scenix.tv.core
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.WriterException
-import com.google.zxing.common.BitMatrix
-import com.google.zxing.qrcode.QRCodeWriter
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.Collections
 
 /**
- * Phone pairing: the TV shows a QR that opens Scenix settings on a phone.
+ * Phone pairing: the TV shows a QR that puts the hub's remote page in a phone's hands.
  *
  * Two backends, two URLs:
  *  - Standalone: the TV itself hosts the web UI on 0.0.0.0:8787 (LoopbackServer).
  *    The phone opens http://<tv-lan-ip>:8787/ and the TV answers UI files from assets/web/.
- *  - Hub: the TV is paired to a hub (typically :8788). The phone opens the hub URL directly;
- *    the hub's web UI already guards settings behind the household Settings PIN
- *    (POST /app/v1/settings/unlock -> X-Scenix-Admin-Session, see hub/web/js/adminlock.js).
- *    Nothing hub-side is needed for minimal scope.
+ *  - Hub: the TV is paired to a hub (typically :8788). The phone opens the hub URL; its Settings
+ *    stay guarded by the household PIN (POST /app/v1/settings/unlock ->
+ *    X-Scenix-Admin-Session, see hub/web/js/adminlock.js).
  *
- * QR encoding prefers ZXing (com.google.zxing:core). If the library is unavailable at runtime
- * (e.g. in a pure-JVM unit test) [renderQr] returns null and the caller falls back to the
- * typed URL text — the Settings sheet always shows the URL below the QR for that reason.
+ * The QR itself is drawn by [QrCode], the app's own encoder, so the APK has no barcode library.
+ * The pairing URL is still printed under the code: a camera that refuses the screen's glare must
+ * not strand the person holding the phone.
  */
 object PhonePairing {
     const val STANDALONE_PORT = 8787
@@ -99,54 +92,37 @@ object PhonePairing {
 
     /**
      * Render [url] as a QR Bitmap of at least [minSizePx] pixels per side.
-     * Uses ZXing byte mode with error correction M. Returns null on any failure so the
-     * caller can show the fallback text instead of a broken image.
+     * Uses the in-house byte-mode encoder at error correction M. Returns null on any failure so
+     * the caller can show the fallback text instead of a broken image.
      */
     fun renderQr(url: String, minSizePx: Int = 512): Bitmap? {
         val text = url.trim()
         if (text.isEmpty()) return null
         return try {
-            val writer = QRCodeWriter()
-            val hints = mapOf(
-                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
-                EncodeHintType.MARGIN to 1,
-                EncodeHintType.CHARACTER_SET to "UTF-8",
-            )
-            // Encode at a module count the writer chooses, then scale to a pixel size
-            // phones can read at couch distance.
-            val matrix = writer.encode(text, BarcodeFormat.QR_CODE, 0, 0, hints)
-            toBitmap(matrix, minSizePx)
-        } catch (_: WriterException) {
-            null
+            val qr = QrCode.encode(text) ?: return null
+            toBitmap(qr, minSizePx)
         } catch (_: Throwable) {
             null
         }
     }
 
-    private fun toBitmap(matrix: BitMatrix, minSizePx: Int): Bitmap {
-        val w = matrix.width
-        val h = matrix.height
-        // Quiet zone: ZXing's MARGIN=1 is included in the matrix, but a TV's
-        // dimmed projection needs a clean white border, so add an extra module all round.
+    private fun toBitmap(qr: QrCode, minSizePx: Int): Bitmap {
+        // A little white margin beyond the symbol's own light border keeps the code readable when
+        // the TV dims the sheet; modules are scaled by a whole number so edges stay crisp.
         val quiet = 2
-        val totalW = w + quiet * 2
-        val totalH = h + quiet * 2
-        // Scale so the bitmap is at least minSizePx on the short side, rounded up to an
-        // integer multiple so modules stay crisp.
-        val scale = maxOf(1, (minSizePx + totalW - 1) / totalW)
-        val outW = totalW * scale
-        val outH = totalH * scale
-        val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.RGB_565)
+        val total = qr.size + quiet * 2
+        val scale = maxOf(1, (minSizePx + total - 1) / total)
+        val out = total * scale
+        val bmp = Bitmap.createBitmap(out, out, Bitmap.Config.RGB_565)
         bmp.eraseColor(Color.WHITE)
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                if (matrix.get(x, y)) {
-                    val ox = (x + quiet) * scale
-                    val oy = (y + quiet) * scale
-                    for (sy in 0 until scale) {
-                        for (sx in 0 until scale) {
-                            bmp.setPixel(ox + sx, oy + sy, Color.BLACK)
-                        }
+        for (y in 0 until qr.size) {
+            for (x in 0 until qr.size) {
+                if (!qr.getModule(x, y)) continue
+                val ox = (x + quiet) * scale
+                val oy = (y + quiet) * scale
+                for (sy in 0 until scale) {
+                    for (sx in 0 until scale) {
+                        bmp.setPixel(ox + sx, oy + sy, Color.BLACK)
                     }
                 }
             }

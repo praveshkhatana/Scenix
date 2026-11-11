@@ -378,6 +378,31 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         request("/app/v1/settings", "", "PUT", patch, 12000) { root, _, error -> done(root, error) }
     }
 
+    /**
+     * The phone remote's session channel (hub/core/remote.js and core/RemoteSession.kt share this
+     * contract). Registration is the only call that needs the household's hub credential; the phone
+     * then proves itself with the random token alone.
+     */
+    fun remoteRegister(token: String, code: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        val body = JSONObject().put("token", token)
+        if (code.isNotBlank()) body.put("code", code)
+        request("/app/v1/remote/register", "", "POST", body, 10000) { root, _, error -> done(root, error) }
+    }
+
+    /** Long-poll-free event read: the TV asks after the last sequence it injected. */
+    fun remoteEvents(token: String, after: Int, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/remote/events", "t=" + enc(token) + "&after=$after", "GET", null, 8000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** End the phone session when Settings closes; it also expires on its own after 15 minutes. */
+    fun remoteClose(token: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/remote/close", "", "POST", JSONObject().put("token", token), 8000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
     /** The person's playback preferences, as the web settings page reads them. */
     fun prefs(profileId: String, done: (prefs: JSONObject?, error: String?) -> Unit) {
         request("/app/v1/prefs", "profile=" + enc(profileId), "GET", null, 12000) { root, _, error ->

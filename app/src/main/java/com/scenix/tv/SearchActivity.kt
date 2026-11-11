@@ -65,6 +65,9 @@ class SearchActivity : Activity() {
         app = (application as ScenixApp).ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         if (profileId.isBlank()) { finish(); return }
+        // A phone can hand a finished query to the television's search, so the owner types on a
+        // real keyboard instead of hunting letters with the D-pad.
+        val seededQuery = intent?.getStringExtra(EXTRA_QUERY).orEmpty().trim()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -111,6 +114,10 @@ class SearchActivity : Activity() {
 
         Motion.enter(app.theme, root)
         buildKeyboard()
+        if (seededQuery.isNotBlank()) {
+            query.append(seededQuery.take(48))
+            scheduleSearch()
+        }
         renderQuery()
         queryView.postDelayed({
             (keys.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.requestFocus()
@@ -446,5 +453,7 @@ class SearchActivity : Activity() {
 
     companion object {
         const val EXTRA_PROFILE = "profile"
+        /** A query typed on the paired phone, so the TV opens with the search already running. */
+        const val EXTRA_QUERY = "query"
     }
 }

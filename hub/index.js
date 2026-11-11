@@ -102,6 +102,9 @@ const communityDirectory = require('./core/community-directory');
 const sourceSetupCore = require('./core/source-setup');
 const sourceSetup = sourceSetupCore.create();
 const trailers = require('./core/trailers');
+// Phone remote: an in-memory key/text queue the TV polls while Settings is open. The phone carries
+// only the session token from the QR; see core/remote.js for the endpoint contract.
+const remote = require('./core/remote');
 const ratings = require('./core/ratings');
 const castApi = require('./core/cast');
 const probe = require('./core/probe');
@@ -4850,7 +4853,12 @@ async function handle(req, res) {
 
     // A token is an access gate, not a second identity system. The public health answer is the one
     // thing pairing needs before it has a token, and it carries no library, paths or counts.
-    if (!authorized(req)) {
+    // The scanned remote page and its session routes are the other exception: a phone has only the
+    // random token from the QR, not the household's hub credential. Registering and closing a
+    // session still pass the normal gate inside core/remote.js.
+    const phoneRemote = path === '/remote' || path === '/remote/' ||
+      path === '/app/v1/remote/events' || path === '/app/v1/remote/state' || path === '/app/v1/remote/send';
+    if (!authorized(req) && !phoneRemote) {
       if (path === '/healthz') {
         return send(res, 200, { status: 'ok', hub: HUB_ID, version: HUB_VERSION });
       }
@@ -4858,6 +4866,9 @@ async function handle(req, res) {
         'WWW-Authenticate': 'Basic realm="Scenix", charset="UTF-8"',
       });
     }
+
+    // The phone remote's routes and page. The page is served by webui below; these are the queue.
+    if (await remote.handle(req, res, path, u, send, readBody, authorized)) return;
 
     // ---- the front-end itself ----
     // One UI everywhere: a browser loads the app straight from the hub, and the TV app shows the very

@@ -161,6 +161,9 @@ abstract class LoopbackServer(
         if (method != "GET" && method != "HEAD") return false
         val rel = when {
             path == "/" || path == "/index.html" -> "index.html"
+            // The QR's scanned page is a single self-contained HTML file, so it works with no
+            // /ui/ asset requests and no hub credential on the phone.
+            path == "/remote" || path == "/remote/" -> "remote.html"
             path.startsWith("/ui/") -> path.removePrefix("/ui/")
             else -> return false
         }
