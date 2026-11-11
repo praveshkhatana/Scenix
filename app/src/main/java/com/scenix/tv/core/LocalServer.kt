@@ -41,10 +41,11 @@ class LocalServer private constructor(
         }
 
         when {
-            path == "/" || path == "/index.html" || path.startsWith("/ui/") -> {
+            path == "/" || path == "/index.html" || path == "/remote" || path == "/remote/" ||
+                path.startsWith("/ui/") -> {
                 // Standalone phone pairing: the TV itself hosts the web Settings UI on :8787.
-                // A phone scanning the QR opens "/" (or deep-links accept /ui/*) and the hub's
-                // adminlock.js then prompts for the Settings PIN before any protected write.
+                // A phone scanning the QR opens "/" or "/remote" and the hub's adminlock.js then
+                // prompts for the Settings PIN before any protected write.
                 if (!serveWeb(res, method, path)) notFound(res, path)
             }
 
@@ -59,6 +60,32 @@ class LocalServer private constructor(
 
             path == "/app/v1/caps" ->
                 res.json(200, hub.capsJson())
+
+            // Phone remote. The same five routes the hub answers in core/remote.js: the scanned
+            // page posts keys/text here, and the Settings screen polls them back over loopback.
+            path == "/app/v1/remote/register" && method == "POST" -> {
+                val bodyObject = parse(body) ?: JSONObject()
+                val out = RemoteSession.register(bodyObject)
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/events" && method == "GET" -> {
+                val out = RemoteSession.events(query["t"].orEmpty(), query["after"]?.toIntOrNull() ?: 0)
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/send" && method == "POST" -> {
+                val bodyObject = parse(body) ?: JSONObject()
+                val out = RemoteSession.send(bodyObject)
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/state" && method == "GET" -> {
+                val out = RemoteSession.state(query["t"].orEmpty())
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/close" && method == "POST" -> {
+                val bodyObject = parse(body) ?: JSONObject()
+                val out = RemoteSession.close(bodyObject)
+                res.json(out.status, out.body)
+            }
 
             path == "/app/v1/profiles" && method == "POST" -> {
                 // Profile creation is household administration when the Settings lock is enabled.

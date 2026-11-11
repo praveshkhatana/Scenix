@@ -1,8 +1,8 @@
 'use strict';
 /*
  * Sources is a household control, not a destination in everyday navigation. The only door is
- * Settings → Access & safety, where the household Settings PIN is asked before the directory is
- * drawn; the TV's left rail must not offer a way around that gate.
+ * the guarded shelf at the bottom of Settings, where one locked row asks for the household Settings
+ * PIN before the directory is drawn; the TV's left rail must not offer a way around that gate.
  */
 
 const assert = require('assert');
@@ -23,21 +23,26 @@ assert.doesNotMatch(
   'Sources must not sit in the left rail: it is a household control reached through Settings',
 );
 
-// Settings owns the entry, and it lives inside Access & safety next to the lock it depends on.
+// Settings owns the entry, and it lives inside the guarded shelf under the row that locks it.
 assert.match(
   settings,
-  /private fun paintSources\(\)[\s\S]*?addRow\("Sources",/,
-  'the Settings rail must carry the only visible Sources entry, in its own PIN-gated area',
+  /private fun paintGuardedGroups\(\)[\s\S]*?if \(!isSourcesUnlocked\(\)\) \{[\s\S]*?addRow\(\s*"Open household settings"/,
+  'the Settings page must put Sources behind one visible, PIN-gated row',
 );
 assert.match(
   settings,
-  /private fun paintSources\(\)[\s\S]*?requireSources \{ paint\(\) \}/,
-  'opening Sources must prove (or create) the household Settings PIN first',
+  /private fun paintGuardedGroups\(\)[\s\S]*?requireSources \{ paint\(\) \}/,
+  'opening the guarded shelf must prove (or create) the household Settings PIN first',
 );
 assert.match(
   settings,
-  /if \(isSourcesUnlocked\(\)\) \{\s*addSourcesRows\(\)/,
+  /if \(!isSourcesUnlocked\(\)\) \{[\s\S]*?return\n\s*\}\s*\n\s*addSourcesRows\(\)/,
   'the Sources rows must appear only after the household Settings PIN has been proved',
+);
+assert.match(
+  settings,
+  /private fun addSourcesRows\(\) \{[\s\S]*?addGroup\("Sources & add-ons"\)[\s\S]*?addRow\("Source packs"/,
+  'the revealed shelf must carry the Sources directory entry',
 );
 assert.match(
   settings,

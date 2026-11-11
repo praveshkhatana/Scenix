@@ -36,8 +36,8 @@ requireMatch(loopback, /protected fun notFound\(res: Res, path: String\)/,
   'the local API server must answer unknown paths explicitly');
 requireMatch(local, /serveWeb\(res, method, path\)/,
   'LocalServer must route / and /ui/* through serveWeb() for phone pairing');
-requireMatch(local, /path == "\/" \|\| path == "\/index\.html" \|\| path\.startsWith\("\/ui\/"\)/,
-  'LocalServer must serve / , /index.html and /ui/* as web paths');
+requireMatch(local, /path == "\/"[\s\S]*?path == "\/remote"[\s\S]*?path\.startsWith\("\/ui\/"\)/,
+  'LocalServer must serve / , /remote and /ui/* as web paths');
 requireMatch(local, /path == "\/app\/v1\/healthz"/,
   'standalone must expose /app/v1/healthz for the settings flow');
 requireMatch(fixture, /else -> notFound\(res, path\)/,

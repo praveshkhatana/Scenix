@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /*
  * Native Settings has a deliberately dense safety contract: a visual redesign must not turn the
- * persistent TV area rail into a focus trap, or hide the only Hub/standalone entry point behind
- * an adult/household gate.  This small source gate is dependency-free so it runs in release QA
- * alongside the Kotlin compile.
+ * phone QR into a focus trap, or hide the only Hub/standalone entry point behind an adult/household
+ * gate.  This small source gate is dependency-free so it runs in release QA alongside the Kotlin
+ * compile.
  */
 
 import assert from 'node:assert/strict';
@@ -16,43 +16,38 @@ const source = await readFile(
 
 assert.match(
   source,
-  /paintControlHeader\(p\)\s*\n\s*paintSectionRail\(\)/,
-  'every rendered settings area must expose its compact state strip and area rail',
+  /paintSafeGroups\(p\)\s*\n\s*paintGuardedGroups\(\)/,
+  'every render must paint the safe groups first and the guarded shelf last',
 );
 assert.match(
   source,
-  /private lateinit var railHost: FrameLayout[\s\S]*?page\.addView\(railHost[\s\S]*?railHost\.addView\(\s*rail/,
-  'the section rail must remain outside the scrolling controls',
+  /body\.addView\(contentScroll[\s\S]*?phoneRail = buildPhoneRail\(\)[\s\S]*?body\.addView\(phoneRail/,
+  'the phone rail must remain outside the scrolling controls',
 );
 assert.match(
   source,
-  /private fun paintControlHeader\(p: JSONObject\)[\s\S]*?minimumHeight = app\.theme\.px\(54f\)/,
-  'the operational context must stay compact rather than becoming a duplicate summary panel',
+  /private fun paintSafeGroups\(p: JSONObject\) \{[\s\S]*?paintAppearance\(\)[\s\S]*?paintPlayback\(p\)[\s\S]*?paintPeople\(\)[\s\S]*?paintThisTv\(\)/,
+  'the safe half must be appearance, playback, people and this TV, in that order',
 );
 assert.match(
   source,
-  /private fun paintSectionRail\(\)[\s\S]*?registerControl\("section:\$\{section\.name\}", chip\)[\s\S]*?nextFocusRightId/,
-  'the persistent area rail must use named controls and explicit horizontal remote routing',
-);
-assert.match(
-  source,
-  /private fun wireControlCentreFocus\(\)[\s\S]*?tab\.nextFocusDownId = first\.id[\s\S]*?entry\.nextFocusUpId = tab\.id/,
-  'the active area chip and first control must form a reversible Up/Down remote route',
-);
-assert.match(
-  source,
-  /private fun paintHome\(p: JSONObject\)[\s\S]*?addGroup\("At a glance"\)[\s\S]*?summaryRow\(/,
-  'the Overview must be a read-only summary of the active profile and household',
+  /private fun paintAppearance\(\) \{[\s\S]*?addGroup\("Appearance"\)[\s\S]*?addRow\("Theme"/,
+  'Appearance must be a visible group with Theme in it',
 );
 assert.doesNotMatch(
   source,
-  /addAreaGrid|ControlArea/,
-  'the Overview must not redraw the area rail as a second menu of cards',
+  /showPickTheme|requireAdmin \{ pickTheme\(\) \}/,
+  'Appearance must not ask for the household PIN',
 );
 assert.match(
   source,
-  /private fun summaryRow\(label: String, value: String, note: String\)[\s\S]*?isFocusable = false[\s\S]*?contentDescription = listOf\(label, value, note\)/,
-  'summary rows must stay off the remote path while announcing their label, value and reason',
+  /private fun paintGuardedGroups\(\) \{[\s\S]*?addGroup\("Household & sources"\)[\s\S]*?if \(!isSourcesUnlocked\(\)\)[\s\S]*?requireSources \{ paint\(\) \}/,
+  'the guarded shelf must be one locked row until its PIN is proved',
+);
+assert.match(
+  source,
+  /private fun addRow\([\s\S]*?firstRow == null[\s\S]*?registerControl\("row:\$label", row\)/,
+  'each row must be a named remote control and the first row must be the landing stop',
 );
 assert.match(
   source,
@@ -61,17 +56,12 @@ assert.match(
 );
 assert.match(
   source,
-  /private fun wireControlCentreFocus\(\)[\s\S]*?val first = firstRow \?: run \{[\s\S]*?tab\.nextFocusDownId = tab\.id[\s\S]*?return/,
-  'a summary-only area must keep the remote on its rail chip instead of jumping into another area',
-);
-assert.match(
-  source,
   /contentDescription = listOf\(label, value, note\)[\s\S]*?joinToString\("\. "\)/,
-  'a summary row must announce its label, value and explanation together',
+  'a row must announce its label, value and explanation together',
 );
 assert.match(
   source,
-  /if \(isTrustedAdult\(\) && householdSettingsReady\) \{\s*addRow\("Hub connection", backendSummary\(\)/,
+  /addRow\("Hub connection", backendSummary\(\)/,
   'an authorized adult must retain the visible Hub connection affordance',
 );
 assert.match(
@@ -81,13 +71,8 @@ assert.match(
 );
 assert.match(
   source,
-  /Hub connection is protected[\s\S]*?standalone mode/,
-  'a child profile must receive an explanation instead of a deceptive, dead Hub control',
-);
-assert.match(
-  source,
-  /Local files need standalone mode/,
-  'Hub mode must visibly explain why the local-files control is unavailable',
+  /if \(app\.prefs\.backendChoice\(\) == Prefs\.BACKEND_STANDALONE\)[\s\S]*?addRow\("Local files"/,
+  'Local files must appear only in standalone mode, where the TV really has the files',
 );
 assert.match(
   source,

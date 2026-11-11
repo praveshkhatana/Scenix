@@ -2,15 +2,15 @@ package com.scenix.tv
 
 import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -40,11 +40,10 @@ class SettingsActivity : Activity() {
     private lateinit var profileId: String
     private lateinit var root: FrameLayout
     private lateinit var page: LinearLayout
-    private lateinit var railHost: FrameLayout
     private lateinit var rows: LinearLayout
     private lateinit var contentScroll: ScrollView
     private lateinit var status: TextView
-    private lateinit var pageTitle: TextView
+    private lateinit var phoneRail: LinearLayout
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var prefs: JSONObject? = null
     private var rowList: JSONArray? = null
@@ -68,7 +67,6 @@ class SettingsActivity : Activity() {
     // same trusted profile snapshot and both must clear when that snapshot fails.
     private var profileName = ""
     private var pinLayer: FrameLayout? = null
-    private var phoneLayer: FrameLayout? = null
     private var pinIsGate = false
     private val pinBuf = StringBuilder()
     private var pinSub: TextView? = null
@@ -81,30 +79,12 @@ class SettingsActivity : Activity() {
     private var adminUnlockUsesSession = false
 
     /**
-     * Settings is deliberately a two-level route. The first level answers "where does this live?"
-     * before exposing a control, so a living-room viewer never has to scan one long, mixed-scope
-     * list to find a profile preference or a household action.
-     */
-    private enum class SettingsSection(val label: String) {
-        HOME("Overview"),
-        PLAYBACK("Playback"),
-        HOME_ROWS("Home"),
-        APPEARANCE("Appearance"),
-        SOURCES("Sources"),
-        PEOPLE("People"),
-        DEVICE("This TV"),
-        ACCESS("Security"),
-    }
-
-    private var activeSection = SettingsSection.HOME
-    private var renderedSection = SettingsSection.HOME
-    /**
-     * The control centre is assembled only when settings data changes. Named controls retain the
-     * remote position through a repaint even when an availability explanation changes the layout.
+     * The page is one scannable column of clearly labelled groups. The remote never has to learn a
+     * second navigation level: safe preferences are in plain sight, and the household areas sit
+     * behind one locked row at the bottom. The phone QR stays pinned beside the column for the whole
+     * visit, so pairing is never a hunt through a sub-page.
      */
     private val controlsByKey = LinkedHashMap<String, View>()
-    private val entryControls = ArrayList<View>()
-    private var activeSectionTab: View? = null
     // The first onResume follows onCreate and the initial load below. Later resumes are returns from
     // child administration screens, where another device may have changed or expired the Settings
     // capability while this Activity was paused.
@@ -118,6 +98,27 @@ class SettingsActivity : Activity() {
     private var householdRefreshPending = false
     private var deferredFocusKey: String? = null
     private var deferredScrollY: Int? = null
+
+    // ---- phone remote session -----------------------------------------------------------------
+    // One random 128-bit token per Settings visit, handed to the phone inside the QR. The TV keeps
+    // the token local; the phone cannot reach any other route with it, and the session closes when
+    // this screen does.
+    private var remoteToken = ""
+    private var remoteCode = ""
+    private var remoteLast = 0
+    private var remoteOrigin = ""
+    private var remoteSessionOpen = false
+    private var remoteRegistering = false
+    private var remotePolling = false
+    private var remoteFallbackUrl: String? = null
+    private var remoteStatusView: TextView? = null
+    private var remoteUrlView: TextView? = null
+    private var remoteCodeView: TextView? = null
+    private var remoteQrHost: FrameLayout? = null
+    private val remoteHandler = Handler(Looper.getMainLooper())
+    private val remotePoll = object : Runnable {
+        override fun run() = pollRemote()
+    }
 
 
 
@@ -138,15 +139,14 @@ class SettingsActivity : Activity() {
         }
         val bar = topBar()
         page.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)))
-        // The area rail is outside the scrolling controls. A viewer can always move UP to switch
-        // scope instead of having to scroll all the way back to the start of a long section.
-        railHost = FrameLayout(this).apply {
+        // The settings column and the phone rail are siblings. The rail never scrolls away, so the
+        // QR is already on screen when Settings opens, and the remote can still walk the whole
+        // column with UP/DOWN without ever being asked to find the pairing card.
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             clipChildren = false
             clipToPadding = false
         }
-        page.addView(railHost, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(60f),
-        ))
         contentScroll = ScrollView(this).apply {
             isFocusable = false
             isFocusableInTouchMode = false
@@ -157,12 +157,17 @@ class SettingsActivity : Activity() {
         rows = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             // Extra canvas keeps focused plates and keylines inside the 1080p scroll viewport.
-            setPadding(app.theme.gutter, app.theme.px(14f), app.theme.gutter, app.theme.px(72f))
+            setPadding(app.theme.gutter, app.theme.px(10f), app.theme.px(10f), app.theme.px(72f))
             clipChildren = false
             clipToPadding = false
         }
         contentScroll.addView(rows)
-        page.addView(contentScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        body.addView(contentScroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        phoneRail = buildPhoneRail()
+        body.addView(phoneRail, LinearLayout.LayoutParams(
+            maxOf(app.theme.px(384f), 320), ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        page.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
         Motion.enter(app.theme, root)
@@ -173,30 +178,38 @@ class SettingsActivity : Activity() {
         super.onResume()
         if (resumedOnce && !isFinishing && !isDestroyed) load()
         resumedOnce = true
+        ensureRemoteSession()
+        startRemotePolling()
+    }
+
+    override fun onStop() {
+        // The session itself survives a short trip to another activity, but nothing can come out of
+        // the phone while this screen is not in front of the viewer.
+        stopRemotePolling()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        stopRemotePolling()
+        closeRemoteSession()
+        super.onDestroy()
     }
 
     private fun topBar(): View {
         val (bar, s) = Screens.topBar(this, app, "Settings") { onBackPressed() }
         status = s
-        pageTitle = bar.getChildAt(1) as TextView
         return bar
     }
 
-    override fun onBackPressed() {
-        if (activeSection != SettingsSection.HOME) {
-            openSection(SettingsSection.HOME)
-        } else {
-            super.onBackPressed()
-        }
-    }
+    override fun onBackPressed() = super.onBackPressed()
 
     private fun load() {
         val generation = ++settingsRefreshVersion
         val wasVisible = page.visibility == View.VISIBLE
         // Preserve the exact remote stop and viewport before an ordinary child return refresh. The
-        // eventual paint consumes these values once; an explicit section change deliberately does
-        // not, so it still enters at the top of its own controls.
-        if (wasVisible && renderedSection == activeSection) {
+        // eventual paint consumes these values once, so a return from an editor keeps its place in
+        // the one long page.
+        if (wasVisible) {
             deferredFocusKey = focusedControlKey()
             deferredScrollY = contentScroll.scrollY
         }
@@ -238,14 +251,11 @@ class SettingsActivity : Activity() {
                 profileName = ""
                 householdSettingsReady = false
                 lockInfo = null
-                val safeSection = allowedSection(activeSection)
-                if (safeSection != activeSection) {
-                    activeSection = safeSection
-                    pageTitle.text = safeSection.label
-                    paint()
-                }
                 status.text = nextPrefsError ?: "The hub is not answering"
-                if (!wasVisible) page.visibility = View.VISIBLE
+                // The safe groups still read from the last good profile snapshot when one exists.
+                // A first entry with no snapshot has nothing to paint, so reveal the status line.
+                if (wasVisible) paint()
+                page.visibility = View.VISIBLE
                 return
             }
 
@@ -275,8 +285,6 @@ class SettingsActivity : Activity() {
                 rowsCfg = resolvedPrefs.optJSONObject("rows") ?: JSONObject()
             }
 
-            activeSection = allowedSection(activeSection)
-            pageTitle.text = activeSection.label
             status.text = when {
                 root == null -> nextSettingsError ?: "Household controls are unavailable"
                 nextProfiles == null -> nextProfilesError ?: "Profile access could not be confirmed"
@@ -322,85 +330,25 @@ class SettingsActivity : Activity() {
     /** Unknown profiles take the same least-privilege route as a child until the Hub identifies them. */
     private fun isTrustedAdult(): Boolean = profileKind == "adult"
 
-    private fun needsHouseholdAccess(section: SettingsSection): Boolean = section in setOf(
-        SettingsSection.HOME_ROWS,
-        SettingsSection.APPEARANCE,
-        SettingsSection.SOURCES,
-        SettingsSection.PEOPLE,
-        SettingsSection.ACCESS,
-    )
-
-    private fun isChildRoute(section: SettingsSection): Boolean = section !in setOf(
-        SettingsSection.HOME,
-        SettingsSection.PLAYBACK,
-        SettingsSection.DEVICE,
-    )
-
-    /** Resolve a fresh server snapshot without letting a child/unknown profile retain a stale route. */
-    private fun allowedSection(section: SettingsSection): SettingsSection =
-        if ((!isTrustedAdult() && isChildRoute(section)) ||
-            (!householdSettingsReady && needsHouseholdAccess(section))
-        ) SettingsSection.HOME else section
-
-    private fun openSection(section: SettingsSection) {
-        // Leave the current screen intact while its fresh profile/household snapshot arrives.
-        // This is not a permission grant: protected actions are held by requireAdmin() until the
-        // snapshot is complete.  It avoids a return from a harmless child screen looking like an
-        // unexpected jump back to the Settings landing page.
-        if (householdRefreshPending && needsHouseholdAccess(section)) {
-            status.text = "Refreshing household access…"
-            return
-        }
-        // A child or unverified profile never inherits a stale route into a household area after a
-        // profile switch or a partial Hub failure.
-        activeSection = allowedSection(section)
-        pageTitle.text = activeSection.label
-        status.text = ""
-        paint()
-    }
-
     private fun paint() {
-        // A rebuild must never strand the remote on chrome. Keep the matching row only when the
-        // viewer remains in the same section; opening another section always starts at its first
-        // real control rather than at a coincidentally numbered row.
-        val keepKey = if (renderedSection == activeSection) {
-            deferredFocusKey ?: focusedControlKey()
-        } else null
-        val keepFocus = renderedSection == activeSection
-        val keepScrollY = if (keepFocus) deferredScrollY ?: contentScroll.scrollY else 0
+        // A rebuild must never strand the remote on chrome: the row the viewer was on keeps the
+        // ring, and the viewport stays where it was. A first paint lands on the first control.
+        val keepKey = deferredFocusKey ?: focusedControlKey()
+        val keepScrollY = deferredScrollY ?: contentScroll.scrollY
         // These values are written by a background refresh exactly once.  Clear them before
         // building so an unrelated paint (for example an Auto-update toggle) never resurrects an
         // old scroll location.
         deferredFocusKey = null
         deferredScrollY = null
-        if (phoneLayer != null) closePhonePairing()
         rows.removeAllViews()
-        railHost.removeAllViews()
         firstRow = null
         controlsByKey.clear()
-        entryControls.clear()
-        activeSectionTab = null
         val p = prefs ?: return
 
-        paintControlHeader(p)
-        paintSectionRail()
-        when (activeSection) {
-            SettingsSection.HOME -> paintHome(p)
-            SettingsSection.PLAYBACK -> paintPlayback(p)
-            SettingsSection.HOME_ROWS -> paintHomeRows()
-            SettingsSection.APPEARANCE -> paintAppearance()
-            SettingsSection.SOURCES -> paintSources()
-            SettingsSection.PEOPLE -> paintPeople()
-            SettingsSection.DEVICE -> paintDevice()
-            SettingsSection.ACCESS -> paintAccess()
-        }
-        renderedSection = activeSection
-        wireControlCentreFocus()
+        paintSafeGroups(p)
+        paintGuardedGroups()
 
-        // Overview is read-only, so it may have no control of its own. The remote then starts on the
-        // area chip it is already looking at, which is also the only way to leave that summary.
-        val target = if (keepFocus) controlsByKey[keepKey] ?: firstRow ?: activeSectionTab
-            else firstRow ?: activeSectionTab
+        val target = controlsByKey[keepKey] ?: firstRow
         rows.post {
             if (isFinishing || isDestroyed) return@post
             contentScroll.scrollTo(0, keepScrollY.coerceAtLeast(0))
@@ -410,216 +358,12 @@ class SettingsActivity : Activity() {
 
     // ---- control-centre shell --------------------------------------------------------------
 
-    private fun controlKey(key: String): String = activeSection.name.lowercase() + ":" + key
-
     private fun focusedControlKey(): String? =
         controlsByKey.entries.firstOrNull { it.value.isFocused }?.key
 
-    private fun registerControl(key: String, control: View, entry: Boolean = false) {
+    private fun registerControl(key: String, control: View) {
         if (control.id == View.NO_ID) control.id = View.generateViewId()
-        controlsByKey[controlKey(key)] = control
-        if (entry) entryControls.add(control)
-    }
-
-    /** One compact operational readout per section; the top bar already carries the page title. */
-    private fun paintControlHeader(p: JSONObject) {
-        val audio = languageName(firstOf(p, "audioLanguages"))
-        val locked = lockInfo?.optBoolean("enabled") == true
-        val (scope, summary, state) = when (activeSection) {
-            SettingsSection.HOME -> ControlHeader(
-                "OVERVIEW",
-                "Audio $audio · ${backendSummary()}",
-                if (isTrustedAdult()) if (locked) "PIN ON" else "PIN OFF" else "CHILD PROFILE",
-            )
-            SettingsSection.PLAYBACK -> ControlHeader(
-                "PLAYBACK",
-                "Audio $audio · Subtitles ${languageName(firstOf(p, "subtitleLanguages"))}",
-                qualityLabel(p.optString("qualityCap", "auto")),
-            )
-            SettingsSection.HOME_ROWS -> ControlHeader(
-                "HOME",
-                "Shelves, categories and the shared live-TV playlist",
-                "ADMIN",
-            )
-            SettingsSection.APPEARANCE -> ControlHeader(
-                "APPEARANCE",
-                themeName(),
-                zoomLabel(),
-            )
-            SettingsSection.SOURCES -> ControlHeader(
-                "SOURCES",
-                "Add-ons, source packs and cached copies",
-                if (isSourcesUnlocked()) "UNLOCKED" else "PIN",
-            )
-            SettingsSection.PEOPLE -> ControlHeader(
-                "PEOPLE",
-                "Who watches, and what each person may see",
-                if (locked) "PIN ON" else "ADMIN",
-            )
-            SettingsSection.DEVICE -> ControlHeader(
-                "THIS TV",
-                backendSummary(),
-                controllersSummary(),
-            )
-            SettingsSection.ACCESS -> ControlHeader(
-                "SECURITY",
-                "Settings lock and the Sources gate",
-                if (locked) "PIN ON" else "PIN OFF",
-            )
-        }
-        val strip = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = app.theme.px(54f)
-            setPadding(app.theme.px(20f), app.theme.px(9f), app.theme.px(16f), app.theme.px(9f))
-            background = Views.rounded(
-                app.theme.colorOr("settingsContext", app.theme.colorOr("listFill", app.theme.surface)),
-                app.theme.radius("listItem", 10f),
-                maxOf(1, app.theme.px(1f)),
-                app.theme.colorOr("listStroke", app.theme.line),
-            )
-        }
-        val accent = app.theme.colorOr("panelValue", app.theme.brand)
-        val scopeLabel = Views.text(app, "meta", 14f, accent, scope, bold = true, maxLines = 1)
-        scopeLabel.letterSpacing = 0.12f
-        strip.addView(scopeLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            rightMargin = app.theme.px(16f)
-        })
-        strip.addView(
-            Views.text(app, "liMeta", 18f, app.theme.ink, summary, maxLines = 1),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
-        val stateView = Views.text(app, "meta", 14f, app.theme.ink2, state, bold = true, gravity = Gravity.END, maxLines = 1)
-        strip.addView(stateView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            leftMargin = app.theme.px(16f)
-        })
-        rows.addView(
-            strip,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = app.theme.px(10f)
-            },
-        )
-    }
-
-    private data class ControlHeader(
-        val scope: String,
-        val summary: String,
-        val state: String,
-    )
-
-    private fun accessibleSections(): List<SettingsSection> {
-        val sections = ArrayList<SettingsSection>()
-        sections.add(SettingsSection.HOME)
-        sections.add(SettingsSection.PLAYBACK)
-        if (isTrustedAdult() && householdSettingsReady) {
-            // Content and household controls, in the order an owner thinks about them: what the house
-            // shows (Home), how it looks (Appearance), where titles come from (Sources), who watches
-            // (People). This TV and the lock that guards it close the list.
-            sections.add(SettingsSection.HOME_ROWS)
-            sections.add(SettingsSection.APPEARANCE)
-            sections.add(SettingsSection.SOURCES)
-            sections.add(SettingsSection.PEOPLE)
-        }
-        sections.add(SettingsSection.DEVICE)
-        if (isTrustedAdult() && householdSettingsReady) {
-            sections.add(SettingsSection.ACCESS)
-        }
-        return sections
-    }
-
-    /** A compact persistent section rail keeps orientation without adding a second navigation page. */
-    private fun paintSectionRail() {
-        val rail = HorizontalScrollView(this).apply {
-            isFocusable = false
-            isFocusableInTouchMode = false
-            isHorizontalScrollBarEnabled = false
-            clipChildren = false
-            clipToPadding = false
-            setPadding(app.theme.gutter, 0, app.theme.gutter, 0)
-        }
-        val line = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            clipChildren = false
-            clipToPadding = false
-            setPadding(app.theme.px(3f), app.theme.px(3f), app.theme.px(3f), app.theme.px(3f))
-        }
-        val chipRadius = app.theme.radius("chip", 12f)
-        val idleFill = app.theme.colorOr("chipBg", app.theme.surface2)
-        val idleInk = app.theme.colorOr("wallInk", app.theme.ink)
-        var previous: View? = null
-        for (section in accessibleSections()) {
-            val selected = section == activeSection
-            val chip = Views.text(
-                app,
-                "chip",
-                18f,
-                if (selected) app.theme.onBrand else idleInk,
-                section.label,
-                bold = selected,
-                gravity = Gravity.CENTER,
-            ).apply {
-                minHeight = app.theme.px(42f)
-                setPadding(app.theme.px(18f), 0, app.theme.px(18f), 0)
-                background = Views.rounded(if (selected) app.theme.brand else idleFill, chipRadius)
-                isFocusable = true
-                isClickable = true
-                contentDescription = if (selected) "${section.label}, current settings area" else "Open ${section.label} settings"
-                setOnClickListener { openSection(section) }
-            }
-            Focus.attach(
-                chip,
-                chip,
-                app,
-                chipRadius,
-                scale = false,
-                elevate = false,
-                glowInset = app.theme.focusGlowInsetSm,
-                control = true,
-            )
-            registerControl("section:${section.name}", chip)
-            if (previous != null) {
-                previous.nextFocusRightId = chip.id
-                chip.nextFocusLeftId = previous.id
-            } else {
-                chip.nextFocusLeftId = chip.id
-            }
-            if (selected) activeSectionTab = chip
-            previous = chip
-            line.addView(
-                chip,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, app.theme.px(42f)).apply {
-                    rightMargin = app.theme.px(8f)
-                },
-            )
-        }
-        previous?.let { it.nextFocusRightId = it.id }
-        rail.addView(line, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        railHost.addView(
-            rail,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(48f)).apply {
-                gravity = Gravity.CENTER_VERTICAL
-            },
-        )
-    }
-
-    /** The first actionable row returns UP to the active rail chip; rail DOWN returns to content. */
-    private fun wireControlCentreFocus() {
-        val tab = activeSectionTab ?: return
-        val first = firstRow ?: run {
-            // A summary section has nothing below the rail. Keep DOWN where it is instead of letting
-            // the focus finder jump into a row that does not belong to this area.
-            tab.nextFocusDownId = tab.id
-            return
-        }
-        tab.nextFocusDownId = first.id
-        for (entry in entryControls) entry.nextFocusUpId = tab.id
-    }
-
-    private fun zoomLabel(): String {
-        val steps = listOf(1f, 1.15f, 1.3f, 1.5f)
-        val labels = listOf("100%", "115%", "130%", "150%")
-        val at = steps.indices.minByOrNull { kotlin.math.abs(steps[it] - app.prefs.uiZoom()) } ?: 0
-        return labels[at]
+        controlsByKey[key] = control
     }
 
     private fun addGroup(title: String) {
@@ -659,88 +403,29 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * The Overview is a summary, not a second copy of the area rail. The rail above is the one and
-     * only way to switch areas; drawing the same six destinations again as a card grid made the page
-     * look like two menus stacked on top of each other. These rows are read-only on purpose: nothing
-     * here can be changed by accident, and every number restates what its area already owns.
+     * The top of the page is everything a person can safely change on this television: how it looks,
+     * what this profile hears, who watches and this TV's own controllers and updates. None of it is a
+     * household act, so none of it asks for the Settings PIN.
      */
-    private fun paintHome(p: JSONObject) {
-        val locked = lockInfo?.optBoolean("enabled") == true
-        addGroup("At a glance")
-        summaryRow(
-            "Watching as",
-            profileName.ifBlank { if (isTrustedAdult()) "Adult profile" else "Child profile" },
-            "The person whose audio, subtitles and quality these are",
-        )
-        summaryRow(
-            "Audio language",
-            languageName(firstOf(p, "audioLanguages")),
-            "First track the hub looks for",
-        )
-        summaryRow(
-            "Video quality",
-            qualityLabel(p.optString("qualityCap", "auto")),
-            "Best copy this profile is offered",
-        )
-        summaryRow(
-            "This TV",
-            backendSummary(),
-            "Where this television gets its library",
-        )
-        summaryRow(
-            "Settings lock",
-            when {
-                !isTrustedAdult() -> "Adult only"
-                locked -> "PIN on"
-                else -> "PIN off"
-            },
-            "Protects household controls and Sources",
-        )
-        if (isTrustedAdult() && householdSettingsReady) {
-            summaryRow(
-                "Sources",
-                if (isSourcesUnlocked()) "Unlocked this visit" else "PIN protected",
-                "Add-ons and source packs sit behind the Settings PIN",
-            )
-            addAvailabilityNotice(
-                "Nothing here changes a setting",
-                "Left and Right switch areas above; this page stays a summary.",
-            )
-        }
-
-        if (!isTrustedAdult()) {
-            addAvailabilityNotice(
-                "Household areas are protected",
-                "Adult profile required for household controls.",
-            )
-        } else if (!householdSettingsReady) {
-            addAvailabilityNotice(
-                "Household controls are reconnecting",
-                "Waiting for Hub confirmation.",
-            )
-            addRow(
-                "Refresh household access",
-                "Try again",
-                "Get a current Hub snapshot",
-                chevron = true,
-            ) { load() }
-        }
+    private fun paintSafeGroups(p: JSONObject) {
+        paintAppearance()
+        paintPlayback(p)
+        paintPeople()
+        paintThisTv()
     }
 
     /** What this person hears and sees. Per-profile, so a child may keep their own language order. */
     private fun paintPlayback(p: JSONObject) {
-        addGroup("Language & captions")
+        addGroup("Play & display")
         addRow("Audio language", languageName(firstOf(p, "audioLanguages")), "Mix this language first") {
             showLanguagePicker("Audio language", "audioLanguages")
         }
         addRow("Subtitles", languageName(firstOf(p, "subtitleLanguages")), "Preferred subtitle language") {
             showLanguagePicker("Subtitles", "subtitleLanguages")
         }
-        addGroup("Quality")
         addRow("Video quality", qualityLabel(p.optString("qualityCap", "auto")), "Best quality to offer") {
             showQualityPicker()
         }
-        addGroup("Live TV")
         addRow("Live TV channels", "This person's channels", "Channels and order", chevron = true) {
             startActivity(
                 Intent(this, LiveChannelsActivity::class.java)
@@ -749,9 +434,95 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /** This TV's own hardware and app: controllers, updates and the build it is running. */
+    private fun paintThisTv() {
+        addGroup("This TV")
+        addRow("Controllers", controllersSummary(), "Pair and test controllers") {
+            startActivity(Intent(this, ControllersActivity::class.java))
+        }
+        // Auto-update (core/Updates.kt): the builds live as GitHub Releases on the project repo.
+        // The check is the app's; the install is always the person's — the dialog offers, Android
+        // confirms, nothing is ever swapped under a viewer mid-frame.
+        addRow("Auto update", if (app.prefs.autoUpdate()) "On" else "Off",
+            "Check on startup; install always confirms") {
+            app.prefs.setAutoUpdate(!app.prefs.autoUpdate())
+            paint()
+        }
+        addRow("Check for updates",
+            "v${Updates.currentVersionName(this)} (${Updates.currentVersionCode(this)})",
+            "Check published releases") {
+            Updates.check(this) { rel, error ->
+                if (isFinishing || isDestroyed) return@check
+                runOnUiThread {
+                    when {
+                        rel != null -> Updates.offer(this, rel)
+                        error != null -> android.widget.Toast.makeText(
+                            this, "Update check failed: $error", android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                        else -> android.widget.Toast.makeText(
+                            this, "This is the newest build", android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The guarded shelf: one row until the household PIN (or the act of creating one) opens it. The
+     * sources, network and advanced controls are not hidden by a visual trick — they do not exist in
+     * the view tree until [isSourcesUnlocked] is true.
+     */
+    private fun paintGuardedGroups() {
+        addGroup("Household & sources")
+        if (!isTrustedAdult()) {
+            addAvailabilityNotice(
+                "Adult profile required",
+                "Switch to an adult profile to manage household settings.",
+            )
+            return
+        }
+        if (!householdSettingsReady || householdRefreshPending) {
+            addAvailabilityNotice(
+                "Household controls are reconnecting",
+                "Waiting for the Hub's current settings snapshot.",
+            )
+            addRow("Refresh household access", "Try again", "Get a current Hub snapshot", chevron = true) {
+                load()
+            }
+            return
+        }
+        if (!isSourcesUnlocked()) {
+            val pinSet = lockInfo?.optBoolean("pinSet") == true
+            val enabled = lockInfo?.optBoolean("enabled") == true
+            val needsSetup = !pinSet && !enabled
+            addRow(
+                "Open household settings",
+                if (needsSetup) "Set a PIN" else "PIN protected",
+                "Sources, network and advanced controls",
+                chevron = true,
+            ) { requireSources { paint() } }
+            addAvailabilityNotice(
+                "One PIN for the household",
+                if (needsSetup) "Create a PIN here; it guards this shelf from now on."
+                else "Enter the household PIN to reveal sources, network and advanced controls.",
+            )
+            return
+        }
+
+        addSourcesRows()
+        paintHomeLibraryRows()
+        paintNetworkRows()
+        paintAdvancedRows()
+        addAvailabilityNotice(
+            "Unlocked for this visit",
+            "The guarded shelf locks again when Settings closes.",
+        )
+    }
+
     /** What the house shows: shelves, categories, the shared playlist, the library's name. */
-    private fun paintHomeRows() {
-        addGroup("Home shelves")
+    private fun paintHomeLibraryRows() {
+        addGroup("Home & library")
         val shelfRows = rowList
         if (shelfRows != null && shelfRows.length() > 0) {
             val hidden = effectiveHidden()
@@ -760,47 +531,55 @@ class SettingsActivity : Activity() {
                 "Show, hide or reorder shelves", chevron = true) { showHomeRows() }
         }
         addRow("Categories", "Home shelves", "Genre shelves drawn on Home", chevron = true) {
-            requireAdmin { startActivity(Intent(this, CategoriesActivity::class.java)) }
+            startActivity(Intent(this, CategoriesActivity::class.java))
         }
-        addGroup("Shared library")
         addRow("Library and search", "Name and search limits", "Hub name and search limits", chevron = true) {
-            requireAdmin { startActivity(Intent(this, SystemActivity::class.java)) }
+            startActivity(Intent(this, SystemActivity::class.java))
         }
         addRow("Live TV playlist", "Shared playlist and groups", "The M3U every profile tunes", chevron = true) {
-            requireAdmin { startActivity(Intent(this, LiveSettingsActivity::class.java)) }
+            startActivity(Intent(this, LiveSettingsActivity::class.java))
         }
     }
 
-    /** The people who watch, and the editor that adds, renames and limits them. */
+    /**
+     * The people who watch. Switching person is safe for anyone; adding or limiting a person is a
+     * household act and keeps its PIN even though the group itself is always visible.
+     */
     private fun paintPeople() {
-        addGroup("People")
-        addRow("People", "Adults and children", "Add, rename or change who is watching", chevron = true) {
+        addGroup("Profiles & kids")
+        val locked = lockInfo?.optBoolean("enabled") == true
+        addRow("People", if (locked) "PIN protected" else "Adults and children",
+            "Add, rename or change who is watching", chevron = true) {
             requireAdmin { startActivity(Intent(this, ManageProfilesActivity::class.java)) }
         }
         addRow("Switch person", "Who's watching", "Change the active profile", chevron = true) {
             startActivity(Intent(this, ProfilesActivity::class.java))
         }
-        if (isTrustedAdult() && householdSettingsReady) {
+        if (!isTrustedAdult()) {
             addAvailabilityNotice(
-                "Each person keeps their own ceiling",
-                "Kids profiles are held to the hub's age band; a profile PIN protects its own settings.",
+                "Household people are protected",
+                "An adult profile is needed to add or limit anyone.",
             )
         }
     }
 
+    /**
+     * Appearance is the owner's headline complaint: theme and readability used to sit behind the
+     * Settings PIN, so the people most bothered by a mixed-up screen could not fix it. They now open
+     * for anyone. A shared theme still falls back to a local choice if the Hub refuses the write.
+     */
     private fun paintAppearance() {
-        addGroup("Theme")
+        addGroup("Appearance")
         addRow("Theme", themeName(),
             "This TV look; shared where supported", chevron = true) {
-            requireAdmin { pickTheme() }
+            pickTheme()
         }
         val installedPacks = Theme.catalog(this, assets).count { it.installed }
         addRow("Extra themes",
             if (installedPacks == 0) "None installed" else "$installedPacks installed",
             "Themes installed on this TV", chevron = true) {
-            requireAdmin { showPackThemes() }
+            showPackThemes()
         }
-        addGroup("Readability")
         // One multiplier governs the complete native rhythm: type, tiles, gaps and hero all grow
         // together. A person can make the interface readable without changing anyone else's theme.
         val zoomSteps = listOf(1f, 1.15f, 1.3f, 1.5f)
@@ -825,82 +604,49 @@ class SettingsActivity : Activity() {
         }
     }
 
-    private fun paintDevice() {
-        addGroup("Connection")
-        if (isTrustedAdult() && householdSettingsReady) {
-            addRow("Hub connection", backendSummary(),
-                "Change Hub or use standalone", chevron = true) {
-                requireAdmin {
-                    startActivity(Intent(this, MainActivity::class.java).putExtra("setup", true))
-                }
-            }
-            if (app.prefs.backendChoice() != Prefs.BACKEND_STANDALONE) {
-                addRow("Update Hub", "Check its build", "The Hub restarts only after it confirms a safe update") {
-                    requireAdmin {
-                        status.text = "Checking Hub…"
-                        val base = HubEndpoint.base(this)
-                        val token = app.prefs.hubToken()
-                        Thread {
-                            val message = when {
-                                base.isBlank() -> "This TV has no Hub to ask"
+    /** Where this library comes from and where its files live. Guarded with the rest of the shelf. */
+    private fun paintNetworkRows() {
+        addGroup("Network & hub")
+        addRow("Hub connection", backendSummary(),
+            "Change Hub or use standalone", chevron = true) {
+            startActivity(Intent(this, MainActivity::class.java).putExtra("setup", true))
+        }
+        if (app.prefs.backendChoice() != Prefs.BACKEND_STANDALONE) {
+            addRow("Update Hub", "Check its build", "The Hub restarts only after it confirms a safe update") {
+                status.text = "Checking Hub…"
+                val base = HubEndpoint.base(this)
+                val token = app.prefs.hubToken()
+                Thread {
+                    val message = when {
+                        base.isBlank() -> "This TV has no Hub to ask"
+                        else -> {
+                            val state = HubUpdate.status(base, token)
+                            when {
+                                state == null -> "This Hub does not support managed updates"
+                                !state.git -> state.blocked ?: "This Hub is not a git checkout"
+                                state.behind == 0 -> "The Hub is already current (${state.commit})"
+                                !state.canUpdate -> "The Hub is ${state.behind} commits behind: ${state.blocked}"
                                 else -> {
-                                    val state = HubUpdate.status(base, token)
-                                    when {
-                                        state == null -> "This Hub does not support managed updates"
-                                        !state.git -> state.blocked ?: "This Hub is not a git checkout"
-                                        state.behind == 0 -> "The Hub is already current (${state.commit})"
-                                        !state.canUpdate -> "The Hub is ${state.behind} commits behind: ${state.blocked}"
-                                        else -> {
-                                            val update = HubUpdate.updateNow(base, token)
-                                            if (update?.optBoolean("updated") == true) {
-                                                "The Hub updated and will restart shortly"
-                                            } else {
-                                                "The Hub declined: ${update?.optString("reason") ?: "no answer"}"
-                                            }
-                                        }
+                                    val update = HubUpdate.updateNow(base, token)
+                                    if (update?.optBoolean("updated") == true) {
+                                        "The Hub updated and will restart shortly"
+                                    } else {
+                                        "The Hub declined: ${update?.optString("reason") ?: "no answer"}"
                                     }
                                 }
                             }
-                            runOnUiThread {
-                                if (!isFinishing && !isDestroyed) status.text = message
-                            }
-                        }.start()
+                        }
                     }
-                }
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) status.text = message
+                    }
+                }.start()
             }
-        } else {
-            addAvailabilityNotice(
-                if (isTrustedAdult()) "Hub controls are reconnecting" else "Hub connection is protected",
-                if (isTrustedAdult()) {
-                    "Waiting for household access."
-                } else {
-                    "Adult profile required to change Hub or standalone mode."
-                },
-            )
-        }
-        addGroup("Phone")
-        // Phone pairing: the QR itself is never painted until requireAdmin has verified the
-        // household Settings PIN in-app. The row is visible to an adult; the code and the
-        // typed fallback stay behind the gate so a child cannot open phone Settings.
-        if (isTrustedAdult() && householdSettingsReady) {
-            addRow("Connect from phone", "Scan QR for web Settings", "Manage sources from your phone", chevron = true) {
-                requireAdmin { showPhonePairing() }
-            }
-        } else {
-            addAvailabilityNotice(
-                "Phone pairing is protected",
-                if (isTrustedAdult()) "Waiting for household access." else "Adult profile required to pair a phone.",
-            )
-        }
-        addGroup("Controllers")
-        addRow("Controllers", controllersSummary(), "Pair and test controllers") {
-            startActivity(Intent(this, ControllersActivity::class.java))
         }
 
         // Only standalone has files on this machine. Against a Hub, a folder row would imply a
         // library this TV cannot actually read, so it remains absent instead of looking broken.
-        if (isTrustedAdult() && householdSettingsReady && app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE) {
-            addGroup("Files on this TV")
+        if (app.prefs.backendChoice() == Prefs.BACKEND_STANDALONE) {
             val local = com.scenix.tv.core.LocalHub.get(this).localStatus()
             val files = local.optInt("files", 0)
             val folder = local.optString("name", "").ifBlank { "no folder chosen" }
@@ -909,91 +655,14 @@ class SettingsActivity : Activity() {
                 files > 0 -> "$files files · $folder"
                 else -> folder
             }
-            addRow("Local files", value,
-                "Files stored on this TV") {
-                requireAdmin { pickLocalFolder() }
-            }
-        } else if (isTrustedAdult() && householdSettingsReady) {
-            addAvailabilityNotice(
-                "Local files need standalone mode",
-                "Switch to standalone to choose local files.",
-            )
-        }
-
-        // Auto-update (core/Updates.kt): the builds live as GitHub Releases on the project repo.
-        // The check is the app's; the install is always the person's — the dialog offers, Android
-        // confirms, nothing is ever swapped under a viewer mid-frame.
-        addGroup("Updates")
-        addRow("Auto update", if (app.prefs.autoUpdate()) "On" else "Off",
-            "Check on startup; install always confirms") {
-            app.prefs.setAutoUpdate(!app.prefs.autoUpdate())
-            paint()
-        }
-        addRow("Check for updates",
-            "v${Updates.currentVersionName(this)} (${Updates.currentVersionCode(this)})",
-            "Check published releases") {
-            Updates.check(this) { rel, error ->
-                if (isFinishing || isDestroyed) return@check
-                runOnUiThread {
-                    when {
-                        rel != null -> Updates.offer(this, rel)
-                        error != null -> android.widget.Toast.makeText(
-                            this, "Update check failed: $error", android.widget.Toast.LENGTH_LONG,
-                        ).show()
-                        else -> android.widget.Toast.makeText(
-                            this, "This is the newest build", android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
-            }
-        }
-        // The component catalogue exists only in debug builds. It is how the design-system parity
-        // gate captures the real components; a release television has no use for a studio.
-        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
-            addRow("Component studio",
-                "Design system catalogue",
-                "Inspect real theme components",
-                chevron = true) {
-                startActivity(Intent(this, StudioActivity::class.java))
-            }
+            addRow("Local files", value, "Files stored on this TV") { pickLocalFolder() }
         }
     }
 
     /**
-     * Sources is the discoverable door behind the Settings PIN: the row is visible to an adult (so
-     * the lock is something you can find, not something you have to know about), and the destinations
-     * appear only after requireSources has proved — or created — the number.
-     */
-    private fun paintSources() {
-        val adminOn = lockInfo?.optBoolean("enabled") == true
-        val pinSet = lockInfo?.optBoolean("pinSet") == true
-        if (isSourcesUnlocked()) {
-            addSourcesRows()
-            addAvailabilityNotice(
-                "Sources unlocked for this visit",
-                "They lock again when Settings closes.",
-            )
-            return
-        }
-        addGroup("Sources")
-        val needsSetup = !pinSet && !adminOn
-        addRow("Sources",
-            if (needsSetup) "🔒 Set a PIN" else "🔒 PIN required",
-            if (needsSetup) "Create a PIN to manage Sources" else "Enter the household Settings PIN",
-            chevron = true) {
-            requireSources { paint() }
-        }
-        addAvailabilityNotice(
-            "One PIN for the household",
-            "Add-ons, source packs and cached copies change what every profile can watch.",
-        )
-    }
-
-    /**
-     * Sources is an area of its own, and the first thing it shows is the lock. If no PIN exists yet,
-     * the first entry creates one; afterwards the PIN is asked once per visit through the shared
-     * unlock. The revealed rows keep the same destinations as the old Sources page — Source packs,
-     * Add-ons, Debrid — so nothing else moves.
+     * The guarded shelf opens once per visit. If no PIN exists yet, the first entry creates one;
+     * afterwards the shared unlock asks for it once. The revealed rows keep the destinations the old
+     * Sources page had — Source packs, Add-ons, Debrid — so nothing else moves.
      */
     private fun isSourcesUnlocked(): Boolean {
         if (!householdSettingsReady || householdRefreshPending) return false
@@ -1049,7 +718,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun addSourcesRows() {
-        addGroup("Sources")
+        addGroup("Sources & add-ons")
         addRow("Source packs", "Extra packs for audio and art", "Fill preferred audio gaps", chevron = true) {
             startActivity(Intent(this, SourcePacksActivity::class.java))
         }
@@ -1061,18 +730,17 @@ class SettingsActivity : Activity() {
                     .putExtra(AddonsActivity.EXTRA_SETTINGS_PROVED, true)
             )
         }
-        addGroup("Cached copies")
         addRow("Debrid", "Cached copies", "Provider, token and switch", chevron = true) {
             startActivity(Intent(this, DebridActivity::class.java))
         }
     }
 
-    /** The lock itself, and the one number it keeps. Sources has its own area, already gated. */
-    private fun paintAccess() {
+    /** The lock itself, and the one number it keeps. */
+    private fun paintAdvancedRows() {
         val adminOn = lockInfo?.optBoolean("enabled") == true
-        addGroup("Settings lock")
+        addGroup("Advanced")
         addRow("Settings lock", if (adminOn) "On" else "Off",
-            "One PIN for household settings and Sources") {
+            "One PIN for the guarded shelf") {
             changeLock()
         }
         if (adminOn) {
@@ -1080,14 +748,17 @@ class SettingsActivity : Activity() {
                 changePin()
             }
         }
-        addGroup("Protected areas")
-        addRow("Sources", if (isSourcesUnlocked()) "Unlocked this visit" else "PIN protected",
-            "Add-ons, source packs and cached copies", chevron = true) {
-            openSection(SettingsSection.SOURCES)
+        // The component catalogue exists only in debug builds. It is how the design-system parity
+        // gate captures the real components; a release television has no use for a studio.
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            addRow("Component studio", "Design system catalogue",
+                "Inspect real theme components", chevron = true) {
+                startActivity(Intent(this, StudioActivity::class.java))
+            }
         }
         addAvailabilityNotice(
-            if (adminOn) "The lock is on" else "The lock is off",
-            if (adminOn) "Household changes and Sources ask for the PIN. It is asked once per visit."
+            if (adminOn) "The household lock is on" else "The household lock is off",
+            if (adminOn) "Guarded areas ask for the PIN once per visit."
             else "Set a PIN here so a child cannot change what the house can watch.",
         )
     }
@@ -1215,7 +886,6 @@ class SettingsActivity : Activity() {
         chevron: Boolean = false,
         action: () -> Unit,
     ) {
-        val isEntry = firstRow == null
         val row = controlRow(label, value, note, chevron, action)
         if (row.id == View.NO_ID) row.id = View.generateViewId()
         // Group labels and availability explanations are never remote stops. Link only real
@@ -1240,64 +910,9 @@ class SettingsActivity : Activity() {
             },
         )
         if (firstRow == null) firstRow = row
-        registerControl("row:$label", row, entry = isEntry)
+        registerControl("row:$label", row)
     }
 
-    /**
-     * A read-only line: label, value, and a one-sentence reason. It is deliberately not focusable —
-     * a summary that the remote can land on is a promise of an action, and there is none here.
-     */
-    private fun summaryRow(label: String, value: String, note: String) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = app.theme.px(64f)
-            setPadding(app.theme.px(20f), app.theme.px(8f), app.theme.px(18f), app.theme.px(8f))
-            background = Screens.rowFill(app)
-            isFocusable = false
-            isClickable = false
-            contentDescription = listOf(label, value, note)
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .joinToString(". ")
-        }
-        val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        copy.addView(Views.text(app, "li", 21f, app.theme.ink, label, bold = true, maxLines = 1))
-        if (note.isNotBlank()) {
-            copy.addView(
-                Views.text(app, "meta", 15f, app.theme.ink2, note, maxLines = 1),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(2f)
-                },
-            )
-        }
-        row.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (value.isNotBlank()) {
-            row.addView(
-                Views.text(
-                    app,
-                    "liMeta",
-                    18f,
-                    app.theme.colorOr("panelValue", app.theme.brand),
-                    value,
-                    bold = true,
-                    gravity = Gravity.END,
-                    maxLines = 1,
-                ),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    leftMargin = app.theme.px(18f)
-                },
-            )
-        }
-        rows.addView(
-            row,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = Screens.listGap(app)
-            },
-        )
-    }
-
-    /** Dense operational row: current value stays visible without opening a second screen. */
     private fun controlRow(
         label: String,
         value: String,
@@ -1684,23 +1299,6 @@ class SettingsActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (phoneLayer != null) {
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                when (event.keyCode) {
-                    KeyEvent.KEYCODE_BACK -> { closePhonePairing(); return true }
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                        if (event.repeatCount == 0) closePhonePairing()
-                        return true
-                    }
-                }
-                // Keep D-pad travel inside the QR sheet: horizontal keys are consumed so the
-                // ring cannot escape to the page behind the dimmed panel.
-                if (event.keyCode in setOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
-                        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN)
-                ) return true
-            }
-            return super.dispatchKeyEvent(event)
-        }
         if (pinLayer != null) {
             if (event.action == KeyEvent.ACTION_DOWN) {
                 when (event.keyCode) {
@@ -1831,14 +1429,12 @@ class SettingsActivity : Activity() {
                 applyTheme(id)
                 return@showPicker
             }
-            status.text = "Saving shared theme…"
-            api.saveSettings(JSONObject().put("settings", JSONObject().put("theme", id))) { _, error ->
+            status.text = "Saving theme…"
+            api.saveSettings(JSONObject().put("settings", JSONObject().put("theme", id))) { _, _ ->
                 if (isFinishing || isDestroyed) return@saveSettings
-                if (error != null) {
-                    status.text = "Theme was not changed: $error"
-                    paint()
-                    return@saveSettings
-                }
+                // Appearance is safe for anyone to change. If the household lock refuses a shared
+                // write, the TV still wears the choice locally instead of sending the owner to a
+                // PIN prompt they do not need for their own screen.
                 applyTheme(id)
             }
         }
@@ -2309,14 +1905,13 @@ class SettingsActivity : Activity() {
         page.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
     }
 
-    // ---- phone pairing (QR) ---------------------------------------------------------------
+    // ---- phone rail & remote session --------------------------------------------------------
 
     /**
-     * Resolve the URL the phone should open.
-     *  - Standalone: this TV's LAN address on :8787 (LocalServer.webBase).
+     * Resolve the origin the phone should open.
+     *  - Standalone: this TV's LAN address on :8787 (LocalServer/webBase).
      *  - Hub: the paired hub origin (HubEndpoint.base, typically :8788).
-     * The hub's web settings already call POST /app/v1/settings/unlock via adminlock.js
-     * (ensureSettingsAdmin) before any household write, so the QR alone is enough.
+     * The QR then adds `/remote` and the one-shot session token, never the hub credential.
      */
     private fun phonePairingUrl(): String? {
         return try {
@@ -2339,138 +1934,268 @@ class SettingsActivity : Activity() {
     }
 
     /**
-     * PIN-gated QR sheet: the caller must have passed requireAdmin() first. Shows the QR plus
-     * the typed fallback URL for a phone whose camera cannot read the code.
+     * The pinned rail. It is part of the page chrome, not a settings row: a person opening Settings
+     * sees a code big enough to scan before they read a single label, and the phone it opens can
+     * drive the D-pad and type into search. It stays outside the ScrollView so scrolling never takes
+     * the link away.
      */
-    private fun showPhonePairing() {
-        closePhonePairing()
-        val url = phonePairingUrl()
-        val standalone = app.prefs.standalone()
-
-        val layer = FrameLayout(this).apply {
-            setBackgroundColor(Screens.dimColor(app))
-            isClickable = true
-        }
-        val panel = LinearLayout(this).apply {
+    private fun buildPhoneRail(): LinearLayout {
+        val rail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(app.theme.px(36f), app.theme.px(28f), app.theme.px(36f), app.theme.px(24f))
-            background = Screens.modalFill(app)
-            elevation = app.theme.px(16f).toFloat()
-        }
-        panel.addView(
-            Views.text(app, "li", 26f, app.theme.ink, "Connect from phone", bold = true, gravity = Gravity.CENTER),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        val sub = if (standalone)
-            "Scan to open Settings on this TV (:8787)"
-        else
-            "Scan to open Settings on your Hub"
-        panel.addView(
-            Views.text(app, "meta", 18f, app.theme.ink2, sub, gravity = Gravity.CENTER, maxLines = 2),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(6f)
-            },
-        )
-
-        if (url.isNullOrBlank()) {
-            panel.addView(
-                Views.text(app, "meta", 19f, app.theme.ink, "No network address yet", bold = true, gravity = Gravity.CENTER),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(18f)
-                },
-            )
-            panel.addView(
-                Views.text(app, "meta", 17f, app.theme.ink2,
-                    "Connect this TV to Wi-Fi, then try again.", gravity = Gravity.CENTER, maxLines = 2),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(6f)
-                },
-            )
-        } else {
-            // The QR and the typed address below are the same string, and both carry the web UI's
-            // Settings route, so a phone that scans lands on the page the row promised.
-            val qrUrl = PhonePairing.settingsUrl(url) ?: url
-            val bitmap = PhonePairing.renderQr(qrUrl, app.theme.px(420f))
-            if (bitmap != null) {
-                val whitePlate = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    setPadding(app.theme.px(16f), app.theme.px(16f), app.theme.px(16f), app.theme.px(16f))
-                    background = Views.rounded(android.graphics.Color.WHITE, app.theme.radius("card", 10f))
-                }
-                val qrView = android.widget.ImageView(this).apply {
-                    setImageBitmap(bitmap)
-                    contentDescription = "QR code to open Scenix Settings on a phone"
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                }
-                val qrPx = app.theme.px(260f)
-                whitePlate.addView(qrView, LinearLayout.LayoutParams(qrPx, qrPx))
-                panel.addView(whitePlate,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        topMargin = app.theme.px(18f)
-                        gravity = Gravity.CENTER_HORIZONTAL
-                    })
-            }
-            // Fallback typed address — always shown so a phone without a QR reader (or a
-            // dim projector) can still type the URL. It is the exact value the QR encodes.
-            val fallback = PhonePairing.fallbackText(qrUrl)
-            panel.addView(
-                Views.text(app, "liMeta", 19f, app.theme.colorOr("panelValue", app.theme.brand),
-                    fallback, bold = true, gravity = Gravity.CENTER, maxLines = 2),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(16f)
-                },
-            )
-            // The sheet may not promise a gate the hub does not have. With the Settings lock off,
-            // the address the QR carries is enough for anyone on the Wi-Fi to change sources, and
-            // the honest line about that is also the one that points at how to close it.
-            val pinNote = if (lockInfo?.optBoolean("enabled") == true)
-                "Or type this address on your phone. Same Wi-Fi. The Settings PIN will be asked there."
-            else
-                "Or type this address on your phone. Same Wi-Fi. This Hub has no Settings PIN yet, so anyone here can change sources — set one under Access & safety."
-            panel.addView(
-                Views.text(app, "meta", 16f, app.theme.ink2,
-                    pinNote,
-                    gravity = Gravity.CENTER, maxLines = 3),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = app.theme.px(8f)
-                },
+            setPadding(app.theme.px(18f), app.theme.px(16f), app.theme.px(18f), app.theme.px(18f))
+            background = Views.rounded(
+                app.theme.colorOr("settingsContext", app.theme.colorOr("listFill", app.theme.surface)),
+                app.theme.radius("listItem", 12f),
+                maxOf(1, app.theme.px(1f)),
+                app.theme.colorOr("listStroke", app.theme.line),
             )
         }
-
-        val done = Views.text(app, "li", 22f, app.theme.colorOr("panelValue", app.theme.brand),
-            "Done", bold = true, gravity = Gravity.CENTER)
-        done.setPadding(app.theme.px(28f), app.theme.px(10f), app.theme.px(28f), app.theme.px(10f))
-        done.background = Views.rounded(app.theme.colorOr("chipBg", app.theme.surface2), app.theme.radius("badge", 10f))
-        done.isFocusable = true
-        done.isClickable = true
-        done.setOnClickListener { closePhonePairing() }
-        Focus.attach(done, done, app, app.theme.radius("badge", 10f), scale = false, elevate = false,
-            glowInset = app.theme.focusGlowInsetSm, control = true)
-        panel.addView(done,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = app.theme.px(20f)
-                gravity = Gravity.CENTER_HORIZONTAL
-            })
-
-        layer.addView(panel, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { gravity = Gravity.CENTER })
-        root.addView(layer, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        val heading = Views.text(app, "meta", 14f, app.theme.colorOr("panelValue", app.theme.brand),
+            "CONNECT YOUR PHONE", bold = true, gravity = Gravity.CENTER, maxLines = 1)
+        heading.letterSpacing = 0.14f
+        rail.addView(heading, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { bottomMargin = app.theme.px(4f) })
+        rail.addView(
+            Views.text(app, "li", 20f, app.theme.ink, "Your phone is the remote",
+                bold = true, gravity = Gravity.CENTER, maxLines = 2),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { bottomMargin = app.theme.px(10f) },
+        )
+        remoteQrHost = FrameLayout(this).apply {
+            // Reserve the code's square before the async session answers, so the rail never jumps
+            // when the bitmap replaces the placeholder.
+            minimumHeight = maxOf(app.theme.px(300f), 260)
+        }
+        rail.addView(remoteQrHost, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
-        phoneLayer = layer
-        // The QR sheet traps remote input: BACK / CENTER close it; D-pad stays on Done.
-        page.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-        done.post { done.requestFocus() }
+        remoteUrlView = Views.text(app, "meta", 13f, app.theme.ink2, "", gravity = Gravity.CENTER, maxLines = 3)
+        rail.addView(remoteUrlView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = app.theme.px(10f) })
+        remoteCodeView = Views.text(app, "liMeta", 22f,
+            app.theme.colorOr("panelValue", app.theme.brand), "",
+            bold = true, gravity = Gravity.CENTER, maxLines = 1)
+        rail.addView(remoteCodeView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = app.theme.px(6f) })
+        remoteStatusView = Views.text(app, "meta", 15f, app.theme.ink2,
+            "Preparing the link…", gravity = Gravity.CENTER, maxLines = 2)
+        rail.addView(remoteStatusView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = app.theme.px(4f) })
+        rail.addView(
+            Views.text(app, "meta", 13f, app.theme.ink3,
+                "D-pad, OK/Back and typing work from the phone. This link ends when Settings closes.",
+                gravity = Gravity.CENTER, maxLines = 4),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = app.theme.px(8f) },
+        )
+        return rail
     }
 
-    private fun closePhonePairing() {
-        phoneLayer?.let { root.removeView(it) }
-        phoneLayer = null
-        page.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+    /** Draw the current session (or the honest fallback) into the rail. */
+    private fun renderPhoneRail() {
+        val host = remoteQrHost ?: return
+        host.removeAllViews()
+        val origin = remoteOrigin
+        if (origin.isBlank()) {
+            remoteUrlView?.text = "No network address yet"
+            remoteCodeView?.text = ""
+            remoteStatusView?.text = "Connect this TV to Wi-Fi, then reopen Settings."
+            return
+        }
+        val live = remoteSessionOpen
+        val url = when {
+            live -> remoteUrl(origin)
+            !remoteFallbackUrl.isNullOrBlank() -> remoteFallbackUrl.orEmpty()
+            else -> PhonePairing.settingsUrl(origin) ?: origin
+        }
+        val bitmap = PhonePairing.renderQr(url, maxOf(app.theme.px(340f), 300))
+        if (bitmap != null) {
+            val plate = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(app.theme.px(10f), app.theme.px(10f), app.theme.px(10f), app.theme.px(10f))
+                background = Views.rounded(android.graphics.Color.WHITE, app.theme.radius("card", 10f))
+            }
+            val image = android.widget.ImageView(this).apply {
+                setImageBitmap(bitmap)
+                contentDescription = if (live)
+                    "QR code to open the Scenix phone remote"
+                else
+                    "QR code to open Scenix Settings on a phone"
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            }
+            val side = maxOf(app.theme.px(300f), 260)
+            plate.addView(image, LinearLayout.LayoutParams(side, side))
+            host.addView(plate, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        } else {
+            host.addView(Views.text(app, "meta", 16f, app.theme.ink2,
+                "The code could not be drawn", gravity = Gravity.CENTER, maxLines = 2))
+        }
+        remoteUrlView?.text = url
+        remoteCodeView?.text = if (live) "CODE  $remoteCode" else ""
+        if (live) {
+            remoteStatusView?.text = "Waiting for your phone…"
+        } else {
+            remoteStatusView?.text = "Phone remote needs a Hub update; this code opens web Settings."
+        }
     }
+
+    private fun remoteUrl(origin: String): String =
+        origin.trimEnd('/') + "/remote?t=" + remoteToken + "&c=" + remoteCode
+
+    /**
+     * Mint one random session for this Settings visit. The token is the only secret the phone gets;
+     * registering it is a hub-authenticated call from this TV, and the route that consumes it is
+     * deliberately not the household's `/app/v1/settings` surface.
+     */
+    private fun ensureRemoteSession() {
+        if (remoteSessionOpen || remoteRegistering || isFinishing || isDestroyed) return
+        val origin = phonePairingUrl()
+        if (origin.isNullOrBlank()) {
+            remoteOrigin = ""
+            renderPhoneRail()
+            return
+        }
+        remoteOrigin = origin
+        remoteFallbackUrl = null
+        remoteToken = randomHex(16)
+        remoteCode = randomCode()
+        remoteLast = 0
+        remoteRegistering = true
+        api.remoteRegister(remoteToken, remoteCode) { root, _ ->
+            remoteRegistering = false
+            if (isFinishing || isDestroyed) return@remoteRegister
+            if (root?.optBoolean("ok") == true) {
+                remoteCode = root.optString("code", remoteCode).uppercase()
+                remoteSessionOpen = true
+                remoteLast = 0
+            } else {
+                // An older compatible Hub has no remote route. The QR still has a job: it opens the
+                // web Settings page, so pairing is never a dead end on an older home.
+                remoteFallbackUrl = PhonePairing.settingsUrl(origin)
+            }
+            renderPhoneRail()
+            startRemotePolling()
+        }
+    }
+
+    private fun startRemotePolling() {
+        if (remotePolling || !remoteSessionOpen) return
+        remotePolling = true
+        remoteHandler.postDelayed(remotePoll, 700L)
+    }
+
+    private fun stopRemotePolling() {
+        remotePolling = false
+        remoteHandler.removeCallbacks(remotePoll)
+    }
+
+    private fun pollRemote() {
+        if (!remotePolling || !remoteSessionOpen || isFinishing || isDestroyed) return
+        val token = remoteToken
+        api.remoteEvents(token, remoteLast) { root, _ ->
+            if (!remotePolling || token != remoteToken || isFinishing || isDestroyed) return@remoteEvents
+            if (root != null) {
+                val events = root.optJSONArray("events")
+                if (events != null) {
+                    for (i in 0 until events.length()) {
+                        val event = events.optJSONObject(i) ?: continue
+                        injectRemoteEvent(event)
+                    }
+                }
+                remoteLast = root.optInt("last", remoteLast)
+                if (root.optLong("phoneSeenAt", 0L) > 0L) {
+                    remoteStatusView?.text = "Phone connected"
+                }
+            }
+            if (remotePolling) remoteHandler.postDelayed(remotePoll, 700L)
+        }
+    }
+
+    private fun closeRemoteSession() {
+        if (!remoteSessionOpen) return
+        val token = remoteToken
+        remoteSessionOpen = false
+        remoteToken = ""
+        remoteCode = ""
+        if (token.isNotBlank()) api.remoteClose(token) { _, _ -> }
+    }
+
+    /**
+     * A phone event lands in the same input path as the TV remote. Keys go through
+     * [dispatchKeyEvent] so pickers and the PIN pad keep their existing traps; typed text either
+     * feeds the PIN pad or becomes a search query, because Settings itself has no text field.
+     */
+    private fun injectRemoteEvent(event: JSONObject) {
+        when (event.optString("type")) {
+            "text" -> {
+                val text = event.optString("text").trim()
+                if (text.isBlank()) return
+                if (pinLayer != null) {
+                    for (ch in text) {
+                        if (ch.isDigit() && pinBuf.length < 8) addPinDigit(ch - '0')
+                    }
+                    return
+                }
+                closePicker()
+                startActivity(
+                    Intent(this, SearchActivity::class.java)
+                        .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
+                        .putExtra(SearchActivity.EXTRA_QUERY, text.take(48))
+                )
+                status.text = "Searching from your phone"
+            }
+            "key" -> {
+                val key = event.optString("key").trim().uppercase()
+                if (key == "HOME") { finish(); return }
+                val code = remoteKeyCode(key) ?: return
+                dispatchRemoteKey(code)
+            }
+        }
+    }
+
+    private fun remoteKeyCode(key: String): Int? = when (key) {
+        "UP" -> KeyEvent.KEYCODE_DPAD_UP
+        "DOWN" -> KeyEvent.KEYCODE_DPAD_DOWN
+        "LEFT" -> KeyEvent.KEYCODE_DPAD_LEFT
+        "RIGHT" -> KeyEvent.KEYCODE_DPAD_RIGHT
+        "OK" -> KeyEvent.KEYCODE_DPAD_CENTER
+        "BACK" -> KeyEvent.KEYCODE_BACK
+        "DELETE" -> KeyEvent.KEYCODE_DEL
+        "MENU" -> KeyEvent.KEYCODE_MENU
+        "PLAY_PAUSE" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+        "REWIND" -> KeyEvent.KEYCODE_MEDIA_REWIND
+        "FAST_FORWARD" -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+        else -> null
+    }
+
+    private fun dispatchRemoteKey(code: Int) {
+        val now = android.os.SystemClock.uptimeMillis()
+        dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+        dispatchKeyEvent(KeyEvent(now, now + 1, KeyEvent.ACTION_UP, code, 0))
+    }
+
+    private fun randomHex(bytes: Int): String {
+        val data = ByteArray(bytes)
+        java.security.SecureRandom().nextBytes(data)
+        return data.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    private fun randomCode(): String {
+        val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        val random = java.security.SecureRandom()
+        return (1..6).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
+    }
+
 
     companion object {
         const val EXTRA_PROFILE = "profile"
