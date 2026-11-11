@@ -59,6 +59,8 @@ class BrowseActivity : Activity() {
      * plain status line, which is their language.
      */
     private var emptyOverlay: View? = null
+    /** The quiet centred line a section with no titles shows instead of the hub's refusal text. */
+    private var sectionEmpty: View? = null
 
     private fun isGlassPack(): Boolean =
         app.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS
@@ -84,6 +86,44 @@ class BrowseActivity : Activity() {
             window.decorView.findViewById<ViewGroup>(android.R.id.content).removeView(host)
         }
         emptyOverlay = null
+    }
+
+    /**
+     * A section this profile carries nothing for. The hub's own sentence ("row not for this
+     * profile") is a refusal written for machines; printed on a black page it reads as a crash.
+     * This is the same quiet statement the billboard language uses: what the state is, and that
+     * another section still has titles.
+     */
+    private fun showSectionEmpty() {
+        showSkeleton(false)
+        status.visibility = View.GONE
+        val copies = if (section == "series") "series" else "films"
+        val sub = "This profile holds no $copies yet. Another section still has titles."
+        if (isGlassPack()) {
+            showEmpty("Nothing in this section yet", sub)
+            return
+        }
+        val host = contentRoot ?: return
+        sectionEmpty?.let { host.removeView(it) }
+        val theme = app.theme
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(theme.px(90f), 0, theme.px(90f), theme.px(80f))
+        }
+        box.addView(Views.text(app, "h1", 32f, theme.ink, "Nothing in this section yet",
+            bold = true, gravity = Gravity.CENTER))
+        box.addView(Views.text(app, "sub", 19f, theme.ink2, sub, gravity = Gravity.CENTER,
+            maxLines = 2).apply { setPadding(0, theme.px(14f), 0, 0) })
+        host.addView(box, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        sectionEmpty = box
+        box.post { pillStops.firstOrNull { it.visibility == View.VISIBLE }?.requestFocus() }
+    }
+
+    private fun hideSectionEmpty() {
+        sectionEmpty?.let { contentRoot?.removeView(it) }
+        sectionEmpty = null
     }
     private var stage: Stage? = null
     /** Last shelf card which changed the room. Avoids repeating backdrop work on the same card. */
@@ -1146,13 +1186,14 @@ class BrowseActivity : Activity() {
         caps ?: FeatureCaps(live = liveSeen, games = true)
 
     private fun load() {
+        hideSectionEmpty()
         showSkeleton(true)
         // The two optional modes are doors to installed add-ons, so ask what this household has.
         // This runs beside the rows, not in front of them: a tiny answer must never hold the page,
         // and an unreachable hub must not wait out this request before showing its own error. The
         // bar was painted from the last known answer; if the household changed its add-ons since,
         // one rebuild gives the page the doors that exist now.
-        api.caps { answer ->
+        api.caps(profileId) { answer ->
             if (isFinishing || isDestroyed) return@caps
             if (answer != null) {
                 val rendered = barCaps
@@ -1166,38 +1207,38 @@ class BrowseActivity : Activity() {
 
     private fun loadHome() {
         if (section.isNotBlank()) {
-            api.row(profileId, section) { _, items, error ->
+            api.row(profileId, section) { _, items, _ ->
                 if (isFinishing || isDestroyed) return@row
-                if (items.isNullOrEmpty()) {
-                    showSkeleton(false)
-                    if (isGlassPack()) {
-                        status.visibility = View.GONE
-                        showEmpty("Nothing in this section yet",
-                            error ?: "The hub may still be warming its shelves. Try again in a moment.")
-                    } else {
-                        status.visibility = View.VISIBLE
-                        status.text = error ?: "Nothing in this section yet"
-                    }
+                if (!items.isNullOrEmpty()) {
+                    loaded = true
+                    present(deriveShelves(section, items))
                     return@row
                 }
                 // A hub need not carry generic movie/series rows for every profile — a kid
-                // profile answers "row not for this profile" and keeps only kids shelves.
-                // Fall back to the profile's own shelves filtered to this section, instead of
-                // printing the hub's raw error sentence on the page.
+                // profile answers "row not for this profile" and keeps only kids shelves. Those
+                // shelves ARE this section's titles, so build it from them instead of printing the
+                // hub's refusal sentence on a black page. The fallback used to sit after this
+                // branch and only ran when the row had answered, which left every profile without
+                // a generic row stuck on that sentence for good.
                 api.load(profileId) { rows, _ ->
                     if (isFinishing || isDestroyed) return@load
-                    val pool = rows.orEmpty()
-                        .filter { it.id != "hero" && it.card != "channel" }
-                        .flatMap { it.items }
-                        .filter { it.type == if (section == "series") "series" else "movie" }
+                    val wanted = if (section == "series") "series" else "movie"
+                    val pool = LinkedHashMap<String, Item>()
+                    for (row in rows.orEmpty()) {
+                        if (row.id == "hero" || row.card == "channel") continue
+                        for (item in row.items) {
+                            if (item.type == wanted && item.identity.isNotBlank() &&
+                                !pool.containsKey(item.identity)) {
+                                pool[item.identity] = item
+                            }
+                        }
+                    }
                     if (pool.isEmpty()) {
-                        showSkeleton(false)
-                        status.visibility = View.VISIBLE
-                        status.text = error ?: "Nothing in this section yet"
+                        showSectionEmpty()
                         return@load
                     }
                     loaded = true
-                    present(deriveShelves(section, pool))
+                    present(deriveShelves(section, pool.values.toList()))
                 }
             }
             return
@@ -1435,6 +1476,7 @@ class BrowseActivity : Activity() {
             return
         }
         emptyPanel?.visibility = View.GONE
+        hideSectionEmpty()
         showSkeleton(false)
         status.visibility = View.GONE
         hideEmpty()

@@ -107,11 +107,13 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
 
     /**
      * The optional add-ons this hub has installed. The navigation asks this before it draws a Games
-     * or Live TV door: a tab for a mode the household never added is a door to an empty room. A hub
-     * too old to answer returns null, and the caller keeps its previous shape.
+     * or Live TV door: a tab for a mode the household never added is a door to an empty room. The
+     * answer is per profile — a child's scope refuses the live row, and a Live tab that opens on
+     * "not for this profile" is worse than no tab. A hub too old to answer returns null, and the
+     * caller keeps its previous shape.
      */
-    fun caps(done: (FeatureCaps?) -> Unit) {
-        request("/app/v1/caps", "", "GET", null, 8000) { root, status, _ ->
+    fun caps(profileId: String, done: (FeatureCaps?) -> Unit) {
+        request("/app/v1/caps", "profile=" + enc(profileId), "GET", null, 8000) { root, status, _ ->
             val body = root
             done(
                 if (status in 200..299 && body != null && body.has("live") && body.has("games")) {

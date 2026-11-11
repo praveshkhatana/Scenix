@@ -112,6 +112,7 @@ internal object HomeSurfaceFactory {
                         onSettings = callbacks.onSettings,
                         showsLive = callbacks.showsLive,
                         showsGames = callbacks.showsGames,
+                        section = callbacks.section,
                     ),
                 ),
             )

@@ -203,6 +203,9 @@ class GameHubActivity : Activity() {
     ).apply {
         gravity = Gravity.TOP or Gravity.START
         leftMargin = app.theme.gutter
+        // The console's left gutter is mirrored on the right: a MATCH_PARENT block that stopped at
+        // the screen edge made every row bleed on one side only.
+        rightMargin = app.theme.gutter
         topMargin = app.theme.px(360f)
     }
 
@@ -324,7 +327,9 @@ class GameHubActivity : Activity() {
             ).apply { topMargin = theme.px(66f); bottomMargin = theme.px(14f) })
             sessions.take(3).forEachIndexed { index, session -> sessionsBox.addView(sessionRow(index, session)) }
         }
-        box.addView(sessionsBox)
+        box.addView(sessionsBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
         return box
     }
 
@@ -354,8 +359,10 @@ class GameHubActivity : Activity() {
             isFocusable = true
             isClickable = true
             contentDescription = "Start the game again"
+            // The save-point rows are list items, not cards: they span the content column exactly,
+            // so the focus plate reads as a row of one list instead of a floating slab.
             layoutParams = LinearLayout.LayoutParams(
-                theme.px(1020f), theme.px(102f),
+                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(102f),
             ).apply { bottomMargin = theme.px(10f) }
             setOnClickListener { play() }
             setOnFocusChangeListener { v, focused ->
@@ -389,8 +396,13 @@ class GameHubActivity : Activity() {
             SimpleDateFormat("dd/MM/yyyy · HH:mm", Locale.getDefault()).format(Date(session.startMs)),
         ).apply { setPadding(0, theme.px(5f), 0, 0) })
         row.addView(copy, FrameLayout.LayoutParams(
-            theme.px(700f), ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL; leftMargin = theme.px(190f) })
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            leftMargin = theme.px(190f)
+            // Keep the copy column clear of the duration printed in the row's right shoulder.
+            rightMargin = theme.px(130f)
+        })
 
         row.addView(Views.text(
             app, "meta", 13f, Console.ink2, formatPlayed(session.durationMs), bold = true,
@@ -423,6 +435,9 @@ class GameHubActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, theme.px(14f), 0, theme.px(14f))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
         }
         row.addView(Views.text(app, "meta", 15f, Console.ink2, label, bold = true), LinearLayout.LayoutParams(
             theme.px(300f), ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -438,7 +453,7 @@ class GameHubActivity : Activity() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         box.addView(Views.text(app, "sub", 19f, Console.ink2,
             description.ifBlank { "No description was supplied for this port." }, maxLines = 4),
-            LinearLayout.LayoutParams(theme.px(1000f), ViewGroup.LayoutParams.WRAP_CONTENT))
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val host = try { java.net.URI(playUrl).host.orEmpty() } catch (e: Exception) { "" }
         box.addView(controlRow("Shelf", category.ifBlank { "Games" }))
         box.addView(controlRow("Source", host.ifBlank { "—" }))

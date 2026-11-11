@@ -372,11 +372,16 @@ function hasSubtitleSource() {
  * a door to a room the household built, so a hub that never had either must not draw one. Presence here
  * is a fact about the install, never about which build the client is talking to.
  */
-async function navCaps() {
+async function navCaps(profile) {
   const list = await addons.list();
   const games = list.some((a) => a.enabled !== false &&
     Array.isArray(a.resources) && a.resources.includes('games'));
-  return { live: capabilities().live, games };
+  // Live is a door, not a paint job: a profile whose scope refuses the live row (a child, by
+  // default) must not be offered a tab that opens on a refusal. The global capability still has to
+  // say yes — a household with no live add-on has no live row to show anyone.
+  const liveRow = registry.rows.find((r) => r.id === 'live');
+  const live = capabilities().live && (!liveRow || !profile || rowVisible(liveRow, profile));
+  return { live, games };
 }
 
 /**
@@ -5077,7 +5082,8 @@ async function handle(req, res) {
     // downloading the manifest to count add-ons. A household without the games add-on, or without a
     // live playlist, gets no tab for a mode it cannot enter.
     if (path === '/app/v1/caps') {
-      return send(res, 200, await navCaps());
+      const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
+      return send(res, 200, await navCaps(profile));
     }
 
     // ---- the hub's own build ----

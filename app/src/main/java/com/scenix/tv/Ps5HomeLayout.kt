@@ -50,6 +50,10 @@ internal class Ps5HomeLayout(
         /** The household's optional modes: a category for a mode nobody installed is a dead end. */
         val showsLive: Boolean = true,
         val showsGames: Boolean = true,
+        /** "" on Home; the section route ("movies", "series") when a section page hosts this surface.
+         *  The category strip boxes the filter the page is actually showing, exactly as the console's
+         *  own categories do — a Movies page that still shows ALL selected is a lie about the page. */
+        val section: String = "",
     )
 
     private data class Tile(
@@ -166,8 +170,9 @@ internal class Ps5HomeLayout(
             "Games" to "games",
             "Live" to "live",
         ).filter { (_, route) -> offered(route) }
-        sections.forEachIndexed { index, (label, route) ->
-            val stop = makeCategory(label, route, index == 0)
+        sections.forEach { (label, route) ->
+            // Home boxes ALL; a section page boxes the filter whose titles it is showing.
+            val stop = makeCategory(label, route, route == callbacks.section)
             categoryStops += stop
             categories.addView(stop)
         }
