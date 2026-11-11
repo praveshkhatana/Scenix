@@ -963,8 +963,12 @@ class PlayerActivity : Activity() {
         api.play(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@play
             val url = str(reply, "url")
-            val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
-                str(reply, "error").contains("prepar", ignoreCase = true)
+            // Only an answer that says it is warming earns another ask. A 503 used to qualify on the
+            // status alone, so a terminal "no playable source" (the hub's 404, or an older hub's 503
+            // carrying a magnet) bought seven retries and a minute of spinner before the card.
+            val warming = reply?.optBoolean("warming", false) == true ||
+                (status == 503 && (reply == null ||
+                    str(reply, "error").contains("prepar", ignoreCase = true)))
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
                 warmingPending = true
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
@@ -978,9 +982,14 @@ class PlayerActivity : Activity() {
             }
             warmingPending = false
             if (status !in 200..299 || url.isBlank() || !isPlayable(url)) {
-                val why = str(reply, "error")
-                    .ifBlank { transport ?: "The hub could not open this title" }
-                showError(why)
+                // The hub may name copies it did not try because the first refusal was this one. Ask
+                // the next one explicitly instead of showing the card while a playable sibling exists.
+                if (failOverToAlternative(reply, positionMs)) return@play
+                val why = explainFailure(
+                    reply,
+                    transport ?: "The hub could not open this title",
+                )
+                showError(why, title = noSourceHeading(reply), reply = reply)
                 return@play
             }
             sameCopyRetries = 0
@@ -1679,6 +1688,53 @@ class PlayerActivity : Activity() {
         askSwitch(body, pos, playWhenReady = true, warmTries = 10, automatic = true)
     }
 
+    /**
+     * The hub's refusal named copies it did not try. Ask the first untried one directly instead of
+     * leaving the viewer on a card while a sibling the hub already listed might open. Bounded by the
+     * same [MAX_FAILOVERS] budget as a mid-film stall.
+     *
+     * A refusal about the hub itself ("the only copies are torrents and there is no gateway") is not
+     * a sibling problem: no other copy can fix it, so that answer goes straight to the card.
+     */
+    private fun failOverToAlternative(reply: JSONObject?, positionMs: Long): Boolean {
+        if (live || strictSource || failovers >= MAX_FAILOVERS) return false
+        if (str(reply, "code") == "torrents-need-gateway") return false
+        val listed = reply?.optJSONArray("alternatives")
+        if (listed != null && listed.length() > 0) alternatives = listed
+        var pick: JSONObject? = null
+        for (i in 0 until alternatives.length()) {
+            val cand = alternatives.optJSONObject(i) ?: continue
+            val id = str(cand, "id")
+            val label = str(cand, "label")
+            if (id.isNotBlank() && tried.contains(id)) continue
+            if (label.isNotBlank() && tried.contains(label)) continue
+            pick = cand
+            break
+        }
+        val chosen = pick ?: return false
+        val spec = spec ?: return false
+        // Remember what was refused, then the copy about to be asked for, so a second failure walks
+        // forward through the shelf instead of asking the hub for the same pick again.
+        val refused = reply?.optJSONObject("picked")
+        str(refused, "id").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        str(refused, "label").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        str(chosen, "id").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        str(chosen, "label").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        failovers++
+        clearError()
+        quietOrCenter("Trying another copy…")
+        val pos = if (positionMs > 0L) positionMs else player?.let { filmPosition(it) } ?: 0L
+        askSwitch(bodyFor(spec, pos, chosen, tried.toMutableSet()), pos,
+            playWhenReady = true, warmTries = 4, automatic = true)
+        return true
+    }
+
+    /** A structured terminal answer is "nothing here can play", not "this copy stalled". */
+    private fun noSourceHeading(reply: JSONObject?): String = when (str(reply, "code")) {
+        "torrents-need-gateway", "blocked", "no-copy" -> "No playable source"
+        else -> ""
+    }
+
     private fun failoverToNext(preferLower: Boolean = false) {
         val spec = spec ?: return
         // A copy the viewer picked by hand is never replaced behind their back. The card below is
@@ -1771,8 +1827,11 @@ class PlayerActivity : Activity() {
         api.switchSource(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@switchSource
             val url = str(reply, "url")
-            val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
-                str(reply, "error").contains("prepar", ignoreCase = true)
+            // Same rule as the first press: only a reply that says it is warming is worth another
+            // ask. A terminal no-source answer must not masquerade as progress.
+            val warming = reply?.optBoolean("warming", false) == true ||
+                (status == 503 && (reply == null ||
+                    str(reply, "error").contains("prepar", ignoreCase = true)))
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
                 warmingPending = true
                 val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
@@ -1793,12 +1852,15 @@ class PlayerActivity : Activity() {
                             "The hub is still preparing this copy. Give it a moment, then try again.",
                             title = "This copy is still being prepared",
                         )
+                    } else if (failOverToAlternative(reply, positionMs)) {
+                        return@switchSource
                     } else {
                         showError(
                             explainFailure(
                                 reply,
                                 transport ?: "No other copy of this title would open",
                             ),
+                            title = noSourceHeading(reply),
                             reply = reply,
                         )
                     }
@@ -4288,8 +4350,13 @@ class PlayerActivity : Activity() {
         // A rule's answer already names itself ("this title is not in the languages this profile
         // allows"), and there is nothing in `tried` to add to it. Use those words rather than dressing
         // up a machine label.
-        str(reply, "detail").takeIf { it.isNotBlank() }?.let { return humaniseError(it) }
-        return humaniseError(str(reply, "error").ifBlank { fallback })
+        val detail = str(reply, "detail").takeIf { it.isNotBlank() }
+        val base = humaniseError(detail ?: str(reply, "error").ifBlank { fallback })
+        // A terminal no-source answer carries the one thing a viewer can act on ("turn on P2P in the
+        // hub", "pick another copy"). Leaving it in the JSON while the card says only "no playable
+        // source" is the spinner-then-nothing complaint in sentence form.
+        val next = str(reply, "nextAction").trim()
+        return if (next.isBlank()) base else "$base $next"
     }
 
     private fun showError(rawMessage: String, title: String = "", reply: JSONObject? = null) {
