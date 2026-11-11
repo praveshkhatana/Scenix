@@ -2697,6 +2697,18 @@ function playClock(identity) {
   };
 }
 
+/**
+ * Did the host refuse this hub, rather than merely stay silent?
+ *
+ * A 401/403/404/410/451 is a verdict about this connection or the stored address: asking again in a
+ * couple of seconds finds the same wall. Silence — a timeout, no bytes, a dropped socket — is a copy
+ * that may still wake. The picker's warming bargain is only honest for the second kind, so the two
+ * must be told apart before an answer is chosen.
+ */
+function isRefusal(text) {
+  return /(?:HTTP\s*)?(?:401|403|404|410|451)\b|forbidden|blocked|geo-?blocked/i.test(String(text || ''));
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   const clock = playClock(identity);
   const answer = await pickMeasured(identity, profile, wanted, type, opts, clock);
@@ -3080,6 +3092,12 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
 
   const deadline = Date.now() + PLAY_TOTAL_BUDGET_MS;
   const tried = [];
+  // A torrent only becomes an address the TV can open through a P2P gateway or a paid resolver. With
+  // both off, a torrent seat is a press this hub cannot finish, and a magnet is not a stream: the
+  // walk must not spend its seconds on copies whose only possible answer is a "warming" that will
+  // never warm. Keep the best magnet for clients that do own an engine, and for the log.
+  const canServeTorrents = gateway.MODE === 'http' || debrid.ready();
+  let magnetOnly = null; // the best torrent copy when this hub has no way to hand one over
   let mintedTries = 0; // how many minted links this press has actually had to check
   // What this response adds to the source's own reasoning: the container it chose and why, and whether
   // the engine is the one holding the copy back. Appended to `source.why` at the end, never replacing it.
@@ -3465,6 +3483,17 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
       out = o; source = cand; break;
     }
 
+    if (!canServeTorrents) {
+      // The copy is a torrent and this hub has neither a gateway nor a debrid account. Asking the
+      // gateway here returns "gateway off" and leaves a magnet as the fallback, which the next
+      // branch then reports as "still warming" — true for nobody, since nothing is warming. Record
+      // the fact once per copy and keep the best magnet for the terminal answer below.
+      tried.push(labelOf(cand) + ': a torrent, and this hub has no P2P gateway or debrid account to serve it');
+      if (!magnetOnly || fallbackNeed(cand) < fallbackNeed(magnetOnly.cand)) magnetOnly = { o, cand };
+      o.checked = true;
+      continue;
+    }
+
     // mode is the whole difference between our three playback paths; the client contract never changes.
     // Async on purpose: the gateway has to ask the engine which file inside the torrent is the film.
     //
@@ -3753,6 +3782,28 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   }));
   scored.sort((x, y) => (y.bytes - x.bytes) || (y.seeders - x.seeders) || (x.size - y.size));
   const fallback = (scored[0] && scored[0].f) || lastResort;
+  if (!out && !fallback && magnetOnly && !explicit) {
+    // This is the honest end of the adult/late-night report: every copy the hub found is a torrent,
+    // and this hub has no way to turn one into an address the TV can open. It is a capability fact,
+    // not a copy that is still preparing, so answer once — not with a 503 the app will retry seven
+    // times while the spinner sits there. The magnet stays in the answer for a client with its own
+    // engine, and the alternatives let the app offer a different copy if one ever becomes playable.
+    log('PLAY NO GATEWAY', identity, 'only torrent copies; ' + tried.join(' | '));
+    return { status: 404, body: {
+      error: 'no playable source',
+      code: 'torrents-need-gateway',
+      identity,
+      title: kept.title || null,
+      copy: explicit ? labelOf(source) : null,
+      detail: 'Every copy of this title the hub found is a torrent. This hub has P2P streaming off'
+        + ' and no debrid account, so it cannot turn one into a link the TV can play.',
+      nextAction: 'Turn on P2P streaming in the hub (set GATEWAY=http with a torrent engine) or connect'
+        + ' a debrid account, then try again.',
+      magnet: (magnetOnly.o && magnetOnly.o.url) || null,
+      tried,
+      alternatives: listAlternatives(candidates, magnetOnly.cand, kept.title, ep),
+    } };
+  }
   if (!out && explicit) {
     // A direct copy whose short validation window was silent is not proof it cannot play: a busy
     // archive/CDN node often takes longer to first byte than the window. Hand the player the URL it
@@ -3768,6 +3819,42 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
     const reason = tried.find((t) => t.startsWith(labelOf(source))) || tried[0]
       || 'it answered with nothing the player could open';
     log('PLAY EXPLICIT FAIL', identity, labelOf(source), reason);
+    // The viewer picked a torrent on a hub that cannot serve one. Say that specifically instead of
+    // the generic "that copy could not be opened", and do not imply another torrent would help.
+    const pickedTorrent = magnetOnly && !canServeTorrents
+      && (magnetOnly.cand === source
+        || (source && magnetOnly.cand
+          && String(magnetOnly.cand.id || '') === String(source.id || '')));
+    if (pickedTorrent) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'torrents-need-gateway',
+        identity, title: kept.title || null,
+        copy: labelOf(source),
+        detail: 'You picked a torrent copy, and this hub has P2P streaming off and no debrid account,'
+          + ' so it cannot hand the TV a link.',
+        nextAction: 'Turn on P2P streaming in the hub (set GATEWAY=http with a torrent engine) or connect'
+          + ' a debrid account, then try again. Or pick a direct copy in Quality.',
+        magnet: (magnetOnly.o && magnetOnly.o.url) || null,
+        tried,
+        alternatives: listAlternatives(candidates, magnetOnly.cand, kept.title, ep),
+      } };
+    }
+    // A 4xx is the host refusing this hub, not a copy that needs another second. Retrying it only
+    // repeats the same wall, so it is a terminal answer even though "measured down" also appears on
+    // silent hosts.
+    if (tried.length > 0 && tried.every((t) => isRefusal(t))) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'blocked',
+        identity, title: kept.title || null,
+        copy: labelOf(source),
+        detail: 'The host refuses this hub for that copy (it blocked the request or the copy is gone).',
+        nextAction: 'Pick another copy in Quality, or add a direct source that will serve this hub.',
+        tried,
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
+      } };
+    }
     const silenceOnly = tried.length > 0 && tried.every((t) =>
       /timeout|no answer|silence|stream read failed|ECONN|socket|closed|measured down|cold copy/i.test(t));
     if (silenceOnly) {
@@ -3812,6 +3899,22 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         detail: 'the copies this hub was told about had no address behind them; asking the addons again',
       } };
     }
+    // A 4xx from every copy is not a sleeping swarm: it is the host refusing this hub (geo/Cloudflare
+    // blocks are the common adult-catalogue case) or a cached address that is gone. There is nothing
+    // to warm and the old "measured down" silence test wrongly put it behind a 503, which the app
+    // retried for a minute. Say it once.
+    if (tried.length > 0 && tried.every((t) => isRefusal(t))) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'blocked',
+        identity, title: kept.title || null,
+        detail: 'The copies of this title were refused by their host (blocked or unavailable from this'
+          + ' hub).',
+        nextAction: 'Try another copy in Quality, or add a direct source that will serve this hub.',
+        tried,
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
+      } };
+    }
     // When every refusal was of the silence kind — timeouts, no bytes, dropped sockets — rather than
     // a refusal of the content (an HTML page, the wrong film's filename), the copies may simply be
     // sleeping hosts that have not woken yet. Answer the hub's warming bargain and the app waits and
@@ -3825,7 +3928,15 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
         detail: 'every copy answered too slowly to measure; they stay candidates, not verdicts',
       } };
     }
-    return { status: 404, body: { error: 'no playable source', identity, tried } };
+    return { status: 404, body: {
+      error: 'no playable source',
+      code: 'no-copy',
+      identity, title: kept.title || null,
+      detail: 'The hub found copies of this title, but none of them could be opened as a stream.',
+      nextAction: 'Try another copy in Quality, or add a source that serves direct video.',
+      tried,
+      alternatives: listAlternatives(candidates, source, kept.title, ep),
+    } };
   }
 
   // A native provider may answer with a hub-relative address (`/app/v1/proxy?u=file://…` for a file
@@ -3841,6 +3952,24 @@ async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   // answering 200 with something unopenable and letting the screen call it a broken file. The magnet is
   // still in the answer, for the sake of any client that can use one and for the log.
   if (!hubRelative && !/^https?:\/\//i.test(String(out.url || ''))) {
+    if (!canServeTorrents) {
+      // Defence in depth: a candidate shaped as "direct" handed back a magnet even though no gateway
+      // or debrid can serve it. Waiting cannot change that, so it is the same terminal answer as the
+      // all-torrents case above.
+      log('PLAY NO GATEWAY', identity, labelOf(source), String(out.url).slice(0, 42));
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'torrents-need-gateway',
+        identity, title: kept.title || null,
+        detail: 'The only copy the hub could find is a torrent, and this hub has P2P streaming off and'
+          + ' no debrid account, so it cannot turn it into a link the TV can play.',
+        nextAction: 'Turn on P2P streaming in the hub (set GATEWAY=http with a torrent engine) or connect'
+          + ' a debrid account, then try again.',
+        magnet: out.url,
+        tried,
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
+      } };
+    }
     log('PLAY WARMING', identity, labelOf(source), String(out.url).slice(0, 42));
     return {
       status: 503,
