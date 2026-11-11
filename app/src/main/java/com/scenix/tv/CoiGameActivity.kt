@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.GameSessions
 import com.scenix.tv.core.Views
 import java.io.File
 import org.mozilla.geckoview.ContentBlocking
@@ -56,6 +57,8 @@ class CoiGameActivity : Activity() {
     private var fallbackUrl = ""
     private var usedFallback = false
     private var titleText = "Game"
+    /** The hub's stable game id: the key the page's session history is stored under. */
+    private var sessionIdentity = ""
     private var padReady = false
     private var painted = false
     private var openedAt = 0L
@@ -92,6 +95,7 @@ class CoiGameActivity : Activity() {
         url = intent?.getStringExtra(GameActivity.EXTRA_URL).orEmpty()
         fallbackUrl = intent?.getStringExtra(GameActivity.EXTRA_FALLBACK).orEmpty()
         titleText = intent?.getStringExtra(GameActivity.EXTRA_TITLE).orEmpty().ifBlank { "Game" }
+        sessionIdentity = intent?.getStringExtra(GameActivity.EXTRA_IDENTITY).orEmpty().ifBlank { titleText }
         padReady = intent?.getBooleanExtra(GameActivity.EXTRA_PAD, false) ?: false
         if (url.isBlank()) { finish(); return }
         // Some portals wrap the game in their own iframe page whose interstitial gate only ever
@@ -747,6 +751,16 @@ class CoiGameActivity : Activity() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        GameSessions.recordStart(this, sessionIdentity)
+    }
+
+    override fun onPause() {
+        GameSessions.recordEnd(this, sessionIdentity)
+        super.onPause()
     }
 
     override fun onDestroy() {

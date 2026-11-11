@@ -26,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.GameSessions
 import com.scenix.tv.core.Views
 import java.io.ByteArrayInputStream
 
@@ -60,6 +61,8 @@ class GameActivity : Activity() {
     private var titleText = "Game"
     private var padReady = false
     private var desktopUa = false
+    /** The hub's stable game id: the key the page's session history is stored under. */
+    private var sessionIdentity = ""
     private var hudVisible = false
     // True from the first pass that found the game's stage: the remote becomes a finger only
     // once there is a stage to touch.
@@ -74,6 +77,7 @@ class GameActivity : Activity() {
         url = intent?.getStringExtra(EXTRA_URL).orEmpty()
         fallbackUrl = intent?.getStringExtra(EXTRA_FALLBACK).orEmpty()
         titleText = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Game" }
+        sessionIdentity = intent?.getStringExtra(EXTRA_IDENTITY).orEmpty().ifBlank { titleText }
         padReady = intent?.getBooleanExtra(EXTRA_PAD, false) ?: false
         needsCoi = intent?.getBooleanExtra(EXTRA_COI, false) ?: false
         desktopUa = intent?.getBooleanExtra(EXTRA_DESKTOP_UA, false) ?: false
@@ -553,11 +557,13 @@ class GameActivity : Activity() {
 
     override fun onPause() {
         if (::web.isInitialized) web.onPause()   // freeze drawing while Bluetooth settings sit on top
+        GameSessions.recordEnd(this, sessionIdentity)
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        GameSessions.recordStart(this, sessionIdentity)
         if (::web.isInitialized) web.onResume()
         updatePadChip()
     }
@@ -575,6 +581,7 @@ class GameActivity : Activity() {
     companion object {
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_IDENTITY = "identity"
         const val EXTRA_PAD = "pad"
         const val EXTRA_FALLBACK = "fallback"
         const val EXTRA_COI = "coi"

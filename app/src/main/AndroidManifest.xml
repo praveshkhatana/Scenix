@@ -121,6 +121,14 @@
             android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- A game's own console-style page: tabs, facts, sessions, and the START box. -->
+        <activity
+            android:name=".GameHubActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- The game player keeps its own keyboard/navigation config contract: a pad pairing or a
              controller arriving must not restart the WebView and drop the running game. -->
         <activity
