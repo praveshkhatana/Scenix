@@ -3,6 +3,7 @@ package com.scenix.tv
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.KeyEvent
@@ -98,6 +99,12 @@ class LiveChannelsActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(96f)
         ))
         status = Views.text(app, "sub", 21f, wallInk2, "Reading channels…", gravity = Gravity.CENTER)
+        // The wall scrolls beneath this sentence; the fade keeps channel captions from reading
+        // through it, which is all it would take for the wall to look broken.
+        status.background = GradientDrawable(
+            GradientDrawable.Orientation.BOTTOM_TOP,
+            intArrayOf(theme.bg, Color.TRANSPARENT),
+        )
         root.addView(status, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, theme.px(64f)
         ).apply { gravity = Gravity.BOTTOM })
