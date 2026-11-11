@@ -966,12 +966,14 @@ class PlayerActivity : Activity() {
             // Only an answer that says it is warming earns another ask. A 503 used to qualify on the
             // status alone, so a terminal "no playable source" (the hub's 404, or an older hub's 503
             // carrying a magnet) bought seven retries and a minute of spinner before the card.
-            val warming = reply?.optBoolean("warming", false) == true ||
-                (status == 503 && (reply == null ||
-                    str(reply, "error").contains("prepar", ignoreCase = true)))
+            val cooldown = hubCooldownMs(reply)
+            val warming = warmingAnswer(reply, status) || cooldown > 0L
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
                 warmingPending = true
-                val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
+                val wait = maxOf(
+                    (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L),
+                    cooldown,
+                )
                 showCenter("The hub is preparing this copy…", true)
                 handler.postDelayed({
                     if (gen == requestGen && !isFinishing) {
@@ -996,6 +998,39 @@ class PlayerActivity : Activity() {
             recoveryScheduled = false
             start(reply!!, positionMs, playWhenReady = true)
         }
+    }
+
+    /** A 503, or an error word from a hub that predates the explicit `warming` flag. */
+    private fun warmingAnswer(reply: JSONObject?, status: Int): Boolean =
+        reply?.optBoolean("warming", false) == true ||
+            (status == 503 && (reply == null ||
+                str(reply, "error").contains("prepar", ignoreCase = true)))
+
+    /**
+     * A hub cooldown, not a verdict on the title. A deployed hub blacklists a cold torrent for half a
+     * minute after its first press times out; the retry two seconds later then answers "no playable
+     * source" whose only reason is "engine already tried this copy, asked again in 27s". Treating that
+     * as terminal is what made every cold play fail on the ask right after the warm one. When every
+     * tried line is that cooldown (or the walk's closing "nothing better"), wait it out and ask again.
+     * Only a short cooldown qualifies: a torrent the engine read and found no video in is held for ten
+     * minutes, and that is a verdict, not a warm-up.
+     */
+    private fun hubCooldownMs(reply: JSONObject?): Long {
+        val tried = reply?.optJSONArray("tried") ?: return 0L
+        var wait = 0L
+        var sawCooldown = false
+        for (i in 0 until tried.length()) {
+            val line = tried.optString(i, "")
+            if (line.isBlank()) continue
+            val m = Regex("asked again in (\\d+)s", RegexOption.IGNORE_CASE).find(line)
+            if (m != null) {
+                sawCooldown = true
+                wait = maxOf(wait, m.groupValues[1].toLongOrNull() ?: 0L)
+            } else if (!line.startsWith("nothing better", ignoreCase = true)) {
+                return 0L
+            }
+        }
+        return if (sawCooldown && wait in 1..45) (wait * 1000L).coerceIn(1200L, 8000L) else 0L
     }
 
     /** The answer is good: turn it into a MediaItem and start. Used for play, switch and retry. */
@@ -1829,12 +1864,14 @@ class PlayerActivity : Activity() {
             val url = str(reply, "url")
             // Same rule as the first press: only a reply that says it is warming is worth another
             // ask. A terminal no-source answer must not masquerade as progress.
-            val warming = reply?.optBoolean("warming", false) == true ||
-                (status == 503 && (reply == null ||
-                    str(reply, "error").contains("prepar", ignoreCase = true)))
+            val cooldown = hubCooldownMs(reply)
+            val warming = warmingAnswer(reply, status) || cooldown > 0L
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
                 warmingPending = true
-                val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
+                val wait = maxOf(
+                    (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L),
+                    cooldown,
+                )
                 handler.postDelayed({
                     if (gen == requestGen && !isFinishing) {
                         askSwitch(body, positionMs, playWhenReady, warmTries - 1, automatic, quiet)
@@ -5812,7 +5849,13 @@ class PlayerActivity : Activity() {
         private const val GLYPH_NEXT = 9
         private const val GLYPH_VOLUME = 10
         private const val GLYPH_EXPAND = 11
-        private const val WARM_TRIES = 7
+        /**
+         * How many times a warming answer is asked again. A cold torrent's file list comes from the
+         * swarm and a hub that is already streaming may take half a minute to produce it; ten asks,
+         * each up to ~6 s at the hub plus the hint's wait, covers that without becoming a spinner
+         * nobody can tell apart from a hang. A copy the hub has judged dead is not retried at all.
+         */
+        private const val WARM_TRIES = 10
         private const val MAX_FAILOVERS = 3
         /** How many times the live wall is asked for after it answers empty. */
         private const val LIVE_RING_TRIES = 3

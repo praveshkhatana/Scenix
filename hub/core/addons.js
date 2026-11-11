@@ -1143,6 +1143,49 @@ const MEDIA_EXT = /\.(mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(\?|#|$)
  */
 const MEDIA_IN_QUERY = /[?&](?:url|src|link|file|u|v)=(https?(?:%3A%2F%2F|:\/\/)[^&]*\.(?:mp4|mkv|webm|m4v|mov|avi|ts|m2ts|flv|wmv|m3u8|mpd)(?:%3F|%23|\?|#|&|%26|$))/i;
 
+/**
+ * Announce URLs for magnets the add-ons hand over as a bare info hash (Torrentio sends no tracker
+ * list at all). The engine can resolve those over the DHT alone — a fresh engine did it in 13 s here
+ * — but it also fetches its own tracker list at boot, and that fetch failed on this network before
+ * falling back. When both the list and the DHT are thin, the file list takes the forty to ninety
+ * seconds that a Play press cannot wait, so name a few long-lived public trackers instead of hoping.
+ * Stremio's torrent engine appends an announce list for the same reason. The swarm is still the swarm.
+ */
+const PUBLIC_TRACKERS = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'udp://open.demonii.com:1337/announce',
+  'https://tracker.nanoha.org:443/announce',
+];
+
+/** Trackers the add-on named (`sources: ["tracker:udp://…"]`) plus the public list, deduped. */
+function trackersFor(entry) {
+  const out = [];
+  const add = (u) => {
+    const s = String(u || '').trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  for (const src of (Array.isArray(entry.sources) ? entry.sources : [])) {
+    const m = /^tracker:(.+)$/i.exec(String(src).trim());
+    if (m) add(m[1]);
+  }
+  for (const t of PUBLIC_TRACKERS) add(t);
+  return out;
+}
+
+/** Add announce URLs a magnet does not already name, leaving everything else untouched. */
+function withTrackers(magnet, trackers) {
+  if (!magnet) return magnet;
+  let out = magnet;
+  for (const t of trackers) {
+    if (out.includes('tr=' + encodeURIComponent(t)) || out.includes('tr=' + t)) continue;
+    out += (out.includes('?') ? '&' : '?') + 'tr=' + encodeURIComponent(t);
+  }
+  return out;
+}
+
 /** One upstream stream entry -> a source plus everything play() needs to resolve it later. */
 function parseStream(entry) {
   const nameLines = String(entry.name || '').split('\n');
@@ -1167,8 +1210,16 @@ function parseStream(entry) {
   const seeds = /👤\s*([\d.,]+)/.exec(desc);
   const seeders = seeds ? Number(seeds[1].replace(/[,.]/g, '')) : null;
 
-  const magnet = (typeof entry.externalUrl === 'string' && entry.externalUrl.startsWith('magnet:'))
+  const named = (typeof entry.externalUrl === 'string' && entry.externalUrl.startsWith('magnet:'))
     ? entry.externalUrl : null;
+  // A bare info hash still becomes a magnet, with announce URLs attached, so the engine has
+  // somewhere to ask besides the DHT (see PUBLIC_TRACKERS).
+  const magnet = withTrackers(
+    named || (entry.infoHash
+      ? 'magnet:?xt=urn:btih:' + entry.infoHash
+        + (hints.filename ? '&dn=' + encodeURIComponent(hints.filename) : '')
+      : null),
+    trackersFor(entry));
   // Some addons spell a plain stream `url`, some `externalUrl`, some `yt`.
   const direct = entry.url || entry.externalUrl || entry.yt || null;
   const torrent = Boolean(entry.infoHash) || Boolean(magnet) || /magnet:/.test(String(direct || ''));

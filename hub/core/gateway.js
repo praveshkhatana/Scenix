@@ -62,13 +62,9 @@ const GET_POLL_MS = Number(process.env.GATEWAY_GET_MS || 4000);
 const PROBE_TIMEOUT_MS = 1500;
 
 // How long a torrent we could not prepare stays blacklisted. "Not yet" and "never" are different facts
-// and must not share one timeout: a cold copy whose metadata is still arriving only needs to be asked
-// again in a moment — that is exactly what the player's *wait and try again* asks for — while a torrent
-// the engine read from end to end and found no video inside is not going to change its mind tonight.
-// Kept short on purpose: the player tells the viewer to press again in fifteen seconds, and a
-// blacklist longer than that promise would answer them from memory instead of asking the engine
-// whether the metadata has arrived yet.
-const MISS_WAITING_MS = Number(process.env.GATEWAY_MISS_WAITING_MS || 30e3);
+// and must not share one timeout: a copy whose metadata is still arriving is not blacklisted at all
+// (prepareTorrent returns it as warming), while a torrent the engine read from end to end and found no
+// video inside is not going to change its mind tonight.
 const MISS_ENGINE_MS = Number(process.env.GATEWAY_MISS_ENGINE_MS || 45e3);
 const MISS_DEAD_MS = Number(process.env.GATEWAY_MISS_DEAD_MS || 10 * 60e3);
 // How long an engine reachability answer is trusted before it is asked again. The same value drives
@@ -563,7 +559,18 @@ async function prepareTorrent(source, hash, ckey, want) {
   }
   // Classify before caching, because the cache entry decides whether the next press even tries.
   const kind = engineFailed ? 'engine' : (sawFiles === 0 ? 'waiting' : 'dead');
-  const ttl = kind === 'engine' ? MISS_ENGINE_MS : (kind === 'waiting' ? MISS_WAITING_MS : MISS_DEAD_MS);
+  if (kind === 'waiting') {
+    // The engine answered, it simply has not read the file list out of the swarm yet. That is the
+    // normal state of a cold copy, and it is not a verdict. It used to be written to the miss
+    // blacklist for 30 s, which is what made "every play fails" self-fulfilling: the first press
+    // spent its 15 s, wrote the entry, and every retry the player sent for the next half-minute was
+    // refused from memory while the engine was fetching the very list the retry needed. Leave the
+    // cache alone, so the next press asks again.
+    log('GATEWAY WARM', 'hash=' + String(hash).slice(0, 12),
+      'no file list yet, next press asks again', lastError);
+    return { hash, error: lastError, kind, warming: true };
+  }
+  const ttl = kind === 'engine' ? MISS_ENGINE_MS : MISS_DEAD_MS;
   prepared.set('miss:' + hash, { error: lastError, at: Date.now(), ttl, kind });
   log('GATEWAY WAIT', 'hash=' + String(hash).slice(0, 12), 'kind=' + kind,
     'retryIn=' + ttl + 'ms', lastError);
