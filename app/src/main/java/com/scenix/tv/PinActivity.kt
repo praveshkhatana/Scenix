@@ -40,6 +40,8 @@ class PinActivity : Activity() {
     private lateinit var panel: View
     private var pin = StringBuilder()
     private var busy = false
+    /** The pack's PIN length: the gate checks the code the moment the last digit lands. */
+    private var pinLength = 4
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,6 +53,10 @@ class PinActivity : Activity() {
         if (profileId.isBlank()) { finish(); return }
 
         val theme = app.theme
+        // The pack owns the PIN's shape (the same `pin` block the web pad reads). `length` decides
+        // when the gate submits itself; `keysPerRow` keeps the pad's rows in the pack's grid.
+        pinLength = theme.token("pin", "length", 4.0).toInt().coerceIn(1, 8)
+        val keysPerRow = theme.token("pin", "keysPerRow", 3.0).toInt().coerceIn(2, 4)
         val frame = FrameLayout(this).apply {
             setBackgroundColor(theme.bg)
             Screens.wall(app)?.let { background = it }
@@ -91,11 +97,11 @@ class PinActivity : Activity() {
         }
         dots = Views.text(app, "h1", 36f,
             if (theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS)
-                theme.color("inkOnWall", "#FFFFFF") else theme.ink, "○ ○ ○ ○", bold = true, gravity = Gravity.CENTER)
+                theme.color("inkOnWall", "#FFFFFF") else theme.ink, emptyDots(), bold = true, gravity = Gravity.CENTER)
         root.addView(dots, LinearLayout.LayoutParams(theme.px(560f), theme.px(90f)).apply {
             topMargin = theme.px(20f)
         })
-        hint = Views.text(app, "meta", 20f, theme.ink3, "Use the number keys or the pad", gravity = Gravity.CENTER)
+        hint = Views.text(app, "meta", 20f, theme.ink3, entryHint(), gravity = Gravity.CENTER)
         root.addView(hint, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(42f)))
 
         keys = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
@@ -103,8 +109,8 @@ class PinActivity : Activity() {
         // the pack's regular ink is near-black and vanished into the key fill.
         val keyInk = if (theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS)
             theme.color("inkOnWall", "#FFFFFF") else theme.ink
-        val rows = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("CLEAR", "0", "OK"))
-        for (labels in rows) {
+        val pad = (1..9).map { it.toString() } + listOf("CLEAR", "0", "OK")
+        for (labels in pad.chunked(keysPerRow)) {
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             for (label in labels) {
                 val b = Views.text(app, "li", if (label.length > 1) 18f else 28f,
@@ -164,13 +170,19 @@ class PinActivity : Activity() {
             "CLEAR" -> { pin.setLength(0); show() }
             "OK" -> submit()
             else -> if (label.length == 1) {
-                // 4 to 8 digits is the household rule, but an older hub may hold a shorter number —
-                // one profile was left with a single digit by an older web pad and could never be
-                // opened again because this gate stopped at four. Accept up to eight and let OK be
-                // the only thing that submits, so both lengths work.
-                if (pin.length < 8) pin.append(label)
-                show()
-                popDots()
+                // The household rule is four to eight digits, but an older hub may hold a shorter
+                // number — one profile was left with a single digit and could never be opened again
+                // when the gate stopped at four. Accept up to eight and let the pack's length decide
+                // when the gate submits itself; OK still opens a shorter legacy number.
+                if (pin.length < 8) {
+                    pin.append(label)
+                    show()
+                    popDots()
+                    // The last digit is the enter key: the gate checks the code the moment it is
+                    // complete. `submit` claims `busy` synchronously before the hub is asked, so a
+                    // fast fifth keystroke or a stray OK cannot ask twice.
+                    if (pin.length == pinLength) submit()
+                }
             }
         }
     }
@@ -194,11 +206,23 @@ class PinActivity : Activity() {
     }
 
     private fun show() {
-        val n = pin.length.coerceIn(4, 8)
-        dots.text = (0 until n).joinToString(" ") { if (it < pin.length) "•" else "○" }
-        hint.text = if (pin.isEmpty()) "4 to 8 digits · OK to confirm" else "OK to confirm"
+        // Filled dots use the same heavy bullet as the Settings pads: a 10-foot glance reads "●" as
+        // filled where the light "•" was easy to mistake for a speck on the glass.
+        val slots = maxOf(pinLength, pin.length).coerceIn(1, 8)
+        dots.text = (0 until slots).joinToString(" ") { if (it < pin.length) "●" else "○" }
+        hint.text = when {
+            pin.isEmpty() -> entryHint()
+            pin.length < pinLength -> "Press OK to confirm" // a shorter number stored by an older client
+            else -> "Checking…"
+        }
         hint.setTextColor(app.theme.ink3)
     }
+
+    private fun emptyDots(): String =
+        (0 until pinLength.coerceIn(1, 8)).joinToString(" ") { "○" }
+
+    private fun entryHint(): String =
+        "Enter $pinLength ${if (pinLength == 1) "digit" else "digits"} · it enters itself"
 
     private fun submit() {
         // One to eight: the household rule is four to eight, and a stored shorter number (written by
@@ -207,7 +231,8 @@ class PinActivity : Activity() {
         busy = true
         hint.text = "Checking…"
         hint.setTextColor(app.theme.ink2)
-        api.unlock(profileId, pin.toString()) { ok, error ->
+        val entered = pin.toString()
+        api.unlock(profileId, entered) { ok, error ->
             if (isFinishing || isDestroyed) return@unlock
             busy = false
             if (ok) {
@@ -217,10 +242,36 @@ class PinActivity : Activity() {
                 pin.setLength(0)
                 show()
                 shakePanel()
-                hint.text = if (error?.contains("403") == true) "That PIN is not right" else (error ?: "That PIN is not right")
+                hint.text = failureMessage(error)
                 hint.setTextColor(app.theme.color("warn", "#F2C33A"))
+                keepKeypadFocus()
             }
         }
+    }
+
+    /** A refusal is said plainly; a rate-limit or an unreachable hub keeps its own words. */
+    private fun failureMessage(error: String?): String {
+        val text = error?.trim().orEmpty()
+        val wrong = text.isEmpty() || text.contains("wrong pin", true) ||
+            text.contains("not right", true) || text.contains("403")
+        return if (wrong) "Wrong PIN, try again" else text
+    }
+
+    /** After a refusal the D-pad must still be on the pad, ready for the next number. */
+    private fun keepKeypadFocus() {
+        val focused = currentFocus
+        if (focused != null && isInside(keys, focused)) return
+        val firstRow = keys.getChildAt(0) as? ViewGroup
+        (firstRow?.getChildAt(0) ?: keys).requestFocus()
+    }
+
+    private fun isInside(parent: View, child: View?): Boolean {
+        var node: View? = child
+        while (node != null) {
+            if (node === parent) return true
+            node = node.parent as? View
+        }
+        return false
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
