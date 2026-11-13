@@ -463,9 +463,42 @@ class DetailActivity : Activity() {
         actions.addView(listBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = theme.px(16f)
         })
-        words.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = theme.px(24f)
-        })
+        val ps5Hero = theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.FOCUSED_HUB
+        if (ps5Hero) {
+            // The console's own detail grammar: the actions are not floating pills but a plate —
+            // a PLAY STATUS caption line and white-framed boxes, the START-the-game pattern,
+            // stacked in reading order so OK always means "act on this row".
+            val plate = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val capRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            }
+            val capL = Views.text(app, "meta", 13f, com.scenix.tv.core.Console.ink2, "PLAY STATUS", bold = true)
+            capL.letterSpacing = 0.10f
+            val capR = Views.text(app, "meta", 13f, com.scenix.tv.core.Console.ink,
+                if (posMs > 0L) runtime(posMs) else "READY", bold = true)
+            capR.letterSpacing = 0.10f
+            capRow.addView(capL, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            capRow.addView(capR)
+            plate.addView(capRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            while (actions.childCount > 0) {
+                val box = actions.getChildAt(0) as TextView
+                actions.removeView(box)
+                box.setTextColor(com.scenix.tv.core.Console.ink)
+                box.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                box.setPadding(theme.px(26f), theme.px(18f), theme.px(22f), theme.px(18f))
+                box.background = Views.rounded(Color.TRANSPARENT, theme.px(8f), theme.px(2f), com.scenix.tv.core.Console.lineStrong)
+                plate.addView(box, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = theme.px(12f)
+                })
+            }
+            words.addView(plate, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(24f)
+            })
+        } else {
+            words.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = theme.px(24f)
+            })
+        }
 
         // The second band is the title's opinion of itself: trailer, seen, like, love, dislike,
         // share. Reactions live on the hub beside progress and My List (see hub/core/taste.js), so
