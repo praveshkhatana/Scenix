@@ -686,6 +686,24 @@ class BrowseActivity : Activity() {
             finish()
             return
         }
+        // The focused-hub household lives in one grammar everywhere now - the shelf browser owns
+        // every zone (Home/Movies/Series/Games/Live) with its row-title strip and single rail.
+        // Under the focused-hub pack this host is only an entry door: hand the viewer over so every
+        // way in (launcher, profile pick, phone-remote HOME, section tabs) lands on the same screen.
+        if (app.theme.homeLayout.hero == HomeLayoutSpec.Hero.FOCUSED_HUB) {
+            val zone = when (section.lowercase()) {
+                "movies" -> ShelfActivity.ZONE_MOVIES
+                "series" -> ShelfActivity.ZONE_SERIES
+                else -> ShelfActivity.ZONE_HOME
+            }
+            startActivity(
+                Intent(this, ShelfActivity::class.java)
+                    .putExtra(ShelfActivity.EXTRA_PROFILE, profileId)
+                    .putExtra(ShelfActivity.EXTRA_ZONE, zone)
+            )
+            finish()
+            return
+        }
         // The bar is painted from the last answer about optional add-ons; load() asks the hub again
         // and rebuilds only if the household changed its add-ons since that answer.
         caps = app.prefs.addonCaps()?.let { FeatureCaps(it.first, it.second) }
