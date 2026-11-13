@@ -54,10 +54,21 @@
   #dot.closed { background: var(--bad); box-shadow: 0 0 0 4px rgba(255,107,107,.14); }
 
   .typebar {
-    display: grid; grid-template-columns: 1fr auto; gap: 9px; align-items: stretch;
+    display: grid; grid-template-columns: 1fr auto auto; gap: 9px; align-items: stretch;
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 9px;
   }
+  .mic {
+    width: 46px; border: 1px solid var(--line); border-radius: 13px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel)); color: var(--ink-2);
+    font-size: 19px; line-height: 1;
+  }
+  .mic:active { transform: scale(.97); }
+  .mic.on {
+    background: var(--accent); color: #17120a; border-color: var(--accent);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(243,181,74,.18); } }
   #text {
     min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink);
     font: 500 17px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -126,7 +137,8 @@
 
 <div class="typebar">
   <input id="text" type="text" inputmode="text" enterkeyhint="send" autocomplete="off"
-         autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type into the TV…">
+         autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type or dictate to the TV…">
+  <button class="mic" id="mic" type="button" aria-label="Dictate">🎙</button>
   <button class="send" id="sendText" type="button">Send</button>
 </div>
 
@@ -146,7 +158,7 @@
     <button class="key" type="button" data-key="REWIND">Rew</button>
     <button class="key" type="button" data-key="FAST_FORWARD">Fwd</button>
   </div>
-  <p class="hint" id="hint">Keep this page open while Settings is on the TV. The link stops working when Settings closes.</p>
+  <p class="hint" id="hint">Works on every screen — Home, Search, Detail, Settings — while Scenix is open on this TV. Typing and dictation land in whatever is being edited.</p>
   <!-- The remote is the fast path; full Settings is one tap away for a longer edit. -->
   <p class="more"><a href="/#/settings">Open full Settings on this phone</a></p>
 </div>
@@ -169,7 +181,7 @@
     closed = true;
     dot.className = 'closed';
     stateText.textContent = 'This link is incomplete — scan the QR again.';
-    hint.textContent = 'Open Settings on the TV and scan the fresh code.';
+    hint.textContent = 'Open Settings on the TV and scan a fresh code, or just rescan this one.';
   } else if (code) {
     codeEl.textContent = code;
   }
@@ -177,9 +189,9 @@
   function markClosed(message) {
     closed = true;
     dot.className = 'closed';
-    stateText.textContent = message || 'The TV closed this remote.';
+    stateText.textContent = message || 'Scenix on the TV stopped listening.';
     hint.classList.add('closed');
-    hint.textContent = 'Open Settings on the TV again for a new code.';
+    hint.textContent = 'Bring Scenix back to the foreground on the TV, or scan a fresh code from Settings.';
   }
 
   function markLive(listening) {
@@ -232,6 +244,49 @@
       sendText();
     }
   });
+
+  // Dictation rides the phone's own speech recogniser: tap once to start talking, the words land
+  // in the field and go straight to the TV. Chrome/Safari on Android and desktop support it; where
+  // the browser has no recogniser the button says so instead of failing silently.
+  var mic = document.getElementById('mic');
+  var Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var listening = false;
+  if (!Speech) {
+    mic.addEventListener('click', function () {
+      stateText.textContent = 'This browser cannot dictate — type instead.';
+    });
+  } else {
+    mic.addEventListener('click', function () {
+      if (listening) return;
+      var rec = new Speech();
+      rec.lang = navigator.language || 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onstart = function () {
+        listening = true;
+        mic.classList.add('on');
+        stateText.textContent = 'Listening… speak now';
+      };
+      rec.onresult = function (e) {
+        var said = '';
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) said += e.results[i][0].transcript + ' ';
+        }
+        if (said.trim()) {
+          input.value = (input.value ? input.value.replace(/\s+$/, '') + ' ' : '') + said.trim();
+          sendText();
+        }
+      };
+      rec.onerror = function () {
+        stateText.textContent = 'Did not catch that — try again.';
+      };
+      rec.onend = function () {
+        listening = false;
+        mic.classList.remove('on');
+      };
+      rec.start();
+    });
+  }
 
   function poll() {
     if (closed) return;

@@ -21,6 +21,7 @@ import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.HubUpdate
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.PhonePairing
+import com.scenix.tv.core.PhoneRemote
 import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Updates
@@ -34,10 +35,11 @@ import org.json.JSONObject
  * packs and lock. Reads and writes the same `/app/v1` contract the web page uses, so the two
  * surfaces cannot disagree.
  */
-class SettingsActivity : Activity() {
+class SettingsActivity : Activity(), PhoneRemote.TextTarget {
 
     private lateinit var app: AppContext
     private lateinit var profileId: String
+    private val remote get() = (application as ScenixApp).phoneRemote
     private lateinit var root: FrameLayout
     private lateinit var page: LinearLayout
     private lateinit var rows: LinearLayout
@@ -99,26 +101,15 @@ class SettingsActivity : Activity() {
     private var deferredFocusKey: String? = null
     private var deferredScrollY: Int? = null
 
-    // ---- phone remote session -----------------------------------------------------------------
-    // One random 128-bit token per Settings visit, handed to the phone inside the QR. The TV keeps
-    // the token local; the phone cannot reach any other route with it, and the session closes when
-    // this screen does.
-    private var remoteToken = ""
-    private var remoteCode = ""
-    private var remoteLast = 0
-    private var remoteOrigin = ""
-    private var remoteSessionOpen = false
-    private var remoteRegistering = false
-    private var remotePolling = false
-    private var remoteFallbackUrl: String? = null
+    // ---- phone pairing rail --------------------------------------------------------------------
+    // The session itself belongs to the app (core/PhoneRemote) so a phone that paired here keeps
+    // driving Search, Detail and the player after this screen closes. This Activity only paints the
+    // rail from the snapshots the relay publishes.
     private var remoteStatusView: TextView? = null
     private var remoteUrlView: TextView? = null
     private var remoteCodeView: TextView? = null
     private var remoteQrHost: FrameLayout? = null
-    private val remoteHandler = Handler(Looper.getMainLooper())
-    private val remotePoll = object : Runnable {
-        override fun run() = pollRemote()
-    }
+    private var remotePairing: PhoneRemote.Pairing? = null
 
 
 
@@ -178,21 +169,18 @@ class SettingsActivity : Activity() {
         super.onResume()
         if (resumedOnce && !isFinishing && !isDestroyed) load()
         resumedOnce = true
-        ensureRemoteSession()
-        startRemotePolling()
+        // The rail paints from the relay's snapshots. The session is not this screen's to keep or
+        // close — it belongs to the app, and it survives leaving Settings.
+        remote.onPairing = { pairing ->
+            remotePairing = pairing
+            renderPhoneRail()
+        }
+        remote.ensureSession()
     }
 
-    override fun onStop() {
-        // The session itself survives a short trip to another activity, but nothing can come out of
-        // the phone while this screen is not in front of the viewer.
-        stopRemotePolling()
-        super.onStop()
-    }
-
-    override fun onDestroy() {
-        stopRemotePolling()
-        closeRemoteSession()
-        super.onDestroy()
+    override fun onPause() {
+        remote.onPairing = null
+        super.onPause()
     }
 
     private fun topBar(): View {
@@ -1905,33 +1893,7 @@ class SettingsActivity : Activity() {
         page.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
     }
 
-    // ---- phone rail & remote session --------------------------------------------------------
-
-    /**
-     * Resolve the origin the phone should open.
-     *  - Standalone: this TV's LAN address on :8787 (LocalServer/webBase).
-     *  - Hub: the paired hub origin (HubEndpoint.base, typically :8788).
-     * The QR then adds `/remote` and the one-shot session token, never the hub credential.
-     */
-    private fun phonePairingUrl(): String? {
-        return try {
-            if (app.prefs.standalone()) {
-                val ip = PhonePairing.lanIp()
-                val port = com.scenix.tv.core.LocalServer.portFor(applicationContext)
-                // webBase already enumerates the LAN IP; fall back to an explicit build so
-                // a bare port-0 server never produces a broken QR.
-                val viaBase = com.scenix.tv.core.LocalServer.webBase(applicationContext)
-                val built = PhonePairing.standaloneUrl(ip, if (port > 0) port else PhonePairing.STANDALONE_PORT)
-                viaBase.takeIf { it.isNotBlank() } ?: built
-            } else {
-                val base = HubEndpoint.base(this)
-                val fromPrefs = app.prefs.hubUrl(getString(R.string.hub_url))
-                PhonePairing.normaliseOrigin(base) ?: PhonePairing.normaliseOrigin(fromPrefs)
-            }
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    // ---- phone pairing rail ---------------------------------------------------------------------
 
     /**
      * The pinned rail. It is part of the page chrome, not a settings row: a person opening Settings
@@ -1989,7 +1951,8 @@ class SettingsActivity : Activity() {
         ).apply { topMargin = app.theme.px(4f) })
         rail.addView(
             Views.text(app, "meta", 13f, app.theme.ink3,
-                "D-pad, OK/Back and typing work from the phone. This link ends when Settings closes.",
+                "D-pad, OK/Back, typing and dictation work from the phone — on this screen or any " +
+                    "other, while Scenix is open on this TV.",
                 gravity = Gravity.CENTER, maxLines = 4),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1998,24 +1961,19 @@ class SettingsActivity : Activity() {
         return rail
     }
 
-    /** Draw the current session (or the honest fallback) into the rail. */
+    /** Draw the relay's current pairing (or the honest fallback) into the rail. */
     private fun renderPhoneRail() {
         val host = remoteQrHost ?: return
+        val pairing = remotePairing ?: return
         host.removeAllViews()
-        val origin = remoteOrigin
-        if (origin.isBlank()) {
+        if (pairing.origin.isBlank()) {
             remoteUrlView?.text = "No network address yet"
             remoteCodeView?.text = ""
-            remoteStatusView?.text = "Connect this TV to Wi-Fi, then reopen Settings."
+            remoteStatusView?.text = pairing.status
             return
         }
-        val live = remoteSessionOpen
-        val url = when {
-            live -> remoteUrl(origin)
-            !remoteFallbackUrl.isNullOrBlank() -> remoteFallbackUrl.orEmpty()
-            else -> PhonePairing.settingsUrl(origin) ?: origin
-        }
-        val bitmap = PhonePairing.renderQr(url, maxOf(app.theme.px(340f), 300))
+        val url = pairing.url
+        val bitmap = url?.let { PhonePairing.renderQr(it, maxOf(app.theme.px(340f), 300)) }
         if (bitmap != null) {
             val plate = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -2025,7 +1983,7 @@ class SettingsActivity : Activity() {
             }
             val image = android.widget.ImageView(this).apply {
                 setImageBitmap(bitmap)
-                contentDescription = if (live)
+                contentDescription = if (pairing.live)
                     "QR code to open the Scenix phone remote"
                 else
                     "QR code to open Scenix Settings on a phone"
@@ -2040,162 +1998,25 @@ class SettingsActivity : Activity() {
             host.addView(Views.text(app, "meta", 16f, app.theme.ink2,
                 "The code could not be drawn", gravity = Gravity.CENTER, maxLines = 2))
         }
-        remoteUrlView?.text = url
-        remoteCodeView?.text = if (live) "CODE  $remoteCode" else ""
-        if (live) {
-            remoteStatusView?.text = "Waiting for your phone…"
-        } else {
-            remoteStatusView?.text = "Phone remote needs a Hub update; this code opens web Settings."
-        }
+        remoteUrlView?.text = url.orEmpty()
+        remoteCodeView?.text = if (pairing.live) "CODE  ${pairing.code}" else ""
+        remoteStatusView?.text = pairing.status
     }
 
     private fun remoteUrl(origin: String): String =
         origin.trimEnd('/') + "/remote?t=" + remoteToken + "&c=" + remoteCode
 
     /**
-     * Mint one random session for this Settings visit. The token is the only secret the phone gets;
-     * registering it is a hub-authenticated call from this TV, and the route that consumes it is
-     * deliberately not the household's `/app/v1/settings` surface.
+     * The phone's typed text feeds the PIN pad while it is open; otherwise the remote's default
+     * applies (an on-screen field, or Search), which is what a viewer holding the phone means.
      */
-    private fun ensureRemoteSession() {
-        if (remoteSessionOpen || remoteRegistering || isFinishing || isDestroyed) return
-        val origin = phonePairingUrl()
-        if (origin.isNullOrBlank()) {
-            remoteOrigin = ""
-            renderPhoneRail()
-            return
+    override fun onRemoteText(text: String): Boolean {
+        if (pinLayer == null) return false
+        for (ch in text) {
+            if (ch.isDigit() && pinBuf.length < 8) addPinDigit(ch - '0')
         }
-        remoteOrigin = origin
-        remoteFallbackUrl = null
-        remoteToken = randomHex(16)
-        remoteCode = randomCode()
-        remoteLast = 0
-        remoteRegistering = true
-        api.remoteRegister(remoteToken, remoteCode) { root, _ ->
-            remoteRegistering = false
-            if (isFinishing || isDestroyed) return@remoteRegister
-            if (root?.optBoolean("ok") == true) {
-                remoteCode = root.optString("code", remoteCode).uppercase()
-                remoteSessionOpen = true
-                remoteLast = 0
-            } else {
-                // An older compatible Hub has no remote route. The QR still has a job: it opens the
-                // web Settings page, so pairing is never a dead end on an older home.
-                remoteFallbackUrl = PhonePairing.settingsUrl(origin)
-            }
-            renderPhoneRail()
-            startRemotePolling()
-        }
+        return true
     }
-
-    private fun startRemotePolling() {
-        if (remotePolling || !remoteSessionOpen) return
-        remotePolling = true
-        remoteHandler.postDelayed(remotePoll, 700L)
-    }
-
-    private fun stopRemotePolling() {
-        remotePolling = false
-        remoteHandler.removeCallbacks(remotePoll)
-    }
-
-    private fun pollRemote() {
-        if (!remotePolling || !remoteSessionOpen || isFinishing || isDestroyed) return
-        val token = remoteToken
-        api.remoteEvents(token, remoteLast) { root, _ ->
-            if (!remotePolling || token != remoteToken || isFinishing || isDestroyed) return@remoteEvents
-            if (root != null) {
-                val events = root.optJSONArray("events")
-                if (events != null) {
-                    for (i in 0 until events.length()) {
-                        val event = events.optJSONObject(i) ?: continue
-                        injectRemoteEvent(event)
-                    }
-                }
-                remoteLast = root.optInt("last", remoteLast)
-                if (root.optLong("phoneSeenAt", 0L) > 0L) {
-                    remoteStatusView?.text = "Phone connected"
-                }
-            }
-            if (remotePolling) remoteHandler.postDelayed(remotePoll, 700L)
-        }
-    }
-
-    private fun closeRemoteSession() {
-        if (!remoteSessionOpen) return
-        val token = remoteToken
-        remoteSessionOpen = false
-        remoteToken = ""
-        remoteCode = ""
-        if (token.isNotBlank()) api.remoteClose(token) { _, _ -> }
-    }
-
-    /**
-     * A phone event lands in the same input path as the TV remote. Keys go through
-     * [dispatchKeyEvent] so pickers and the PIN pad keep their existing traps; typed text either
-     * feeds the PIN pad or becomes a search query, because Settings itself has no text field.
-     */
-    private fun injectRemoteEvent(event: JSONObject) {
-        when (event.optString("type")) {
-            "text" -> {
-                val text = event.optString("text").trim()
-                if (text.isBlank()) return
-                if (pinLayer != null) {
-                    for (ch in text) {
-                        if (ch.isDigit() && pinBuf.length < 8) addPinDigit(ch - '0')
-                    }
-                    return
-                }
-                closePicker()
-                startActivity(
-                    Intent(this, SearchActivity::class.java)
-                        .putExtra(SearchActivity.EXTRA_PROFILE, profileId)
-                        .putExtra(SearchActivity.EXTRA_QUERY, text.take(48))
-                )
-                status.text = "Searching from your phone"
-            }
-            "key" -> {
-                val key = event.optString("key").trim().uppercase()
-                if (key == "HOME") { finish(); return }
-                val code = remoteKeyCode(key) ?: return
-                dispatchRemoteKey(code)
-            }
-        }
-    }
-
-    private fun remoteKeyCode(key: String): Int? = when (key) {
-        "UP" -> KeyEvent.KEYCODE_DPAD_UP
-        "DOWN" -> KeyEvent.KEYCODE_DPAD_DOWN
-        "LEFT" -> KeyEvent.KEYCODE_DPAD_LEFT
-        "RIGHT" -> KeyEvent.KEYCODE_DPAD_RIGHT
-        "OK" -> KeyEvent.KEYCODE_DPAD_CENTER
-        "BACK" -> KeyEvent.KEYCODE_BACK
-        "DELETE" -> KeyEvent.KEYCODE_DEL
-        "MENU" -> KeyEvent.KEYCODE_MENU
-        "PLAY_PAUSE" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
-        "REWIND" -> KeyEvent.KEYCODE_MEDIA_REWIND
-        "FAST_FORWARD" -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
-        else -> null
-    }
-
-    private fun dispatchRemoteKey(code: Int) {
-        val now = android.os.SystemClock.uptimeMillis()
-        dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-        dispatchKeyEvent(KeyEvent(now, now + 1, KeyEvent.ACTION_UP, code, 0))
-    }
-
-    private fun randomHex(bytes: Int): String {
-        val data = ByteArray(bytes)
-        java.security.SecureRandom().nextBytes(data)
-        return data.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-    }
-
-    private fun randomCode(): String {
-        val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-        val random = java.security.SecureRandom()
-        return (1..6).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
-    }
-
 
     companion object {
         const val EXTRA_PROFILE = "profile"

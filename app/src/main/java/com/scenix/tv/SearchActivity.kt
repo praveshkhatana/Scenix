@@ -24,6 +24,7 @@ import com.scenix.tv.core.CardActionSheet
 import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.PhoneRemote
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
@@ -36,7 +37,7 @@ import com.scenix.tv.core.Views
  * A search request goes out after a short pause, never on every key, and a stale answer (the viewer
  * kept typing) is dropped by generation.
  */
-class SearchActivity : Activity() {
+class SearchActivity : Activity(), PhoneRemote.TextTarget {
 
     private lateinit var app: AppContext
     private lateinit var profileId: String
@@ -246,6 +247,25 @@ class SearchActivity : Activity() {
         }
         renderQuery()
         scheduleSearch()
+    }
+
+    /**
+     * A phone typed (or dictated) these letters. They join the query exactly the way the on-screen
+     * keyboard's presses do — the same debounce, the same generation guard — instead of restarting
+     * the search from scratch.
+     */
+    override fun onRemoteText(text: String): Boolean {
+        var took = false
+        for (ch in text) {
+            if (query.length < 48) {
+                query.append(ch)
+                took = true
+            } else break
+        }
+        if (!took) return true
+        renderQuery()
+        scheduleSearch()
+        return true
     }
 
     private fun renderQuery() {
