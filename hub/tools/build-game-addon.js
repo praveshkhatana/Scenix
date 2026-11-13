@@ -25,6 +25,7 @@ const item = (g, defTouch) => ({
   touch: g.touch !== undefined ? !!g.touch : defTouch,
   ua: g.ua || '',
   tags: (g.tags || []).slice(0, 4), desc: (g.desc || '').slice(0, 200),
+  verified: !!g.verified,
 });
 
 // Ports that can't run on a TV at all stay out even if a data refresh adds them back.
@@ -38,6 +39,13 @@ const crazy = keep(load('crazygames.json')).map((g) => item(g, true));
 const rows = [];
 
 if (curated.length) rows.push({ id: 'highlight', title: 'Highlighted', items: curated });
+
+// Games played to completion on the 2GB proxy AVD (and spot-checked on the owner's Sony):
+// loaded clean, ran frames, answered the remote. The shelf is the trust anchor of the library —
+// The flag lives in the catalogue data itself ("verified": true), set by scripts/tvsweep.mjs
+// verdicts plus a screenshot pass, so hub and addon shelve the same games without two id lists.
+const tested = dedupe(curated.concat(p2b, crazy).filter((g) => g.verified));
+if (tested.length) rows.push({ id: 'tested', title: 'Verified on our TV', items: tested });
 
 const padReady = p2b.filter((g) => g.pad);
 const marqueeTags = ['fighting', 'racing', 'sports', 'action', 'shooter'];

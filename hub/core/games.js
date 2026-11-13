@@ -83,6 +83,15 @@ async function builtinRows() {
   const curated = load('curated.json').map((g) => card(g, 'curated'));
   if (curated.length) out.push({ id: 'games-highlight', title: 'Highlighted', card: 'game', items: curated });
 
+  // Games played to completion on a 2GB TV box — loaded clean, ran frames, answered the remote.
+  // The flag ("verified": true) lives in the catalogue data and is set from scripts/tvsweep.mjs
+  // verdicts plus a screenshot pass; this shelf mirrors the addon's "Verified on our TV" row so
+  // both hub flavours make the same promise.
+  const verified = [
+    ...load('curated.json'), ...load('ported2browser.json'), ...load('crazygames.json'),
+  ].filter((g) => g.verified).map((g) => card(g, 'tested'));
+  if (verified.length) out.push({ id: 'games-tested', title: 'Verified on our TV', card: 'game', items: verified });
+
   // The marquee shelf: the biggest ports that answer a controller, fighting/racing/action first —
   // the genres where a gamepad is the whole point.
   const padReady = p2b.filter((g) => g.pad);
