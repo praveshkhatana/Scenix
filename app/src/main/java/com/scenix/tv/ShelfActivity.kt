@@ -637,6 +637,17 @@ class ShelfActivity : Activity() {
             chip.background = boxed(theme, i == index)
             ((chip as ViewGroup).getChildAt(0) as? TextView)?.setTextColor(if (i == index) Console.ink else Console.ink2)
         }
+        // The boxed tab travels with the walk. A wall-walk or L1/R1 step repaints the box onto a
+        // chip that can sit off-screen — then the viewer has no idea which row they are on. The
+        // strip shifts with the same grammar as the tile rows: bring the boxed tab back into view.
+        if (changed) {
+            val stop = chipViews.getOrNull(index)
+            if (stop != null) {
+                chipScroll.post {
+                    chipScroll.smoothScrollTo((stop.left - theme.px(90f)).coerceAtLeast(0), 0)
+                }
+            }
+        }
         if (changed || tiles.isEmpty()) {
             renderRail(shelves[index].cards)
             select(keepIndex.coerceAtLeast(0), focus = false)
