@@ -52,6 +52,8 @@ data class GameCard(
     val desc: String,
     /** The shelf the card came from, shown as a fact on its page. */
     val category: String,
+    /** Playtested on this box class: loaded clean, ran frames, answered the remote. */
+    val verified: Boolean = false,
 )
 
 data class GameRow(val id: String, val title: String, val items: List<GameCard>)
@@ -389,6 +391,7 @@ class GamesActivity : Activity() {
                         ua = o.optString("ua"),
                         desc = o.optString("desc"),
                         category = r.optString("title"),
+                        verified = o.optBoolean("verified"),
                     )
                 )
             }
@@ -559,6 +562,22 @@ class GamesActivity : Activity() {
             background = Views.ring(Color.argb(150, 255, 255, 255), radius, theme.px(2f))
         }
         root.addView(keyline, FrameLayout.LayoutParams(width, height))
+        // A quiet fact printed on the art itself: this title was playtested on a box like this
+        // one — it loads, runs, and answers the remote. A dot you can read from across the room.
+        if (item.verified) {
+            val dot = View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.rgb(46, 204, 113))
+                }
+            }
+            val s = theme.px(12f)
+            root.addView(dot, FrameLayout.LayoutParams(s, s).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.END
+                topMargin = theme.px(10f)
+                marginEnd = theme.px(10f)
+            })
+        }
         Focus.attach(
             root,
             halo,

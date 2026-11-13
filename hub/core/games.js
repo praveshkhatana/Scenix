@@ -68,6 +68,9 @@ function card(g, kind) {
     tags: (g.tags || []).slice(0, 4),
     desc: (g.desc || '').slice(0, 200),
     source: kind,
+    // The receipt travels with the card: a title playtested on our own 2GB box carries
+    // "verified": true in the catalogue data, and clients print a dot (and order it first).
+    verified: !!g.verified,
   };
 }
 
