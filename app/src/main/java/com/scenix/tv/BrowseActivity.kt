@@ -59,6 +59,8 @@ class BrowseActivity : Activity() {
      * plain status line, which is their language.
      */
     private var emptyOverlay: View? = null
+    /** The quiet centred line a section with no titles shows instead of the hub's refusal text. */
+    private var sectionEmpty: View? = null
 
     private fun isGlassPack(): Boolean =
         app.theme.homeLayout.hero == HomeLayoutSpec.Hero.GLASS_CARDS
@@ -84,6 +86,44 @@ class BrowseActivity : Activity() {
             window.decorView.findViewById<ViewGroup>(android.R.id.content).removeView(host)
         }
         emptyOverlay = null
+    }
+
+    /**
+     * A section this profile carries nothing for. The hub's own sentence ("row not for this
+     * profile") is a refusal written for machines; printed on a black page it reads as a crash.
+     * This is the same quiet statement the billboard language uses: what the state is, and that
+     * another section still has titles.
+     */
+    private fun showSectionEmpty() {
+        showSkeleton(false)
+        status.visibility = View.GONE
+        val copies = if (section == "series") "series" else "films"
+        val sub = "This profile holds no $copies yet. Another section still has titles."
+        if (isGlassPack()) {
+            showEmpty("Nothing in this section yet", sub)
+            return
+        }
+        val host = contentRoot ?: return
+        sectionEmpty?.let { host.removeView(it) }
+        val theme = app.theme
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(theme.px(90f), 0, theme.px(90f), theme.px(80f))
+        }
+        box.addView(Views.text(app, "h1", 32f, theme.ink, "Nothing in this section yet",
+            bold = true, gravity = Gravity.CENTER))
+        box.addView(Views.text(app, "sub", 19f, theme.ink2, sub, gravity = Gravity.CENTER,
+            maxLines = 2).apply { setPadding(0, theme.px(14f), 0, 0) })
+        host.addView(box, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        sectionEmpty = box
+        box.post { pillStops.firstOrNull { it.visibility == View.VISIBLE }?.requestFocus() }
+    }
+
+    private fun hideSectionEmpty() {
+        sectionEmpty?.let { contentRoot?.removeView(it) }
+        sectionEmpty = null
     }
     private var stage: Stage? = null
     /** Last shelf card which changed the room. Avoids repeating backdrop work on the same card. */
@@ -177,7 +217,9 @@ class BrowseActivity : Activity() {
                     android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                     android.view.KeyEvent.KEYCODE_ENTER,
                     android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                        rail.focusedRow()?.performClick()
+                        // One press, one section. A held OK repeats, and a rail that moves on every repeat
+                        // walks straight past the section the viewer was aiming at.
+                        if (event.repeatCount == 0) rail.focusedRow()?.performClick()
                         return true
                     }
                 }
@@ -556,6 +598,9 @@ class BrowseActivity : Activity() {
                 startActivity(Intent(this, LiveChannelsActivity::class.java).putExtra(LiveChannelsActivity.EXTRA_PROFILE, profileId))
             }
         }
+        // Sources are a household control, not an everyday destination: the only door is Settings →
+        // Access & safety, where the household Settings PIN is asked before the directory is drawn.
+        // A left-rail entry here bypassed that gate for every adult profile.
         entries += LeftRail.Entry("Settings", R.drawable.ic_nav_settings, "settings") {
             startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
         }
@@ -638,6 +683,24 @@ class BrowseActivity : Activity() {
         if (profileId.isBlank()) {
             // Never guess who is watching. The native profile gate is the one place a PIN is checked.
             startActivity(Intent(this, ProfilesActivity::class.java))
+            finish()
+            return
+        }
+        // The focused-hub household lives in one grammar everywhere now - the shelf browser owns
+        // every zone (Home/Movies/Series/Games/Live) with its row-title strip and single rail.
+        // Under the focused-hub pack this host is only an entry door: hand the viewer over so every
+        // way in (launcher, profile pick, phone-remote HOME, section tabs) lands on the same screen.
+        if (app.theme.homeLayout.hero == HomeLayoutSpec.Hero.FOCUSED_HUB) {
+            val zone = when (section.lowercase()) {
+                "movies" -> ShelfActivity.ZONE_MOVIES
+                "series" -> ShelfActivity.ZONE_SERIES
+                else -> ShelfActivity.ZONE_HOME
+            }
+            startActivity(
+                Intent(this, ShelfActivity::class.java)
+                    .putExtra(ShelfActivity.EXTRA_PROFILE, profileId)
+                    .putExtra(ShelfActivity.EXTRA_ZONE, zone)
+            )
             finish()
             return
         }
@@ -756,6 +819,10 @@ class BrowseActivity : Activity() {
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 updateBrandFade()
+            }
+
+            override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
             }
         })
         // A focus change without a scroll — UP from the first row lands on the bar itself — must
@@ -1137,13 +1204,14 @@ class BrowseActivity : Activity() {
         caps ?: FeatureCaps(live = liveSeen, games = true)
 
     private fun load() {
+        hideSectionEmpty()
         showSkeleton(true)
         // The two optional modes are doors to installed add-ons, so ask what this household has.
         // This runs beside the rows, not in front of them: a tiny answer must never hold the page,
         // and an unreachable hub must not wait out this request before showing its own error. The
         // bar was painted from the last known answer; if the household changed its add-ons since,
         // one rebuild gives the page the doors that exist now.
-        api.caps { answer ->
+        api.caps(profileId) { answer ->
             if (isFinishing || isDestroyed) return@caps
             if (answer != null) {
                 val rendered = barCaps
@@ -1157,38 +1225,38 @@ class BrowseActivity : Activity() {
 
     private fun loadHome() {
         if (section.isNotBlank()) {
-            api.row(profileId, section) { _, items, error ->
+            api.row(profileId, section) { _, items, _ ->
                 if (isFinishing || isDestroyed) return@row
-                if (items.isNullOrEmpty()) {
-                    showSkeleton(false)
-                    if (isGlassPack()) {
-                        status.visibility = View.GONE
-                        showEmpty("Nothing in this section yet",
-                            error ?: "The hub may still be warming its shelves. Try again in a moment.")
-                    } else {
-                        status.visibility = View.VISIBLE
-                        status.text = error ?: "Nothing in this section yet"
-                    }
+                if (!items.isNullOrEmpty()) {
+                    loaded = true
+                    present(deriveShelves(section, items))
                     return@row
                 }
                 // A hub need not carry generic movie/series rows for every profile — a kid
-                // profile answers "row not for this profile" and keeps only kids shelves.
-                // Fall back to the profile's own shelves filtered to this section, instead of
-                // printing the hub's raw error sentence on the page.
+                // profile answers "row not for this profile" and keeps only kids shelves. Those
+                // shelves ARE this section's titles, so build it from them instead of printing the
+                // hub's refusal sentence on a black page. The fallback used to sit after this
+                // branch and only ran when the row had answered, which left every profile without
+                // a generic row stuck on that sentence for good.
                 api.load(profileId) { rows, _ ->
                     if (isFinishing || isDestroyed) return@load
-                    val pool = rows.orEmpty()
-                        .filter { it.id != "hero" && it.card != "channel" }
-                        .flatMap { it.items }
-                        .filter { it.type == if (section == "series") "series" else "movie" }
+                    val wanted = if (section == "series") "series" else "movie"
+                    val pool = LinkedHashMap<String, Item>()
+                    for (row in rows.orEmpty()) {
+                        if (row.id == "hero" || row.card == "channel") continue
+                        for (item in row.items) {
+                            if (item.type == wanted && item.identity.isNotBlank() &&
+                                !pool.containsKey(item.identity)) {
+                                pool[item.identity] = item
+                            }
+                        }
+                    }
                     if (pool.isEmpty()) {
-                        showSkeleton(false)
-                        status.visibility = View.VISIBLE
-                        status.text = error ?: "Nothing in this section yet"
+                        showSectionEmpty()
                         return@load
                     }
                     loaded = true
-                    present(deriveShelves(section, pool))
+                    present(deriveShelves(section, pool.values.toList()))
                 }
             }
             return
@@ -1353,10 +1421,18 @@ class BrowseActivity : Activity() {
         val body = panel.getChildAt(1) as? TextView
         title?.text = if (standalone) "This TV is running on its own"
         else "This hub has no titles to show"
-        body?.text = if (standalone)
-            "Scenix becomes the backend on this TV. Add an add-on and films and series arrive straight from it — no second machine, no hub address."
+        body?.text = if (standalone) {
+            // Standalone owns the playback backend, but it deliberately does not pretend its local API
+            // is a browser control centre.  Sending an owner to the TV address produced a JSON 404 and
+            // made a working native Sources screen look broken.
+            "Scenix is the backend on this TV. If its shelves are still empty, check the add-on list " +
+                "and network in Settings → Sources. Standalone does not host browser management; pair " +
+                "a Hub when you want to manage this household from a phone or computer."
+        }
         else
-            "The hub is reachable, but its shelves are empty. Add an add-on to the hub in Settings, or check that its library has finished its first scan."
+            "The hub is reachable, but its shelves are empty. Add an add-on to the hub in Settings, or " +
+                "check that its library has finished its first scan — or open its address on a " +
+                "computer, where typing is not done with a remote."
         panel.visibility = View.VISIBLE
         panel.getChildAt(2)?.post { panel.getChildAt(2)?.requestFocus() }
     }
@@ -1418,6 +1494,7 @@ class BrowseActivity : Activity() {
             return
         }
         emptyPanel?.visibility = View.GONE
+        hideSectionEmpty()
         showSkeleton(false)
         status.visibility = View.GONE
         hideEmpty()
@@ -1425,7 +1502,7 @@ class BrowseActivity : Activity() {
         heroItem = slides.firstOrNull()
         stage?.show(heroItem?.backdrop ?: heroItem?.poster
             ?: shelves.firstOrNull()?.items?.firstOrNull()?.backdrop)
-        val adapter = BrowseAdapter(heroItem, shelves)
+        val adapter = BrowseAdapter(heroItem, ArrayList(shelves))
         browseAdapter = adapter
         list.adapter = adapter
         list.post { updateBrandFade() }
@@ -1563,6 +1640,26 @@ class BrowseActivity : Activity() {
     }
 
     /** A full-list page for one shelf: the hub's row by id, or a search for a derived shelf's tag. */
+    /**
+     * The hub has taken a shelf off this profile's Home. The page drops it where it stands and hands
+     * focus to the shelf that took its place, so the remote is never left holding a view that has
+     * just left the page.
+     */
+    private fun rowHidden(rowId: String) {
+        val adapter = browseAdapter ?: return
+        val pos = adapter.dropShelf(rowId)
+        if (pos < 0) return
+        list.post {
+            val holder = list.findViewHolderForAdapterPosition(pos) as? ShelfHolder
+            val stop = holder?.rail?.takeIf { it.childCount > 0 }?.getChildAt(0)
+            (stop ?: list).requestFocus()
+            // The row that left re-laid the whole page out, and the tile that took its place slid up
+            // while the glass was already standing where that tile used to be. Once the page settles,
+            // the slab goes back onto the tile that holds focus.
+            list.postDelayed({ GlassKit.reseatSlab(list, app) }, 340)
+        }
+    }
+
     private fun openRowFull(row: BrowseRow) {
         val id = row.id
         // Derived section shelves (trending, new, top-rated) are orderings of the whole section —
@@ -1649,7 +1746,7 @@ class BrowseActivity : Activity() {
 
     private inner class BrowseAdapter(
         private val hero: Item?,
-        private val shelves: List<BrowseRow>,
+        private val shelves: MutableList<BrowseRow>,
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         var heroPlay: View? = null
@@ -1674,6 +1771,22 @@ class BrowseActivity : Activity() {
             heroHolder?.let { renderHero(it) }
         }
 
+        /**
+         * Takes a shelf off Home once the hub has agreed to hide it. The page is edited in place
+         * rather than reloaded: a rebuild would throw away the viewer's place on the page because
+         * one row left it. Answers with the adapter position that now holds the next row, so the
+         * caller can move focus to something that still exists, or -1 when this page has no such row.
+         */
+        fun dropShelf(rowId: String): Int {
+            val at = shelves.indexOfFirst { it.id == rowId }
+            if (at < 0) return -1
+            shelves.removeAt(at)
+            val first = if (hero != null) 1 else 0
+            notifyItemRemoved(at + first)
+            notifyItemRangeChanged(first, shelves.size)
+            return (at + first).coerceAtMost(itemCount - 1)
+        }
+
         override fun getItemCount(): Int = (if (hero != null) 1 else 0) + shelves.size
 
         override fun getItemViewType(position: Int): Int =
@@ -1694,16 +1807,12 @@ class BrowseActivity : Activity() {
                         onFavourite = { item ->
                             // The hero answers a hold with the same sheet as a shelf card, so the
                             // confirmation is identical wherever the ring happens to be standing.
-                            CardActionSheet.open(
-                                this@BrowseActivity, app, item.title,
-                                listOf(CardActionSheet.Choice(
-                                    if (CardActions.inList(app, profileId, item))
-                                        "Remove from My List" else "Add to My List",
-                                ) {
-                                    CardActions.toggleMyList(
-                                        this@BrowseActivity, app, api, profileId, item,
-                                    )
-                                }),
+                            // Its own Continue row is left to the shelves: the billboard is built
+                            // from the featured titles, and a slide that left watching would sit
+                            // under the viewer's eye until the page reloaded.
+                            CardActions.holdSheet(
+                                this@BrowseActivity, app, api, profileId, item,
+                                canDismissContinue = false,
                             )
                         },
                         onSelected = ::onSlideFocused,
@@ -1790,6 +1899,15 @@ class BrowseActivity : Activity() {
                     setPadding(theme.gutter, theme.space("railGlowPad", 44f), theme.gutter, theme.space("railGlowPad", 44f))
                     clipToPadding = false
                     clipChildren = false
+                    // The focused tile's glass slab steps out while this rail is moving and comes
+                    // back to the tile holding focus when it settles (GlassKit.slabScrolling): a
+                    // lens re-bends the poster under it every frame, which the panel cannot pay for
+                    // a tile that is on its way past.
+                    addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                        override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                            GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
+                        }
+                    })
                 }
                 box.addView(rail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 ShelfHolder(box, head, rail)
@@ -1825,8 +1943,16 @@ class BrowseActivity : Activity() {
                     override fun openDetail(item: Item) = this@BrowseActivity.openDetail(item)
                     override fun openLive(item: Item) = this@BrowseActivity.openLive(item)
                     override fun openRowFull(row: BrowseRow) = this@BrowseActivity.openRowFull(row)
+                    // Only Home offers to hide a row: a section tab's shelves are this app's own
+                    // groupings of one pool of titles, and their ids are not the hub's row ids.
+                    override fun managesRows() = section.isEmpty()
+                    override fun onRowHidden(rowId: String) = this@BrowseActivity.rowHidden(rowId)
                 }, row)
                 holder.rail.adapter = cards
+                // The default recycling depth keeps five tiles of a shape, while one row of this
+                // pack shows seven: every tile past the fifth in a fling was being built - six
+                // views, two drawables, an outline - inside a frame. Keep a row and a half deep.
+                holder.rail.recycledViewPool.setMaxRecycledViews(cards.getItemViewType(0), 24)
             }
         }
 

@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
@@ -22,6 +23,23 @@ class ScenixWordmarkIntroView(context: Context) : View(context) {
     private val wordmark: Drawable = checkNotNull(context.getDrawable(R.drawable.scenix_wordmark)).mutate()
     private val foldMask = Path()
     private val foldPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // The colours and stops never change. The curl moves its existing gradient with a matrix
+    // rather than allocating a new shader for every frame of the short launch animation.
+    private val foldShader = LinearGradient(
+        0f,
+        0f,
+        1f,
+        1f,
+        intArrayOf(
+            Color.argb(16, 255, 255, 255),
+            Color.argb(112, 72, 0, 5),
+            Color.argb(28, 255, 255, 255),
+            Color.argb(148, 133, 0, 8),
+        ),
+        floatArrayOf(0f, 0.38f, 0.7f, 1f),
+        Shader.TileMode.CLAMP,
+    )
+    private val foldShaderMatrix = Matrix()
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(205, 255, 96, 101)
         style = Paint.Style.STROKE
@@ -110,20 +128,10 @@ class ScenixWordmarkIntroView(context: Context) : View(context) {
         wordmark.draw(canvas)
         canvas.restoreToCount(logo)
 
-        foldPaint.shader = LinearGradient(
-            foldLeft,
-            0f,
-            foldRight,
-            fullHeight,
-            intArrayOf(
-                Color.argb(16, 255, 255, 255),
-                Color.argb(112, 72, 0, 5),
-                Color.argb(28, 255, 255, 255),
-                Color.argb(148, 133, 0, 8),
-            ),
-            floatArrayOf(0f, 0.38f, 0.7f, 1f),
-            Shader.TileMode.CLAMP,
-        )
+        foldShaderMatrix.setScale(foldRight - foldLeft, fullHeight)
+        foldShaderMatrix.postTranslate(foldLeft, 0f)
+        foldShader.setLocalMatrix(foldShaderMatrix)
+        foldPaint.shader = foldShader
         canvas.drawPath(foldMask, foldPaint)
         foldPaint.shader = null
         canvas.restoreToCount(folded)

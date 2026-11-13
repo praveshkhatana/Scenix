@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "fixture-cinema",
+      "name": "Fixture Cinema",
+      "version": "1.2.3",
+      "manifest": "https://cinema.example.invalid/manifest.json",
+      "manifestId": "org.example.fixture.cinema",
+      "description": "Deterministic movie and series catalogue fixture.",
+      "categories": ["featured", "movies"],
+      "tags": ["catalog", "metadata"],
+      "configurationRequired": false,
+      "resources": [
+        { "name": "catalog", "types": ["movie", "series"] },
+        { "name": "meta", "types": ["movie", "series"] },
+        { "name": "stream", "types": ["movie", "series"] }
+      ]
+    },
+    {
+      "id": "fixture-live",
+      "name": "Fixture Live",
+      "version": "2.0.0",
+      "manifest": "https://live.example.invalid/manifest.json",
+      "manifestId": "org.example.fixture.live",
+      "description": "Deterministic live-channel fixture which needs setup.",
+      "categories": ["live"],
+      "tags": ["channels"],
+      "configurationRequired": true,
+      "resources": [
+        { "name": "catalog", "types": ["channel"] },
+        { "name": "stream", "types": ["channel"] }
+      ]
+    }
+  ]
+}

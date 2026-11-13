@@ -3,7 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#141414">
+<meta name="color-scheme" content="dark">
+<!-- The browser chrome follows the default pack's own background (scenix-apple
+     bg #000000): a light or stale value would tint the phone itself a different
+     shade from the page behind it. -->
+<meta name="theme-color" content="#000000">
+<meta name="description" content="Scenix — the home interface for your household hub: browse, manage and play from the couch.">
+<meta property="og:title" content="Scenix">
+<meta property="og:description" content="Scenix — the home interface for your household hub.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/ui/assets/scenix-mark.svg">
+<meta name="application-name" content="Scenix">
 <title>Scenix</title>
 <!--
   Scenix — one web UI, thin native shells.
@@ -16,6 +26,8 @@
   content: the hub's `/app/v1/home` decides what the household sees.
 -->
 <link rel="icon" href="/ui/assets/scenix-mark.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="/ui/assets/scenix-mark-32.png">
+<link rel="apple-touch-icon" href="/ui/assets/scenix-mark-180.png">
 <link rel="stylesheet" href="/ui/app.css">
 <!-- The billboard, the detail page and the player chrome. Loaded after app.css on purpose: it overrides
      app.css's shapes for those screens and adds the elements they draw, and it never redefines a token. -->
@@ -23,6 +35,9 @@
 <link rel="stylesheet" href="/ui/css/hero.css">
 <!-- The pack layer: layout, card treatments and focus effects chosen by the theme. -->
 <link rel="stylesheet" href="/ui/css/packs.css">
+<!-- Browser-only interaction refinements. This loads last so it can retain the active TV pack's
+     tokens while giving a fine-pointer browser its own navigation and management ergonomics. -->
+<link rel="stylesheet" href="/ui/css/web-shell.css">
 </head>
 <body>
   <!-- The screen router mounts one screen at a time into #stage. -->

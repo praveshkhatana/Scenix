@@ -40,6 +40,11 @@ internal interface ShelfHost {
     fun openDetail(item: Item)
     fun openLive(item: Item)
     fun openRowFull(row: BrowseRow)
+    /** Home offers to take a whole shelf off the page; a section or a search grid shows titles that
+     *  belong to many shelves, so it offers only the title's own actions. */
+    fun managesRows(): Boolean = false
+    /** The shelf is gone from the hub's Home record; the page drops it too. */
+    fun onRowHidden(rowId: String) {}
 }
 
 internal class ShelfAdapter(
@@ -87,6 +92,17 @@ internal class ShelfAdapter(
         else theme.radius("card", 6f)
     // When the shelf is a slice of a bigger list, its end carries one more tile: the full list.
     private val seeAll = !featured && row.total > row.items.size
+    // A tile's geometry is part of its identity. The recycled pool hands holders to whoever asks
+    // next - a rail rebound to a new row, tiles surviving from the last one - and a ranked tile
+    // with numerals or a landscape 16:9 still must not come back as a portrait poster. Encoding
+    // the shape in the viewType keeps every tile the pool holds a tile built for this row's
+    // exact shape, which is also what lets the rails keep a deeper pool without visual bugs.
+    private val tileType: Int = (if (poster) 1 else 0) or (if (landscape) 2 else 0) or
+        (if (ranked) 4 else 0) or (if (frame) 8 else 0) or (if (below) 16 else 0) or
+        (if (tileSquare) 32 else 0) or (if (glass) 64 else 0) or (if (featured) 128 else 0) or
+        (if (seeAll) 256 else 0)
+
+    override fun getItemViewType(position: Int): Int = tileType
     // Continue is the one shelf a viewer can clean up in place: long-press removes the tile and
     // the hub marks the record dismissed (the position survives; pressing the title re-arms it).
     // The mutable copy exists so the removal animates without re-reading Home.
@@ -401,6 +417,10 @@ internal class ShelfAdapter(
                 if (featured) host.onSlideFocused(holder.bindingAdapterPosition)
                 else holder.item?.let { host.onCardFocused(card, it) }
             })
+        // The focused tile wears a slab of the pack's glass over its own artwork: the poster bends,
+        // splits colour and lights its rim while the card holds focus. The slab is invisible on every
+        // unfocused tile, so only one lens is ever compositing.
+        GlassKit.onGlassFocus(card, art, app, radius)
         return holder
     }
 
@@ -431,6 +451,8 @@ internal class ShelfAdapter(
             CardActions.holdSheet(
                 activity, app, api, profileId, item,
                 canDismissContinue = dismissible,
+                rowId = if (host.managesRows()) row.id else null,
+                rowTitle = row.title,
                 afterList = { onList ->
                     val now = holder.bindingAdapterPosition
                     if (!onList && myListRow && now in shown.indices) {
@@ -450,6 +472,7 @@ internal class ShelfAdapter(
                         notifyItemRangeChanged(now, shown.size - now)
                     }
                 },
+                afterHideRow = { host.onRowHidden(row.id) },
             )
             true
         }

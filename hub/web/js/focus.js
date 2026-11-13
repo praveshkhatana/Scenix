@@ -333,7 +333,10 @@ export function scopeDepth() { return scopes.length; }
  * the first visible focusable. Called by every screen after it renders.
  */
 export function focusDefault(preferred) {
-  const target = preferred && preferred.isConnected ? preferred : candidates()[0];
+  // A responsive pack can keep a control connected while hiding it (for example a compact Home
+  // header drops its wordmark). A return-memory preference is only valid when it is also visible;
+  // otherwise choose the first real candidate rather than drawing an invisible ring.
+  const target = preferred && preferred.isConnected && visible(preferred) ? preferred : candidates()[0];
   return target ? setFocus(target, { source: 'screen' }) : false;
 }
 

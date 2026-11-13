@@ -17,6 +17,9 @@
  *     has no such rule yet.
  *   · The fields the hub does *not* guard — a name, a face — are not gated here either. A screen that invented
  *     its own stricter rule would only teach viewers that the real lock is arbitrary.
+ *   · A household Settings lock is a separate boundary over every profile mutation. Its short-lived
+ *     session is acquired and retried once by `withSettingsAdmin`; the profile PIN checks above remain
+ *     independent, so unlocking a profile never requires first changing household settings.
  *   · The household's own numbers (which ages to offer, whether a new profile starts behind a PIN, which
  *     languages this hub asks for) are read from `/app/v1/settings`. Nothing in this file names a person, an
  *     age, or a language.
@@ -29,6 +32,7 @@ import { el } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { api } from '/ui/js/api.js';
 import { session, setProfiles, isKids, isLocked } from '/ui/js/state.js';
+import { withSettingsAdmin } from '/ui/js/adminlock.js';
 
 /**
  * The fields the hub refuses to move on a locked profile without the current PIN
@@ -48,6 +52,9 @@ export function touchesGate(fields) {
 /** A refusal that reads as what happened rather than as a dead button. */
 export function whyRefused(e, fallback) {
   if (isAdultGate(e)) return (e.body && e.body.error) || 'An adult PIN is needed for that';
+  if (e && e.status === 403 && e.body && e.body.sessionRequired === true) {
+    return 'The household Settings PIN is needed';
+  }
   if (e && e.status === 403) return 'That is not the current PIN';
   const body = e && e.body && e.body.error;
   return body || fallback;
@@ -87,7 +94,9 @@ export async function adultProof(ctx, act) {
     await refreshProfiles();
     return null;
   }
-  const digits = await ctx.enterPin(holder, `An adult PIN is needed to ${act}`);
+  // 1 to 8: a number stored by an older client may be shorter than today's rule, and it still
+  // has to be enterable so the adult can replace it.
+  const digits = await ctx.enterPin(holder, `An adult PIN is needed to ${act}`, { minLength: 1, maxLength: 8 });
   if (!digits) return null;
   try {
     const out = await api.unlockProfile(holder.id, digits);
@@ -147,7 +156,7 @@ export async function refreshProfiles() {
  */
 export async function proofOfLock(ctx, p) {
   if (!isLocked(p)) return '';
-  const current = await ctx.enterPin(p, `Enter ${p.name}’s current PIN`);
+  const current = await ctx.enterPin(p, `Enter ${p.name}’s current PIN`, { minLength: 1, maxLength: 8 });
   if (!current) return null;
   try {
     const out = await api.unlockProfile(p.id, current);
@@ -263,8 +272,9 @@ export function profileEditor(ctx, profile, opts = {}) {
       // a ceiling - but the field is one, so the request carries the one it has and the hub answers for the other
       // by refusing. A profile with a number of its own never reaches the second question (index.js accepts its
       // own proof for both), so the retry below cannot undo the first answer.
-      out = await withAdultProof(ctx, 'change that profile',
-        (extra) => api.updateProfile(profile.id, Object.assign({}, body, extra)));
+      out = await withSettingsAdmin(ctx,
+        () => withAdultProof(ctx, 'change that profile',
+          (extra) => api.updateProfile(profile.id, Object.assign({}, body, extra))));
     } catch (e) {
       if (gate) proof = null;   // the number we held is no good: ask again next time
       ctx.toast(whyRefused(e, (note || 'The hub') + ' would not save that change'));
@@ -286,7 +296,7 @@ export function profileEditor(ctx, profile, opts = {}) {
   async function setPin() {
     const current = await ensureProof();
     if (current === null) return false;
-    const digits = await ctx.enterPin(profile, current ? 'Choose a new PIN' : 'Choose a PIN');
+    const digits = await ctx.enterPin(profile, current ? 'Choose a new PIN' : 'Choose a PIN', { minLength: 4, maxLength: 8 });
     if (!digits) return false;
     // The hub keeps a PIN and the wish to be asked for one as one decision, so both go in one request.
     return patch({ pin: digits, pinRequired: true }, `${profile.name} now needs that PIN`);
@@ -338,8 +348,9 @@ export function profileEditor(ctx, profile, opts = {}) {
     const own = current ? { pinCurrent: current } : {};
     let out = null;
     try {
-      out = await withAdultProof(ctx, 'remove a profile',
-        (extra) => api.deleteProfile(profile.id, Object.assign({}, own, extra)));
+      out = await withSettingsAdmin(ctx,
+        () => withAdultProof(ctx, 'remove a profile',
+          (extra) => api.deleteProfile(profile.id, Object.assign({}, own, extra))));
     } catch (e) {
       proof = null;
       ctx.toast(whyRefused(e, (e && e.body && e.body.error) || 'The hub would not remove that profile'));

@@ -18,11 +18,11 @@ import java.io.InputStreamReader
  * happen to be similar. The native screens ask [packString] rather than branching on a theme id, so
  * a developer adds a pack by writing the JSON and one assets/themes.json row.
  *
- * Packs come in two tiers. The FIVE curated packs are complete layouts living in assets. An
+ * Packs come in two tiers. The curated packs are complete layouts living in assets. An
  * INSTALLED pack is a token reskin in the app's files dir (`files/packs/<id>.json` with `basedOn`
- * naming a curated pack): it paints that layout's colours, radii, spacing, type, focus bands,
- * player ceilings and size numbers, but the structural pack keys (hero, rows, card, focus style…)
- * are the base's — a reskin can never make Home unusable or fake a layout family it cannot draw.
+ * naming a curated pack): it paints only that layout's colours, radii, spacing, type and focus
+ * values. Playback ceilings and every structural choice stay in the curated base, so a reskin can
+ * never make Home unusable, change buffering behavior, or fake a layout family it cannot draw.
  *
  * The mockup is authored at 1920x1080 in pixels. Device pixels are those numbers times
  * `scale = min(screenW/1920, screenH/1080)`, which keeps the layout identical to the mockup on
@@ -265,17 +265,12 @@ class Theme private constructor(
             val asset: String,
             val pack: String = "",
             val installed: Boolean = false,
-        )
-
-        /**
-         * Pack keys that decide WHICH layout a pack is. A reskin may paint colours, radii, spacing,
-         * type, focus bands, player ceilings and size numbers, but it cannot swap the layout family
-         * out from under the curated native surface — the five references stay exact by design.
-         */
-        private val STRUCTURAL_PACK_KEYS = setOf(
-            "hero", "heroAlign", "rows", "card", "focus", "motion", "detail", "nav",
-            "featuredMarker", "family", "homeSurface",
-        )
+            /** Targets that genuinely ship this asset and its declared renderer family. */
+            val targets: Set<String> = setOf("android-tv"),
+        ) {
+            /** A shared choice may be mirrored to a browser without a silent visual fallback. */
+            val sharedWithWeb: Boolean get() = "web" in targets
+        }
 
         /** What the settings picker offers. A missing manifest keeps the built-in default only. */
         fun catalog(assets: AssetManager): List<Choice> {
@@ -287,8 +282,12 @@ class Theme private constructor(
                     val o = arr.optJSONObject(i) ?: continue
                     val id = o.optString("id").trim()
                     val asset = o.optString("asset").trim()
-                    if (id.isBlank() || asset.isBlank()) continue
-                    out.add(Choice(id, o.optString("name", id), asset, o.optString("pack", "")))
+                    val targets = targetsOf(o.optJSONArray("targets"))
+                    // `themes.json` is the TV projection. Retaining the target check makes an
+                    // accidentally copied web-only entry harmless instead of drawable by guesswork.
+                    if (id.isBlank() || asset.isBlank() || "android-tv" !in targets) continue
+                    out.add(Choice(id, o.optString("name", id), asset, o.optString("pack", ""),
+                        targets = targets))
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "assets/themes.json missing or unreadable", t)
@@ -322,11 +321,11 @@ class Theme private constructor(
                         val o = JSONObject(f.readText())
                         val id = o.optString("id").trim()
                         val baseId = o.optString("basedOn").trim()
-                        if (id.isBlank() || baseId.isBlank() || id in taken) continue
+                        if (id.isBlank() || baseId.isBlank() || id in taken || !isSafeInstalledSkin(o)) continue
                         val base = out.firstOrNull { it.id == baseId } ?: continue
                         if (base.installed) continue // reskins stack on curated packs only
                         out.add(Choice(id, o.optString("name", id), "file:" + f.absolutePath,
-                            base.pack, true))
+                            base.pack, true, setOf("android-tv")))
                     } catch (t: Throwable) {
                         Log.w(TAG, "installed pack ${f.name} unreadable", t)
                     }
@@ -352,8 +351,8 @@ class Theme private constructor(
             zoom: Float = 1f,
         ): Theme {
             var root = readRoot(assets, asset)
-            // An installed reskin is not a pack by itself: it paints on top of the curated pack it
-            // names in `basedOn`. Structural pack keys are dropped so the layout family is the base's.
+            // An installed reskin is not a pack by itself: it paints visual token groups over the
+            // curated base it names in `basedOn`; playback and layout behavior remain immutable.
             val basedOn = root.optString("basedOn").trim()
             if (basedOn.isNotBlank()) {
                 val baseAsset = catalog(assets).firstOrNull { it.id == basedOn }?.asset ?: ASSET
@@ -399,13 +398,12 @@ class Theme private constructor(
         }
 
         /**
-         * Paint an installed reskin onto its curated base: token groups merge key by key, and the
-         * `pack` block takes only its non-structural keys, so sizes like `cleanHomeHeight` are the
-         * householder's to tune while the layout family stays the base's.
+         * Paint an installed reskin onto its curated base. Every accepted group is visual-only: no
+         * local theme file can change decoder buffers, animation work, or a pack's layout grammar.
          */
         private fun mergeSkin(base: JSONObject, skin: JSONObject): JSONObject {
             val out = JSONObject(base.toString())
-            for (group in listOf("colors", "radii", "spacing", "type", "focus", "player")) {
+            for (group in SKIN_GROUPS) {
                 val over = skin.optJSONObject(group) ?: continue
                 val into = out.optJSONObject(group) ?: JSONObject().also { out.put(group, it) }
                 val keys = over.keys()
@@ -414,19 +412,82 @@ class Theme private constructor(
                     into.put(k, over.get(k))
                 }
             }
-            val packOver = skin.optJSONObject("pack")
-            if (packOver != null) {
-                val packInto = out.optJSONObject("pack") ?: JSONObject().also { out.put("pack", it) }
-                val keys = packOver.keys()
-                while (keys.hasNext()) {
-                    val k = keys.next()
-                    if (k in STRUCTURAL_PACK_KEYS) continue
-                    packInto.put(k, packOver.get(k))
-                }
-            }
             out.put("id", skin.optString("id", out.optString("id", "scenix-dark")))
             return out
         }
+
+        /** Defense at read time for skins installed by an older build or placed in app-private data. */
+        private fun isSafeInstalledSkin(skin: JSONObject): Boolean {
+            val allowedRoots = setOf("id", "name", "basedOn") + SKIN_GROUPS
+            val roots = skin.keys()
+            while (roots.hasNext()) if (roots.next() !in allowedRoots) return false
+            var tokens = 0
+            for (group in SKIN_GROUPS) {
+                if (!skin.has(group)) continue
+                val values = skin.optJSONObject(group) ?: return false
+                if (values.length() > 96) return false
+                val keys = values.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (!Regex("^[A-Za-z][A-Za-z0-9]{0,47}$").matches(key)) return false
+                    if (!safeSkinToken(group, key, values.opt(key))) return false
+                    tokens++
+                }
+            }
+            return tokens > 0
+        }
+
+        private fun safeSkinToken(group: String, key: String, value: Any?): Boolean {
+            if (group == "colors" || (group == "focus" && key == "keylineColor")) {
+                return value is String && isSkinColor(value)
+            }
+            if (group == "focus" && key == "glowAlphas") {
+                val levels = value as? JSONArray ?: return false
+                return levels.length() == 3 && (0 until levels.length()).all {
+                    val n = levels.opt(it)
+                    n is Number && n.toDouble() in 0.0..255.0
+                }
+            }
+            if (value !is Number || !java.lang.Double.isFinite(value.toDouble())) return false
+            val n = value.toDouble()
+            return when (group) {
+                "radii" -> n in 0.0..400.0
+                "spacing" -> n in 0.0..1_200.0
+                "type" -> n in 8.0..320.0
+                "focus" -> when (key) {
+                    "scale", "rowScale" -> n in 1.0..1.16
+                    "durationMs" -> n in 0.0..500.0
+                    "ringWidth", "glassPad", "glowInset", "glowInsetSm", "keylineWidth" -> n in 0.0..96.0
+                    "shadowElevation" -> n in 0.0..80.0
+                    "glass", "glowAlpha" -> n in 0.0..8.0
+                    else -> false
+                }
+                else -> false
+            }
+        }
+
+        private fun isSkinColor(value: String): Boolean {
+            val text = value.trim()
+            if (Regex("^#[0-9a-fA-F]{3}([0-9a-fA-F]{3}|[0-9a-fA-F]{5})?$").matches(text)) return true
+            val match = Regex("^rgba?\\(([^)]*)\\)$", RegexOption.IGNORE_CASE).matchEntire(text) ?: return false
+            val parts = match.groupValues[1].split(',').map { it.trim() }
+            if (parts.size !in 3..4) return false
+            if (!parts.take(3).all { it.toIntOrNull()?.let { n -> n in 0..255 } == true }) return false
+            return parts.size == 3 || parts[3].toDoubleOrNull()?.let { it in 0.0..1.0 } == true
+        }
+
+        /** A missing legacy declaration meant TV-only; only an explicit `web` target is shared. */
+        private fun targetsOf(arr: JSONArray?): Set<String> {
+            if (arr == null) return setOf("android-tv")
+            val out = LinkedHashSet<String>()
+            for (i in 0 until arr.length()) {
+                val target = arr.optString(i).trim()
+                if (target == "android-tv" || target == "web") out.add(target)
+            }
+            return out.ifEmpty { setOf("android-tv") }
+        }
+
+        private val SKIN_GROUPS = listOf("colors", "radii", "spacing", "type", "focus")
 
         /** `#RGB`, `#RRGGBB`, `#AARRGGBB` and `rgba(r,g,b,a)` — the forms used by the mockup CSS. */
         fun parseColor(s: String): Int {

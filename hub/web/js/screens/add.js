@@ -30,6 +30,7 @@ import { setTypingTarget } from '/ui/js/input.js';
 import { openAvatarPicker } from '/ui/js/avatarmodal.js';
 import { profileDefaults, languageChoices, refreshProfiles, whyRefused, withAdultProof } from '/ui/js/profileedit.js';
 import { makeRows } from '/ui/js/rows.js';
+import { withSettingsAdmin } from '/ui/js/adminlock.js';
 
 export function screen(ctx) {
   const wrap = el('div', { class: 'screen padd' });
@@ -205,7 +206,7 @@ export function screen(ctx) {
     // half-set gate to explain.
     let digits = null;
     if (wantPin) {
-      digits = await ctx.enterPin({ name }, 'Choose a PIN');
+      digits = await ctx.enterPin({ name }, 'Choose a 4 to 8 digit PIN', { minLength: 4, maxLength: 8 });
       if (!digits) return;
     }
     busy = true;
@@ -218,8 +219,9 @@ export function screen(ctx) {
       /* The hub is asked first, so it is the one that says whether this household has any number to demand and
          whether this act needs one. A screen that decided that on its own would be a second copy of the rule,
          and the copy would be wrong the day the rule moved. */
-      out = await withAdultProof(ctx, 'add a profile',
-        (extra) => api.createProfile(Object.assign({}, body, extra)));
+      out = await withSettingsAdmin(ctx,
+        () => withAdultProof(ctx, 'add a profile',
+          (extra) => api.createProfile(Object.assign({}, body, extra))));
     } catch (e) {
       busy = false;
       create.textContent = 'Create profile';
@@ -243,7 +245,12 @@ export function screen(ctx) {
       // A PIN is not a field the hub takes at creation, so it goes on immediately afterwards. If that write
       // fails the person still exists — unlocked, and saying so beats pretending the gate is there.
       try {
-        await api.updateProfile(made.id, { pin: digits, pinRequired: true });
+        const pinned = await withSettingsAdmin(ctx,
+          () => api.updateProfile(made.id, { pin: digits, pinRequired: true }));
+        if (pinned === null) {
+          ctx.toast(`${made.name} was made, but its PIN was not saved`);
+          wantPin = false;
+        }
       } catch (e) {
         ctx.toast(`${made.name} was made without a PIN: ${whyRefused(e, 'the hub would not store it')}`);
         wantPin = false;

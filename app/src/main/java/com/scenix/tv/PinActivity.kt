@@ -24,8 +24,9 @@ import com.scenix.tv.core.Views
  * A remote-first PIN keypad. The code is checked by the hub; this screen only collects it.
  *
  * Screen pass 2026-11-03 (splash → profile → PIN → home): the gate stands on the pack's wall with
- * its keypad and dots on one frost plate — the same liquid-glass material as the Home chrome,
- * sampled from what actually sits behind it (LiquidFrost) over a translucent fallback. Input has
+ * its keypad and dots on one frost plate — the same liquid-glass material as the Home chrome, a real
+ * lens that bends the wall behind it (LiquidGlassKit) rather than a wash that only claims to. Input
+ * has
  * motion: the dots pop on every digit, a wrong PIN shakes the whole plate, keys dip under the
  * press, and the plate rises into the gate rather than snapping in.
  */
@@ -37,9 +38,10 @@ class PinActivity : Activity() {
     private lateinit var hint: TextView
     private lateinit var keys: LinearLayout
     private lateinit var panel: View
-    private var frost: LiquidFrost? = null
     private var pin = StringBuilder()
     private var busy = false
+    /** The pack's PIN length: the gate checks the code the moment the last digit lands. */
+    private var pinLength = 4
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,6 +53,10 @@ class PinActivity : Activity() {
         if (profileId.isBlank()) { finish(); return }
 
         val theme = app.theme
+        // The pack owns the PIN's shape (the same `pin` block the web pad reads). `length` decides
+        // when the gate submits itself; `keysPerRow` keeps the pad's rows in the pack's grid.
+        pinLength = theme.token("pin", "length", 4.0).toInt().coerceIn(1, 8)
+        val keysPerRow = theme.token("pin", "keysPerRow", 3.0).toInt().coerceIn(2, 4)
         val frame = FrameLayout(this).apply {
             setBackgroundColor(theme.bg)
             Screens.wall(app)?.let { background = it }
@@ -63,7 +69,7 @@ class PinActivity : Activity() {
             // The gate wears the pack's deep glass — the nav pill's own ink at plate weight — so
             // its white type carries full contrast and the rim reads as one edge, not a smudge
             // (the 59% wash over the frost sample had muddy two-tone edges on the light wall).
-            // Fallback plate first; the sampled frost layers over it once the capture lands.
+            // The lens pack paints this away; a pack without the lens wears it as the plate.
             background = Views.rounded(
                 theme.color(if (glass) "gatePlate" else "glassSurface",
                     if (glass) "rgba(8,16,28,0.88)" else "rgba(8,10,14,0.59)"),
@@ -91,11 +97,11 @@ class PinActivity : Activity() {
         }
         dots = Views.text(app, "h1", 36f,
             if (theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS)
-                theme.color("inkOnWall", "#FFFFFF") else theme.ink, "○ ○ ○ ○", bold = true, gravity = Gravity.CENTER)
+                theme.color("inkOnWall", "#FFFFFF") else theme.ink, emptyDots(), bold = true, gravity = Gravity.CENTER)
         root.addView(dots, LinearLayout.LayoutParams(theme.px(560f), theme.px(90f)).apply {
             topMargin = theme.px(20f)
         })
-        hint = Views.text(app, "meta", 20f, theme.ink3, "Use the number keys or the pad", gravity = Gravity.CENTER)
+        hint = Views.text(app, "meta", 20f, theme.ink3, entryHint(), gravity = Gravity.CENTER)
         root.addView(hint, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, theme.px(42f)))
 
         keys = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
@@ -103,8 +109,8 @@ class PinActivity : Activity() {
         // the pack's regular ink is near-black and vanished into the key fill.
         val keyInk = if (theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.GLASS_CARDS)
             theme.color("inkOnWall", "#FFFFFF") else theme.ink
-        val rows = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("CLEAR", "0", "OK"))
-        for (labels in rows) {
+        val pad = (1..9).map { it.toString() } + listOf("CLEAR", "0", "OK")
+        for (labels in pad.chunked(keysPerRow)) {
             val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             for (label in labels) {
                 val b = Views.text(app, "li", if (label.length > 1) 18f else 28f,
@@ -139,20 +145,23 @@ class PinActivity : Activity() {
         root.addView(keys, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = theme.px(8f)
         })
-        frame.addView(root, FrameLayout.LayoutParams(
+        // The gate is one sheet of the pack's glass: the wall behind it bends along the plate's rim
+        // instead of showing a flat wash with a hairline on it. The pad's keys keep their own fills —
+        // twelve lenses on a 2 GB panel buy nothing a small control can show with a rim.
+        val gate = if (glass) LiquidGlassKit.lens(this, app, plateR).apply {
+            root.background = null
+            elevation = root.elevation
+            root.elevation = 0f
+            addView(root)
+        } else root
+        frame.addView(gate, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER
         ))
         setContentView(frame)
-        Motion.enter(theme, frame, listOf(root))
+        Motion.enter(theme, frame, listOf(gate))
+        show()
         val firstRow = keys.getChildAt(0) as? ViewGroup
         (firstRow?.getChildAt(0) ?: keys)?.requestFocus()
-        // Real frost on the plate: sample the wall behind it — but only once the plate has finished
-        // rising. Capturing mid-entry sampled the animating plate itself and left a lighter inner
-        // rectangle with its own edges inside the plate (the muddy double-frame the owner saw).
-        root.postDelayed({
-            if (!isFinishing) frost = LiquidFrost.install(root, app, plateR, root.background)
-        }, if (theme.motionEnabled)
-            (theme.token("anim", "fadeUpMs", 600.0) + 250).toLong() else 0L)
     }
 
     private fun press(label: String) {
@@ -161,10 +170,19 @@ class PinActivity : Activity() {
             "CLEAR" -> { pin.setLength(0); show() }
             "OK" -> submit()
             else -> if (label.length == 1) {
-                if (pin.length < 4) pin.append(label)
-                show()
-                popDots()
-                if (pin.length == 4) submit()
+                // The household rule is four to eight digits, but an older hub may hold a shorter
+                // number — one profile was left with a single digit and could never be opened again
+                // when the gate stopped at four. Accept up to eight and let the pack's length decide
+                // when the gate submits itself; OK still opens a shorter legacy number.
+                if (pin.length < 8) {
+                    pin.append(label)
+                    show()
+                    popDots()
+                    // The last digit is the enter key: the gate checks the code the moment it is
+                    // complete. `submit` claims `busy` synchronously before the hub is asked, so a
+                    // fast fifth keystroke or a stray OK cannot ask twice.
+                    if (pin.length == pinLength) submit()
+                }
             }
         }
     }
@@ -188,30 +206,77 @@ class PinActivity : Activity() {
     }
 
     private fun show() {
-        dots.text = (0 until 4).joinToString(" ") { if (it < pin.length) "•" else "○" }
-        hint.text = "Use the number keys or the pad"
+        // Filled dots use the same heavy bullet as the Settings pads: a 10-foot glance reads "●" as
+        // filled where the light "•" was easy to mistake for a speck on the glass.
+        val slots = maxOf(pinLength, pin.length).coerceIn(1, 8)
+        dots.text = (0 until slots).joinToString(" ") { if (it < pin.length) "●" else "○" }
+        hint.text = when {
+            pin.isEmpty() -> entryHint()
+            pin.length < pinLength -> "Press OK to confirm" // a shorter number stored by an older client
+            else -> "Checking…"
+        }
         hint.setTextColor(app.theme.ink3)
     }
 
+    private fun emptyDots(): String =
+        (0 until pinLength.coerceIn(1, 8)).joinToString(" ") { "○" }
+
+    private fun entryHint(): String =
+        "Enter $pinLength ${if (pinLength == 1) "digit" else "digits"} · it enters itself"
+
     private fun submit() {
-        if (pin.length != 4 || busy) return
+        // One to eight: the household rule is four to eight, and a stored shorter number (written by
+        // an older client) still has to open its profile so it can be replaced with a valid one.
+        if (pin.isEmpty() || pin.length > 8 || busy) return
         busy = true
         hint.text = "Checking…"
         hint.setTextColor(app.theme.ink2)
-        api.unlock(profileId, pin.toString()) { ok, error ->
+        val entered = pin.toString()
+        api.unlock(profileId, entered) { ok, error ->
             if (isFinishing || isDestroyed) return@unlock
             busy = false
             if (ok) {
                 setResult(RESULT_OK, Intent().putExtra(EXTRA_PROFILE, profileId))
                 finish()
             } else {
-                pin.setLength(0)
+                // A household PIN is 4–8 digits, but the gate only knows the pack's four. Clearing a
+                // four-digit attempt would leave a five-to-eight digit profile permanently locked out,
+                // so a wrong automatic check keeps the digits: the owner can add the rest and press
+                // OK, while a plain four-digit mistake starts over with CLEAR.
+                val keep = entered.length == pinLength && pinLength < 8
+                if (!keep) pin.setLength(0)
                 show()
                 shakePanel()
-                hint.text = if (error?.contains("403") == true) "That PIN is not right" else (error ?: "That PIN is not right")
+                hint.text = if (keep) "Wrong PIN — add the rest, or CLEAR" else failureMessage(error)
                 hint.setTextColor(app.theme.color("warn", "#F2C33A"))
+                keepKeypadFocus()
             }
         }
+    }
+
+    /** A refusal is said plainly; a rate-limit or an unreachable hub keeps its own words. */
+    private fun failureMessage(error: String?): String {
+        val text = error?.trim().orEmpty()
+        val wrong = text.isEmpty() || text.contains("wrong pin", true) ||
+            text.contains("not right", true) || text.contains("403")
+        return if (wrong) "Wrong PIN, try again" else text
+    }
+
+    /** After a refusal the D-pad must still be on the pad, ready for the next number. */
+    private fun keepKeypadFocus() {
+        val focused = currentFocus
+        if (focused != null && isInside(keys, focused)) return
+        val firstRow = keys.getChildAt(0) as? ViewGroup
+        (firstRow?.getChildAt(0) ?: keys).requestFocus()
+    }
+
+    private fun isInside(parent: View, child: View?): Boolean {
+        var node: View? = child
+        while (node != null) {
+            if (node === parent) return true
+            node = node.parent as? View
+        }
+        return false
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -222,7 +287,12 @@ class PinActivity : Activity() {
                 return true
             }
             KeyEvent.KEYCODE_DEL -> { if (pin.isNotEmpty()) { pin.deleteCharAt(pin.length - 1); show() }; return true }
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { submit(); return true }
+            // Digits may repeat — a held key typing is what a keypad is for. Submitting may not: a held OK
+            // would ask the hub to check the PIN several times over.
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                if (event.repeatCount == 0) submit()
+                return true
+            }
             KeyEvent.KEYCODE_BACK -> { finish(); return true }
         }
         return super.onKeyDown(keyCode, event)

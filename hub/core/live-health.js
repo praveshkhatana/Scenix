@@ -40,6 +40,9 @@ const PROBE_TIMEOUT_MS = Number(process.env.LIVE_HEALTH_TIMEOUT_MS || 6000); // 
 const CONCURRENCY = Number(process.env.LIVE_HEALTH_CONCURRENCY || 8); // never take the box's uplinks
 const MAX_REDIRECTS = 3;
 const STALE_MS = Number(process.env.LIVE_HEALTH_STALE_MS || 24 * 60 * 60 * 1000); // after a day, "dead" is a rumour
+// A refusal is fresher news than a silence: 403s on CDN edges come and go with the hour, so a refused
+// feed is worth another try within a couple of hours instead of after a day.
+const FAIL_STALE_MS = Number(process.env.LIVE_HEALTH_FAIL_STALE_MS || 2 * 60 * 60 * 1000);
 const UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -158,6 +161,18 @@ function wantManifest(url) {
 }
 
 /**
+ * Two kinds of "no" arrive from a live feed and they must not be filed together. A refusal that names
+ * a gatekeeper — 403/456, "Token required", "Access Denied" — is the provider declining US or a
+ * missing signed-token; the feed exists, another exit or the provider's own token would play it.
+ * Everything else (timeout, refused connection, 404, parked page) is `dead`: nothing is there.
+ */
+function classifyFailure(error) {
+  const s = String(error || '').toLowerCase();
+  if (/403|456|401|token|forbidden|denied|unauthoriz|block|hotlink|referer/.test(s)) return 'blocked';
+  return 'dead';
+}
+
+/**
  * Probe a batch of channels, bounded by CONCURRENCY, and record one result per identity.
  * `targets` = [{ identity, urls: [best first] }]. The first working url wins, so a channel with a
  * 1080p feed that is down but a 480p feed that is up is still offered (and shown as working).
@@ -190,6 +205,7 @@ async function probe(targets, { timeoutMs = PROBE_TIMEOUT_MS, concurrency = CONC
         checkedAt: Date.now(),
         latencyMs: best ? best.latencyMs : null,
         error: best && !best.ok ? best.error : null,
+        status: best && best.ok ? 'ok' : classifyFailure(best && best.error), // 'ok' | 'blocked' | 'dead'
         url: best && best.ok ? best.url : prev.url || null,
       };
       checked++;
@@ -237,8 +253,10 @@ function numberFor(identity) {
 function get(identity) {
   const entry = state.channels[String(identity)];
   if (!entry) return null;
+  const ok = entry.ok === true;
   return {
-    ok: entry.ok === true,
+    ok,
+    status: ok ? 'ok' : String(entry.status || classifyFailure(entry.error)), // 'ok' | 'blocked' | 'dead'
     checkedAt: Number(entry.checkedAt) || null,
     latencyMs: Number.isFinite(entry.latencyMs) ? entry.latencyMs : null,
     error: entry.error || null,
@@ -250,11 +268,14 @@ function get(identity) {
 /**
  * 0 = the hub watched this one play, 1 = never checked / the evidence is old, 2 = the hub watched it
  * fail. Dead-last, unknown-in-the-middle: an unchecked channel is not guilty until it is checked.
+ * A failure ages out on the shorter FAIL_STALE_MS clock, so a transient refusal is re-tried the same
+ * evening instead of marking a channel dead until tomorrow.
  */
 function rank(identity) {
   const h = get(identity);
   if (!h || !h.checkedAt) return 1;
-  if (Date.now() - h.checkedAt > STALE_MS) return 1;
+  const age = Date.now() - h.checkedAt;
+  if (h.ok ? age > STALE_MS : age > FAIL_STALE_MS) return 1;
   return h.ok ? 0 : 2;
 }
 
@@ -272,20 +293,24 @@ function compare(a, b) {
 function status() {
   let ok = 0;
   let dead = 0;
+  let blocked = 0;
   let stale = 0;
   let numbered = 0;
   for (const entry of Object.values(state.channels)) {
     if (Number.isFinite(entry.number)) numbered++;
     const age = Date.now() - (Number(entry.checkedAt) || 0);
     if (entry.ok === true) ok++;
-    else if (entry.ok === false && age <= STALE_MS) dead++;
-    else stale++;
+    else if (entry.ok === false && age <= FAIL_STALE_MS) {
+      if ((entry.status || classifyFailure(entry.error)) === 'blocked') blocked++;
+      else dead++;
+    } else stale++;
   }
   return {
     file: FILE,
     checked: Object.keys(state.channels).length,
     working: ok,
     dead,
+    blocked, // the channel exists; its provider declined this request (country, token, hotlink rule)
     unknown: stale,
     numbered,
     updatedAt: state.updatedAt || null,
@@ -308,9 +333,10 @@ function report(identity, ok, url, error) {
   entry.checkedAt = Date.now();
   if (url) entry.url = String(url);
   entry.error = ok ? null : String(error || 'a viewer reported a failure');
+  entry.status = ok ? 'ok' : classifyFailure(entry.error);
   scheduleSave();
   return get(identity);
 }
 
-module.exports = { probe, assignNumbers, numberFor, get, rank, compare, status, report, FILE,
-  limits: { PROBE_TIMEOUT_MS, CONCURRENCY, STALE_MS } };
+module.exports = { probe, assignNumbers, numberFor, get, rank, compare, status, report, classifyFailure, FILE,
+  limits: { PROBE_TIMEOUT_MS, CONCURRENCY, STALE_MS, FAIL_STALE_MS } };

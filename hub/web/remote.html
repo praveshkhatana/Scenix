@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0b0c0f">
+<title>Scenix Remote</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #f5f6f8;
+    --ink-2: #b6b9c2;
+    --ink-3: #7e828e;
+    --bg: #0b0c0f;
+    --panel: #17191f;
+    --panel-2: #20232b;
+    --line: #2c303b;
+    --accent: #f3b54a;
+    --ok: #57d98b;
+    --bad: #ff6b6b;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { height: auto; }
+  body {
+    background:
+      radial-gradient(120% 60% at 50% 0%, #20242e 0%, transparent 62%),
+      var(--bg);
+    color: var(--ink);
+    font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    padding: max(14px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    /* The page is at least a screen tall but never locked to one: when the on-screen keyboard
+       shrinks the viewport, a 100%-high body squeezed its children until the D-pad overflowed
+       upward and painted over the typing row. Let the page scroll instead. */
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: .17em; font-weight: 800; color: var(--accent);
+    text-transform: uppercase;
+  }
+  h1 { margin: 2px 0 0; font-size: 22px; line-height: 1.1; letter-spacing: -.02em; }
+  #code {
+    font: 800 20px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .16em; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 11px 12px 9px; white-space: nowrap;
+  }
+  #state { display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; min-height: 18px; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 4px rgba(126,130,142,.12); }
+  #dot.live { background: var(--ok); box-shadow: 0 0 0 4px rgba(87,217,139,.14); }
+  #dot.closed { background: var(--bad); box-shadow: 0 0 0 4px rgba(255,107,107,.14); }
+
+  .typebar {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 9px; align-items: stretch;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 9px; flex-shrink: 0;
+  }
+  .mic {
+    width: 46px; border: 1px solid var(--line); border-radius: 13px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel)); color: var(--ink-2);
+    font-size: 19px; line-height: 1;
+  }
+  .mic:active { transform: scale(.97); }
+  .mic.on {
+    background: var(--accent); color: #17120a; border-color: var(--accent);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(243,181,74,.18); } }
+  #text {
+    min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink);
+    font: 500 17px/1.2 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 12px 10px;
+  }
+  #text::placeholder { color: var(--ink-3); }
+  .send {
+    border: 0; border-radius: 13px; padding: 0 18px; min-width: 76px;
+    background: var(--accent); color: #17120a; font: 800 15px/1 system-ui, sans-serif;
+    touch-action: manipulation;
+  }
+  .send:active { transform: scale(.97); }
+
+  /* Auto margins centre the pad block when a tall screen leaves slack, but unlike the old
+     stretched-and-centred wrapper they collapse to nothing when space is tight — the controls
+     then simply extend the page downward for scrolling, never upward over the typing row. */
+  .padwrap { display: flex; flex-direction: column; gap: 14px; margin-block: auto; flex-shrink: 0; }
+  .pad {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(64px, 1fr));
+    grid-template-areas: ". up ." "left ok right" ". down .";
+    gap: 10px;
+    max-width: 360px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .key {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    color: var(--ink);
+    border-radius: var(--radius);
+    min-height: 74px;
+    display: flex; align-items: center; justify-content: center;
+    font: 800 20px/1 system-ui, -apple-system, sans-serif;
+    touch-action: manipulation;
+    box-shadow: 0 8px 22px rgba(0,0,0,.22);
+  }
+  .key:active { transform: translateY(1px) scale(.985); border-color: #3a3f4c; }
+  .key.ok {
+    background: linear-gradient(180deg, #f7c568, #e4a63b);
+    color: #1b1408; border-color: #f7c568; font-size: 18px;
+  }
+  #up { grid-area: up; } #down { grid-area: down; }
+  #left { grid-area: left; } #right { grid-area: right; } #ok { grid-area: ok; }
+  .minor { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; max-width: 360px; margin: 0 auto; width: 100%; }
+  .minor .key { min-height: 52px; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; }
+  .minor .key.wide { grid-column: span 2; }
+  .hint { color: var(--ink-3); font-size: 12px; text-align: center; margin: 0; line-height: 1.45; }
+  .closed { color: var(--bad); font-weight: 700; }
+  .more { color: var(--ink-2); font-size: 12px; text-align: center; margin: 0; }
+  .more a { color: var(--accent); font-weight: 700; text-decoration: none; }
+  @media (min-height: 760px) {
+    .key { min-height: 84px; }
+    .pad { max-width: 390px; }
+    .minor { max-width: 390px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="eyebrow">Scenix remote</div>
+    <h1>Type and steer<br>from your phone</h1>
+  </div>
+  <div id="code">••••••</div>
+</header>
+
+<div id="state"><span id="dot"></span><span id="stateText">Connecting…</span></div>
+
+<div class="typebar" id="typebar">
+  <input id="text" type="text" inputmode="text" enterkeyhint="send" autocomplete="off"
+         autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type to the TV…">
+  <button class="mic" id="mic" type="button" aria-label="Dictate">🎙</button>
+  <button class="send" id="sendText" type="button">Send</button>
+</div>
+
+<div class="padwrap">
+  <div class="pad" aria-label="Direction pad">
+    <button class="key" id="up" type="button" data-key="UP" aria-label="Up">▲</button>
+    <button class="key" id="left" type="button" data-key="LEFT" aria-label="Left">◀</button>
+    <button class="key ok" id="ok" type="button" data-key="OK" aria-label="OK">OK</button>
+    <button class="key" id="right" type="button" data-key="RIGHT" aria-label="Right">▶</button>
+    <button class="key" id="down" type="button" data-key="DOWN" aria-label="Down">▼</button>
+  </div>
+  <div class="minor">
+    <button class="key wide" type="button" data-key="BACK">Back</button>
+    <button class="key" type="button" data-key="HOME">Home</button>
+    <button class="key" type="button" data-key="DELETE">Del</button>
+    <button class="key wide" type="button" data-key="PLAY_PAUSE">Play / pause</button>
+    <button class="key" type="button" data-key="REWIND">Rew</button>
+    <button class="key" type="button" data-key="FAST_FORWARD">Fwd</button>
+  </div>
+  <p class="hint" id="hint">Works on every screen — Home, Search, Detail, Settings — while Scenix is open on this TV. Typing and dictation land in whatever is being edited.</p>
+  <!-- The remote is the fast path; full Settings is one tap away for a longer edit. -->
+  <p class="more"><a href="/#/settings">Open full Settings on this phone</a></p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var params = new URLSearchParams(location.search);
+  var token = String(params.get('t') || '').toLowerCase();
+  var code = String(params.get('c') || '').toUpperCase();
+  var dot = document.getElementById('dot');
+  var stateText = document.getElementById('stateText');
+  var codeEl = document.getElementById('code');
+  var input = document.getElementById('text');
+  var hint = document.getElementById('hint');
+  var closed = false;
+  var lastStateAt = 0;
+
+  if (!/^[a-f0-9]{32}$/.test(token)) {
+    closed = true;
+    dot.className = 'closed';
+    stateText.textContent = 'This link is incomplete — scan the QR again.';
+    hint.textContent = 'Open Settings on the TV and scan a fresh code, or just rescan this one.';
+  } else if (code) {
+    codeEl.textContent = code;
+  }
+
+  function markClosed(message) {
+    closed = true;
+    dot.className = 'closed';
+    stateText.textContent = message || 'Scenix on the TV stopped listening.';
+    hint.classList.add('closed');
+    hint.textContent = 'Bring Scenix back to the foreground on the TV, or scan a fresh code from Settings.';
+  }
+
+  function markLive(listening) {
+    if (closed) return;
+    dot.className = listening ? 'live' : '';
+    stateText.textContent = listening ? 'TV is listening' : 'Waiting for the TV…';
+  }
+
+  function send(events, done) {
+    if (closed) return;
+    if (navigator.vibrate) navigator.vibrate(8);
+    fetch('/app/v1/remote/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ token: token, events: events })
+    }).then(function (r) {
+      if (r.status === 404 || r.status === 410) {
+        markClosed('The TV closed this remote.');
+        return null;
+      }
+      if (!r.ok) throw new Error('send failed');
+      return r.json();
+    }).then(function (body) {
+      if (body && body.ok) markLive(true);
+      if (done) done();
+    }).catch(function () {
+      if (!closed) stateText.textContent = 'No answer from the hub — trying again.';
+    });
+  }
+
+  document.querySelectorAll('[data-key]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      send([{ type: 'key', key: button.getAttribute('data-key') }]);
+    });
+  });
+
+  function sendText() {
+    var text = input.value;
+    if (!text) return;
+    send([{ type: 'text', text: text }], function () {
+      input.value = '';
+      input.focus();
+    });
+  }
+  document.getElementById('sendText').addEventListener('click', sendText);
+  // When the on-screen keyboard takes half the screen, keep the row being typed in visible:
+  // once the viewport has settled after focus, pull the typing row into view.
+  var typebar = document.getElementById('typebar');
+  input.addEventListener('focus', function () {
+    setTimeout(function () {
+      if (document.activeElement === input) typebar.scrollIntoView({ block: 'nearest' });
+    }, 300);
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendText();
+    }
+  });
+
+  // Dictation rides the phone's own speech recogniser: tap once to start talking, the words land
+  // in the field and go straight to the TV. Chrome/Safari on Android and desktop support it; where
+  // the browser has no recogniser the button says so instead of failing silently.
+  var mic = document.getElementById('mic');
+  var Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var listening = false;
+  if (!Speech) {
+    mic.addEventListener('click', function () {
+      stateText.textContent = 'This browser cannot dictate — type instead.';
+    });
+  } else {
+    mic.addEventListener('click', function () {
+      if (listening) return;
+      var rec = new Speech();
+      rec.lang = navigator.language || 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onstart = function () {
+        listening = true;
+        mic.classList.add('on');
+        stateText.textContent = 'Listening… speak now';
+      };
+      rec.onresult = function (e) {
+        var said = '';
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) said += e.results[i][0].transcript + ' ';
+        }
+        if (said.trim()) {
+          input.value = (input.value ? input.value.replace(/\s+$/, '') + ' ' : '') + said.trim();
+          sendText();
+        }
+      };
+      rec.onerror = function () {
+        stateText.textContent = 'Did not catch that — try again.';
+      };
+      rec.onend = function () {
+        listening = false;
+        mic.classList.remove('on');
+      };
+      rec.start();
+    });
+  }
+
+  function poll() {
+    if (closed) return;
+    fetch('/app/v1/remote/state?t=' + encodeURIComponent(token), { cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404 || r.status === 410) {
+          markClosed('The TV closed this remote.');
+          return null;
+        }
+        if (!r.ok) throw new Error('state failed');
+        return r.json();
+      })
+      .then(function (body) {
+        if (!body) return;
+        if (body.code) codeEl.textContent = body.code;
+        markLive(!!body.tvListening);
+        setTimeout(poll, 5000);
+      })
+      .catch(function () {
+        if (!closed) {
+          dot.className = '';
+          stateText.textContent = 'Looking for the TV…';
+          setTimeout(poll, 5000);
+        }
+      });
+  }
+
+  // One immediate probe tells the page whether the QR is already stale.
+  setTimeout(poll, 300);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && !closed) poll();
+  });
+})();
+</script>
+</body>
+</html>

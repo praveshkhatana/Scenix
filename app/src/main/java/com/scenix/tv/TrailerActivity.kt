@@ -6,7 +6,9 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.scenix.tv.core.AppContext
@@ -22,6 +24,9 @@ import com.scenix.tv.core.Views
  * produced "No player for the trailer" (owner report, 2026-11-03). Media3 is already in this build
  * for the film; using it here keeps the promise inside the product.
  */
+// The trailer screen owns its Media3 view configuration. Keep the experimental API acknowledgement
+// at this narrow integration boundary rather than suppressing it application-wide.
+@OptIn(UnstableApi::class)
 class TrailerActivity : Activity() {
 
     private var player: ExoPlayer? = null

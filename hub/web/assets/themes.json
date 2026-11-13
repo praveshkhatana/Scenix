@@ -1,16 +1,14 @@
 {
- "themes": [
-  {
-   "id": "scenix-apple",
-   "name": "Clean",
-   "asset": "theme-apple.json",
-   "pack": "Scene"
-  },
-  {
-   "id": "scenix-netflix",
-   "name": "Netflix",
-   "asset": "theme-netflix.json",
-   "pack": "Classic"
-  }
- ]
+  "version": 1,
+  "registry": "design-system/themes.json",
+  "themes": [
+    { "id": "scenix-dark", "name": "Scenix Dark", "version": "1.0.0", "asset": "theme.json", "pack": "Classic", "layout": "classic", "targets": ["android-tv", "web"], "sha256": "969d12b76ab94361425ff7873e486ad646fb53067015a27a34bd206466fe6a79" },
+    { "id": "scenix-midnight", "name": "Midnight", "version": "1.0.0", "asset": "theme-midnight.json", "pack": "Cinema", "layout": "cinema", "targets": ["android-tv", "web"], "sha256": "3b718871c9687659cbbf505cf124add4f3757ef7066e5bb2bb633480ceaa2f12" },
+    { "id": "scenix-ember", "name": "Ember", "version": "1.0.0", "asset": "theme-ember.json", "pack": "Editorial", "layout": "editorial", "targets": ["android-tv", "web"], "sha256": "9956bffaea6dbbd024acbe3874582d9b62e03b9f23176d5ef6540f87c002f23d" },
+    { "id": "scenix-apple", "name": "Apple", "version": "1.0.0", "asset": "theme-apple.json", "pack": "Scene", "layout": "scene", "targets": ["android-tv", "web"], "sha256": "61d8b64ceaa7aab2022af9b9af8874bef6236ab9002d4ae05bbcd91fab82aad9" },
+    { "id": "scenix-netflix", "name": "Netflix", "version": "1.0.0", "asset": "theme-netflix.json", "pack": "Classic", "layout": "cinema-row", "targets": ["android-tv", "web"], "sha256": "3e08a61876653958b918533704eb277d9f7a240f16a41e5329be45a0eae3f717" },
+    { "id": "scenix-ps5", "name": "PS5", "version": "1.0.0", "asset": "theme-ps5.json", "pack": "Console Scene", "layout": "console-scene", "targets": ["android-tv", "web"], "sha256": "6cbf3bece268d75d833b495ae64b046727ced924a92e9cc41447d49c3cdc9c55" },
+    { "id": "scenix-kids", "name": "Kids", "version": "1.0.0", "asset": "theme-kids.json", "pack": "kids", "layout": "kids-stage", "targets": ["android-tv", "web"], "sha256": "d638c9567763a86861fb49ce08cea4eb79b4f8d1708e279ee647d850ee20768e" },
+    { "id": "scenix-glass", "name": "Glass", "version": "1.0.0", "asset": "theme-glass.json", "pack": "Liquid Glass", "layout": "liquid-glass", "targets": ["android-tv", "web"], "sha256": "dcc57af992ac003686194dbac6bd36c633dfa154c330c42581d97dfee2b9501f" }
+  ]
 }

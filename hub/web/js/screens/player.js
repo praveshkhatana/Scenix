@@ -30,7 +30,7 @@ import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { createPlayer, describePlayback } from '/ui/js/player.js';
 import { session, hasNativePlayer, effectivePrefs } from '/ui/js/state.js';
-import { clock, langName, qualityWord, codecName, episodeLabel, size as fmtSize } from '/ui/js/format.js';
+import { clock, langName, qualityWord, codecName, episodeLabel, maturityLabel, size as fmtSize } from '/ui/js/format.js';
 import { token, px } from '/ui/js/theme.js';
 import { setFeatureVisible, setSurfaceLive } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
@@ -49,7 +49,10 @@ export function screen(ctx, identity) {
      episode waiting; a feature does not. A stream that has not reported a length yet is a different thing
      again — that is the `live` flag below, and it only ever decides whether the bar can be moved along,
      never which controls exist. */
-  const kind = String(spec.type || '').toLowerCase();
+  const kind = String(spec.type || '').toLowerCase()
+    // An episode window only ever arrives with a series, so a route that carries one is a series even if the
+    // hand-off forgot to say so.
+    || (spec.season || spec.episode ? 'series' : '');
   let isLiveFeed = kind === 'channel' || kind === 'live';
   const isSeries = kind === 'series';
 
@@ -67,8 +70,10 @@ export function screen(ctx, identity) {
   const stage = el('div', { class: 'ply-stage' });
 
   const title = el('div', { class: 'pt', text: spec.title || '' });
-  const subtitle = el('div', { class: 'ps', text: spec.subtitle || '' });
-  const cert = String(spec.maturity || '');
+  // A hand-off that carries an episode window but not its label still has to say which episode is playing.
+  const subtitle = el('div', { class: 'ps',
+    text: spec.subtitle || (spec.season && spec.episode ? episodeLabel(spec.season, spec.episode) : '') });
+  const cert = maturityLabel(spec);
   const advisories = Array.isArray(spec.advisories) ? spec.advisories : [];
   // A channel says so beside its own name too, not only in the transport mark that fades with the bar —
   // the same habit as the native player's red LIVE badge. If the hub names the feed later (a deep link or
@@ -79,10 +84,38 @@ export function screen(ctx, identity) {
     el('span', { class: 'pccert', text: cert || 'Not rated' }),
     advisories.length ? el('span', { class: 'pcadv', text: advisories.join(' · ') }) : null);
   const status = el('div', { class: 'ply-status' });
+  /* The status line keeps the top of the picture: it has to be able to say "stalled", "playing the copy you
+     picked" or "subtitles are off" without moving the transport out from under anyone's ring. What the
+     picture *is* — its name, the channel's LIVE pill, the certificate — rides the bottom bar above the
+     timeline instead, which is where the television's player puts that line. Two clients, one line-up. */
   const hud = el('div', { class: 'ply-hud ply-fade' },
-    el('div', {}, title, subtitle, content),
     el('div', { class: 'right' }, status));
+  const titleRow = el('div', { class: 'ply-title ply-fade' }, title, subtitle, content);
   const top = el('div', { class: 'ply-top ply-fade' });
+
+  /*
+    The television is always told what it is playing, because the screen that launched it names the thing. A
+    deep link typed into a browser, or a channel reached by identity, arrives with an address and nothing
+    else, and then the identity line says "Not rated" over a blank where a name should be. So the name is
+    looked up: first in the shelf this device is already holding, which costs nothing, then from the hub. A
+    player that cannot say what it is showing reads as a broken player even when the film is fine.
+  */
+  if (!spec.title || !cert) {
+    const cached = ((session.home && session.home.rows) || [])
+      .flatMap((r) => r.items || [])
+      .find((x) => x.identity === identity);
+    const fills = (rec) => !!rec && ((!spec.title && rec.title) || (!cert && !!maturityLabel(rec)));
+    const fill = (rec) => {
+      if (!rec) return;
+      if (!spec.title && rec.title) title.textContent = spec.title = rec.title;
+      if (!cert) {
+        const word = maturityLabel(rec);
+        if (word) content.querySelector('.pccert').textContent = word;
+      }
+    };
+    if (fills(cached)) fill(cached);
+    else api.meta(identity, session.profile && session.profile.id).then(fill, () => {});
+  }
 
   // The theme owns how far a seek jumps; a label that promises ten seconds while the token says thirty
   // is a lie on every box that retunes it.
@@ -101,6 +134,7 @@ export function screen(ctx, identity) {
       onclick: () => fn(),
     }, icon(ico || name, { solid: name === 'play' }), el('span', { class: 'lbl', text: label }));
     focus.focusable(b);
+    b.addEventListener('focus', () => sayFor(b));
     return b;
   };
   const btnBack = pbtn('back', '', 'Back', () => ctx.back());
@@ -114,12 +148,42 @@ export function screen(ctx, identity) {
     const b = el('button', { class: 'iconbtn', type: 'button', 'aria-label': label, title: label,
       onclick: () => fn() }, icon(name), el('span', { text: label }), el('b', { class: 'val' }));
     focus.focusable(b);
+    b.addEventListener('focus', () => sayFor(b));
     return b;
   };
+  /** The small pills a panel uses for its ways out — the television's chip, not the transport's disc. */
+  const chip = (label, primary, fn) => focus.focusable(el('button', {
+    class: `ply-chip${primary ? ' go' : ''}`, type: 'button', text: label, onclick: () => fn(),
+  }));
   const btnSub = tool('cc', 'Subtitles', () => openMenu('sub', btnSub));
   const btnAudio = tool('audio', 'Audio', () => openMenu('audio', btnAudio));
   const btnSpeed = tool('speed', 'Speed', () => openMenu('speed', btnSpeed));
   const btnQuality = tool('globe', 'Quality', () => openMenu('quality', btnQuality));
+
+  /*
+   * The film arrives with its own shape, and the television letters it into the black rather than cropping
+   * the top and bottom of the picture away. That is the default here too, and the one control that changes
+   * it is the one the television has: Picture size, cycling letterboxed to full-screen. A native surface
+   * draws its own picture, so the button is not offered where pressing it would do nothing.
+   */
+  const ASPECTS = [['', 'Fit'], ['fill', 'Fill']];
+  let aspectAt = 0;
+  const btnAspect = native ? null : tool('expand', 'Picture size', () => {
+    aspectAt = (aspectAt + 1) % ASPECTS.length;
+    const [cls, label] = ASPECTS[aspectAt];
+    const host = document.getElementById('video-host');
+    if (host) host.classList.toggle('fill', cls === 'fill');
+    const v = btnAspect.querySelector('.val');
+    if (v) v.textContent = label;
+    setStatus(`Picture size · ${label}`, null);
+  });
+  if (btnAspect) {
+    const v = btnAspect.querySelector('.val');
+    if (v) v.textContent = ASPECTS[0][1];
+  }
+  // The television's player carries Episodes for a series: the next one is already at the edge of the
+  // picture, but choosing an earlier one without leaving the film is a different want.
+  const btnEp = (isSeries && !isLiveFeed) ? tool('list', 'Episodes', () => openMenu('episodes', btnEp)) : null;
   const rate = el('span', { class: 'rate' });
 
   /* Two rows and no panel: where the programme is (elapsed, the line, what is left) and what you can do to it
@@ -128,7 +192,11 @@ export function screen(ctx, identity) {
      floating in the film. Nothing here carries a `data-nav` band: the ring walks these controls by geometry,
      which is only safe while they are all on the same floor, so every one of them lives inside the chrome that
      fades in and out together. */
-  const times = el('div', { class: 'times' }, tLeft, trk, tRight);
+  const times = el('div', { class: 'times' }, trk);
+  // The clock belongs at the end of the control row - `0:00 / 1:37:20`, where the eye finishes the line -
+  // not pinned to the two ends of the timeline, which is the television's arrangement and reads better
+  // beside the buttons it describes.
+  const clockLine = el('span', { class: 'ptimes' }, tLeft, tRight);
 
   // The scrub preview Netflix answers every Left/Right with: the time you landed on, shown over the
   // picture just above the bar, fading out by itself. Thumbnails would need a seekable sprite endpoint
@@ -149,10 +217,25 @@ export function screen(ctx, identity) {
   // A channel has no position to move along, so the line that shows one is replaced by the only fact that
   // stream supports: it is happening now.
   const liveMark = el('div', { class: 'live-mark' }, el('i', { class: 'dot' }), el('span', { text: 'Live' }));
+  /* One quiet line above the transport names whichever control the ring is standing on. The words under the
+     buttons were dropped because they fit three huge circles and nothing else, so without this a focused
+     glyph is anonymous — and this is exactly how the television's player says it too. */
+  const hintLine = el('div', { class: 'ply-hint' });
+  const sayFor = (b) => {
+    const name = b.getAttribute('aria-label') || '';
+    hintLine.textContent = name;
+    b.addEventListener('blur', () => { if (hintLine.textContent === name) hintLine.textContent = ''; });
+  };
+  // The hairline is the group break the television's row uses: transport on one side, the tracks and the
+  // picture on the other. Without it the row reads as eight equal things rather than two kinds of thing.
   const bar = el('div', { class: 'ply-bar' },
     isLiveFeed ? liveMark : times,
+    hintLine,
     el('div', { class: 'pbtns' }, btnPlay, ...(isLiveFeed ? [] : [btnRew, btnFwd]),
-      el('div', { class: 'ply-right' }, btnSub, btnAudio, ...(isLiveFeed ? [] : [btnSpeed]), btnQuality)));
+      el('span', { class: 'ply-div', 'aria-hidden': 'true' }),
+      el('div', { class: 'ply-right' }, btnSub, btnAudio, ...(isLiveFeed ? [] : [btnSpeed]), btnQuality,
+        ...(btnAspect ? [btnAspect] : []), ...(btnEp ? [btnEp] : [])),
+      ...(isLiveFeed ? [] : [clockLine])));
 
   // Shown only when there is a next episode to go to, so a film and a channel are not offered a button that
   // does nothing.
@@ -169,7 +252,7 @@ export function screen(ctx, identity) {
     el('span', { class: 'iconbtn dim' }, icon(player.backend === 'native' ? 'tv' : 'external'),
       el('span', { text: player.backend === 'native' ? 'TV player' : 'Browser player' })),
     rate);
-  const bottom = el('div', { class: 'ply-bottom ply-fade' }, bar, ctl);
+  const bottom = el('div', { class: 'ply-bottom ply-fade' }, titleRow, bar, ctl);
 
   /* An intro is a thing the hub marks on an episode, and the first frame of a film has not been watched long
      enough for anyone to want out of it. So the button starts put away — `gone` is opacity 0, which is also
@@ -569,7 +652,20 @@ export function screen(ctx, identity) {
     btnSpeed.classList.toggle('on', r !== 1);
   }
 
+  /* The episode list is not part of the play answer, so it is asked for once per film and kept: a viewer
+     who opens Episodes twice should not wait for the hub twice. */
+  let episodesRecord = null;
+  function episodesFor() {
+    if (episodesRecord) return Promise.resolve(episodesRecord);
+    return api.meta(identity, session.profile && session.profile.id)
+      .then((r) => { episodesRecord = r; return r; });
+  }
+
   function openMenu(kind, opener) {
+    // A card owns the screen until the viewer answers it: a sheet opened behind one is two panels stacked,
+    // and only one of them has the way out. The loading surface is not a card — the transport still works
+    // while the hub is fetching the first seconds.
+    if (!center.hidden && center.querySelector('.ply-panel')) return;
     if (openKind === kind) return closeMenu();
     if (!openKind) {
       // The sheet was opened from the bar (a chip, or the first Down): the ring belongs to the sheet now.
@@ -599,7 +695,46 @@ export function screen(ctx, identity) {
         { val: qualityLabel(), chev: true }));
       if (!isLiveFeed) panel.appendChild(row('Speed', null, false, () => openMenu('speed'),
         { val: `${Number(player.rate) || 1}x`, chev: true }));
+      /* The sheet is the bar in a list, so a series carries the same Episodes entry the bar does. */
+      if (btnEp) panel.appendChild(row('Episodes', null, false, () => openMenu('episodes'), { chev: true }));
       panel.appendChild(el('div', { class: 'note', text: 'Up and down pick a row; OK opens the choice; Back leaves the player.' }));
+    } else if (kind === 'episodes') {
+      /* The television's Episodes menu, in the same place: the list the hub holds for this series, the one
+         playing marked, and picking a row starts that episode instead of making the viewer leave the film to
+         go back to the detail page. The next episode is already at the edge of the picture; this is for the
+         want that is not "next". */
+      panel.appendChild(el('h4', {}, icon('list'), el('span', { text: 'Episodes' })));
+      panel.appendChild(el('div', { class: 'note', text: 'Asking the hub for this series…' }));
+      const paintList = (rec) => {
+        if (openKind !== 'episodes') return;
+        panel.textContent = '';
+        panel.appendChild(el('h4', {}, icon('list'), el('span', { text: 'Episodes' })));
+        const eps = (rec && rec.episodes) || [];
+        if (!eps.length) {
+          panel.appendChild(el('div', { class: 'note', text: 'The hub has no episode list for this series yet.' }));
+          return;
+        }
+        for (const e of eps) {
+          const s = e.season == null ? 1 : Number(e.season);
+          const n = e.episode == null ? 1 : Number(e.episode);
+          const on = Number(spec.season) === s && Number(spec.episode) === n;
+          panel.appendChild(row(episodeLabel(s, n), e.title || '', on, () => {
+            ctx.play({ identity, type: 'series', title: (rec && rec.title) || spec.title }, {
+              season: s, episode: n, subtitle: episodeLabel(s, n),
+            });
+          }, { val: e.runtimeMs ? clock(Math.round(Number(e.runtimeMs) / 1000)) : '' }));
+        }
+        /* The list arrives after the sheet is open, so the ring was standing on the "asking" note that this
+           repaint just removed. It goes to the first episode only if it had nowhere else to be — a viewer
+           already sitting on a row keeps their place. */
+        if (!panel.contains(document.activeElement)) focus.focusDefault(panel.querySelector('.prow'));
+      };
+      episodesFor().then(paintList, () => {
+        if (openKind !== 'episodes') return;
+        panel.textContent = '';
+        panel.appendChild(el('h4', {}, icon('list'), el('span', { text: 'Episodes' })));
+        panel.appendChild(el('div', { class: 'note', text: 'The hub could not answer for this series.' }));
+      });
     } else if (kind === 'audio') {
       panel.appendChild(el('h4', {}, icon('audio'), el('span', { text: 'Audio' })));
       // Symmetric with Subtitles' "Off": one row that gives up any manual pick and lets the hub rank
@@ -809,41 +944,61 @@ export function screen(ctx, identity) {
     // to wait and re-ask the same address; only a copy that died after it began, or that this browser
     // cannot decode at all, is worth sending the viewer off to look for another.
     const waiting = !!(e && e.waiting);
-    center.appendChild(el('div', { class: 'big',
-      text: waiting ? 'This copy has not started moving yet' : 'This copy would not play' }));
-    center.appendChild(el('div', { class: 'small', text: waiting
+    // The television's unplayable panel: what the copy is doing, one line about why, and the four ways out
+    // as chips - Try again, Next copy, Quality, Back - with a sentence that says what the two middle ones
+    // are for. A wall of big buttons over the film reads as an alarm; this reads as a decision.
+    const box = el('div', { class: 'ply-panel' });
+    box.appendChild(el('div', { class: 'big',
+      text: waiting ? 'This copy is still being prepared' : 'This copy would not play' }));
+    /* Which thing failed, named the way the television's card names it: for a channel, the number and name
+       the viewer put into the remote; for a copy, the copy it was being watched in. A card that only says
+       "cannot play" leaves the viewer guessing which of four things broke. */
+    const tag = [isLiveFeed ? 'Off the air' : 'Cannot play'];
+    if (isLiveFeed) {
+      const n = channelNumber();
+      if (n != null && n !== '') tag.push(String(n));
+      if (spec.title) tag.push(spec.title);
+    } else {
+      const picked = player.target && player.target.picked;
+      const which = picked && (qualityWord(picked.quality) || picked.label);
+      if (which) tag.push(which);
+    }
+    box.appendChild(el('div', { class: 'kick', text: tag.join('  ·  ') }));
+    box.appendChild(el('div', { class: 'small', text: waiting
       ? 'The hub asked the peers sharing it and nothing has arrived. Waiting longer often fixes it — '
         + 'another copy is usually ready right away.'
       : (e && e.message) || 'The hub could not open it.' }));
+    // What the hub ruled out, one line each, and the number it left out stated rather than dropped.
+    const verdicts = ((e && e.tried) || []).map((r) => String(r).trim()).filter(Boolean);
+    for (const r of verdicts.slice(0, 3)) box.appendChild(el('div', { class: 'why', text: `· ${r}` }));
+    if (verdicts.length > 3) {
+      box.appendChild(el('div', { class: 'why', text: `· and ${verdicts.length - 3} more this hub tried` }));
+    }
     // A live channel has no "another copy": it has another channel. The remote's left/right already zap,
     // and the failure card must offer the same thing instead of sending the viewer to a source picker that
     // does not exist on a live feed.
     if (isLiveFeed) {
-      const next = el('button', { class: 'btn white big', type: 'button', text: 'Next channel',
-        onclick: () => ctx.zap(1) });
-      const prev = el('button', { class: 'btn ghost big', type: 'button', text: 'Previous channel',
-        onclick: () => ctx.zap(-1) });
-      const home = el('button', { class: 'btn ghost big', type: 'button', text: 'Back', onclick: () => ctx.back() });
-      center.appendChild(el('div', { class: 'btns' }, next, prev, home));
-      focus.focusable(next); focus.focusable(prev); focus.focusable(home);
+      box.appendChild(el('div', { class: 'btns' },
+        chip('Next channel', true, () => ctx.zap(1)),
+        chip('Previous channel', false, () => ctx.zap(-1)),
+        chip('Back', false, () => ctx.back())));
+      center.appendChild(box);
       setStatus('This channel is not answering', 'bad');
-      focus.focusDefault(next);
+      focus.focusDefault(box.querySelector('button'));
       return;
     }
-    const wait2 = el('button', { class: 'btn white big', type: 'button', text: 'Wait and try again',
-      onclick: () => player.retry() });
-    const again = el('button', { class: waiting ? 'btn ghost big' : 'btn white big', type: 'button',
-      text: 'Try another copy',
-      onclick: () => player.switchTo({ exclude: player.tried }).then(() => { center.hidden = true; }) });
-    const home = el('button', { class: 'btn ghost big', type: 'button', text: 'Back', onclick: () => ctx.back() });
-    if (waiting) center.appendChild(wait2);
-    center.appendChild(el('div', { class: 'btns' }, again, home));
-    if (waiting) focus.focusable(wait2);
-    focus.focusable(again);
-    focus.focusable(home);
+    const again = chip('Try again', true, () => player.retry());
+    const nextCopy = chip('Next copy', false, () => player.switchTo({ exclude: player.tried })
+      .then(() => { center.hidden = true; }));
+    const quality = chip('Quality', false, () => { center.hidden = true; openMenu('quality', quality); });
+    const home = chip('Back', false, () => ctx.back());
+    box.appendChild(el('div', { class: 'btns' }, again, nextCopy, quality, home));
+    box.appendChild(el('div', { class: 'note',
+      text: 'Try again, or let the hub pick another copy with Next copy.' }));
+    center.appendChild(box);
     // A copy still gathering its first bytes is not a failure, and a red status line says otherwise.
     setStatus((e && e.message) || 'Playback failed', waiting ? 'wait' : 'bad');
-    focus.focusDefault(waiting ? wait2 : again);
+    focus.focusDefault(again);
   }));
   offs.push(player.on('ended', () => {
     setPlayIcon();
@@ -866,28 +1021,30 @@ export function screen(ctx, identity) {
     center.hidden = false;
     asking = true;
     center.textContent = '';
-    center.appendChild(el('div', { class: 'big', text: 'This copy has stopped moving' }));
+    // The same card as the unplayable one: heading, the quiet uppercase line that says which copy, one
+    // sentence about what happened, then the ways out as chips. Two failure states, one shape.
+    const box = el('div', { class: 'ply-panel' });
+    box.appendChild(el('div', { class: 'big', text: 'This copy has stopped moving' }));
+    box.appendChild(el('div', { class: 'kick', text: `Still frozen · ${d.label}` }));
     const alt = Number((d && d.alternates) || 0);
-    center.appendChild(el('div', { class: 'small', text: `${d.label} froze here and asking the hub for it again did not start it up. `
+    box.appendChild(el('div', { class: 'small', text: `${d.label} froze here and asking the hub for it again did not start it up. `
       + (alt ? `${alt} other cop${alt === 1 ? 'y is' : 'ies are'} available on this title.`
         : 'Nothing else was offered for this title, so the only choice is to wait it out.') }));
     const buttons = [];
     if (alt) {
-      const other = el('button', { class: 'btn white big', type: 'button', text: 'Choose another stream',
-        onclick: () => {
-          setStatus('Looking for another copy...', 'wait');
-          player.giveUpOnCurrent().then((t) => { if (t) { center.hidden = true; asking = false; refreshStatus(); } },
-            () => setStatus('No other copy would open', 'bad'));
-        } });
-      focus.focusable(other);
+      const other = chip('Choose another stream', true, () => {
+        setStatus('Looking for another copy...', 'wait');
+        player.giveUpOnCurrent().then((t) => { if (t) { center.hidden = true; asking = false; refreshStatus(); } },
+          () => setStatus('No other copy would open', 'bad'));
+      });
       buttons.push(other);
     }
-    const stay = el('button', { class: alt ? 'btn ghost big' : 'btn white big', type: 'button',
-      text: 'Keep watching this one',
-      onclick: () => { center.hidden = true; asking = false; player.keepWatching(); refreshStatus(); } });
-    focus.focusable(stay);
+    const stay = chip('Keep watching this one', !alt, () => {
+      center.hidden = true; asking = false; player.keepWatching(); refreshStatus();
+    });
     buttons.push(stay);
-    center.appendChild(el('div', { class: 'btns' }, ...buttons));
+    box.appendChild(el('div', { class: 'btns' }, ...buttons));
+    center.appendChild(box);
     focus.focusDefault(buttons[0]);
   }
 

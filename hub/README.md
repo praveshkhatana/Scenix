@@ -103,7 +103,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | | |
 |---|---|
 | `GET /healthz`, `GET /` | per-provider and per-row counts, loaded and **failed** plugins |
-| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`, `search`, `subtitles`, `debrid` when a token is set), which is the only thing a client UI may branch on |
+| `GET /app/v1/manifest` | rows, cards, providers, rules, theme id, and `capabilities` — what this install can do (`gateway`, `live`, `localFiles`, `remux`, `tracks`, `announce`, `search`, `subtitles`, `hubUpdate`, `debrid` when a token is set), which is the only thing a client UI may branch on |
 | `GET /app/v1/profiles` | profiles and the rows each one sees, with **both** preference views: `prefs` (what the owner typed, untouched, the thing a settings screen writes back) and `effectivePrefs` (what it resolves to once household defaults fill the gaps — the language order a player needs) |
 | `GET /app/v1/home?profile=<id>` | `{ rows: [{ id, title, card, items: […] }] }` |
 | `GET /app/v1/row/<id>?profile=<id>` | one row, for the app's "see all" |
@@ -120,6 +120,7 @@ Rules run in `order` on **every** item of **every** row, so a row added later ca
 | `POST /app/v1/progress` `{profile, identity, positionMs, watchedMs}` | remembered in `data/progress.json`; **refused (403) for a tier-3 title while the adult switch is off** |
 | `GET`/`POST /app/v1/prefs?profile=<id>` | per-profile playback prefs (`qualityCap`, quality, audio/subtitle languages, adaptive preference, size/bitrate ceilings) and `xxxEnabled`, with the defaults the interface should show. A POST reads the profile from the body; the query is accepted as a fallback |
 | `POST /app/v1/cache/clear` | forgets every response, probed file and judged link this process remembers, answering with the three counts it acted on (`{cleared, tracks, links}`); deleting the files by hand changes nothing until a restart, because the running hub holds them open |
+| `GET /app/v1/hub/update` | the hub's own build: the commit this hub runs, the branch and upstream it tracks, how far behind that upstream is, and whether a self-pull is allowed right now — or the honest reason it is not (not a git checkout, someone's uncommitted edits, no upstream, a history that would need a merge). `POST /app/v1/hub/update` performs that `git pull --ff-only` and restarts the process when anything new arrived — the way an app updated today drags its hub forward today, from the TV's Settings, the web's Settings, or the hub's own six-hourly pass. The origin `git fetch` is throttled to one per minute however many clients poll |
 | `GET /manifest.json`, `/catalog/`, `/meta/`, `/stream/` | any addon-protocol client — same ids (`inlive___`, `ytv___`), byte-identical bodies |
 
 Every route that names a profile accepts **both** `profile=` and `profileId=` (and `profile`/`profileId` in a

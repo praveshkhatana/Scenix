@@ -1,0 +1,11 @@
+{
+  "addons": [
+    { "id": "audio-pack", "name": "Audio-only pack", "native": true, "enabled": false },
+    { "id": "framextv", "name": "FrameXTV", "native": true, "enabled": false },
+    { "id": "igc", "name": "IGC source pack", "native": true, "enabled": false },
+    { "id": "kids-yt", "name": "Curated kids YouTube", "native": true, "enabled": false },
+    { "id": "live-tv", "name": "Live TV playlists", "native": true, "enabled": false },
+    { "id": "local-files", "name": "Local Files", "native": true, "enabled": false },
+    { "id": "public-domain", "name": "Public Domain Movies", "native": true, "enabled": false }
+  ]
+}

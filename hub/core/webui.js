@@ -40,7 +40,11 @@ const TEXTUAL = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.txt'
 const MAX_BYTES = 4 * 1024 * 1024;
 
 function resolveFile(urlPath) {
-  const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/ui\//, '');
+  const rel = urlPath === '/'
+    ? 'index.html'
+    : (urlPath === '/remote' || urlPath === '/remote/')
+      ? 'remote.html'
+      : urlPath.replace(/^\/ui\//, '');
   if (!rel || rel.includes('\0')) return null;
   const abs = path.resolve(ROOT, rel);
   // Everything must stay inside web/: `/ui/../../etc/passwd` is a request, not a file open.
@@ -54,7 +58,7 @@ function resolveFile(urlPath) {
  */
 function serve(req, res, urlPath) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
-  if (!(urlPath === '/' || urlPath.startsWith('/ui/'))) return false;
+  if (!(urlPath === '/' || urlPath === '/remote' || urlPath === '/remote/' || urlPath.startsWith('/ui/'))) return false;
   const file = resolveFile(urlPath);
   if (!file) return false;
   let stat;

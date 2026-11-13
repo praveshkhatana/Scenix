@@ -1,6 +1,7 @@
 package com.scenix.tv
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -62,8 +63,9 @@ class MainActivity : AppCompatActivity(), ScreenHost {
 
         // QA direct-play: `am start -n com.scenix.tv/.MainActivity --es qa_url <url> [--es qa_title t]
         // [--ez qa_coi true] [--ez qa_pad true] [--ez qa_ua true]` opens one game in its own player.
-        // The players aren't exported; this is the door the per-game load sweep walks through.
-        intent.getStringExtra("qa_url")?.let { u ->
+        // MainActivity is exported for the TV launcher/deep links, so this arbitrary-address harness
+        // must not exist in a production build merely because the private game player is not exported.
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) intent.getStringExtra("qa_url")?.let { u ->
             if (u.isNotBlank()) {
                 val play = if (intent.getBooleanExtra("qa_coi", false))
                     android.content.Intent(this, CoiGameActivity::class.java)
@@ -209,6 +211,12 @@ class MainActivity : AppCompatActivity(), ScreenHost {
             ctx.prefs.setBackendChoice(Prefs.BACKEND_STANDALONE)
             ctx.prefs.setFixture("")
             Log.i(TAG, "standalone override")
+        }
+        // A standalone TV is its own backend, so a manifest URL can arrive the same way a hub's can:
+        // one switch, no on-screen keyboard. `--es addon_url https://…/manifest.json`
+        i.getStringExtra("addon_url")?.takeIf { it.isNotBlank() }?.let {
+            val out = com.scenix.tv.core.LocalHub.get(this).addAddon(it.trim())
+            Log.i(TAG, "addon_url override ${it.trim()}: ${if (out.has("error")) out.optString("error") else "added"}")
         }
     }
 

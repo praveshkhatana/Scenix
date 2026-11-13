@@ -1,11 +1,16 @@
 package com.scenix.tv.core
 
 import android.content.Context
+import android.util.Base64
 import android.util.Log
 import com.scenix.tv.R
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
+import java.security.SecureRandom
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 import kotlin.math.roundToInt
 
 /**
@@ -45,18 +50,32 @@ class LocalHub private constructor(context: Context) {
     private val progressFile = File(data, "progress.json")
     private val listFile = File(data, "list.json")
     private val prefStore = File(data, "profile-prefs.json")
+    // A standalone browser is still a separate caller from the native Settings screen. Keep proof
+    // of an administrator unlock in memory, with a short expiry, rather than treating the local
+    // loopback port as proof that every write is allowed.
+    private val adminSessions = HashMap<String, AdminSession>()
+    private val secureRandom = SecureRandom()
+    private var failedSettingsUnlocks: FailedUnlocks? = null
+
+    private data class AdminSession(val client: String, val expiresAt: Long)
+    private data class FailedUnlocks(var count: Int, var until: Long)
 
     // ---- the owner's settings -----------------------------------------------------------------
 
     /**
      * `{ addons: [...], audioLanguages: [...], subtitleLanguages: [...], adult: false }` in one file.
-     * Shipped empty: no addon, no language and no channel is preselected by a build, because none of
-     * them is the same between two households.
+     * A brand-new install starts the same way a fresh hub does — with the handful of keyless, public
+     * sources the product ships as defaults (metadata, subtitle search, watch links) — so the home
+     * screen fills with content instead of an empty-state card. An owner who removes every addon keeps
+     * an empty list: the seed applies to a settings file that has never been written, never to one
+     * someone has edited.
      */
     fun settings(): JSONObject = synchronized(lock) {
         val o = readJson(settingsFile)
+        val seededAddons = if (!settingsFile.exists()) JSONArray(DEFAULT_STANDALONE_ADDONS.map { JSONObject(it) }) else null
+        val savedLock = o.optJSONObject("lock") ?: JSONObject()
         JSONObject()
-            .put("addons", o.optJSONArray("addons") ?: JSONArray())
+            .put("addons", o.optJSONArray("addons") ?: seededAddons ?: JSONArray())
             .put("audioLanguages", o.optJSONArray("audioLanguages") ?: JSONArray())
             .put("subtitleLanguages", o.optJSONArray("subtitleLanguages") ?: JSONArray())
             .put("adult", o.optBoolean("adult", false))
@@ -64,15 +83,39 @@ class LocalHub private constructor(context: Context) {
             .put("theme", o.optString("theme", "scenix-apple"))
             .put("debrid", o.optJSONObject("debrid") ?: defaultDebrid())
             .put("live", o.optJSONObject("live") ?: JSONObject())
+            // Only the internal model sees the verifier. [publicSettings] replaces it with the
+            // `enabled`/`pinSet` state that every Settings surface is allowed to display.
+            .put("lock", JSONObject()
+                .put("enabled", savedLock.optBoolean("enabled", false))
+                .put("pinHash", savedLock.optString("pinHash").trim()))
             // The folder this TV may read, as a SAF tree URI plus the words the owner sees. Empty is
             // a normal state: there are no local files until someone picks a folder.
             .put("local", o.optJSONObject("local") ?: JSONObject())
     }
 
+    /**
+     * What a fresh standalone install has enabled, mirroring what a fresh hub seeds (addons.example.json):
+     * keyless public sources only — the title catalogue and metadata, the subtitle search, the watch-link
+     * service, and the household's own games shelf. No torrent index, no paid account, no credential.
+     */
+    private val DEFAULT_STANDALONE_ADDONS = listOf(
+        mapOf("id" to "cinemeta", "name" to "Cinemeta",
+            "url" to "https://v3-cinemeta.strem.io/manifest.json", "enabled" to true, "priority" to 40),
+        mapOf("id" to "opensubtitles", "name" to "OpenSubtitles v3",
+            "url" to "https://opensubtitles-v3.strem.io/manifest.json", "enabled" to true, "priority" to 41),
+        mapOf("id" to "watchhub", "name" to "WatchHub",
+            "url" to "https://watchhub.strem.io/manifest.json", "enabled" to true, "priority" to 42),
+        mapOf("id" to "scenix-games", "name" to "Scenix Games",
+            "url" to "https://praveshkhatana.github.io/scenix-games-addon/manifest.json",
+            "enabled" to true, "priority" to 43),
+    )
+
     /** Merge what the caller sent into what is stored, so a screen that edits one field keeps the rest. */
     fun setSettings(body: JSONObject): JSONObject = synchronized(lock) {
         val merged = settings()
-        for (k in arrayOf("addons", "audioLanguages", "subtitleLanguages")) {
+        // Source addresses are never a generic settings field. They enter only through addAddon(),
+        // where their manifest is checked at the public-network boundary before persistence.
+        for (k in arrayOf("audioLanguages", "subtitleLanguages")) {
             if (body.has(k)) merged.put(k, body.optJSONArray(k) ?: JSONArray())
         }
         if (body.has("adult")) merged.put("adult", body.optBoolean("adult", false))
@@ -109,6 +152,182 @@ class LocalHub private constructor(context: Context) {
         merged
     }
 
+    /** Whether a write needs a short-lived administrator capability at this moment. */
+    fun settingsLockActive(): Boolean = synchronized(lock) {
+        val saved = settings().optJSONObject("lock") ?: return@synchronized false
+        saved.optBoolean("enabled", false) && saved.optString("pinHash").isNotBlank()
+    }
+
+    /** Verify a settings PIN and mint client-bound, process-memory proof for later protected writes. */
+    fun unlockSettings(pin: String, headers: Map<String, String>): JSONObject = synchronized(lock) {
+        val saved = settings().optJSONObject("lock") ?: JSONObject()
+        val pinHash = saved.optString("pinHash").trim()
+        if (pinHash.isBlank()) return@synchronized JSONObject().put("ok", true).put("pinSet", false)
+        val now = System.currentTimeMillis()
+        if (!settingsUnlockAllowed(now)) {
+            val retry = ((failedSettingsUnlocks?.until ?: now) - now).coerceAtLeast(0L)
+            return@synchronized JSONObject()
+                .put("ok", false)
+                .put("error", "too many attempts")
+                .put("retryAfterMs", retry)
+        }
+        if (!pinMatches(pinHash, pin)) {
+            settingsUnlockFailed(now)
+            return@synchronized JSONObject().put("ok", false).put("error", "wrong PIN")
+        }
+        failedSettingsUnlocks = null
+        val session = mintAdminSession(headers)
+        JSONObject()
+            .put("ok", true)
+            .put("pinSet", true)
+            .put("adminSession", session.first)
+            .put("adminSessionExpiresAt", session.second)
+    }
+
+    /**
+     * The dedicated lock route mirrors the Hub contract. The PIN verifier is never accepted by a
+     * generic settings PATCH, and every PIN/lock change revokes outstanding capabilities first.
+     */
+    fun setSettingsLock(body: JSONObject, headers: Map<String, String>): JSONObject = synchronized(lock) {
+        val current = settings().optJSONObject("lock") ?: JSONObject()
+        val currentHash = current.optString("pinHash").trim()
+        val currentPin = body.optString("pinCurrent", body.optString("current", "")).trim()
+        if (currentHash.isNotBlank() && !hasAdminSession(headers)) {
+            // This route verifies the current PIN too.  Keep its failure budget identical to the
+            // dedicated unlock route so it cannot be used as an unlimited PIN oracle.
+            val now = System.currentTimeMillis()
+            if (!settingsUnlockAllowed(now)) {
+                val retry = ((failedSettingsUnlocks?.until ?: now) - now).coerceAtLeast(0L)
+                return@synchronized JSONObject()
+                    .put("error", "too many attempts")
+                    .put("retryAfterMs", retry)
+            }
+            if (!pinMatches(currentHash, currentPin)) {
+                settingsUnlockFailed(now)
+                return@synchronized JSONObject().put("error", "the current settings PIN is needed")
+            }
+            failedSettingsUnlocks = null
+        }
+
+        var nextHash = currentHash
+        if (body.has("pin")) {
+            if (body.isNull("pin")) {
+                nextHash = ""
+            } else {
+                val fresh = body.optString("pin").trim()
+                if (!PIN.matcher(fresh).matches()) {
+                    return@synchronized JSONObject().put("error", "the PIN must be 4 to 8 digits")
+                }
+                nextHash = hashPin(fresh)
+            }
+        }
+        val enabled = body.optBoolean("enabled", false)
+        if (enabled && nextHash.isBlank()) {
+            return@synchronized JSONObject().put("error", "set a PIN before turning the lock on")
+        }
+
+        val merged = settings()
+        merged.put("lock", JSONObject().put("enabled", enabled).put("pinHash", nextHash))
+        writeJson(settingsFile, merged)
+        adminSessions.clear()
+        failedSettingsUnlocks = null
+        val session = if (enabled && nextHash.isNotBlank()) mintAdminSession(headers) else null
+        JSONObject()
+            .put("ok", true)
+            .put("lock", JSONObject().put("enabled", enabled).put("pinSet", nextHash.isNotBlank()))
+            .also { out ->
+                if (session != null) {
+                    out.put("adminSession", session.first)
+                    out.put("adminSessionExpiresAt", session.second)
+                }
+            }
+    }
+
+    /** True when a locked standalone backend received the unexpired proof for this HTTP client. */
+    fun hasAdminSession(headers: Map<String, String>): Boolean = synchronized(lock) {
+        val token = headers[ADMIN_SESSION_HEADER].orEmpty().trim()
+        if (!TOKEN.matcher(token).matches()) return@synchronized false
+        val now = System.currentTimeMillis()
+        pruneAdminSessions(now)
+        val session = adminSessions[token] ?: return@synchronized false
+        session.expiresAt > now && MessageDigest.isEqual(
+            session.client.toByteArray(Charsets.UTF_8), clientKey(headers).toByteArray(Charsets.UTF_8),
+        )
+    }
+
+    private fun mintAdminSession(headers: Map<String, String>): Pair<String, Long> {
+        val now = System.currentTimeMillis()
+        pruneAdminSessions(now)
+        val bytes = ByteArray(32)
+        secureRandom.nextBytes(bytes)
+        val token = bytes.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        val expiresAt = now + ADMIN_SESSION_TTL_MS
+        adminSessions[token] = AdminSession(clientKey(headers), expiresAt)
+        return token to expiresAt
+    }
+
+    private fun pruneAdminSessions(now: Long) {
+        adminSessions.entries.removeIf { (_, session) -> session.expiresAt <= now }
+    }
+
+    private fun settingsUnlockAllowed(now: Long): Boolean {
+        val attempts = failedSettingsUnlocks ?: return true
+        if (attempts.until <= now) {
+            failedSettingsUnlocks = null
+            return true
+        }
+        return attempts.count < MAX_UNLOCK_ATTEMPTS
+    }
+
+    private fun settingsUnlockFailed(now: Long) {
+        val attempts = failedSettingsUnlocks
+        if (attempts == null || attempts.until <= now) {
+            failedSettingsUnlocks = FailedUnlocks(1, now + UNLOCK_WINDOW_MS)
+        } else {
+            attempts.count++
+        }
+    }
+
+    private fun clientKey(headers: Map<String, String>): String {
+        val userAgent = headers["user-agent"].orEmpty().take(512)
+        val authorization = headers["authorization"].orEmpty().take(2048)
+        return digestHex("$userAgent\n$authorization".toByteArray(Charsets.UTF_8))
+    }
+
+    private fun hashPin(pin: String): String {
+        val salt = ByteArray(PIN_SALT_BYTES)
+        secureRandom.nextBytes(salt)
+        val derived = derivePin(pin, salt, PIN_ITERATIONS) ?: return ""
+        return "pbkdf2-sha256:$PIN_ITERATIONS:${Base64.encodeToString(salt, Base64.NO_WRAP)}:" +
+            Base64.encodeToString(derived, Base64.NO_WRAP)
+    }
+
+    private fun pinMatches(stored: String, entered: String): Boolean {
+        if (!PIN.matcher(entered).matches()) return false
+        val parts = stored.split(':')
+        if (parts.size != 4 || parts[0] != "pbkdf2-sha256") return false
+        val iterations = parts[1].toIntOrNull()?.coerceIn(MIN_PIN_ITERATIONS, MAX_PIN_ITERATIONS) ?: return false
+        val salt = try { Base64.decode(parts[2], Base64.NO_WRAP) } catch (_: Throwable) { return false }
+        val expected = try { Base64.decode(parts[3], Base64.NO_WRAP) } catch (_: Throwable) { return false }
+        if (salt.size != PIN_SALT_BYTES || expected.size != PIN_HASH_BYTES) return false
+        val actual = derivePin(entered, salt, iterations) ?: return false
+        return MessageDigest.isEqual(expected, actual)
+    }
+
+    private fun derivePin(pin: String, salt: ByteArray, iterations: Int): ByteArray? {
+        val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, PIN_HASH_BYTES * 8)
+        return try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+        } catch (_: Throwable) {
+            null
+        } finally {
+            spec.clearPassword()
+        }
+    }
+
+    private fun digestHex(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(value).joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+
     /**
      * The addons this TV has been told about. Content asks for the enabled ones; the list shown to the
      * owner includes the switched-off ones, because an addon that is off still has to be seen to be
@@ -118,8 +337,8 @@ class LocalHub private constructor(context: Context) {
         val arr = settings().optJSONArray("addons") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val url = s(o, "manifest", s(o, "url", "")).trim()
-            if (url.isBlank()) return@mapNotNull null
+            val url = AddonClient.canonicalManifestUrl(s(o, "manifest", s(o, "url", "")))
+                ?: return@mapNotNull null
             val name = s(o, "name", "").trim()
             AddonSpec(
                 id = s(o, "id", "").ifBlank { slug(url) },
@@ -136,13 +355,12 @@ class LocalHub private constructor(context: Context) {
 
     private fun ttlMs(): Long = settings().optLong("cacheTtlHours", 6L).coerceIn(1L, 24L) * 3600_000L
 
-    /** Where this TV keeps its settings, named the way a hub names the file its addons live in. */
-    fun settingsPath(): String = settingsFile.absolutePath
-
     /**
      * The envelope a hub answers `GET /app/v1/settings` with: what is stored, what an untouched file would
      * mean, the words the language codes in it stand for, and where the values live on this box. A screen
-     * needs the defaults beside the settings to tell an owner's choice from a build's silence.
+     * needs the defaults beside the settings to tell an owner's choice from a build's silence. It
+     * intentionally omits device file paths: an API response is not a debugging channel and no
+     * Settings surface needs the private on-disk location to do its job.
      */
     fun settingsEnvelope(): JSONObject = JSONObject()
         .put("settings", publicSettings())
@@ -151,7 +369,6 @@ class LocalHub private constructor(context: Context) {
         .put("themes", themeCatalog())
         .put("debrid", debridStatus())
         .put("live", liveEnvelope())
-        .put("file", settingsPath())
 
     private fun defaultDebrid(): JSONObject = JSONObject()
         .put("enabled", false).put("provider", "real-debrid").put("token", "")
@@ -159,10 +376,19 @@ class LocalHub private constructor(context: Context) {
     /** The settings shape a screen may see: the token is write-only and never crosses the contract. */
     private fun publicSettings(): JSONObject {
         val out = JSONObject(settings().toString())
+        // Installed source addresses can contain per-source configuration. The dedicated `/addons`
+        // route returns a redacted management summary, so no full settings response needs this array.
+        out.remove("addons")
         val d = out.optJSONObject("debrid") ?: defaultDebrid()
         d.remove("token")
         d.put("tokenSet", ((settings().optJSONObject("debrid") ?: JSONObject()).optString("token")).isNotBlank())
         out.put("debrid", d)
+        val lock = out.optJSONObject("lock") ?: JSONObject()
+        // The PIN verifier is strictly server-private. The app only needs the two state bits to
+        // decide whether to show a lock toggle or ask for the existing PIN.
+        out.put("lock", JSONObject()
+            .put("enabled", lock.optBoolean("enabled", false))
+            .put("pinSet", lock.optString("pinHash").isNotBlank()))
         return out
     }
 
@@ -254,6 +480,7 @@ class LocalHub private constructor(context: Context) {
         .put("cacheTtlHours", 6)
         .put("theme", "scenix-apple")
         .put("debrid", defaultDebrid())
+        .put("lock", JSONObject().put("enabled", false).put("pinHash", ""))
         .put("live", JSONObject())
         .put("local", JSONObject())
 
@@ -262,18 +489,45 @@ class LocalHub private constructor(context: Context) {
      * which tongues a household listens in is not a fact about this app — so a screen labels exactly the
      * choices in front of it.
      */
-    /** The theme registry shipped in the APK's assets, in the same shape the hub serves. */
-    fun themeCatalog(): JSONArray {
+    /** The complete registry compiled into this TV. It includes TV-only layout families. */
+    private fun allThemeCatalog(): JSONArray {
         return try {
             val text = assets.open("themes.json").bufferedReader().use { it.readText() }
             JSONObject(text).optJSONArray("themes") ?: JSONArray()
         } catch (t: Throwable) {
             JSONArray().put(JSONObject().put("id", "scenix-apple")
-                .put("name", "Apple").put("asset", "theme-apple.json").put("pack", "Scene"))
+                .put("name", "Apple").put("asset", "theme-apple.json").put("pack", "Scene")
+                .put("targets", JSONArray().put("android-tv").put("web")))
         }
     }
 
-    /** `GET /app/v1/theme`: the selected tokens, so the bundled web UI follows the TV's theme too. */
+    /**
+     * Browser-facing projection of the registry. A web page is offered only layouts it genuinely
+     * ships, never a TV-specific family it would approximate with an unrelated fallback.
+     */
+    fun themeCatalog(): JSONArray {
+        val out = JSONArray()
+        val all = allThemeCatalog()
+        for (i in 0 until all.length()) {
+            val choice = all.optJSONObject(i) ?: continue
+            val targets = choice.optJSONArray("targets") ?: continue
+            var web = false
+            for (j in 0 until targets.length()) if (targets.optString(j) == "web") web = true
+            if (web) out.put(choice)
+        }
+        return out
+    }
+
+    /** Whether a value may enter the household's browser-facing setting. */
+    fun supportsWebTheme(id: String): Boolean {
+        val themes = themeCatalog()
+        for (i in 0 until themes.length()) {
+            if (themes.optJSONObject(i)?.optString("id") == id) return true
+        }
+        return false
+    }
+
+    /** `GET /app/v1/theme`: selected browser tokens, with an explicit effective id on fallback. */
     fun themeJson(): JSONObject {
         val themes = themeCatalog()
         val wanted = settings().optString("theme", "scenix-apple")
@@ -282,7 +536,14 @@ class LocalHub private constructor(context: Context) {
             val o = themes.optJSONObject(i) ?: continue
             if (o.optString("id") == wanted) { choice = o; break }
         }
-        // A saved theme this build no longer ships is not an error: the first shipped pack answers.
+        // A stale/TV-only shared preference must be visible as a fallback, never represented as if
+        // the browser drew it. Prefer Apple as the stable web reference before the first entry.
+        if (choice == null) {
+            for (i in 0 until themes.length()) {
+                val candidate = themes.optJSONObject(i) ?: continue
+                if (candidate.optString("id") == "scenix-apple") { choice = candidate; break }
+            }
+        }
         if (choice == null && themes.length() > 0) choice = themes.optJSONObject(0)
         val id = choice?.optString("id") ?: "scenix-apple"
         val name = choice?.optString("name") ?: "Apple"
@@ -292,7 +553,17 @@ class LocalHub private constructor(context: Context) {
         } catch (t: Throwable) {
             JSONObject()
         }
-        return JSONObject().put("id", id).put("name", name).put("themes", themes).put("tokens", tokens)
+        return JSONObject()
+            // `id` is retained for older callers. New callers can distinguish what was requested
+            // from what this renderer actually drew.
+            .put("id", id)
+            .put("name", name)
+            .put("requestedId", wanted)
+            .put("effectiveId", id)
+            .put("available", id == wanted)
+            .put("reason", if (id == wanted) "" else "This theme is available on this TV only")
+            .put("themes", themes)
+            .put("tokens", tokens)
     }
 
     private fun languageNames(): JSONObject {
@@ -902,22 +1173,42 @@ class LocalHub private constructor(context: Context) {
         // A live channel is not a catalogue title: it has no addon meta and no sources lookup. Answer
         // from the parsed playlist so the native Detail/Play path can open it.
         channelItems().firstOrNull { it.identity == identity }?.let { return itemJson(it) }
-        val t = type?.takeIf { it.isNotBlank() } ?: knownType(identity) ?: "movie"
+        val seed = seedFromLibrary(identity)
+        val asked = type?.takeIf { it.isNotBlank() } ?: knownType(identity)
         val answers = ArrayList<Item>()
+        // An identity says nothing about whether it is a series or a film. Asking only as "movie" is
+        // how a fresh Bluey tile answered with a 1976 drama and poisoned its own remembered record:
+        // ask each addon as a series first (a series meta carries the episode list every later screen
+        // needs), fall back to the film answer.
+        val asks = asked?.let { a -> listOf(a) + listOf("series", "movie").filter { it != a } }
+            ?: listOf("series", "movie")
         for (am in addonManifests()) {
             if (!am.has("meta") || !addressableBy(identity, am.spec.id)) continue
-            val meta = addons.meta(am, communityType(t) ?: "movie", remoteIdFor(identity, am.spec.id), wait = true, ttlMs = ttlMs())
-                ?: continue
-            answers.add(Item.from(itemFromMeta(meta, am, t)))
+            val remote = remoteIdFor(identity, am.spec.id)
+            for (ask in asks) {
+                val meta = addons.meta(am, communityType(ask) ?: "movie", remote, wait = true, ttlMs = ttlMs())
+                    ?: continue
+                answers.add(Item.from(itemFromMeta(meta, am, ask)))
+                break
+            }
         }
-        val seed = seedFromLibrary(identity)
         if (answers.isEmpty() && seed == null) return null
         val merged = dedupe(answers).firstOrNull() ?: seed!!
+        // A series tile is thin under one addon and complete under another that indexes the same show
+        // under its own id. The hub learned this the hard way when a 4,862-episode soap answered
+        // "one episode": take the longer list BEFORE the answer ships, union rather than replace.
+        var eps = merged.episodes
+        if (merged.type == "series" && eps.size < 5) {
+            Log.i("ScenixLocalHub", "meta $identity thin (${eps.size} episodes), joining siblings")
+            eps = adoptEpisodeSiblings(merged, eps)
+            Log.i("ScenixLocalHub", "meta $identity joined -> ${eps.size} episodes")
+        }
         // Sources are a separate resource in this protocol, so they are looked up here, once, on a
         // round trip the viewer is already waiting for. Which profile is watching is not part of a
         // meta call, so the ceiling applied here is the one this app was left on.
         val withSources = merged.copy(
-            sources = applyCaps(collectSources(identity, t, wait = true), null),
+            episodes = eps,
+            sources = applyCaps(collectSources(identity, merged.type, wait = true), null),
             subtitleLanguages = if (manifestsHaveSubs()) settings().optStringList("subtitleLanguages") else emptyList(),
         )
         rememberItem(withSources)
@@ -1001,104 +1292,215 @@ class LocalHub private constructor(context: Context) {
             }
         }
         val sources = applyCaps(collectSources(address, type, wait = true), profileId)
-        val wanted = s(body, "source", s(body, "provider", ""))
-        val named = sources.firstOrNull { wanted.isNotBlank() && (it.label == wanted || it.provider == wanted) }
+        val skip = exclusions(body.optJSONArray("exclude"))
+        val wanted = wantedSource(body)
+        // The title a copy's own release name must match. The shelf remembered this tile long before
+        // the press, so the ladder never needs the client to carry a name.
+        val wantTitle = s(body, "title", "").ifBlank { seedFromLibrary(identity)?.title ?: "" }
+        val wantYear = seedFromLibrary(identity)?.year ?: 0
+        // Copies this player already watched fail. Ignoring `exclude` is what made "Next copy" re-pick
+        // the same dead link forever — on a night when several upstreams died at once that is exactly
+        // how a standalone TV read the evening as "nothing works".
+        val fresh = sources.filter { src ->
+            skip.isEmpty() || listOf(
+                src.label.lowercase(), src.provider.lowercase(), src.quality.lowercase(),
+                (urlOf(src) ?: urlFor(address, src))?.lowercase().orEmpty(),
+            ).none { it.isNotBlank() && it in skip }
+        }
+        val named = wanted?.let { w ->
+            val label = s(w, "label", "").trim()
+            val quality = s(w, "quality", "").trim()
+            val provider = s(w, "provider", "").trim()
+            sources.firstOrNull { src ->
+                (label.isNotBlank() && (src.label == label || (urlOf(src) ?: urlFor(address, src)) == label)) ||
+                    (quality.isNotBlank() && src.quality.equals(quality, true)) ||
+                    (provider.isNotBlank() && src.provider.equals(provider, true))
+            }
+        }
         val torrentRoom = TorrentEngine.freeBytes(appContext) - 300L * 1024 * 1024
-        val torrents = sources.filter { it.mode == "torrent" }
-        // Prefer a copy whose size the addon stated and which fits. An unknown-size 2160p entry is not
-        // a reason to fail while a 1080p copy that fits is sitting next to it.
-        val fitting = torrents.filter { it.sizeBytes > 0 && it.sizeBytes <= torrentRoom }
-            .ifEmpty { torrents.filter { it.sizeBytes == 0L } }
-        val pick = named
-            ?: sources.firstOrNull { it.mode == "direct" }
-            ?: fitting.firstOrNull()
-            ?: torrents.firstOrNull()
-            ?: return JSONObject()
-                .put("error", "nothing here is a file this TV can open on its own")
-                .put("sources", JSONArray(sources.map { sourceJson(it) }))
-
-        if (pick.mode == "torrent") {
-            val magnet = torrentFor(address, pick)
-            val token = debridToken()
-            if (token.isNotBlank() && magnet != null) {
-                val d = Debrid.resolveMagnet(magnet, season, episode, token)
-                if (d.url != null) {
-                    return JSONObject()
-                        .put("url", d.url)
-                        .put("kind", d.kind)
-                        .put("mode", "debrid")
-                        .put("headers", JSONObject())
-                        .put("sizeBytes", if (d.fileSize > 0) d.fileSize else pick.sizeBytes)
-                        .put("sourceName", d.fileName ?: pick.label)
-                        .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
-                        .put("why", JSONArray(listOf("${pick.provider} · served by Real-Debrid")))
-                        .put("episode", if (season > 0 && episode > 0) JSONObject()
-                            .put("season", season).put("episode", episode) else JSONObject.NULL)
-                        .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
-                            .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+        // Seat the copies the way the hub seats them: the named pick first, then direct files, then a
+        // torrent that fits this TV's free space, then the rest. A 2160p copy that cannot fit never
+        // holds the front seat while a working 720p copy waits behind it.
+        val queue = ArrayList<Source>()
+        if (named != null) queue.add(named)
+        val rest = if (named != null) fresh.filter { it !== named } else fresh
+        // A torrent whose swarm failed to answer on the last press drops behind the fresh ones this
+        // press: its magnet keeps resolving in the background, but the next seat may be a livelier
+        // swarm of the same episode, and finding out is faster than waiting on one dead torrent.
+        fun torrentSeats(pred: (Source) -> Boolean) =
+            rest.filter(pred).sortedBy { if (warmingSeat(address, it)) 1 else 0 }
+        queue.addAll(rest.filter { it.mode == "direct" })
+        queue.addAll(torrentSeats { it.mode == "torrent" && it.sizeBytes > 0 && it.sizeBytes <= torrentRoom })
+        queue.addAll(torrentSeats { it.mode == "torrent" && it.sizeBytes == 0L })
+        queue.addAll(torrentSeats { it.mode == "torrent" && it.sizeBytes > torrentRoom })
+        queue.addAll(rest.filter { it.mode != "direct" && it.mode != "torrent" })
+        Log.i("ScenixLocalHub", "play $address: ${sources.size} sources, ${queue.size} seats to try")
+        // One press walks the seats until something plays, instead of answering after the first copy
+        // and making the viewer press "Next copy" through every dead one. Same shape the hub's
+        // picker proved on the 7th November: a dead copy costs its reason and the next one its chance.
+        val token = debridToken()
+        val tried = ArrayList<String>()
+        var coldWarm = false
+        val deadline = System.currentTimeMillis() + PLAY_TOTAL_BUDGET_MS
+        for ((index, cand) in queue.withIndex()) {
+            if (index >= PLAY_MAX_TRIES) break
+            val left = deadline - System.currentTimeMillis()
+            if (left <= 0L) { tried.add("out of time after ${tried.size} tries"); break }
+            val label = cand.label.ifBlank { cand.provider }
+            if (type != "channel" && wantTitle.isNotBlank()) {
+                val mismatch = wrongReleaseName(cand, wantTitle, wantYear, season, episode)
+                if (mismatch != null) { tried.add(mismatch); continue }
+            }
+            if (cand.mode == "torrent") {
+                val magnet = torrentFor(address, cand)
+                if (token.isNotBlank() && magnet != null) {
+                    val d = Debrid.resolveMagnet(magnet, season, episode, token)
+                    if (d.url != null) {
+                        return playAnswer(debrid = d, cand = cand, season = season, episode = episode, tried = tried)
+                    }
+                }
+                if (magnet == null) { tried.add("$label: this copy has no magnet the local engine can use"); continue }
+                if (cand.sizeBytes > 0 && cand.sizeBytes > torrentRoom) {
+                    tried.add("$label: this copy is larger than the free space on this TV"); continue
+                }
+                // A magnet this engine has never seen gets a short look — long enough for a tracker
+                // announce, short enough that the walk still reaches the next seat inside the
+                // player's patience. A magnet already resolving in the background gets the engine's
+                // real patience, because its metadata is usually seconds away now.
+                val wait = if (TorrentEngine.pending(magnet)) minOf(left, 30_000L) else minOf(left, 10_000L)
+                val prepared = TorrentEngine.prepare(appContext, magnet, season, episode, wait)
+                if (prepared == null) {
+                    tried.add("$label: the P2P engine on this TV could not prepare this copy")
+                    // A running engine does not forget a magnet: it keeps resolving in the background.
+                    // Note the seat as "warming" — the next press tries it last, while fresh seats
+                    // get their first look — and answer `warming` when the walk runs out.
+                    if (TorrentEngine.hasSession()) {
+                        coldWarm = true
+                        warmingNote(address, magnet)
+                    }
+                    continue
+                }
+                // Hand ExoPlayer a copy whose FIRST bytes already exist. A cold torrent answers the
+                // gateway's opening Range with "wait 45 s", and the player's own HTTP timeout fires
+                // before that does — the loop that read "Still loading this copy…" forever on a
+                // standalone TV. Pull the opening block here (the engine caches it), and if even that
+                // doesn't arrive, let the walk move on instead of minting a URL that will stall.
+                val target = TorrentEngine.find(prepared.hash, prepared.fileId)
+                val warmed = target != null && TorrentEngine.read(
+                    target, 0L, TORRENT_FIRST_CHUNK, minOf(deadline - System.currentTimeMillis(), 25_000L)
+                ) != null
+                if (!warmed) {
+                    tried.add("$label: this copy has no peers answering yet")
+                    coldWarm = true
+                    warmingNote(address, magnet)
+                    continue
+                }
+                return playAnswer(prepared = prepared, cand = cand, season = season, episode = episode, tried = tried)
+            }
+            // A hoster page the addon handed over is not a media file, but a debrid account can turn
+            // it into one. Direct files are left alone: they already play and must not spend a provider call.
+            if (token.isNotBlank() && cand.mode != "direct") {
+                val hoster = urlFor(address, cand)
+                if (hoster != null && hoster.startsWith("http")) {
+                    val d = Debrid.unrestrict(hoster, token)
+                    if (d.url != null) {
+                        return playAnswer(debrid = d, cand = cand, season = season, episode = episode, tried = tried)
+                    }
                 }
             }
-            if (pick.sizeBytes > 0 && pick.sizeBytes > torrentRoom) {
-                return JSONObject()
-                    .put("error", "this copy is larger than the free space on this TV")
-                    .put("sources", JSONArray(sources.map { sourceJson(it) }))
-            }
-            val uri = magnet
-                ?: return JSONObject().put("error", "this copy has no magnet the local engine can use")
-            val prepared = TorrentEngine.prepare(appContext, uri, season, episode)
-                ?: return JSONObject()
-                    .put("error", "the P2P engine on this TV could not prepare this copy")
-                    .put("warming", true)
-                    .put("retryAfterMs", 5000)
-                    .put("sources", JSONArray(sources.map { sourceJson(it) }))
-            return JSONObject()
+            val url = urlFor(address, cand)
+            if (url == null) { tried.add("$label: stream link expired, open the title again"); continue }
+            return playAnswer(url = url, cand = cand, season = season, episode = episode, tried = tried)
+        }
+        if (coldWarm) return warmingAnswer(address, tried)
+        return JSONObject()
+            .put("error", if (sources.isNotEmpty() && fresh.isEmpty()) "every copy here was already tried"
+                else "nothing here is a file this TV can open on its own")
+            .put("sources", JSONArray(sources.map { sourceJson(it) }))
+            .put("tried", JSONArray(tried))
+            .also { Log.i("ScenixLocalHub", "play $address failed: ${JSONArray(tried)}") }
+    }
+
+    /**
+     * The engine HAS these copies — magnets accepted, metadata resolving — but no peer has sent the
+     * opening bytes yet. That is preparation, not refusal: the client retries /play on its own
+     * clock, the magnets keep resolving in the background, and a later try mints almost at once.
+     */
+    private fun warmingAnswer(address: String, tried: List<String>): JSONObject =
+        JSONObject()
+            .put("warming", true)
+            .put("retryAfterMs", 6000L)
+            .put("message", "this copy is still finding its first peers")
+            .put("error", "the peer-to-peer copies on this TV had not started sending bytes yet")
+            .put("tried", JSONArray(tried))
+            .also { Log.i("ScenixLocalHub", "play $address warming: ${JSONArray(tried)}") }
+
+    /** Seats whose swarm had not answered metadata on a recent press; they wait behind fresh ones. */
+    private val warmingSeats = HashMap<String, HashMap<String, Long>>()
+
+    private fun warmingSeat(address: String, src: Source): Boolean = synchronized(lock) {
+        val magnet = torrentFor(address, src) ?: return false
+        val hash = TorrentEngine.hashOf(magnet) ?: return false
+        val at = warmingSeats[address]?.get(hash) ?: return false
+        System.currentTimeMillis() - at < WARMING_DEMOTE_MS
+    }
+
+    private fun warmingNote(address: String, magnet: String) {
+        val hash = TorrentEngine.hashOf(magnet) ?: return
+        val now = System.currentTimeMillis()
+        synchronized(lock) {
+            val seats = warmingSeats.getOrPut(address) { HashMap() }
+            seats[hash] = now
+            for (k in seats.keys.toList()) if (now - seats.getValue(k) > 10 * 60_000L) seats.remove(k)
+        }
+    }
+
+    /**
+     * One seat that answered, in the shape the player expects. `tried` rides along so the Quality
+     * menu and the next press know what was already ruled out on this walk.
+     */
+    private fun playAnswer(
+        url: String? = null,
+        prepared: TorrentEngine.Prepared? = null,
+        debrid: Debrid.Result? = null,
+        cand: Source,
+        season: Int,
+        episode: Int,
+        tried: List<String>,
+    ): JSONObject {
+        val episodeJson = if (season > 0 && episode > 0) JSONObject()
+            .put("season", season).put("episode", episode) else JSONObject.NULL
+        val nextJson = if (season > 0 && episode > 0) JSONObject()
+            .put("season", season).put("episode", episode + 1) else JSONObject.NULL
+        val out = JSONObject()
+            .put("headers", JSONObject())
+            .put("episode", episodeJson)
+            .put("nextEpisode", nextJson)
+        when {
+            prepared != null -> out
                 .put("url", "/app/v1/torrent/${prepared.hash}/${prepared.fileId}")
                 .put("kind", "http")
                 .put("mode", "gateway") // libtorrent streams it; the player sees ordinary HTTP
-                .put("headers", JSONObject())
                 .put("proxied", true)
-                .put("why", JSONArray(pick.why))
                 .put("sizeBytes", prepared.size)
                 .put("sourceName", prepared.name)
-                .put("episode", if (season > 0 && episode > 0) JSONObject()
-                    .put("season", season).put("episode", episode) else JSONObject.NULL)
-                .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
-                    .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+                .put("why", JSONArray(cand.why))
+            debrid != null -> out
+                .put("url", debrid.url)
+                .put("kind", debrid.kind)
+                .put("mode", "debrid")
+                .put("sizeBytes", if (debrid.fileSize > 0) debrid.fileSize else cand.sizeBytes)
+                .put("sourceName", debrid.fileName ?: cand.label)
+                .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
+                .put("why", JSONArray(listOf("${cand.provider} \u00B7 served by Real-Debrid")))
+            else -> out
+                .put("url", url)
+                .put("kind", cand.kind)
+                .put("mode", "direct")     // this device reads the file itself: no gateway, no re-mux
+                .put("why", JSONArray(cand.why))
         }
-
-        // A hoster page the addon handed over is not a media file, but a debrid account can turn it
-        // into one. Direct files are left alone: they already play and must not spend a provider call.
-        val token = debridToken()
-        if (token.isNotBlank() && pick.mode != "direct") {
-            val hoster = urlFor(address, pick)
-            if (hoster != null && hoster.startsWith("http")) {
-                val d = Debrid.unrestrict(hoster, token)
-                if (d.url != null) {
-                    return JSONObject()
-                        .put("url", d.url)
-                        .put("kind", d.kind)
-                        .put("mode", "debrid")
-                        .put("headers", JSONObject())
-                        .put("sizeBytes", if (d.fileSize > 0) d.fileSize else pick.sizeBytes)
-                        .put("sourceName", d.fileName ?: pick.label)
-                        .put("debrid", JSONObject().put("provider", "real-debrid").put("providerLabel", "Real-Debrid"))
-                        .put("why", JSONArray(listOf("${pick.provider} \u00B7 served by Real-Debrid")))
-                        .put("episode", JSONObject.NULL)
-                        .put("nextEpisode", JSONObject.NULL)
-                }
-            }
-        }
-        val url = urlFor(address, pick) ?: return JSONObject().put("error", "stream link expired, open the title again")
-        return JSONObject()
-            .put("url", url)
-            .put("kind", pick.kind)
-            .put("mode", "direct")     // this device reads the file itself: no gateway, no re-mux
-            .put("headers", JSONObject())
-            .put("why", JSONArray(pick.why))
-            .put("episode", if (season > 0 && episode > 0) JSONObject()
-                .put("season", season).put("episode", episode) else JSONObject.NULL)
-            .put("nextEpisode", if (season > 0 && episode > 0) JSONObject()
-                .put("season", season).put("episode", episode + 1) else JSONObject.NULL)
+        if (tried.isNotEmpty()) out.put("tried", JSONArray(tried))
+        return out
     }
 
     /** The `source` a client names: an object (native player) or a plain label string (older screens). */
@@ -1224,9 +1626,9 @@ class LocalHub private constructor(context: Context) {
         }
         return JSONObject()
             .put("id", spec.id)
-            .put("name", spec.name)
-            .put("url", spec.manifestUrl)
+            .put("name", publicAddonName(spec))
             .put("native", false)   // nothing on a TV was shipped by a build: the owner typed every URL
+            .put("provenance", "manual")
             .put("enabled", spec.enabled)
             .put("kind", kind)
             .put("resources", JSONArray(resourceNames(am)))
@@ -1235,6 +1637,15 @@ class LocalHub private constructor(context: Context) {
     }
 
     private fun resourceNames(am: AddonManifest?): List<String> = am?.resources?.keys?.sorted() ?: emptyList()
+
+    /** A label may be useful in Settings; an endpoint or a configuration string never is. */
+    private fun publicAddonName(spec: AddonSpec): String {
+        val name = spec.name.trim()
+        if (name.isBlank() || name.contains("://") || name.startsWith("magnet:", true) ||
+            Regex("(?:token|secret|password|api[_-]?key|config)=", RegexOption.IGNORE_CASE).containsMatchIn(name)
+        ) return "Advanced manual source"
+        return name.take(80)
+    }
 
     /** One addon's report, found by the id or the URL a caller used. */
     private fun addonStatsFor(which: String): JSONObject? =
@@ -1255,7 +1666,7 @@ class LocalHub private constructor(context: Context) {
      */
     fun addAddon(url: String, name: String = ""): JSONObject = synchronized(lock) {
         val address = manifestAddress(url)
-            ?: return JSONObject().put("error", "url must be http(s)")
+            ?: return JSONObject().put("error", "source must use a public HTTP(S) address")
         val arr = settings().optJSONArray("addons") ?: JSONArray()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -1265,21 +1676,23 @@ class LocalHub private constructor(context: Context) {
         }
         val spec = AddonSpec(slug(address), name.trim(), address, true)
         if (addons.manifest(spec, wait = true, ttlMs = 0) == null) {
-            return JSONObject().put("error", "manifest not reachable").put("url", address)
+            return JSONObject().put("error", "manifest not reachable")
         }
         val entry = JSONObject().put("url", address)
         if (name.isNotBlank()) entry.put("name", name.trim())
         arr.put(entry)
-        setSettings(JSONObject().put("addons", arr))
+        writeAddonEntries(arr)
         JSONObject().put("addon", addonStats(spec))
     }
 
-    /** An addon address the way a hub reads one: http(s) only, and a directory gets its manifest file. */
-    private fun manifestAddress(url: String): String? {
-        val t = url.trim()
-        if (!Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(t)) return null
-        val trimmed = t.trimEnd('/')
-        return if (trimmed.endsWith("/manifest.json", true)) trimmed else "$trimmed/manifest.json"
+    /** An add-on address is accepted only when it resolves to public HTTP(S) before persistence. */
+    private fun manifestAddress(url: String): String? = AddonClient.publicManifestUrl(url)
+
+    /** Internal source mutations use this narrow writer; generic Settings writes cannot smuggle URLs. */
+    private fun writeAddonEntries(entries: JSONArray) = synchronized(lock) {
+        val merged = settings()
+        merged.put("addons", entries)
+        writeJson(settingsFile, merged)
     }
 
     private fun sameAddress(a: String, b: String): Boolean =
@@ -1299,7 +1712,7 @@ class LocalHub private constructor(context: Context) {
             if (matchesAddon(o, which)) removed = true else kept.put(o)
         }
         if (!removed) return null
-        setSettings(JSONObject().put("addons", kept))
+        writeAddonEntries(kept)
         return which
     }
 
@@ -1314,7 +1727,7 @@ class LocalHub private constructor(context: Context) {
             }
         }
         if (!hit) return false
-        setSettings(JSONObject().put("addons", arr))
+        writeAddonEntries(arr)
         return true
     }
 
@@ -1605,10 +2018,17 @@ class LocalHub private constructor(context: Context) {
                     ?: continue
                 val items = itemsFromMetas(metas, am, type)
                 if (items.isEmpty()) continue
+                // Cinemeta's movie and series catalogs carry the same names ("Popular", "New"), and a
+                // fresh install with the default sources on showed two "Popular" shelves side by side.
+                // The second one says what it holds.
+                val plain = s(c, "name", am.spec.name)
+                val label = if (out.any { it.title == plain })
+                    "$plain ${if (type == "series") "series" else if (type == "movie") "movies" else type}"
+                else plain
                 out.add(
                     LocalRow(
                         id = rowIdFor(am, type, s(c, "id", "default")),
-                        title = s(c, "name", am.spec.name),
+                        title = label,
                         card = "poster",
                         order = 20 + out.size,
                         scope = "all",
@@ -1691,6 +2111,21 @@ class LocalHub private constructor(context: Context) {
      */
     private fun episodesFromMeta(m: JSONObject): List<JSONObject> {
         val out = ArrayList<JSONObject>()
+        // Some addons publish a season/episode map, some publish the flat episode list under
+        // `episodes` and no `seasons` at all (the community soaps do exactly this). Read both;
+        // answering zero for a show that HAS a published list is what read as "no episodes".
+        val flat = m.optJSONArray("episodes")
+        if (flat != null) {
+            for (j in 0 until flat.length()) {
+                val e = flat.optJSONObject(j) ?: continue
+                val number = numberFromEpisode(s(e, "id", ""))
+                val n = number ?: e.optInt("number", e.optInt("episode", 0))
+                val season = e.optInt("season", seasonFromEpisode(s(e, "id", "")) ?: 0)
+                if (season > 0 && n > 0) {
+                    out.add(JSONObject().put("season", season).put("episode", n).put("title", s(e, "title", "")))
+                }
+            }
+        }
         val seasons = m.optJSONArray("seasons") ?: return out
         for (i in 0 until seasons.length()) {
             val season = seasons.optJSONObject(i) ?: continue
@@ -1706,6 +2141,13 @@ class LocalHub private constructor(context: Context) {
         }
         return out
     }
+
+    /** A community episode id is often `<show>:<season>:<episode>`; read the numbers off it. */
+    private fun seasonFromEpisode(id: String): Int? =
+        Regex("""^(?:.*:)?(\d+):\d+$""").find(id)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 }
+
+    private fun numberFromEpisode(id: String): Int? =
+        Regex("""^.*:(\d+)$""").find(id)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it > 0 }
 
     private fun rowJson(r: LocalRow): JSONObject = JSONObject()
         .put("id", r.id).put("title", r.title).put("card", r.card).put("scope", r.scope).put("order", r.order)
@@ -1786,9 +2228,23 @@ class LocalHub private constructor(context: Context) {
     private fun torrentUri(e: JSONObject): String? {
         val magnet = listOf(s(e, "externalUrl", ""), s(e, "url", ""), s(e, "magnet", ""))
             .firstOrNull { it.startsWith("magnet:", true) }
-        if (!magnet.isNullOrBlank()) return magnet
-        val hash = s(e, "infoHash", s(e, "hash", ""))
-        return if (Regex("^[a-fA-F0-9]{40}$").matches(hash)) "magnet:?xt=urn:btih:$hash" else null
+        if (magnet.isNullOrBlank()) {
+            val hash = s(e, "infoHash", s(e, "hash", ""))
+            if (!Regex("^[a-fA-F0-9]{40}$").matches(hash)) return null
+            return withTrackers("magnet:?xt=urn:btih:$hash")
+        }
+        return withTrackers(magnet)
+    }
+
+    /**
+     * A torrent index like Torrentio names only the info hash, and a magnet without a `tr=` line
+     * must find the swarm through the DHT alone — on a television that means metadata arrives in
+     * 10 s or never. The well-known announce servers ride on every bare magnet we mint, which is
+     * how a phone app resolves the same torrent in one announce.
+     */
+    private fun withTrackers(magnet: String): String {
+        if (magnet.contains("tr=", true)) return magnet
+        return magnet + TRACKERS.joinToString("") { "&tr=$it" }
     }
 
     /** Sources carry no URL, so the one an addon gave is remembered beside it under its shown fields. */
@@ -1860,7 +2316,12 @@ class LocalHub private constructor(context: Context) {
             playable -> listOf(URL_TAG + direct, "$addonName \u00B7 a file this TV reads on its own")
             isTorrent -> listOf("$addonName \u00B7 streamed peer-to-peer on this TV")
             else -> listOf("not a file this player can open")
-        }
+        } +
+            // The release name rides on the source so the play walk can check it before spending
+            // fifteen seconds on the P2P engine — the same wrong-title reject the hub's picker proved.
+            // Addons put the provider word first and the release name on the line after it, with the
+            // full filename in the description; read the lines that actually name the copy.
+            listOf(NAME_TAG + listOf(tag, desc).joinToString(" "))
         return Source(
             provider = addonName,
             label = label,
@@ -2243,7 +2704,14 @@ class LocalHub private constructor(context: Context) {
         synchronized(lock) {
             val root = readJson(libraryFile)
             val map = root.optJSONObject("items") ?: JSONObject()
-            map.put(identity, o)
+            // A thin tile must never overwrite a fatter one. The hub learned this when a search result
+            // with no episodes replaced the remembered record that held 4,862 of them, and the next
+            // open of the same show answered "one episode". Keep the longer episode list either way.
+            val old = map.optJSONObject(identity)
+            val merged = if (old != null &&
+                o.optJSONArray("episodes").length() < old.optJSONArray("episodes").length()
+            ) JSONObject(o.toString()).put("episodes", old.optJSONArray("episodes")) else o
+            map.put(identity, merged)
             root.put("items", map)
             writeJson(libraryFile, root)
         }
@@ -2275,12 +2743,89 @@ class LocalHub private constructor(context: Context) {
                 inCinemas = keep.inCinemas || it.inCinemas,
                 genres = (keep.genres + it.genres).distinct(),
                 languages = (keep.languages + it.languages).distinct(),
-                episodes = if (keep.episodes.isNotEmpty()) keep.episodes else it.episodes,
+                episodes = unionEpisodes(keep.episodes, it.episodes),
                 subtitleLanguages = (keep.subtitleLanguages + it.subtitleLanguages).distinct(),
                 sources = rankSources(keep.sources + it.sources),
             )
         }
         return out.values.toList()
+    }
+
+    /**
+     * One identity's episodes, from every source that has them: deduped by season/episode (the richer
+     * title wins) and sorted. A thin addon and a complete one both speak for the same show; neither
+     * is allowed to blank the other out.
+     */
+    private fun unionEpisodes(a: List<Episode>, b: List<Episode>): List<Episode> {
+        val bySeat = LinkedHashMap<Pair<Int, Int>, Episode>()
+        for (e in a + b) {
+            if (e.season <= 0 || e.episode <= 0) continue
+            val key = e.season to e.episode
+            val old = bySeat[key]
+            if (old == null || old.title.isBlank() && e.title.isNotBlank()) bySeat[key] = e
+        }
+        return bySeat.values.sortedWith(compareBy({ it.season }, { it.episode }))
+    }
+
+    /**
+     * A series whose meta is thin, joined with the same show under other addons' ids, BEFORE the meta
+     * answer ships. Cinemeta answers many Indian soaps with artwork and no episode list at all, while a
+     * community addon that indexes the same title carries thousands of episodes under its own id: the
+     * hub adopted the sibling the same way and that is what turned "no episodes" into "Season 1 - 4,862
+     * episodes". Search is the only shared address space, so that is where the sibling is looked for.
+     */
+    private fun adoptEpisodeSiblings(item: Item, eps: List<Episode>): List<Episode> {
+        if (item.title.isBlank()) return eps
+        var out = eps
+        for (am in addonManifests()) {
+            if (!am.has("meta")) continue
+            val term = item.title
+            for (c in am.searchableCatalogs()) {
+                val type = communityType(s(c, "type", "series")) ?: continue
+                val metas = addons.catalog(am, type, s(c, "id", ""), "search=$term", wait = true, ttlMs = ttlMs())
+                if (metas == null) continue
+                for (i in 0 until metas.length()) {
+                    val m = metas.optJSONObject(i) ?: continue
+                    val siblingId = s(m, "id", "")
+                    if (siblingId.isBlank() || remoteIdFor(item.identity, am.spec.id) == siblingId) continue
+                    if (!s(m, "name", "").equals(term, ignoreCase = true)) continue
+                    val full = addons.meta(am, type, siblingId, wait = true, ttlMs = ttlMs()) ?: continue
+                    Log.i("ScenixLocalHub", "join: sibling $siblingId meta -> ${episodesFromMeta(full).size} episodes")
+                    out = unionEpisodes(out, episodesFromMeta(full)
+                        .map { Episode(it.optInt("season", 0), it.optInt("episode", 0), s(it, "title", "")) })
+                    if (out.size >= 5) return out
+                }
+                if (out.size >= 5) return out
+            }
+            if (out.size >= 5) break
+        }
+        return out
+    }
+
+    /**
+     * Does this copy's release name belong to the title the viewer pressed? Torrent addons name the
+     * file, so a copy whose name matches neither the title nor the SxxExx being asked for is the wrong
+     * show, and the P2P engine would spend fifteen seconds proving it. `null` = no objection (a copy
+     * that carries no name stays innocent); otherwise the reason to tell the player.
+     */
+    private fun wrongReleaseName(cand: Source, wantTitle: String, wantYear: Int, season: Int, episode: Int): String? {
+        val named = cand.why.firstOrNull { it.startsWith(NAME_TAG) }?.removePrefix(NAME_TAG)?.trim().orEmpty()
+        if (named.isBlank()) return null
+        val flat = named.lowercase()
+        if (season > 0 && episode > 0) {
+            // The copy names the very episode being played: the show's own words may be missing or
+            // abbreviated, but the number is the address, and the address agrees.
+            val code = "S%02dE%02d".format(season, episode)
+            if (flat.contains(code.lowercase()) || flat.contains("S$season E$episode".lowercase())) return null
+        }
+        val want = NAME_WORD.splitToSequence(wantTitle.lowercase()).filter { it.length >= 3 }.toList()
+        if (want.isEmpty()) return null
+        val have = NAME_WORD.splitToSequence(named.lowercase()).filter { it.length >= 3 }.toSet()
+        val hits = want.count { have.contains(it) }
+        if (hits >= minOf(want.size, 2)) return null
+        Log.i("ScenixLocalHub", "wrong-name reject: name=\"$named\" want=$want")
+        val label = cand.label.ifBlank { cand.provider }
+        return "$label: its release name doesn't match ${wantTitle.take(40)}"
     }
 
     // ---- small helpers --------------------------------------------------------------------------
@@ -2355,6 +2900,27 @@ class LocalHub private constructor(context: Context) {
 
     private fun manifestsHaveSubs(): Boolean = addonManifests().any { it.has("subtitles") }
 
+    /**
+     * A brand-new standalone install ships with the default sources enabled AND their shelves warmed:
+     * the home path is cache-only, so seeding the list without warming it would show the empty-state
+     * card on the very screen the defaults exist to fill. This runs as the LAST field initialiser, not
+     * in `init` — `settings()` synchronises on a lock that does not exist yet when `init` runs.
+     */
+    private val firstBoot: Unit = run {
+        try {
+            if (!settingsFile.exists()) {
+                val seeded = settings().optJSONArray("addons")
+                if (seeded != null && seeded.length() > 0) {
+                    setSettings(JSONObject().put("addons", seeded))
+                    Thread { refreshAddons() }.apply { isDaemon = true; name = "scenix-warm" }.start()
+                }
+            }
+        } catch (t: Throwable) {
+            // A first-boot convenience must never break the hub this object serves.
+            android.util.Log.w("ScenixLocalHub", "first-boot seed skipped", t)
+        }
+    }
+
     companion object {
         private const val TAG = "ScenixLocal"
         private const val ROW_MAX = 30
@@ -2368,12 +2934,48 @@ class LocalHub private constructor(context: Context) {
         // by this backend runs no rules of its own, so this is the one that protects a kids shelf.
         private const val KIDS_MAX_AGE = 7
         private const val URL_TAG = "url="
+        private const val NAME_TAG = "name="
+        // One press walks this many copies of the title before it gives up, and the walk as a whole
+        // stays inside the player's own patience (the client waits 40 s for /play and /switch). A
+        // cold P2P engine on a television needs most of that budget for its FIRST copy: the magnet
+        // keeps resolving in the background, so a second press finds it at once.
+        private const val PLAY_MAX_TRIES = 6
+        private const val PLAY_TOTAL_BUDGET_MS = 35_000L
+        // The opening block a torrent must have in hand before its URL goes to the player.
+        private const val TORRENT_FIRST_CHUNK = 256 * 1024
+        // How long a seat that failed to answer stays demoted behind fresh swarms.
+        private const val WARMING_DEMOTE_MS = 5 * 60_000L
+        // Public announce servers, percent-encoded, added to every magnet that lacks its own `tr=`.
+        // (The same list the big phone players ship; a magnet with no tracker is DHT-only luck.)
+        private val TRACKERS = listOf(
+            "udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce",
+            "udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce",
+            "udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce",
+            "udp%3A%2F%2Fexodus.desync.com%3A66%2Fannounce",
+            "udp%3A%2F%2Ftracker.tiny-vps.com%3A6969%2Fannounce",
+            "udp%3A%2F%2Ftracker.theoks.net%3A6969%2Fannounce",
+            "udp%3A%2F%2Ftracker.files.fm%3A6969%2Fannounce",
+            "udp%3A%2F%2Ftracker.pomf.se%3A80%2Fannounce",
+        )
+        // A release name, split the way a title is read: words, not punctuation.
+        private val NAME_WORD = Regex("[^a-z0-9]+")
         private const val LIVE_TTL_MS = 5 * 60_000L
+        private const val ADMIN_SESSION_HEADER = "x-scenix-admin-session"
+        private const val ADMIN_SESSION_TTL_MS = 30 * 60_000L
+        private const val PIN_ITERATIONS = 120_000
+        private const val MIN_PIN_ITERATIONS = 10_000
+        private const val MAX_PIN_ITERATIONS = 300_000
+        private const val PIN_SALT_BYTES = 16
+        private const val PIN_HASH_BYTES = 32
+        private const val MAX_UNLOCK_ATTEMPTS = 10
+        private const val UNLOCK_WINDOW_MS = 5 * 60_000L
 
         private val QUALITY_P = Regex("(\\d{3,4})p", RegexOption.IGNORE_CASE)
         private val FOUR_K = Regex("\\b4k\\b|\\buhd\\b|\\b2160\\b", RegexOption.IGNORE_CASE)
         private val MINUTES = Regex("(\\d+)\\s*min", RegexOption.IGNORE_CASE)
         private val SIZE = Regex("([\\d.]+)\\s*(GB|MB|KB)", RegexOption.IGNORE_CASE)
+        private val PIN = java.util.regex.Pattern.compile("^\\d{4,8}$")
+        private val TOKEN = java.util.regex.Pattern.compile("^[a-f0-9]{64}$", java.util.regex.Pattern.CASE_INSENSITIVE)
 
         /**
          * One instance per process. [LocalServer] and the HTTP client must answer out of the same

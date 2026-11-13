@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "stremio-cinemeta",
+      "name": "Cinemeta",
+      "version": "3.0.14",
+      "manifest": "https://v3-cinemeta.strem.io/manifest.json",
+      "manifestId": "com.linvo.cinemeta",
+      "description": "Official metadata and discovery catalogues for films and series.",
+      "categories": ["catalogs", "metadata"],
+      "tags": ["official", "movies", "series"],
+      "configurationRequired": false,
+      "resources": [
+        { "name": "catalog", "types": ["movie", "series"] },
+        { "name": "meta", "types": ["movie", "series"] }
+      ]
+    },
+    {
+      "id": "stremio-opensubtitles-v3",
+      "name": "OpenSubtitles v3",
+      "version": "1.0.0",
+      "manifest": "https://opensubtitles-v3.strem.io/manifest.json",
+      "manifestId": "org.stremio.opensubtitlesv3",
+      "description": "Official subtitle lookup for films and series in available languages.",
+      "categories": ["accessibility", "subtitles"],
+      "tags": ["official", "captions", "movies", "series"],
+      "configurationRequired": false,
+      "resources": [
+        { "name": "subtitles", "types": ["movie", "series"] }
+      ]
+    },
+    {
+      "id": "stremio-watchhub",
+      "name": "WatchHub",
+      "version": "1.15.0",
+      "manifest": "https://watchhub.strem.io/manifest.json",
+      "manifestId": "org.stremio.watchhub",
+      "description": "Official availability links for streaming services in supported regions.",
+      "categories": ["availability", "streaming-links"],
+      "tags": ["official", "movies", "series"],
+      "configurationRequired": false,
+      "resources": [
+        { "name": "stream", "types": ["movie", "series"] }
+      ]
+    }
+  ]
+}

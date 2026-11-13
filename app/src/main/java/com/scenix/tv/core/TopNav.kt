@@ -163,7 +163,7 @@ internal class TopNav(
         ).apply { gravity = Gravity.CENTER })
         // DOWN from anywhere on the bar returns to the top of the shelves.
         for (i in 0 until pill.childCount) pill.getChildAt(i).nextFocusDownId = shelfListId
-                return bar
+        return bar
     }
     // Classic/Netflix navigation uses the wordmark as its Home stop.  It used to be only
     // decoration, leaving `navAnchor` unset for these packs: UP from Hero Play then had no
@@ -246,7 +246,7 @@ internal class TopNav(
     stops = listOf(homeBrand, movies, series, games, live, profile, search, settings)
     wireFocus()
     for (i in 0 until bar.childCount) bar.getChildAt(i).nextFocusDownId = shelfListId
-        return bar
+    return bar
 }
 
     fun wireFocus() {

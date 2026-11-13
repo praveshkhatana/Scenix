@@ -1,9 +1,12 @@
 package com.scenix.tv
 
+import android.app.Activity
 import android.app.Application
 import android.net.http.HttpResponseCache
+import android.os.Bundle
 import android.util.Log
 import com.scenix.tv.core.AppContext
+import com.scenix.tv.core.PhoneRemote
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.Theme
 import java.io.File
@@ -21,6 +24,14 @@ class ScenixApp : Application() {
     lateinit var ctx: AppContext
         private set
 
+    /**
+     * The phone remote belongs to the running app, not to the screen that showed its QR: keys steer
+     * whatever is in front and typed text reaches the field on screen, so a pairing opened in
+     * Settings keeps working through Search, Detail and the player until the TV leaves the foreground.
+     */
+    lateinit var phoneRemote: PhoneRemote
+        private set
+
     override fun onCreate() {
         super.onCreate()
         val metrics = resources.displayMetrics
@@ -32,9 +43,23 @@ class ScenixApp : Application() {
         prefs = Prefs(this)
         // Packs come and go between builds. A TV still holding a retired theme id lands on the
         // default look at boot instead of wandering through fallbacks with a stale label.
-        if (Theme.catalog(assets).none { it.id == prefs.theme() }) prefs.setTheme(Theme.DEFAULT_ID)
+        // Include validated local reskins here. Checking assets alone discarded a selected local
+        // theme on the next process start even though its safe file was still present.
+        if (Theme.catalog(this, assets).none { it.id == prefs.theme() }) prefs.setTheme(Theme.DEFAULT_ID)
         theme = Theme.load(this, assets, w, h, Theme.assetFor(this, assets, prefs.theme()), prefs.uiZoom())
         ctx = AppContext(this, theme, prefs)
+        phoneRemote = PhoneRemote(this, ctx)
+        // The remote needs to know which screen is in front (keys are dispatched into it) and whether
+        // the app has any screen at all (a backgrounded TV closes the pairing honestly).
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) = phoneRemote.noteResumed(activity)
+            override fun onActivityPaused(activity: Activity) = phoneRemote.notePaused(activity)
+            override fun onActivityStarted(activity: Activity) = phoneRemote.noteForeground(true)
+            override fun onActivityStopped(activity: Activity) = phoneRemote.noteForeground(false)
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+        })
     }
 
     /**

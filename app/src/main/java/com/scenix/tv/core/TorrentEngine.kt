@@ -69,6 +69,9 @@ object TorrentEngine {
     @Synchronized
     fun available(): Boolean = session != null || failure == null
 
+    /** True once the P2P engine is running: magnets asked for it keep resolving in the background. */
+    fun hasSession(): Boolean = session != null
+
     /** Bytes this app may use for a torrent, before the cushion reserved for the rest of the TV. */
     fun freeBytes(context: Context): Long = try {
         android.os.StatFs(File(context.cacheDir, "torrents").apply { mkdirs() }.absolutePath).availableBytes
@@ -89,11 +92,11 @@ object TorrentEngine {
      */
     fun prepare(context: Context, uri: String, season: Int, episode: Int, timeoutMs: Long = METADATA_WAIT_MS): Prepared? {
         init(context)
-        val s = session ?: return null
-        val hash = hashOf(uri) ?: return null
+        val s = session ?: return null.also { Log.w(TAG, "prepare: no session ($failure)") }
+        val hash = hashOf(uri) ?: return null.also { Log.w(TAG, "prepare: no info hash in \"$uri\"") }
         opened["$hash:meta"]?.let { return it.prepared }
 
-        val dir = saveDir ?: return null
+        val dir = saveDir ?: return null.also { Log.w(TAG, "prepare: no save dir") }
         val free = try { android.os.StatFs(dir.absolutePath).availableBytes } catch (t: Throwable) { Long.MAX_VALUE }
         if (free < MIN_FREE_BYTES) {
             Log.w(TAG, "not enough free space for a torrent ($free bytes)")
@@ -165,16 +168,27 @@ object TorrentEngine {
     /** A prepared file by hash and file index, or null when it was never prepared by this process. */
     fun find(hash: String, fileId: Int): Opened? = opened["$hash:$fileId"]
 
+    /** True when the engine already carries this magnet: metadata is resolving in the background. */
+    fun pending(uri: String): Boolean {
+        val s = session ?: return false
+        val h = hashOf(uri) ?: return false
+        return try {
+            s.find(Sha1Hash.parseHex(h)) != null
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
     /**
      * Block until the pieces covering [offset, offset+length) are present, then read exactly that
      * range. Null means the bytes did not arrive in time; the caller closes the stream rather than
      * serving zeros, which the decoder would report as a corrupt file.
      */
-    fun read(target: Opened, offset: Long, length: Int): ByteArray? {
+    fun read(target: Opened, offset: Long, length: Int, timeoutMs: Long = CHUNK_WAIT_MS): ByteArray? {
         if (length <= 0) return ByteArray(0)
         val want = length.coerceAtMost((target.prepared.size - offset).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         if (want <= 0) return ByteArray(0)
-        val deadline = System.currentTimeMillis() + CHUNK_WAIT_MS
+        val deadline = System.currentTimeMillis() + timeoutMs
         var firstPiece = 0
         var lastPiece = 0
         try {
@@ -201,6 +215,25 @@ object TorrentEngine {
         return try {
             if (!target.file.isFile) return null
             RandomAccessFile(target.file, "r").use { f ->
+                // A piece can be verified in libtorrent's cache a beat before it lands on disk, and a
+                // Matroska reader probes the TAIL of the file (the index) as soon as it opens. Without
+                // this wait that race answers a spurious EOF and ExoPlayer drops the connection — seen
+                // as `read failed at <near-EOF>` on a cold 1080p, 8th Nov.
+                var flushed = false
+                while (f.length() < offset + want && System.currentTimeMillis() < deadline) {
+                    // libtorrent can hold a verified piece in its RAM cache and not extend the file
+                    // until the cache flushes. Ask for that flush instead of waiting a minute for it:
+                    // a Matroska reader needs the tail of the file the moment it opens.
+                    if (!flushed) {
+                        flushed = true
+                        try { target.handle.flushCache() } catch (t: Throwable) { }
+                    }
+                    try { Thread.sleep(100) } catch (e: InterruptedException) { return null }
+                }
+                if (f.length() < offset + want) {
+                    Log.w(TAG, "pieces for $offset..${offset + want} verified but not on disk yet")
+                    return null
+                }
                 f.seek(offset)
                 val buf = ByteArray(want)
                 f.readFully(buf)

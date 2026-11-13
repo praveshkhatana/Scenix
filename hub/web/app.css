@@ -10,33 +10,39 @@
    ========================================================================== */
 
 :root {
-  /* ---- colour tokens (defaults; theme.json re-applies them) ---- */
-  --bg: #141414;
-  --surface: #181818;
-  --surface2: #232323;
-  --surface3: #2f2f2f;
-  --line: #262626;
-  --border: rgba(255, 255, 255, .10);
+  /* ---- colour tokens (defaults; theme.json re-applies them) ----
+     These defaults are the design system's scenix-apple theme — the look the television ships. The web
+     client keeps ONE theme (the product default) rather than the television's five, so the page paints the
+     right look before any script runs; /ui/assets/theme.json remains the file that moves it. */
+  --bg: #000000;
+  --surface: #0b0b0f;
+  --surface2: #15161b;
+  --surface3: #1d1f26;
+  --line: #2a2c34;
+  --border: rgba(255, 255, 255, .14);
   --ink: #ffffff;
-  --ink1: #e8e8e8;
-  --ink2: #b3b3b3;
-  --ink3: #737373;
-  --brand: #e50914;
-  --brand-deep: #b00710;
-  --match: #46d369;
-  --kids: #f2c33a;
-  --kids-deep: #d9a22b;
-  --live: #e50914;
-  --warn: #f2c33a;
+  --ink1: #f2f3f5;
+  --ink2: #b9bbc3;
+  --ink3: #7a7d86;
+  --brand: #f2f3f5;
+  --brand-deep: #c9cbd1;
+  --match: #8de2a0;
+  --kids: #ffd60a;
+  --kids-deep: #c7a500;
+  --live: #ff453a;
+  --warn: #ffd60a;
   --focus-ring: #ffffff;
-  --track: #2f2f2f;
-  --chip-bg: rgba(255, 255, 255, .20);
-  --key-bg: #2a2a2a;
-  --modal-scrim: rgba(0, 0, 0, .90);
-  --panel-scrim: rgba(0, 0, 0, .90);
-  --mat-border: rgba(255, 255, 255, .35);
-  --hd-ink: #e0e0e0;
-  --numeral-stroke: #7c7c7c;
+  --track: #2a2c34;
+  --chip-bg: rgba(255, 255, 255, .14);
+  --key-bg: rgba(50, 54, 62, .66);
+  --modal-scrim: rgba(0, 0, 0, .82);
+  --panel-scrim: rgba(12, 13, 17, .94);
+  --mat-border: rgba(255, 255, 255, .28);
+  --hd-ink: #f2f3f5;
+  --numeral-stroke: #ffffff;
+  /* The ink used ON a filled brand button. The brand is near-white now, so the label over it is the
+     page's own black rather than the old Netflix charcoal. */
+  --on-brand: #0b0b0f;
 
   /* ---- scale ---- */
   --s: 1;
@@ -83,28 +89,28 @@
   --t-panel-note: calc(18px * var(--s));
 
   /* ---- radii ---- */
-  --r-card: calc(6px * var(--s));
-  --r-badge: calc(4px * var(--s));
-  --r-chip: calc(6px * var(--s));
-  --r-button: calc(6px * var(--s));
-  --r-field: calc(8px * var(--s));
-  --r-key: calc(6px * var(--s));
-  --r-modal: calc(10px * var(--s));
-  --r-avatar: calc(10px * var(--s));
-  --r-panel: calc(10px * var(--s));
-  --r-hero-button: calc(12px * var(--s));
+  --r-card: calc(14px * var(--s));
+  --r-badge: calc(8px * var(--s));
+  --r-chip: calc(8px * var(--s));
+  --r-button: calc(999px * var(--s));
+  --r-field: calc(12px * var(--s));
+  --r-key: calc(12px * var(--s));
+  --r-modal: calc(18px * var(--s));
+  --r-avatar: calc(999px * var(--s));
+  --r-panel: calc(18px * var(--s));
+  --r-hero-button: calc(999px * var(--s));
 
   /* ---- cards ---- */
-  --card-w: calc(280px * var(--s));
-  --card-h: calc(420px * var(--s));     /* 280 x 1.5 */
+  --card-w: calc(268px * var(--s));
+  --card-h: calc(402px * var(--s));     /* 268 x 1.5 */
   --rank-w: calc(var(--card-h) * .55);
   --rank-overlap: calc(var(--card-h) * .229);
   --rank-extra: calc(var(--card-h) * .321);
 
-  /* ---- focus + motion (spec B: scale 1.10, ring 5 px, 200 ms ease-out) ---- */
-  --ring-w: calc(5px * var(--s));
-  --focus-scale: 1.10;
-  --focus-ms: 200ms;
+  /* ---- focus + motion (scenix-apple: scale 1.07, ring 2 px + glow, 280 ms) ---- */
+  --ring-w: calc(2px * var(--s));
+  --focus-scale: 1.07;
+  --focus-ms: 280ms;
   --row-scroll-ms: 240ms;
   --screen-ms: 180ms;
   --card-in-ms: 600ms;
@@ -309,7 +315,7 @@ ul { list-style: none; }
 /* A profile's ring is drawn on the tile, not on the button box: the button also contains the name below
    it, and a square ring around a rounded tile with a label hanging out of it reads as a rendering fault. */
 .btn.foc.solid-white { background: #fff; }
-.li.foc, .src.foc, .ep.foc { background: var(--surface3); }
+.li.foc, .src.foc, .ep.foc { background: var(--theme-color-list-fill-focused, var(--surface3)); }
 .chip.foc { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
 .key.foc { background: #fff; color: #000; }
 .round.foc { transform: scale(1.08); border-color: #fff; }
@@ -356,15 +362,18 @@ ul { list-style: none; }
 .billboard .bb-art img { width: 100%; height: 100%; object-fit: cover; object-position: center 22%; }
 .billboard .bb-art.on { opacity: 1; }
 /* The trailer preview sits in the same frame as the still, and cross-fades into it. */
-#video-host video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* The film is letterboxed, not cropped: a 2.39:1 copy keeps its bars exactly as the television shows them,
+   and Picture size is the one control that trades the bars for filling the window. */
+#video-host video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#video-host.fill video { object-fit: cover; }
 .billboard .preview { position: absolute; inset: 0; opacity: 0; transition: opacity 320ms ease; z-index: 2; }
 .billboard .preview.on { opacity: 1; }
 /* Spec scrim stops: the horizontal wash ends at 55%, the vertical at 60%, and the bottom band is 8%. */
 .billboard .scrim {
   position: absolute; inset: 0; z-index: 3; pointer-events: none;
   background:
-    linear-gradient(90deg, rgba(20, 20, 20, .94) 4%, rgba(20, 20, 20, .58) 30%, rgba(20, 20, 20, 0) 55%),
-    linear-gradient(0deg, var(--bg) 8%, rgba(20, 20, 20, .55) 32%, rgba(20, 20, 20, 0) 60%);
+    linear-gradient(90deg, rgba(20, 20, 20, .94) 4%, rgba(20, 20, 20, .58) 30%, rgba(0, 0, 0, 0) 55%),
+    linear-gradient(0deg, var(--bg) 8%, rgba(20, 20, 20, .55) 32%, rgba(0, 0, 0, 0) 60%);
 }
 .billboard .preview .scrim {
   background: linear-gradient(90deg, rgba(20, 20, 20, .88) 6%, rgba(20, 20, 20, .35) 45%, rgba(20, 20, 20, .1) 75%);
@@ -389,17 +398,18 @@ ul { list-style: none; }
 .btn {
   display: inline-flex; align-items: center; gap: calc(14px * var(--s));
   padding: calc(16px * var(--s)) calc(34px * var(--s)); border-radius: var(--r-button);
-  font-size: var(--t-button); font-weight: 700; border: 0; color: #fff;
-  background: rgba(109, 109, 110, .55); transition: transform var(--focus-ms), background var(--focus-ms);
+  font-size: var(--t-button); font-weight: 700; border: 0; color: var(--ink);
+  background: var(--theme-color-btn-grey, rgba(109, 109, 110, .55));
+  transition: transform var(--focus-ms), background var(--focus-ms);
   white-space: nowrap;
 }
 .btn .ico { width: calc(32px * var(--s)); height: calc(32px * var(--s)); }
-.btn.white { background: #fff; color: #000; }
-.btn.white .ico { stroke: #000; }
-.btn.red { background: var(--brand); }
+.btn.white { background: #fff; color: #101010; }
+.btn.white .ico { stroke: #101010; }
+.btn.red { background: var(--brand); color: var(--on-brand); }
 .btn.line { border: calc(2px * var(--s)) solid rgba(255, 255, 255, .5); background: transparent; }
 .btn.big { min-width: calc(320px * var(--s)); height: calc(72px * var(--s)); justify-content: center; padding: 0 calc(28px * var(--s)); border-radius: var(--r-hero-button); }
-.btn.ghost { background: rgba(255, 255, 255, .10); }
+.btn.ghost { background: var(--theme-color-btn-grey, rgba(255, 255, 255, .10)); }
 .round {
   width: calc(58px * var(--s)); height: calc(58px * var(--s)); border-radius: 50%;
   border: calc(2px * var(--s)) solid rgba(255, 255, 255, .55);
@@ -412,7 +422,7 @@ ul { list-style: none; }
 .chips { display: flex; gap: var(--chip-gap); flex-wrap: wrap; padding: 0 var(--gutter); margin-bottom: calc(30px * var(--s)); }
 .chip {
   padding: calc(10px * var(--s)) calc(24px * var(--s)); border-radius: var(--r-chip);
-  background: rgba(255, 255, 255, .09); border: 1px solid var(--border);
+  background: var(--chip-bg); border: 1px solid var(--border);
   font-size: var(--t-chip); color: var(--ink1); display: flex; gap: calc(10px * var(--s)); align-items: center;
 }
 .chip.on { background: #fff; color: #000; border-color: #fff; font-weight: 700; }
@@ -423,9 +433,9 @@ ul { list-style: none; }
   font-size: var(--t-badge); font-weight: 700; padding: calc(5px * var(--s)) calc(10px * var(--s));
   border-radius: var(--r-badge); background: rgba(0, 0, 0, .78); border: 1px solid var(--border);
 }
-.badge.new { background: var(--brand); border-color: transparent; }
-.badge.live { background: var(--brand); border-color: transparent; display: flex; gap: calc(8px * var(--s)); align-items: center; }
-.badge.live i { width: calc(9px * var(--s)); height: calc(9px * var(--s)); border-radius: 50%; background: #fff; }
+.badge.new { background: var(--brand); border-color: transparent; color: var(--on-brand); }
+.badge.live { background: var(--brand); border-color: transparent; color: var(--on-brand); display: flex; gap: calc(8px * var(--s)); align-items: center; }
+.badge.live i { width: calc(9px * var(--s)); height: calc(9px * var(--s)); border-radius: 50%; background: currentColor; }
 .badge.kids { background: var(--kids); color: #132339; border-color: transparent; }
 .badge.right { left: auto; right: calc(12px * var(--s)); }
 /* Badges sit in a cluster per corner so any number of them line up without new geometry. */
@@ -480,12 +490,23 @@ ul { list-style: none; }
   contain: paint layout style;
   align-items: flex-start;
 }
-/* Card geometry is chosen by the row plugin, never by the screen: 5 landscape cards + a 120 px peek
-   of the sixth at 1920 (spec B), and 280x420 posters with a 28 px gap on a poster rail. */
-.cards.landscape { --card-w: calc(320px * var(--s)); --card-h: calc(180px * var(--s)); --gap: calc(20px * var(--s)); }
-.cards.poster    { --card-w: calc(280px * var(--s)); --card-h: calc(420px * var(--s)); --gap: calc(28px * var(--s)); }
-.cards.rank      { --card-w: calc(280px * var(--s)); --card-h: calc(420px * var(--s)); --gap: calc(28px * var(--s)); }
-.cards.channel   { --card-w: calc(320px * var(--s)); --card-h: calc(180px * var(--s)); --gap: calc(20px * var(--s)); }
+/*
+  Card geometry is chosen by the row plugin, and its size by the theme's own card block: the Scene pack
+  ships 480x270 tiles and the browser drew 320x180, the same pack looking like two different products.
+  So each rail shape reads the token the television reads - `cards.poster` for a poster rail, `cards.continue`
+  for a wide shelf, `cards.channel` for the live wall - and the old pixel pair is only the fallback for a hub
+  that ships no such block. The gap stays ours: a mouse and a D-pad need more air between tiles than a panel.
+*/
+.cards.landscape { --card-w: var(--card-cont-w, calc(320px * var(--s))); --card-h: var(--card-cont-h, calc(180px * var(--s))); --gap: calc(20px * var(--s)); }
+.cards.poster    { --card-w: var(--card-poster-w, calc(280px * var(--s))); --card-h: var(--card-poster-h, calc(420px * var(--s))); --gap: calc(28px * var(--s)); }
+.cards.rank      { --card-w: var(--card-poster-w, calc(280px * var(--s))); --card-h: var(--card-poster-h, calc(420px * var(--s))); --gap: calc(28px * var(--s)); }
+.cards.channel   { --card-w: var(--card-chan-w, calc(320px * var(--s))); --card-h: var(--card-chan-h, calc(180px * var(--s))); --gap: calc(20px * var(--s)); }
+/*
+  The arcade's tiles are 480x270 on both clients: the television's Games screen draws its shelf at that
+  size whatever the pack says, because a browser game's art is a 16:9 box, not a poster. So this rail takes
+  the same numbers rather than the pack's card block, and stays scaled like everything else here.
+*/
+.cards.game      { --card-w: calc(480px * var(--s)); --card-h: calc(270px * var(--s)); --gap: calc(20px * var(--s)); }
 .card {
   position: relative; flex: none; width: var(--card-w);
   /* transform only. A box-shadow transition repaints the whole area around a card on every frame, and a
@@ -513,7 +534,7 @@ ul { list-style: none; }
   position: relative; width: 100%; height: var(--card-h);
   border-radius: var(--r-card); overflow: hidden;
   background: linear-gradient(150deg, #2b3a4a, #0f1620);
-  border: 1px solid rgba(255, 255, 255, .05);
+  border: 1px solid var(--border);
 }
 .card .art img { width: 100%; height: 100%; object-fit: cover; }
 .card .cap {
@@ -525,7 +546,7 @@ ul { list-style: none; }
 .card .meta { margin-top: var(--meta-gap); display: flex; gap: calc(12px * var(--s)); align-items: center; font-size: var(--t-meta); color: var(--ink2); }
 .card .meta .match { color: var(--match); font-weight: 700; }
 .card .meta .left { color: var(--ink3); }
-/* Continue Watching: 8 px, track rgba(255,255,255,.2), fill #E50914. The fill is scaled, not widened. */
+/* Continue Watching: 8 px, track rgba(255,255,255,.2), fill var(--brand). The fill is scaled, not widened. */
 .prog { position: absolute; left: 0; right: 0; bottom: 0; height: calc(8px * var(--s)); background: rgba(255, 255, 255, .2); }
 .prog i { display: block; height: 100%; width: 100%; background: var(--brand); transform-origin: left center; }
 
@@ -571,7 +592,7 @@ ul { list-style: none; }
    ========================================================================== */
 .detail-hero { position: relative; height: calc(620px * var(--s)); overflow: hidden; }
 .detail-hero img.bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
-.detail-hero .scrim { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(20, 20, 20, .95) 4%, rgba(20, 20, 20, .55) 45%, rgba(20, 20, 20, .1) 75%), linear-gradient(0deg, var(--bg) 2%, rgba(20, 20, 20, 0) 55%); }
+.detail-hero .scrim { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(20, 20, 20, .95) 4%, rgba(20, 20, 20, .55) 45%, rgba(20, 20, 20, .1) 75%), linear-gradient(0deg, var(--bg) 2%, rgba(0, 0, 0, 0) 55%); }
 .detail-body { position: relative; z-index: 5; padding: 0 var(--gutter); margin-top: calc(-140px * var(--s)); }
 .detail-cols { display: grid; grid-template-columns: minmax(0, 1fr) calc(560px * var(--s)); gap: calc(48px * var(--s)); align-items: start; }
 .detail-body h1 { font-size: var(--t-h2); font-weight: 800; letter-spacing: -.02em; line-height: 1.02; margin-bottom: calc(16px * var(--s)); max-width: calc(1100px * var(--s)); }
@@ -622,26 +643,41 @@ body.native-live, html.native-live { background: transparent; }
 .ply-hud .pt { font-size: calc(34px * var(--s)); font-weight: 700; }
 .ply-hud .ps { color: var(--ink2); font-size: calc(20px * var(--s)); margin-top: calc(8px * var(--s)); }
 .ply-hud .right { margin-left: auto; display: flex; gap: calc(12px * var(--s)); align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+/*
+  What the picture is, on one line above the timeline: its name, the channel's LIVE pill, the certificate,
+  the advisories. The television's player carries this line at the bottom of the film, directly over the
+  seek bar, and so does this one - the name of the thing you are watching belongs with the thing you are
+  watching, not with the way out.
+*/
+.ply-title {
+  display: flex; align-items: baseline; gap: calc(14px * var(--s)); flex-wrap: wrap;
+  margin-bottom: calc(16px * var(--s));
+}
+.ply-title .pt { font-size: calc(30px * var(--s)); font-weight: 700; }
+.ply-title .ps { color: var(--ink2); font-size: calc(19px * var(--s)); }
+.ply-title .pcontent { margin-top: 0; }
+/* The group break in the control row: transport on one side, tracks and picture on the other. */
+.ply-div { width: calc(1px * var(--s)); height: calc(26px * var(--s)); background: rgba(255,255,255,.30); }
 .ply-status {
   display: flex; align-items: center; gap: calc(14px * var(--s));
   font-size: calc(20px * var(--s)); color: var(--ink1);
   background: rgba(0, 0, 0, .62); border: 1px solid var(--border); border-radius: var(--r-badge);
   padding: calc(10px * var(--s)) calc(16px * var(--s)); max-width: calc(760px * var(--s));
 }
-.ply-status.warn { border-color: rgba(242, 195, 58, .55); color: var(--warn); }
-.ply-status.bad { border-color: rgba(255, 90, 90, .6); color: #ff8a8a; }
+.ply-status.warn { border-color: color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); }
+.ply-status.bad { border-color: color-mix(in srgb, var(--live) 60%, transparent); color: color-mix(in srgb, var(--live) 72%, var(--ink)); }
 .ply-status .spin { width: calc(22px * var(--s)); height: calc(22px * var(--s)); border-radius: 50%; border: calc(3px * var(--s)) solid rgba(255, 255, 255, .25); border-top-color: #fff; animation: spin 900ms linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .ply-bar {
   position: absolute; left: var(--gutter); right: var(--gutter); bottom: calc(54px * var(--s)); z-index: 6;
 }
-/* Spec B: progress 8 px tall, radius 4, track rgba(255,255,255,.2), fill #E50914. The fills are
+/* Spec B: progress 8 px tall, radius 4, track rgba(255,255,255,.2), fill var(--brand). The fills are
    scaled, not widened — section F animates transform and opacity only. */
 .trk { height: calc(8px * var(--s)); border-radius: calc(4px * var(--s)); background: rgba(255, 255, 255, .2); position: relative; }
 .trk .buf { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(0); background: rgba(255, 255, 255, .45); border-radius: inherit; }
 .trk .pl { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(0); background: var(--brand); border-radius: inherit; }
-.trk .kn { position: absolute; top: 50%; width: calc(22px * var(--s)); height: calc(22px * var(--s)); border-radius: 50%; background: #fff; transform: translate(-50%, -50%); box-shadow: 0 0 0 calc(4px * var(--s)) rgba(229, 9, 20, .85); }
+.trk .kn { position: absolute; top: 50%; width: calc(22px * var(--s)); height: calc(22px * var(--s)); border-radius: 50%; background: #fff; transform: translate(-50%, -50%); box-shadow: 0 0 0 calc(4px * var(--s)) color-mix(in srgb, var(--brand) 85%, transparent); }
 .trk.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 .times { display: flex; justify-content: space-between; color: var(--ink1); font-size: calc(19px * var(--s)); margin: calc(12px * var(--s)) 0 calc(22px * var(--s)); }
 .ctl { display: flex; align-items: center; gap: calc(10px * var(--s)); flex-wrap: wrap; }
@@ -659,7 +695,7 @@ body.native-live, html.native-live { background: transparent; }
 .ply-right { margin-left: auto; display: flex; align-items: center; gap: calc(10px * var(--s)); }
 .rate { color: var(--match); font-size: calc(19px * var(--s)); padding: 0 calc(10px * var(--s)); }
 
-/* Spec B: transport buttons are 144 px circles, Play 176 px, focus fill rgba(229,9,20,.85) with a
+/* Spec B: transport buttons are 144 px circles, Play 176 px, focus fill color-mix(in srgb, var(--brand) 85%, transparent) with a
    4 px white ring and scale 1.08. They sit inside the bottom bar, above the progress row. */
 .pbtns { display: flex; align-items: center; justify-content: center; gap: calc(40px * var(--s)); margin-top: calc(26px * var(--s)); }
 .pbtn {
@@ -668,11 +704,11 @@ body.native-live, html.native-live { background: transparent; }
   display: grid; place-content: center; color: #fff;
   transition: transform var(--focus-ms) ease-out, background-color var(--focus-ms) ease-out, border-color var(--focus-ms) ease-out;
 }
-.pbtn.play { width: calc(176px * var(--s)); height: calc(176px * var(--s)); background: #fff; color: #141414; border-color: #fff; }
+.pbtn.play { width: calc(176px * var(--s)); height: calc(176px * var(--s)); background: #fff; color: #101010; border-color: #fff; }
 .pbtn .ico { width: calc(56px * var(--s)); height: calc(56px * var(--s)); }
 .pbtn .lbl { position: absolute; top: 100%; left: 0; right: 0; margin-top: calc(10px * var(--s));
   text-align: center; font-size: var(--t-meta); color: var(--ink2); }
-.pbtn.foc { background: rgba(229, 9, 20, .85); border-color: #fff; color: #fff;
+.pbtn.foc { background: color-mix(in srgb, var(--brand) 85%, transparent); border-color: #fff; color: var(--on-brand);
   transform: scale(1.08); box-shadow: 0 0 0 calc(4px * var(--s)) #fff, 0 calc(18px * var(--s)) calc(44px * var(--s)) rgba(0, 0, 0, .6); }
 .pbtn.play.foc { transform: scale(1.08); }
 
@@ -685,7 +721,7 @@ body.native-live, html.native-live { background: transparent; }
   display: grid; place-content: center;
   animation: fadeUp 200ms var(--fade-up-ease) backwards;
 }
-.skip.foc { background: #fff; color: #141414; box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
+.skip.foc { background: #fff; color: #101010; box-shadow: 0 0 0 var(--ring-w) var(--focus-ring); }
 .skip.gone { opacity: 0; transition: opacity 150ms ease; pointer-events: none; }
 
 .ply-fade { transition: opacity 260ms ease, transform 260ms ease; }
@@ -737,7 +773,7 @@ body.native-live, html.native-live { background: transparent; }
 .panel .prow {
   display: flex; align-items: center; gap: calc(14px * var(--s));
   min-height: var(--panel-row-h); padding: calc(10px * var(--s)) calc(14px * var(--s));
-  border-radius: var(--r-button); font-size: var(--t-panel-row);
+  border-radius: var(--theme-radius-list-item, var(--r-panel)); font-size: var(--t-panel-row);
 }
 .panel .prow .sub { display: block; font-size: var(--t-panel-note); color: var(--ink2); margin-top: calc(2px * var(--s)); }
 .panel .prow .val { margin-left: auto; color: var(--kids); font-weight: 700; font-size: var(--t-panel-note); flex: none; }
@@ -745,7 +781,7 @@ body.native-live, html.native-live { background: transparent; }
 .panel .prow.on .lbl::before { content: ""; }
 .panel .note { font-size: var(--t-panel-note); color: var(--ink2); margin-top: calc(12px * var(--s)); }
 .panel .segs { display: flex; gap: calc(8px * var(--s)); flex-wrap: wrap; }
-.seg { padding: calc(8px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-badge); background: rgba(255, 255, 255, .10); border: 1px solid var(--border); font-size: var(--t-panel-row); }
+.seg { padding: calc(8px * var(--s)) calc(16px * var(--s)); border-radius: var(--r-badge); background: var(--theme-color-btn-grey, rgba(255, 255, 255, .10)); border: 1px solid var(--border); font-size: var(--t-panel-row); }
 .seg.on { background: #fff; color: #000; font-weight: 700; }
 
 /* ==========================================================================
@@ -764,7 +800,7 @@ body.native-live, html.native-live { background: transparent; }
 /* The halo is the only decoration here, and it is the brand colour doing the work rather than a border. */
 .pglow {
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background: radial-gradient(46% 44% at 50% 50%, rgba(229, 9, 20, .42), rgba(229, 9, 20, .16) 42%, rgba(0, 0, 0, 0) 72%);
+  background: radial-gradient(46% 44% at 50% 50%, color-mix(in srgb, var(--brand) 42%, transparent), color-mix(in srgb, var(--brand) 16%, transparent) 42%, rgba(0, 0, 0, 0) 72%);
   transition: opacity 500ms cubic-bezier(.33, 0, .67, 1);
 }
 /* The wordmark holds the top of the screen so the surface still reads as Scenix, but it stays small and dim:
@@ -950,7 +986,7 @@ body.booted .pwrap .avatar .a {
   color: var(--ink); font-size: calc(16px * var(--s)); font-weight: 600;
   transition: background var(--focus-ms), color var(--focus-ms), border-color var(--focus-ms);
 }
-.avmore.foc { background: #fff; color: #141414; border-color: #fff; }
+.avmore.foc { background: #fff; color: #101010; border-color: #fff; }
 /* The dialog box itself takes focus so the ring cannot escape back into the page behind it. The browser's own
    focus ring then draws a hairline around the whole modal, which reads as a border belonging to nothing. */
 .mbox:focus, .mbox:focus-visible { outline: none; }
@@ -974,7 +1010,7 @@ body.booted .pwrap .avatar .a {
 .avatar .pedit .ico { width: calc(20px * var(--s)); height: calc(20px * var(--s)); }
 .avatar.foc .pedit { opacity: 1; transform: translateX(-50%) scale(1); pointer-events: auto; }
 .avatar.keep .pedit { opacity: 1; pointer-events: auto; }
-.avatar .pedit.foc { background: #fff; color: #141414; border-color: #fff; transform: translateX(-50%) scale(1.1); }
+.avatar .pedit.foc { background: #fff; color: #101010; border-color: #fff; transform: translateX(-50%) scale(1.1); }
 .avatar.keep { transform: scale(1.34); z-index: 30; }
 .pfs.armed .avatar:not(.foc):not(.keep) { opacity: .55; }
 /* Manage profiles is a card like the rest: the row is the whole menu, and there is nothing to hunt for below
@@ -986,8 +1022,8 @@ body.booted .pwrap .avatar .a {
 }
 /* Spec B: Manage Profiles is square, uppercase, tracked out, grey that whitens on focus. */
 .manage {
-  margin-top: calc(48px * var(--s)); font-size: calc(22px * var(--s)); color: #808080;
-  border: calc(1px * var(--s)) solid #808080; border-radius: 0;
+  margin-top: calc(48px * var(--s)); font-size: calc(22px * var(--s)); color: var(--ink3);
+  border: calc(1px * var(--s)) solid var(--ink3); border-radius: 0;
   padding: calc(14px * var(--s)) calc(30px * var(--s)); letter-spacing: .2em; text-transform: uppercase;
   transition: color var(--focus-ms), border-color var(--focus-ms);
 }
@@ -1014,8 +1050,8 @@ body.booted .pwrap .avatar .a {
 .avatar-ghost .a { width: 100%; height: 100%; }
 .avatar-ghost.fly { opacity: 0; }
 
-.modal { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, .82); display: grid; place-content: center; justify-items: center; }
-.mbox { width: var(--modal-w); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-button); padding: calc(44px * var(--s)) calc(48px * var(--s)); text-align: center; }
+.modal { position: fixed; inset: 0; z-index: 70; background: var(--modal-scrim); display: grid; place-content: center; justify-items: center; }
+.mbox { width: var(--modal-w); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-modal); padding: calc(44px * var(--s)) calc(48px * var(--s)); text-align: center; }
 /* A dialog arrives rather than popping: the scrim darkens while the box lifts into place, the same
    entrance language the panes and sheets use — opacity and transform only. The PIN box's shake is a
    reaction, not an entrance; it wins over this on the element that carries it. */
@@ -1034,7 +1070,7 @@ body.booted .pwrap .avatar .a {
 .p9 { display: grid; grid-template-columns: repeat(3, var(--key-w)); gap: calc(14px * var(--s)); justify-content: center; }
 .p9 .key { height: var(--key-h); border-radius: var(--r-key); background: var(--key); border: 1px solid var(--border); display: grid; place-content: center; font-size: var(--t-key); }
 .p9 .key.sm { font-size: calc(20px * var(--s)); font-weight: 700; letter-spacing: .04em; }
-.mbox .err { color: #ff8a8a; font-size: calc(19px * var(--s)); min-height: calc(26px * var(--s)); margin-top: calc(14px * var(--s)); }
+.mbox .err { color: color-mix(in srgb, var(--live) 72%, var(--ink)); font-size: calc(19px * var(--s)); min-height: calc(26px * var(--s)); margin-top: calc(14px * var(--s)); }
 
 /* On-screen keyboard (remote-only entry; a physical keyboard types straight into the field). */
 .kbd { display: grid; gap: calc(8px * var(--s)); justify-content: center; margin-top: calc(18px * var(--s)); }
@@ -1067,21 +1103,24 @@ body.booted .pwrap .avatar .a {
 .sgroup > h3 { font-size: var(--t-h3); font-weight: 700; margin-bottom: calc(14px * var(--s)); }
 .li {
   display: flex; align-items: center; gap: calc(18px * var(--s));
-  padding: calc(20px * var(--s)) calc(24px * var(--s)); border-radius: var(--r-button);
-  background: var(--surface); border: 1px solid var(--border); font-size: var(--t-li);
+  padding: calc(20px * var(--s)) calc(24px * var(--s));
+  border-radius: var(--theme-radius-list-item, var(--r-panel));
+  background: var(--theme-color-list-fill, var(--surface));
+  border: 1px solid var(--theme-color-list-stroke, var(--border));
+  font-size: var(--t-li);
 }
 .li .lv { margin-left: auto; color: var(--ink2); font-size: var(--t-li-meta); text-align: right; max-width: calc(400px * var(--s)); }
-.li .sw { width: calc(64px * var(--s)); height: calc(32px * var(--s)); border-radius: 999px; background: rgba(255, 255, 255, .22); position: relative; margin-left: auto; flex: none; }
+.li .sw { width: calc(64px * var(--s)); height: calc(32px * var(--s)); border-radius: 999px; background: var(--track); position: relative; margin-left: auto; flex: none; }
 .li .sw.on { background: var(--brand); }
-.li .sw i { position: absolute; top: calc(4px * var(--s)); left: calc(4px * var(--s)); width: calc(24px * var(--s)); height: calc(24px * var(--s)); border-radius: 50%; background: #fff; transition: left 160ms ease; }
-.li .sw.on i { left: calc(36px * var(--s)); }
+.li .sw i { position: absolute; top: calc(4px * var(--s)); left: calc(4px * var(--s)); width: calc(24px * var(--s)); height: calc(24px * var(--s)); border-radius: 50%; background: #fff; transition: transform 160ms ease; }
+.li .sw.on i { transform: translateX(calc(32px * var(--s))); background: var(--on-brand); }
 .li .note { display: block; font-size: var(--t-panel-note); color: var(--ink3); margin-top: calc(4px * var(--s)); max-width: calc(420px * var(--s)); }
 .diag { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-panel); padding: calc(24px * var(--s)); }
 .diag h4 { font-size: var(--t-panel-title); margin-bottom: calc(14px * var(--s)); }
 .diag .dr { display: flex; gap: calc(14px * var(--s)); font-size: var(--t-panel-row); padding: calc(7px * var(--s)) 0; border-bottom: 1px solid rgba(255, 255, 255, .06); }
 .diag .dr b { font-weight: 400; color: var(--ink2); min-width: calc(240px * var(--s)); }
 .diag .ok { color: var(--match); font-weight: 700; }
-.diag .no { color: #ff8a8a; font-weight: 700; }
+.diag .no { color: color-mix(in srgb, var(--live) 72%, var(--ink)); font-weight: 700; }
 .diag .mid { color: var(--warn); font-weight: 700; }
 
 /* ==========================================================================
@@ -1103,7 +1142,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
    ========================================================================== */
 .toast {
   position: fixed; left: 50%; bottom: calc(48px * var(--s)); transform: translateX(-50%);
-  z-index: 80; background: rgba(24, 24, 24, .96); border: 1px solid var(--border);
+  z-index: 80; background: var(--panel-scrim); border: 1px solid var(--border);
   border-radius: var(--r-button); padding: calc(16px * var(--s)) calc(28px * var(--s));
   font-size: var(--t-li); color: var(--ink1); box-shadow: 0 calc(18px * var(--s)) calc(40px * var(--s)) rgba(0, 0, 0, .6);
   max-width: 86vw; animation: toastIn 200ms ease-out both;
@@ -1137,10 +1176,51 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   .detail-cols { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
-  :root { --gutter: calc(20px * var(--s)); --card-w: calc(190px * var(--s)); --card-h: calc(285px * var(--s)); --billboard-h: calc(560px * var(--s)); }
+  /* theme.js writes --gutter as an inline custom property, so a phone override has to be !important;
+     at the token's 76 px the 390 px screen lost 110 px to margins on both sides. */
+  :root { --gutter: calc(18px * var(--s)) !important; --card-w: calc(190px * var(--s)); --card-h: calc(285px * var(--s)); --billboard-h: calc(560px * var(--s)); }
   .nav-items { gap: 0; }
   .bb h1 { font-size: calc(56px * var(--s)); }
   .detail-body h1 { font-size: calc(34px * var(--s)); }
+  /* A phone cannot fit eight destinations and a wordmark across 390 px. The wordmark stays, and the
+     destinations become one touch-scrollable strip instead of pushing Settings off the right edge. */
+  .nav {
+    gap: calc(8px * var(--s));
+    padding: 0 calc(12px * var(--s));
+    background: linear-gradient(180deg, rgba(0, 0, 0, .92), rgba(0, 0, 0, .55) 70%, rgba(0, 0, 0, 0));
+  }
+  .brand-mark { width: calc(62px * var(--s)); height: calc(22px * var(--s)); }
+  .nav-items {
+    flex: 1 1 auto; min-width: 0;
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .nav-items::-webkit-scrollbar { display: none; }
+  .nav-item { white-space: nowrap; font-size: calc(15px * var(--s)); padding: 0 calc(9px * var(--s)); }
+  .avatar-chip { flex: none; }
+  /* The profile wall is a row of portraits, not one portrait per screen: three faces fit a phone. */
+  .pfs { gap: calc(26px * var(--s)); }
+  .avatar { width: calc(150px * var(--s)); }
+  .avatar .a {
+    width: calc(150px * var(--s)); height: calc(225px * var(--s));
+    border-radius: calc(20px * var(--s));
+  }
+  .avatar .nm {
+    left: calc(12px * var(--s)); right: calc(12px * var(--s)); bottom: calc(40px * var(--s));
+    font-size: calc(19px * var(--s));
+  }
+  .avatar .chips { left: calc(12px * var(--s)); right: calc(12px * var(--s)); bottom: calc(12px * var(--s)); }
+  .avatar .pc { font-size: calc(13px * var(--s)); }
+  /* A phone should see a shelf, not one poster per screen: two to three columns is the shape a
+     vertical scroll expects, and the deeper See-all grid gets the same density. */
+  .cards.poster { --card-w: calc(150px * var(--s)); --card-h: calc(225px * var(--s)); --gap: calc(10px * var(--s)); }
+  .cards.landscape { --card-w: calc(220px * var(--s)); --card-h: calc(124px * var(--s)); --gap: calc(10px * var(--s)); }
+  .grid { gap: calc(10px * var(--s)); }
+  .grid .card { width: calc(150px * var(--s)); }
+  /* The results pane already applies the page gutter, so the grid must not add a second one or the
+     third column falls four pixels over the edge and the phone shows two. */
+  .search-results .grid, .browse .grid { padding: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1156,7 +1236,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .modal:focus, .modal:focus-visible, .mbox.pin:focus, .mbox.pin:focus-visible { outline: none; }
 .mbox.pin {
   position: relative; width: calc(560px * var(--s)); padding: calc(40px * var(--s)) calc(44px * var(--s)) calc(34px * var(--s));
-  background: linear-gradient(180deg, #1e1e20 0%, var(--surface) 62%);
+  background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 62%);
   border: 1px solid rgba(255, 255, 255, .10); border-radius: var(--r-modal);
   box-shadow: 0 calc(30px * var(--s)) calc(80px * var(--s)) rgba(0, 0, 0, .72);
 }
@@ -1174,9 +1254,9 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   display: grid; place-content: center; font-size: calc(22px * var(--s)); color: var(--ink1);
   background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16);
 }
-.mclose.foc { background: #fff; color: #141414; box-shadow: 0 0 0 var(--ring-w) var(--brand); }
+.mclose.foc { background: #fff; color: #101010; box-shadow: 0 0 0 var(--ring-w) var(--brand); }
 .dots i { background: rgba(255, 255, 255, .14); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22); transition: background 140ms ease, box-shadow 140ms ease; }
-.dots i.on { background: var(--brand); box-shadow: 0 0 calc(14px * var(--s)) rgba(229, 9, 20, .55); }
+.dots i.on { background: var(--focus-ring); box-shadow: 0 0 calc(14px * var(--s)) color-mix(in srgb, var(--brand) 55%, transparent); }
 .mbox.pin .p9 { gap: calc(12px * var(--s)); }
 .mbox.pin .key {
   background: var(--surface2); border: 1px solid rgba(255, 255, 255, .10);
@@ -1186,7 +1266,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .mbox.pin .key:hover { background: var(--surface3); }
 .mbox.pin .key.sm { font-size: calc(18px * var(--s)); letter-spacing: .1em; text-transform: uppercase; color: var(--ink2); }
 .mbox.pin .key.foc {
-  background: #fff; color: #141414; transform: translateY(calc(-2px * var(--s)));
+  background: #fff; color: #101010; transform: translateY(calc(-2px * var(--s)));
   box-shadow: 0 0 0 var(--ring-w) var(--brand), 0 calc(10px * var(--s)) calc(26px * var(--s)) rgba(0, 0, 0, .6);
 }
 .mfoot { display: flex; justify-content: center; gap: calc(14px * var(--s)); margin-top: calc(22px * var(--s)); }
@@ -1216,7 +1296,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .avface {
   position: relative; flex: none; width: calc(150px * var(--s)); height: calc(225px * var(--s));
   border-radius: calc(16px * var(--s)); overflow: hidden; background: var(--surface2);
-  border: 1px solid rgba(255, 255, 255, .12);
+  border: 1px solid var(--border);
   transition: transform var(--focus-ms) ease;
 }
 .avface img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 30%; }
@@ -1332,7 +1412,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 }
 .firstrun .fr-step i {
   flex: none; width: calc(42px * var(--s)); height: calc(42px * var(--s)); border-radius: 999px;
-  background: var(--brand); color: #fff; display: grid; place-content: center;
+  background: var(--brand); color: var(--on-brand); display: grid; place-content: center;
   font-style: normal; font-size: calc(21px * var(--s)); font-weight: 800;
 }
 .firstrun .fr-step div { display: grid; gap: calc(4px * var(--s)); }
@@ -1400,23 +1480,23 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 /* Switches outside a Settings line: the channel manager and any future list share one shape. */
 .sw {
   width: calc(64px * var(--s)); height: calc(32px * var(--s)); border-radius: 999px;
-  background: rgba(255, 255, 255, .22); position: relative; flex: none; border: 0; padding: 0;
+  background: var(--track); position: relative; flex: none; border: 0; padding: 0;
 }
 .sw.on { background: var(--brand); }
 .sw i {
   position: absolute; top: calc(4px * var(--s)); left: calc(4px * var(--s));
   width: calc(24px * var(--s)); height: calc(24px * var(--s)); border-radius: 50%;
-  background: #fff; transition: left 160ms ease;
+  background: #fff; transition: transform 160ms ease;
 }
-.sw.on i { left: calc(36px * var(--s)); }
+.sw.on i { transform: translateX(calc(32px * var(--s))); background: var(--on-brand); }
 .chg .sw, .chrow .sw { width: calc(46px * var(--s)); height: calc(24px * var(--s)); }
 .chg .sw i, .chrow .sw i { top: calc(3px * var(--s)); left: calc(3px * var(--s)); width: calc(18px * var(--s)); height: calc(18px * var(--s)); }
-.chg .sw.on i, .chrow .sw.on i { left: calc(25px * var(--s)); }
+.chg .sw.on i, .chrow .sw.on i { transform: translateX(calc(22px * var(--s))); background: var(--on-brand); }
 
 .search-empty {
   min-height: calc(360px * var(--s)); display: flex; flex-direction: column; justify-content: center;
   padding: calc(40px * var(--s)); border: 1px solid var(--border); border-radius: var(--r-panel);
-  background: linear-gradient(140deg, var(--surface), rgba(20, 20, 20, .4));
+  background: linear-gradient(140deg, var(--surface), var(--surface2));
 }
 .search-empty .big { font-size: var(--t-h3); font-weight: 800; }
 .search-empty p { color: var(--ink2); font-size: var(--t-sub); margin-top: calc(10px * var(--s)); max-width: calc(520px * var(--s)); }
@@ -1471,7 +1551,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
   display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start;
   gap: calc(8px * var(--s)); padding: calc(24px * var(--s));
   background:
-    radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.55), rgba(229,9,20,0) 55%),
+    radial-gradient(120% 80% at 20% 0%, color-mix(in srgb, var(--brand) 55%, transparent), color-mix(in srgb, var(--brand) 0%, transparent) 55%),
     linear-gradient(150deg, #2a2a2a, #101010);
 }
 .genre-art .gname { font-size: calc(40px * var(--s)); font-weight: 900; line-height: .95; color: #fff; letter-spacing: -.02em; }
@@ -1479,13 +1559,13 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .genre-art .garrow { position: absolute; top: calc(18px * var(--s)); right: calc(18px * var(--s)); color: #fff; opacity: .8; }
 .genre-art .garrow .ico { width: calc(28px * var(--s)); height: calc(28px * var(--s)); }
 .genre-card.foc .genre-art { background:
-  radial-gradient(120% 80% at 20% 0%, rgba(229,9,20,.8), rgba(229,9,20,0) 60%),
+  radial-gradient(120% 80% at 20% 0%, color-mix(in srgb, var(--brand) 80%, transparent), color-mix(in srgb, var(--brand) 0%, transparent) 60%),
   linear-gradient(150deg, #3a3a3a, #121212); }
 
 /* Detail loading: the same promise as the player's preloader, at the page scale. */
 .detail-loading {
   position: absolute; inset: 0; z-index: 6; display: grid; place-content: center;
-  justify-items: center; gap: calc(18px * var(--s)); background: #141414;
+  justify-items: center; gap: calc(18px * var(--s)); background: var(--bg);
 }
 .detail-loading .dl-mark { font-size: calc(64px * var(--s)); font-weight: 900; letter-spacing: -.03em; color: var(--brand); }
 .detail-loading .dl-bar { width: calc(360px * var(--s)); height: calc(4px * var(--s)); border-radius: 999px; background: rgba(255,255,255,.2); overflow: hidden; }
@@ -1503,7 +1583,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 .detail-facts .dk { color: var(--ink3); font-size: var(--t-meta); }
 .detail-facts .dv { color: var(--ink1); font-size: var(--t-li-meta); }
 .detail-facts .dv.muted { color: var(--ink3); }
-.advisory-line { margin-top: calc(18px * var(--s)); padding: calc(14px * var(--s)) calc(18px * var(--s)); border-left: calc(3px * var(--s)) solid var(--warn); background: rgba(242,195,58,.08); border-radius: var(--r-chip); display: grid; gap: calc(4px * var(--s)); }
+.advisory-line { margin-top: calc(18px * var(--s)); padding: calc(14px * var(--s)) calc(18px * var(--s)); border-left: calc(3px * var(--s)) solid var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); border-radius: var(--r-chip); display: grid; gap: calc(4px * var(--s)); }
 .advisory-line b { color: var(--warn); font-size: var(--t-meta); text-transform: uppercase; letter-spacing: .08em; }
 .advisory-line span { color: var(--ink1); font-size: var(--t-li-meta); }
 
@@ -1515,7 +1595,7 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 /* A channel's name is never just a name: the red pill says the stream is happening now, in the HUD where
    it stays visible while the transport bar fades. */
 .plive { font-size: calc(13px * var(--s)); font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
-  color: #fff; background: var(--brand); border-radius: var(--r-badge); padding: calc(3px * var(--s)) calc(8px * var(--s)); }
+  color: var(--on-brand); background: var(--brand); border-radius: var(--r-badge); padding: calc(3px * var(--s)) calc(8px * var(--s)); }
 
 /* The detail page keeps its two columns on a television (the CSS viewport is ~960 px there even though
    the panel is 1920). Only a genuine phone stacks it. */
@@ -1559,3 +1639,14 @@ body.kids .card.foc { box-shadow: 0 0 0 var(--ring-w) var(--focus-ring), 0 0 0 c
 }
 .card .art.has-logo + .ctitle { display: none; }
 .card.foc .art .clogo, .card.rank .art .clogo { opacity: 1; transform: none; }
+
+/* ==========================================================================
+   The build mark — which hub build this page is standing on
+   One quiet line at the foot of Home. When a screen looks wrong, the first question is whether the
+   page and the hub are the same vintage, and until now that answer only existed on the hub box.
+   ========================================================================== */
+.hub-stamp {
+  padding: calc(44px * var(--s)) var(--gutter) calc(34px * var(--s));
+  font-size: var(--t-meta); color: var(--ink2); opacity: .55;
+  letter-spacing: .06em; text-align: center;
+}

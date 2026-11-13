@@ -3,7 +3,6 @@ package com.scenix.tv.core
 import android.content.res.AssetManager
 import android.util.Log
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
@@ -17,20 +16,33 @@ import java.util.concurrent.ThreadFactory
  *
  * Standalone mode and the fixture preview answer the same contract from the same APK, so the
  * socket handling, the bounded body reader, the static asset server and the response writer live
- * here once. A subclass only decides what `/app/v1` means; everything else — loopback binding,
+ * here once. A subclass only decides what `/app/v1` means; everything else — the binding,
  * `Connection: close`, cache policy, path traversal refusal — is identical.
- *
- * Loopback only, ephemeral port, no authentication. Nothing outside this TV can reach it.
  */
-abstract class LoopbackServer(protected val assets: AssetManager) {
+abstract class LoopbackServer(
+    protected val assets: AssetManager,
+    bindAddress: InetAddress = InetAddress.getByName("127.0.0.1"),
+    preferredPort: Int = 0,
+) {
 
-    private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
+    /**
+     * The listening socket. Standalone asks for every interface on a fixed port so a phone or laptop
+     * on the same Wi-Fi can open the same page the hub serves and type add-on addresses there; the
+     * fixture stays loopback-only. Any port the OS falls back to is still reported through [port].
+     */
+    private val server = try {
+        ServerSocket(preferredPort, 8, bindAddress)
+    } catch (t: Throwable) {
+        // The one predictable port this backend wanted is taken by something else; the address the
+        // screens show is read from `port`, so an ephemeral fallback stays honest everywhere.
+        ServerSocket(0, 8, bindAddress)
+    }
     private val pool = Executors.newFixedThreadPool(POOL_THREADS, ThreadFactory { r ->
         Thread(r, "scenix-server").apply { isDaemon = true }
     })
     @Volatile private var running = true
 
-    /** The port the page and every `/app/v1` call hang off. */
+    /** The port internal `/app/v1` calls use. */
     val port: Int get() = server.localPort
 
     fun start() {
@@ -116,54 +128,15 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
         return buf.copyOf(got)
     }
 
-    // ---- the bundled page ------------------------------------------------------------------------
+    // ---- bundled web surface (standalone phone pairing) ---------------------------------------
+    //
+    // The APK already ships the full web snapshot under assets/web/ (copyHubUi from hub/web).
+    // Standalone mode serves it on the same 0.0.0.0:8787 socket the /app/v1 contract uses,
+    // so a phone scanning the TV's QR opens the same Settings control centre the hub serves.
+    // A fixture (FixtureServer) intentionally stays API-only and never calls serveWeb().
 
-    /**
-     * The page is mounted at `/ui/` by a hub, and its own asset paths are written that way, so a
-     * backend answers `/ui/app.css` and `/app.css` as one file. That is what lets the same untouched
-     * bundle run against either backend.
-     */
-    protected fun static(res: Res, requested: String) {
-        val rel = when {
-            requested == "/" || requested.isBlank() || requested == "/ui" || requested == "/ui/" -> "index.html"
-            requested.startsWith("/ui/") -> requested.removePrefix("/ui/")
-            else -> requested.removePrefix("/")
-        }
-        if (rel.contains("..")) {
-            res.json(400, JSONObject().put("error", "bad path"))
-            return
-        }
-        val bytes = readAsset(rel)
-        when {
-            bytes == null -> res.json(404, JSONObject().put("error", "not found"))
-            bytes.size > MAX_STATIC -> res.json(413, JSONObject().put("error", "file too large"))
-            else -> res.send(200, contentType(rel), bytes)
-        }
-    }
-
-    /**
-     * One asset, read with a ceiling. A file in this APK that outgrew the page it belongs to is refused
-     * rather than streamed, because a TV with 2 GB of RAM has no room for a mistake like that.
-     */
-    private fun readAsset(rel: String): ByteArray? = try {
-        assets.open("web/$rel").use { input ->
-            val out = ByteArrayOutputStream()
-            val buf = ByteArray(8 * 1024)
-            var total = 0
-            while (true) {
-                val n = input.read(buf)
-                if (n < 0) break
-                out.write(buf, 0, n)
-                total += n
-                if (total > MAX_STATIC) break
-            }
-            out.toByteArray()
-        }
-    } catch (t: Throwable) {
-        null
-    }
-
-    private fun contentType(path: String): String = when (path.substringAfterLast('.', "")) {
+    /** MIME types served by the hub's webui.js, mirrored here so UI assets answer Content-Type identically. */
+    private fun webMime(rel: String): String = when (rel.substringAfterLast('.', "").lowercase()) {
         "html" -> "text/html; charset=utf-8"
         "js", "mjs" -> "text/javascript; charset=utf-8"
         "css" -> "text/css; charset=utf-8"
@@ -174,9 +147,55 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
         "webp" -> "image/webp"
         "ico" -> "image/x-icon"
         "woff2" -> "font/woff2"
-        "woff" -> "font/woff"
         "txt" -> "text/plain; charset=utf-8"
         else -> "application/octet-stream"
+    }
+
+    /**
+     * Serve one bundled web file, or return false when [path] is not a web path / the file is absent.
+     *  · "/" or "/index.html" → web/index.html
+     *  · "/ui/<file>"        → web/<file>   (same mapping as hub/core/webui.js's /ui/ prefix)
+     * Only GET/HEAD are served; other methods are not web reads.
+     */
+    protected fun serveWeb(res: Res, method: String, path: String): Boolean {
+        if (method != "GET" && method != "HEAD") return false
+        val rel = when {
+            path == "/" || path == "/index.html" -> "index.html"
+            // The QR's scanned page is a single self-contained HTML file, so it works with no
+            // /ui/ asset requests and no hub credential on the phone.
+            path == "/remote" || path == "/remote/" -> "remote.html"
+            path.startsWith("/ui/") -> path.removePrefix("/ui/")
+            else -> return false
+        }
+        // Refuse traversal and empty names: "/ui/../../assets/…" must never open a bundle file.
+        val clean = rel.trim().trimStart('/')
+        if (clean.isBlank() || clean.contains('\u0000') || clean.split('/').any { it == ".." || it == "." }) return false
+        val assetPath = "web/$clean"
+        val bytes = try {
+            assets.open(assetPath).use { it.readBytes() }
+        } catch (_: Throwable) {
+            return false
+        }
+        if (bytes.size > MAX_WEB_BYTES) return false
+        val type = webMime(clean)
+        if (method == "HEAD") {
+            res.begin(200, type, bytes.size.toLong())
+            res.end()
+        } else {
+            res.send(200, type, bytes)
+        }
+        return true
+    }
+
+    /**
+     * Browser UI files live on the paired Hub, not inside the TV APK. Answer unknown loopback paths
+     * explicitly so a stray `http://127.0.0.1:<port>/` does not masquerade as a usable web surface.
+     */
+    protected fun notFound(res: Res, path: String) {
+        res.json(404, JSONObject()
+            .put("error", "not found")
+            .put("path", path)
+            .put("detail", "This TV exposes the local API only; use a paired Hub for the browser interface."))
     }
 
     // ---- request helpers -------------------------------------------------------------------------
@@ -223,6 +242,7 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
                 409 -> "Conflict"
                 413 -> "Payload Too Large"
                 416 -> "Range Not Satisfiable"
+                429 -> "Too Many Requests"
                 502 -> "Bad Gateway"
                 503 -> "Service Unavailable"
                 else -> "Error"
@@ -269,8 +289,6 @@ abstract class LoopbackServer(protected val assets: AssetManager) {
         private const val TAG = "ScenixServer"
         const val POOL_THREADS = 8
         const val MAX_BODY = 256 * 1024
-        // The ceiling a hub's own static server holds a page file to. The whole bundle is well under it; the
-        // number is there so one wrong file cannot fill a TV's memory.
-        private const val MAX_STATIC = 4 * 1024 * 1024
+        private const val MAX_WEB_BYTES = 4 * 1024 * 1024
     }
 }

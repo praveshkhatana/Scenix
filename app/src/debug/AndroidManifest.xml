@@ -18,5 +18,11 @@
         <activity
             android:name=".StudioActivity"
             android:exported="true" />
+        <!-- The press rules, tested on the box they must work on: it synthesizes a remote's held OK
+             (down, autorepeats, release) which `adb shell input` cannot send, and reports PASS/FAIL in
+             logcat. Release builds do not contain it. -->
+        <activity
+            android:name=".PressLabActivity"
+            android:exported="true" />
     </application>
 </manifest>

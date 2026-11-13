@@ -32,6 +32,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -39,6 +40,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -55,6 +57,7 @@ import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Programme
 import com.scenix.tv.core.Motion
+import com.scenix.tv.core.PlaybackOriginPolicy
 import com.scenix.tv.core.Theme
 import com.scenix.tv.core.Views
 import com.scenix.tv.plugins.player.Ceilings
@@ -78,6 +81,9 @@ import org.json.JSONObject
  *   · a live channel has no scrubber and no speed, and left/right at rest zaps the live row.
  *   · a series rolls into its next episode with a visible countdown and an Undo window.
  */
+// Media3's player tuning and analytics surface is intentionally experimental. The TV player is the
+// only owner of that surface; opting in here keeps the acknowledgement scoped to playback code.
+@OptIn(UnstableApi::class)
 class PlayerActivity : Activity() {
 
     private lateinit var app: AppContext
@@ -179,6 +185,8 @@ class PlayerActivity : Activity() {
     private var pendingEpisodeFocus: EpisodeRowKey? = null
     private var selectedAudioId: String? = null
     private var selectedSubId: String? = null
+    /** How many times this session swapped audio tracks after the panel refused a codec. */
+    private var audioTrackSwitches = 0
     /** The language column's current filter in the subtitle sheet. */
     private var subLangFilter = ""
     private var audioChosen = false
@@ -216,9 +224,19 @@ class PlayerActivity : Activity() {
     private var liveWatchMs = 0L
     private var liveWatchBaseAt = 0L
     private var requestGen = 0
+
+    /**
+     * The hub said "this copy is preparing, ask again" and a retry is already scheduled. While that
+     * is true the preloader must not fail over on its own clock: a cold P2P engine on a television
+     * legitimately spends 30 s on its first peer lookup, and a failover walk racing the warming
+     * retry only splits the engine between two copies.
+     */
+    private var warmingPending = false
     private var subsGen = 0
     private var failovers = 0
     private var sameCopyRetries = 0
+    /** Set when a subtitle payload failed to parse (bad VTT/SRT); subtitles stay off for this title. */
+    private var textTrackBlocked = false
     /** Bounded re-tunes after a live feed closed its body mid-evening; reset when a picture plays. */
     private var liveEndedRetries = 0
     private var bufferingSince = 0L
@@ -227,6 +245,16 @@ class PlayerActivity : Activity() {
     private var cushionAheadMs = -1L
     private var cushionFalling = 0
     private var cushionSwitches = 0
+    /**
+     * The last cushion evidence taken while a frame was actually moving, kept across the freeze that
+     * follows it. [cushionAheadMs] is cleared the moment playback stops, so by the time the 12 s stall
+     * clock fires the only record of WHY the picture froze has been erased — and a copy that was being
+     * outrun by its own film then gets the same patience as one the hub merely reopened behind the scenes.
+     */
+    private var lastLiveCushionMs = -1L
+    private var lastLiveFallingTicks = 0
+    /** True when this buffering spell began with the picture already running out. */
+    private var ranDry = false
     /**
      * A copy that is still filling is not a copy that failed. The watchdog waits before spending the
      * retry/failover budget; an ExoPlayer error still gets its own two soft reloads first.
@@ -239,7 +267,10 @@ class PlayerActivity : Activity() {
             return@Runnable
         }
         val pos = filmPosition(p)
-        if (sameCopyRetries < 2) {
+        // A freeze that began with a thin cushion is a copy losing the rate race, not a hiccup on a copy
+        // that is keeping pace. The second twelve-second reload of the same starved stream is twelve more
+        // seconds of loading card, so a copy that ran dry gets one retry before the viewer is moved.
+        if (sameCopyRetries < (if (ranDry) 1 else 2)) {
             sameCopyRetries++
             showCenter("Still loading this copy…", true)
             // Gen-guarded like every HTTP path: a switch or an episode jump that resolved while this
@@ -264,6 +295,8 @@ class PlayerActivity : Activity() {
     /** True while Picture size is on Zoom; the surface stays scaled across retunes. */
     private var zoomSurface = false
     private var liveLoaded = false
+    /** How many times the live wall has been asked for after answering empty (see [prefetchLiveChannels]). */
+    private var liveRetries = 0
     private var pausedForBackground = false
     /** True while the viewer asked for the picture's own audio instead of the hub's language mix. */
     private var mixDisabled = false
@@ -276,6 +309,8 @@ class PlayerActivity : Activity() {
 
     // ---- media ----------------------------------------------------------------------------
     private var player: ExoPlayer? = null
+    /** Whether [player]'s meter was created for a verified hub-owned local HLS ladder. */
+    private var playerUsesLocalLadderSeed = false
     private var http: DefaultHttpDataSource.Factory? = null
     private var playerView: PlayerView? = null
     private var preloadOverlay: FrameLayout? = null
@@ -283,8 +318,16 @@ class PlayerActivity : Activity() {
     private var preloadFill: ValueAnimator? = null
     private var preloadDismissing = false
     private var preloadShownAt = 0L
+    /** The playhead-buffer mark taken when the preloader appears; growth past it means bytes are flowing. */
+    private var preloadBufferMarkMs = -1_500L
     private var preloadStatus: TextView? = null
     private var preloadFallback: Runnable? = null
+
+    /** How far the player has buffered, in ms from the media start (0 when nothing is buffered yet). */
+    private fun bufferedMs(): Long = player?.let { p ->
+        if (p.playbackState == Player.STATE_IDLE) return 0L
+        maxOf(0L, p.bufferedPosition)
+    } ?: 0L
 
     // ---- chrome ---------------------------------------------------------------------------
     private lateinit var root: FrameLayout
@@ -321,7 +364,7 @@ class PlayerActivity : Activity() {
     private var volumeValue: TextView? = null
     private var volumeIconView: ImageView? = null
     private lateinit var centerBox: LinearLayout
-    private lateinit var centerSpinner: ProgressBar
+    private lateinit var centerSpinner: android.view.View
     private lateinit var centerText: TextView
 
     private var panel: View? = null
@@ -388,7 +431,9 @@ class PlayerActivity : Activity() {
             title = intent?.getStringExtra(EXTRA_TITLE).orEmpty(),
         )
         displayTitle = spec.title
-        buildPlayer()
+        // The real player is built only after /play identifies the delivery origin. A Studio preview
+        // has no delivery answer, so it keeps an unseeded player solely for its static chrome.
+        if (previewMode) buildPlayer(seedLocalLadder = false)
         buildViews()
         setContentView(root)
         if (previewMode) {
@@ -438,6 +483,8 @@ class PlayerActivity : Activity() {
         playerView?.player = null
         player?.release()
         player = null
+        bandwidthMeter = null
+        playerUsesLocalLadderSeed = false
         super.onDestroy()
     }
 
@@ -445,7 +492,7 @@ class PlayerActivity : Activity() {
     // media
     // =========================================================================================
 
-    private fun buildPlayer() {
+    private fun buildPlayer(seedLocalLadder: Boolean) {
         val httpFactory = DefaultHttpDataSource.Factory()
             // NOT setUserAgent: DefaultHttpDataSource applies the factory's UA AFTER the per-request
             // properties, so the hub's own User-Agent — the browser UA live feeds demand — was silently
@@ -474,17 +521,17 @@ class PlayerActivity : Activity() {
                 dataSpec
             }
         }
-        // An adaptive ladder begins on the rung the player's starting bandwidth estimate allows. With
-        // no estimate media3 conservatively opens the lowest rung, so a 720p film visibly starts at
-        // 480p and upshifts four seconds later. The hub is on this household's LAN, where even a weak
-        // Wi-Fi link carries more than 9 Mbps; seeding that figure selects 720p at once for a 720/480
-        // ladder, and 720p first (then 1080p by measurement) for a 1080 ladder. A remote hub keeps
-        // media3's own cautious start: the LAN assumption does not hold beyond the router.
+        // An adaptive ladder begins on the rung the player's starting bandwidth estimate allows. This
+        // path is entered only after a play answer proved that the HLS ladder is both local and owned
+        // by this control origin. A loopback fixture/standalone controller may still hand us a public
+        // URL, where media3 must retain its cautious default instead of inheriting a LAN assumption.
         val meterBuilder = DefaultBandwidthMeter.Builder(this)
             // A network-type callback at startup would otherwise replace the LAN seed with media3's
             // country default (often 1 Mbps) before the first segment is measured.
             .setResetOnNetworkTypeChange(false)
-        if (isLocalHub(hubOrigin.host)) meterBuilder.setInitialBitrateEstimate(9_000L)
+        if (seedLocalLadder) {
+            meterBuilder.setInitialBitrateEstimate(PlaybackOriginPolicy.LOCAL_LADDER_INITIAL_BITRATE_BPS)
+        }
         val meter = meterBuilder.build()
         bandwidthMeter = meter
         val builder = ExoPlayer.Builder(this)
@@ -528,6 +575,22 @@ class PlayerActivity : Activity() {
             }
         })
         player = p
+        playerUsesLocalLadderSeed = seedLocalLadder
+        playerView?.player = p
+    }
+
+    /**
+     * A player owns its bandwidth meter, so switch it when the delivery policy changes. This keeps a
+     * prior local-ladder measurement from becoming the starting estimate for a later direct remote
+     * source (or the other way round) in the same activity.
+     */
+    private fun ensurePlayer(seedLocalLadder: Boolean) {
+        if (player != null && playerUsesLocalLadderSeed == seedLocalLadder) return
+        playerView?.player = null
+        player?.release()
+        player = null
+        bandwidthMeter = null
+        buildPlayer(seedLocalLadder)
     }
 
     private fun listener() = object : Player.Listener {
@@ -538,7 +601,29 @@ class PlayerActivity : Activity() {
                     if (bufferingSince == 0L) {
                         bufferingSince = System.currentTimeMillis()
                         handler.removeCallbacks(stallCheck)
-                        handler.postDelayed(stallCheck, STALL_AFTER_MS)
+                        // The freeze says nothing on its own; what the cushion was doing a second earlier
+                        // does. A thin cushion that had already been shrinking for seconds is a copy being
+                        // outrun by its own film, and twelve seconds of "Buffering…" plus two same-copy
+                        // reloads on top of it only postpones the switch the viewer needs. A cushion that
+                        // was full and vanished is the hub reopening behind the scenes, and that one has
+                        // earned the patience the stall clock gives it.
+                        ranDry = lastLiveFallingTicks >= CUSHION_FALL_TICKS - 2 ||
+                            (lastLiveCushionMs in 0L until CUSHION_FLOOR_MS)
+                        if (lastLiveFallingTicks >= CUSHION_FALL_TICKS - 2 && !live && !recoveryScheduled
+                            && cushionSwitches < CUSHION_SWITCHES_MAX
+                        ) {
+                            cushionSwitches++
+                            recoveryScheduled = true
+                            Log.i(TAG, "picture ran dry on a falling cushion: last " + lastLiveCushionMs
+                                + "ms ahead after " + lastLiveFallingTicks + " falling ticks")
+                            quietOrCenter(
+                                if (lowerAlternative() != null) "This copy fell behind — moving to a lighter one…"
+                                else "This copy fell behind — trying another one…"
+                            )
+                            failoverToNext(preferLower = true)
+                        } else {
+                            handler.postDelayed(stallCheck, STALL_AFTER_MS)
+                        }
                     }
                     updatePlayLabel()
                 }
@@ -565,6 +650,33 @@ class PlayerActivity : Activity() {
                     updatePlayLabel()
                     onEnded()
                 }
+                // `stop()` moves the reusable player through IDLE before the next item is prepared.
+                // It is not a playback failure, but a pending stall timer from the previous item must
+                // never fire over the next item's "Preparing" state.
+                Player.STATE_IDLE -> {
+                    bufferingSince = 0L
+                    handler.removeCallbacks(stallCheck)
+                    updatePlayLabel()
+                }
+            }
+        }
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            // A seek empties the buffer by definition, so what the cushion was doing before it says
+            // nothing about the copy. Without this, pressing >> on a copy that is keeping pace would be
+            // read as a copy that just ran dry, and the viewer would get swapped to a different source.
+            if (reason == Player.DISCONTINUITY_REASON_SEEK
+                || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT
+            ) {
+                lastLiveCushionMs = -1L
+                lastLiveFallingTicks = 0
+                cushionAheadMs = -1L
+                cushionFalling = 0
+                ranDry = false
             }
         }
 
@@ -662,8 +774,11 @@ class PlayerActivity : Activity() {
                         "video/x-vnd.on2.vp9" -> add("vp9")
                         "video/mp4v-es" -> add("mpeg4")
                         "audio/mp4a-latm" -> add("aac")
-                        "audio/ac3" -> add("ac3")
-                        "audio/eac3" -> add("eac3")
+                        // Only advertise a codec this panel actually opened. Sony's table lists
+                        // AC3/EAC3 while AudioTrack creation fails on the built-in speakers; telling
+                        // the hub otherwise is how a copy was chosen that could never make a sound.
+                        "audio/ac3" -> if (!audioCodecBlocked("ac3")) add("ac3")
+                        "audio/eac3" -> if (!audioCodecBlocked("eac3")) add("eac3")
                         "audio/opus" -> add("opus")
                     }
                 }
@@ -673,6 +788,93 @@ class PlayerActivity : Activity() {
             // hub filters nothing.
         }
         return out
+    }
+
+    private fun audioCodecBlocked(codec: String): Boolean =
+        app.prefs.audioBlockedCodecs().contains(codec.trim().lowercase())
+
+    /**
+     * The right-hand note for a track in this copy. Two tracks in the same language used to read as
+     * two identical "English · in this copy" rows; the codec and channel layout are what tell a
+     * viewer (and this activity) which one their panel can actually open.
+     */
+    private fun audioTrackNote(o: JSONObject): String {
+        val codec = str(o, "codec").lowercase()
+        val channels = o.optInt("channels", 0)
+        val shape = when {
+            channels >= 8 -> "7.1"
+            channels == 6 -> "5.1"
+            channels == 2 -> "2.0"
+            channels == 1 -> "mono"
+            channels > 0 -> channels.toString() + "ch"
+            else -> ""
+        }
+        val codecWords = when {
+            codec.startsWith("eac3") || codec == "ec-3" -> "EAC3"
+            codec.startsWith("ac3") || codec == "ac-3" -> "AC3"
+            codec.startsWith("aac") || codec.startsWith("mp4a") -> "AAC"
+            codec.startsWith("dts") -> "DTS"
+            codec.contains("truehd") -> "TrueHD"
+            codec.isNotBlank() -> codec.uppercase()
+            else -> ""
+        }
+        val detail = listOf(codecWords, shape).filter { it.isNotBlank() }.joinToString(" ")
+        val head = if (codec.isNotBlank() && audioCodecBlocked(codec)) "not supported here"
+        else "in this copy"
+        return if (detail.isBlank()) head else head + " · " + detail
+    }
+
+    /** The audio codec a media3 AudioTrack failure names, in the hub's short spelling. */
+    private fun audioCodecFromError(error: Throwable): String {
+        var cur: Throwable? = error
+        repeat(4) {
+            val m = Regex("audio/([a-z0-9._-]+)").find(cur?.message.orEmpty().lowercase())
+            if (m != null) {
+                val raw = m.groupValues[1]
+                return when {
+                    raw.startsWith("ac-3") || raw == "ac3" -> "ac3"
+                    raw.startsWith("ec-3") || raw == "eac3" -> "eac3"
+                    raw.startsWith("vnd.dts") -> "dts"
+                    raw.contains("truehd") -> "truehd"
+                    raw.contains("mp4a") -> "aac"
+                    raw.contains("opus") -> "opus"
+                    raw.contains("vorbis") -> "vorbis"
+                    raw.contains("flac") -> "flac"
+                    raw.contains("mpeg") -> "mp3"
+                    else -> raw.substringAfterLast('.')
+                }
+            }
+            cur = cur?.cause ?: return ""
+        }
+        return ""
+    }
+
+    /**
+     * The audio track this panel should start with: the hub's pick unless this panel already refused
+     * its codec, in which case the first track in the same file with a codec it has not refused.
+     * `null` keeps media3's own default, which is right when the hub named no track.
+     */
+    private fun decodableAudioId(preferred: String?): String? {
+        if (audioTracks.length() == 0) return preferred
+        val blocked = app.prefs.audioBlockedCodecs()
+        fun codecOf(id: String?): String {
+            if (id == null) return ""
+            for (i in 0 until audioTracks.length()) {
+                val t = audioTracks.optJSONObject(i) ?: continue
+                if (str(t, "id") == id) return str(t, "codec").lowercase()
+            }
+            return ""
+        }
+        if (preferred != null && codecOf(preferred) !in blocked) return preferred
+        // Nothing refused yet and the hub named no track: media3's own default is the honest choice.
+        if (preferred == null && blocked.isEmpty()) return null
+        for (i in 0 until audioTracks.length()) {
+            val t = audioTracks.optJSONObject(i) ?: continue
+            val id = str(t, "id")
+            if (id.isBlank()) continue
+            if (str(t, "codec").lowercase() !in blocked) return id
+        }
+        return preferred
     }
 
     private fun sameTitle(a: String, b: String): Boolean {
@@ -698,6 +900,7 @@ class PlayerActivity : Activity() {
         tried.clear()
         failovers = 0
         sameCopyRetries = 0
+        textTrackBlocked = false
         bufferingSince = 0L
         recoveryScheduled = false
         mixDisabled = false
@@ -760,10 +963,17 @@ class PlayerActivity : Activity() {
         api.play(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@play
             val url = str(reply, "url")
-            val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
-                str(reply, "error").contains("prepar", ignoreCase = true)
+            // Only an answer that says it is warming earns another ask. A 503 used to qualify on the
+            // status alone, so a terminal "no playable source" (the hub's 404, or an older hub's 503
+            // carrying a magnet) bought seven retries and a minute of spinner before the card.
+            val cooldown = hubCooldownMs(reply)
+            val warming = warmingAnswer(reply, status) || cooldown > 0L
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
-                val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
+                warmingPending = true
+                val wait = maxOf(
+                    (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L),
+                    cooldown,
+                )
                 showCenter("The hub is preparing this copy…", true)
                 handler.postDelayed({
                     if (gen == requestGen && !isFinishing) {
@@ -772,10 +982,16 @@ class PlayerActivity : Activity() {
                 }, wait)
                 return@play
             }
+            warmingPending = false
             if (status !in 200..299 || url.isBlank() || !isPlayable(url)) {
-                val why = str(reply, "error")
-                    .ifBlank { transport ?: "The hub could not open this title" }
-                showError(why)
+                // The hub may name copies it did not try because the first refusal was this one. Ask
+                // the next one explicitly instead of showing the card while a playable sibling exists.
+                if (failOverToAlternative(reply, positionMs)) return@play
+                val why = explainFailure(
+                    reply,
+                    transport ?: "The hub could not open this title",
+                )
+                showError(why, title = noSourceHeading(reply), reply = reply)
                 return@play
             }
             sameCopyRetries = 0
@@ -784,10 +1000,46 @@ class PlayerActivity : Activity() {
         }
     }
 
+    /** A 503, or an error word from a hub that predates the explicit `warming` flag. */
+    private fun warmingAnswer(reply: JSONObject?, status: Int): Boolean =
+        reply?.optBoolean("warming", false) == true ||
+            (status == 503 && (reply == null ||
+                str(reply, "error").contains("prepar", ignoreCase = true)))
+
+    /**
+     * A hub cooldown, not a verdict on the title. A deployed hub blacklists a cold torrent for half a
+     * minute after its first press times out; the retry two seconds later then answers "no playable
+     * source" whose only reason is "engine already tried this copy, asked again in 27s". Treating that
+     * as terminal is what made every cold play fail on the ask right after the warm one. When every
+     * tried line is that cooldown (or the walk's closing "nothing better"), wait it out and ask again.
+     * Only a short cooldown qualifies: a torrent the engine read and found no video in is held for ten
+     * minutes, and that is a verdict, not a warm-up.
+     */
+    private fun hubCooldownMs(reply: JSONObject?): Long {
+        val tried = reply?.optJSONArray("tried") ?: return 0L
+        var wait = 0L
+        var sawCooldown = false
+        for (i in 0 until tried.length()) {
+            val line = tried.optString(i, "")
+            if (line.isBlank()) continue
+            val m = Regex("asked again in (\\d+)s", RegexOption.IGNORE_CASE).find(line)
+            if (m != null) {
+                sawCooldown = true
+                wait = maxOf(wait, m.groupValues[1].toLongOrNull() ?: 0L)
+            } else if (!line.startsWith("nothing better", ignoreCase = true)) {
+                return 0L
+            }
+        }
+        return if (sawCooldown && wait in 1..45) (wait * 1000L).coerceIn(1200L, 8000L) else 0L
+    }
+
     /** The answer is good: turn it into a MediaItem and start. Used for play, switch and retry. */
     private fun start(reply: JSONObject, positionMs: Long, playWhenReady: Boolean) {
         pendingSeekTarget = -1L
         bufferingSince = 0L
+        ranDry = false
+        lastLiveCushionMs = -1L
+        lastLiveFallingTicks = 0
         handler.removeCallbacks(stallCheck)
         // A hub answer must belong to the title this screen opened. If a provider or a stale route
         // answers another identity, refuse it instead of putting a different film on screen.
@@ -804,6 +1056,16 @@ class PlayerActivity : Activity() {
             showError("The hub answered a different title. Nothing was started.")
             return
         }
+        // Control and delivery origins are distinct: fixture/standalone answer control calls through
+        // loopback but can return direct public HLS. Only a verified same-origin local ladder may use
+        // the optimistic 9 Mbps initial estimate or the temporary 720p start-rung override.
+        val useLocalLadderSeed = PlaybackOriginPolicy.usesLocalLadderSeed(
+            controlOrigin = HubEndpoint.base(this),
+            mediaUrl = str(reply, "url"),
+            kind = str(reply, "kind"),
+            hasLadder = reply.optJSONObject("ladder") != null,
+        )
+        ensurePlayer(useLocalLadderSeed)
         clearError()
         // A failed source pick writes a status line; the new copy starting is the moment that line
         // stops being true. Leaving it up is how "not available" sat on screen over a playing film.
@@ -826,9 +1088,9 @@ class PlayerActivity : Activity() {
             audioCatalogKey = catalogKey
             chosenSourceKey = ""
             pendingSourceKey = ""
+            audioTrackSwitches = 0
         }
         mergeAudioOptions(reply.optJSONArray("audioOptions") ?: JSONArray())
-        audioOptions = JSONArray(audioCatalog.values.toList())
         introStartMs = reply.optLong("introStartMs", 0L)
         introEndMs = reply.optLong("introEndMs", 0L)
         if (introEndMs <= 0L) skipChip?.visibility = View.GONE
@@ -839,8 +1101,7 @@ class PlayerActivity : Activity() {
                 ?: reply.optJSONObject("remux")?.optLong("startMs", 0L)
                 ?: 0L
             ).coerceAtLeast(0L)
-        startRungPending = reply.optJSONObject("ladder") != null &&
-            isLocalHub(Uri.parse(HubEndpoint.base(this)).host)
+        startRungPending = useLocalLadderSeed
         startRungLocked = false
         forcedRungHeight = 0
         val mix = reply.optJSONObject("audioMix")
@@ -888,7 +1149,10 @@ class PlayerActivity : Activity() {
         // new copy (matched by stream index/id, and left alone if the new copy cannot honour it).
         val answerAudio = str(reply, "selectedAudio").takeIf { it.isNotBlank() }
         val answerSub = str(reply, "selectedSub").takeIf { it.isNotBlank() }
-        if (!audioChosen) selectedAudioId = answerAudio
+        // A panel that already refused a codec must not be handed the same track again: the hub's
+        // pick is only a starting point, and a file with an AAC track next to the AC3 one can play
+        // without the viewer touching the Audio menu.
+        if (!audioChosen) selectedAudioId = decodableAudioId(answerAudio)
         if (!subChosen) selectedSubId = answerSub
 
         // Baseline UA first, then the answer's own headers on top: setDefaultRequestProperties REPLACES
@@ -927,18 +1191,29 @@ class PlayerActivity : Activity() {
             (durationMs - 20_000).coerceAtLeast(0L) else positionMs
         val mediaStart = if (live) C.TIME_UNSET
             else (capped - timelineOffsetMs).coerceAtLeast(0L)
+        if (textTrackBlocked) {
+            // A subtitle payload that failed to parse must never be re-selected, even if the player
+            // was rebuilt by ensurePlayer above and lost the parameters the error handler set.
+            val params = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .build()
+            p.trackSelectionParameters = params
+        }
         p.setMediaItem(item, mediaStart)
         // A source switch, an episode roll and a failover all reuse the same ExoPlayer; re-asserting
         // the session's trim here keeps a viewer's volume through every one of those paths.
         p.volume = if (muted || volume <= 0.001f) 0f else volume
         pendingAudio = selectedAudioId
-        pendingSub = selectedSubId
+        pendingSub = if (textTrackBlocked) null else selectedSubId
         audioApplied = false
         subApplied = false
         subsInItem = hubSubs.length()
         p.prepare()
         p.playWhenReady = playWhenReady
-        speed = p.playbackParameters.speed
+        // The session's speed lives in this field; a player rebuilt when the ladder-seed flag
+        // flips (remote source → local ladder) starts at 1.0 and must INHERIT the viewer's chosen
+        // speed, not hand it back a reset. Nothing else ever moves playbackParameters on its own.
         p.setPlaybackSpeed(speed)
         paintTransport(true)
         updateHeader()
@@ -966,7 +1241,9 @@ class PlayerActivity : Activity() {
         // An offset ladder's media timeline starts at the resume point, while an external subtitle
         // file is timed from the beginning of the film. Loading it unchanged would show every line
         // minutes early; the menu says subtitles are off rather than pretending they are in sync.
-        if (timelineOffsetMs <= 0L) for (i in 0 until hubSubs.length()) {
+        // The hub may label an SRT file "vtt"; once that payload has failed to parse, attaching the
+        // same sidecars to the next media item would only hand the parser the same bomb again.
+        if (!textTrackBlocked && timelineOffsetMs <= 0L) for (i in 0 until hubSubs.length()) {
             val s = hubSubs.optJSONObject(i) ?: continue
             val subUrl = str(s, "url").ifBlank { str(s, "src") }
             if (subUrl.isBlank()) continue
@@ -1054,28 +1331,6 @@ class PlayerActivity : Activity() {
             + ((bandwidthMeter?.bitrateEstimate ?: 0L) / 1000) + " kbps")
     }
 
-    /**
-     * Whether the hub address names this household's own network: loopback, the three private IPv4
-     * ranges, link-local IPv6, or a `.local` name. Only there is it safe to start a ladder on a high
-     * rung before measuring the link.
-     */
-    private fun isLocalHub(host: String?): Boolean {
-        val h = host?.trim()?.lowercase() ?: return false
-        if (h.isEmpty()) return false
-        if (h == "localhost" || h == "::1" || h.endsWith(".local")) return true
-        // A URI host is a name or an address. Only a colon proves the latter, so a domain that happens
-        // to start with "fc" is not mistaken for a unique-local IPv6 address.
-        if (h.contains(':') && (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd"))) {
-            return true
-        }
-        val parts = h.split('.')
-        if (parts.size != 4) return false
-        val a = parts[0].toIntOrNull() ?: return false
-        val b = parts[1].toIntOrNull() ?: return false
-        return a == 127 || a == 10 || (a == 172 && b in 16..31) ||
-            (a == 192 && b == 168) || (a == 169 && b == 254)
-    }
-
     /** A hub-relative subtitle path becomes an address the decoder can open. */
     private fun absoluteUrl(url: String): String = when {
         url.startsWith("http://", true) || url.startsWith("https://", true) -> url
@@ -1133,7 +1388,8 @@ class PlayerActivity : Activity() {
         // order, so the row's place in it is the group to select. The old `a:3` -> group 3 lookup
         // silently left a Hindi track unselected on a Telugu/Tamil/Hindi file.
         val ordered = if (type == C.TRACK_TYPE_AUDIO) audioTracks else embeddedSubs
-        val group = findGroup(groups, id, ordered) ?: return false
+        val group = findGroup(groups, id, ordered, preferPosition = type == C.TRACK_TYPE_AUDIO)
+            ?: return false
         b.setTrackTypeDisabled(type, false)
             .clearOverridesOfType(type)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, listOf(0)))
@@ -1159,19 +1415,36 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun findGroup(groups: List<Tracks.Group>, id: String, ordered: JSONArray?): Tracks.Group? {
+    private fun findGroup(
+        groups: List<Tracks.Group>,
+        id: String,
+        ordered: JSONArray?,
+        preferPosition: Boolean = false,
+    ): Tracks.Group? {
         // First: the language/label the hub recorded for the clicked row, matched against what media3
         // reports. The positional lookup below is only correct while the hub's list is EXACTLY the
         // container's stream list — commentary filtering, language dedupe or a cover-art stream media3
         // hides all shift it, and a positional hit then selects a silent wrong language.
-        val row = ordered?.optJSONObject(positionOf(ordered, id).takeIf { it >= 0 } ?: -1)
+        val position = positionOf(ordered, id)
+        val row = ordered?.optJSONObject(position.takeIf { it >= 0 } ?: -1)
         val rowLabel = row?.optString("label").orEmpty().ifBlank { row?.optString("name").orEmpty() }
         val rowLang = row?.optString("lang").orEmpty().ifBlank { row?.optString("language").orEmpty() }
         if (rowLabel.isNotBlank()) {
             groups.firstOrNull { g -> (0 until g.length).any { i -> g.getTrackFormat(i).label == rowLabel } }
                 ?.let { return it }
         }
-        val position = positionOf(ordered, id)
+        // Audio rows name the container's audio streams in order, so the row's position IS the
+        // stream. Trust it when the group there carries the row's language: this is the only handle
+        // that separates two tracks in one language (English AC3 and English AAC), which a
+        // language-only search always collapsed onto the first — the one this panel had refused.
+        if (preferPosition && position >= 0) {
+            val byPos = groups.getOrNull(position)
+            val langOk = byPos != null && (rowLang.isBlank() || (0 until byPos.length).any { i ->
+                val f = byPos.getTrackFormat(i)
+                f.language == rowLang || (f.language.isNullOrBlank() && rowLang == "und")
+            })
+            if (byPos != null && langOk) return byPos
+        }
         if (position >= 0 && rowLang.isBlank() && rowLabel.isBlank()) {
             groups.getOrNull(position)?.let { return it }
         } else if (position >= 0 && rowLang.isNotBlank()) {
@@ -1305,10 +1578,31 @@ class PlayerActivity : Activity() {
     // recovery
     // =========================================================================================
 
+    /** True when any cause in the chain names one of the given fragments (in class or message). */
+    private fun causeChainMentions(e: Throwable?, vararg needles: String): Boolean {
+        var cur: Throwable? = e
+        while (cur != null) {
+            val text = ((cur.javaClass.name.lowercase()) + " " + (cur.message?.lowercase() ?: ""))
+            if (needles.any { it in text }) return true
+            cur = cur.cause
+        }
+        return false
+    }
+
     private fun handlePlaybackError(error: PlaybackException) {
         if (isFinishing || isDestroyed) return
         val name = error.errorCodeName
         Log.w(TAG, "playback error " + name + " / " + error.errorCode + " / " + error.message)
+        val probe = StringBuilder("TEXTFAULT probe code=" + error.errorCode + " blocked=" + textTrackBlocked
+            + " match=" + causeChainMentions(error, "webvtt", "subtitle", "subrip"))
+        var cur: Throwable? = error
+        repeat(3) {
+            val c = cur?.cause ?: return@repeat
+            probe.append(" | cause=").append(c.javaClass.simpleName).append(":")
+                .append((c.message ?: "").take(60))
+            cur = c
+        }
+        Log.w(TAG, probe.toString())
         val detail = (error.message ?: "").lowercase()
         // A message-text match alone banned HEVC for the whole install: media3 IO errors embed the data
         // URI, so a 404 on `movie-1080p-hevc.mkv` used to block the codec permanently with no way back.
@@ -1323,6 +1617,62 @@ class PlayerActivity : Activity() {
             // that for this panel, then let the normal failover ask the hub for an H.264 copy.
             app.prefs.setHevcBlocked(true)
             Log.w(TAG, "HEVC disabled for this panel after a decode failure")
+        }
+        // A subtitle payload that does not match its declared format (an SRT embedded in an MKV
+        // that media3 labels vtt) fails at the text parser as ERR 3001 before any frame plays —
+        // video and audio themselves are fine, so one bad text track must not sink the copy.
+        // Drop subtitles once for this title and retry before blaming the hub's copies.
+        if (!textTrackBlocked && error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED &&
+            causeChainMentions(error, "webvtt", "subtitle", "subrip")) {
+            textTrackBlocked = true
+            val p = player
+            if (p != null) {
+                val b = p.trackSelectionParameters.buildUpon()
+                b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                b.clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                p.trackSelectionParameters = b.build()
+                pendingSub = null
+                val pos = filmPosition(p)
+                sameCopyRetries++
+                quietOrCenter("Subtitles are broken in this copy — playing without them…")
+                val gen = requestGen
+                handler.postDelayed({
+                    if (!isFinishing && gen == requestGen) answer?.let { start(it, pos, playWhenReady = true) }
+                }, 600)
+                return
+            }
+        }
+        // A panel that advertises AC3/EAC3 but cannot create the AudioTrack (Sony BRAVIA on its
+        // built-in speakers) reaches here with the picture prepared and no sound. The file often
+        // carries a second, decodable track; switch to it instead of failing an otherwise fine copy.
+        // The codec is remembered so the next copy starts on the working track.
+        if (error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED) {
+            val codec = audioCodecFromError(error)
+            if (codec.isNotBlank()) {
+                app.prefs.blockAudioCodec(codec)
+                Log.w(TAG, "audio codec blocked on this panel: $codec")
+            }
+            val alt = decodableAudioId(selectedAudioId)
+            if (alt != null && alt != selectedAudioId && audioTrackSwitches < 2) {
+                audioTrackSwitches++
+                // Deliberately NOT audioChosen: this is the panel rescuing itself, not a person
+                // choosing. The next copy still lets the hub's pick be tried (and `decodableAudioId`
+                // now refuses this codec anyway), so an automatic switch cannot pin every later
+                // file to a track id that may not exist there.
+                selectedAudioId = alt
+                pendingAudio = alt
+                audioApplied = false
+                val pos = player?.let { filmPosition(it) } ?: 0L
+                quietOrCenter("This copy's " + codecName(codec).ifBlank { "audio" }
+                    + " won't play here — switching audio track…")
+                val gen = requestGen
+                handler.postDelayed({
+                    if (!isFinishing && gen == requestGen) {
+                        answer?.let { start(it, pos, playWhenReady = true) }
+                    }
+                }, 450)
+                return
+            }
         }
         val waiting = name.contains("TIMEOUT") || name.contains("IO_NETWORK") ||
             name.contains("IO_UNSPECIFIED") || name.contains("BEHIND_LIVE_WINDOW")
@@ -1356,6 +1706,9 @@ class PlayerActivity : Activity() {
             return
         }
         if (failovers >= MAX_FAILOVERS) {
+            // Park it: the zap ring should not hand this channel back on the next press, and the
+            // viewer pressing CH DOWN is asking for a different channel, not this one again.
+            if (live) markChannelDead()
             showError(if (live) "This channel is off the air. Try another channel."
                 else "Nothing on this hub would play this title. ${sourceAdvice()}")
             return
@@ -1368,6 +1721,53 @@ class PlayerActivity : Activity() {
         val lower = lowerAlternative()
         if (preferLowerSource(lower, spec, pos)) return
         askSwitch(body, pos, playWhenReady = true, warmTries = 10, automatic = true)
+    }
+
+    /**
+     * The hub's refusal named copies it did not try. Ask the first untried one directly instead of
+     * leaving the viewer on a card while a sibling the hub already listed might open. Bounded by the
+     * same [MAX_FAILOVERS] budget as a mid-film stall.
+     *
+     * A refusal about the hub itself ("the only copies are torrents and there is no gateway") is not
+     * a sibling problem: no other copy can fix it, so that answer goes straight to the card.
+     */
+    private fun failOverToAlternative(reply: JSONObject?, positionMs: Long): Boolean {
+        if (live || strictSource || failovers >= MAX_FAILOVERS) return false
+        if (str(reply, "code") == "torrents-need-gateway") return false
+        val listed = reply?.optJSONArray("alternatives")
+        if (listed != null && listed.length() > 0) alternatives = listed
+        var pick: JSONObject? = null
+        for (i in 0 until alternatives.length()) {
+            val cand = alternatives.optJSONObject(i) ?: continue
+            val id = str(cand, "id")
+            val label = str(cand, "label")
+            if (id.isNotBlank() && tried.contains(id)) continue
+            if (label.isNotBlank() && tried.contains(label)) continue
+            pick = cand
+            break
+        }
+        val chosen = pick ?: return false
+        val spec = spec ?: return false
+        // Remember what was refused, then the copy about to be asked for, so a second failure walks
+        // forward through the shelf instead of asking the hub for the same pick again.
+        val refused = reply?.optJSONObject("picked")
+        str(refused, "id").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        str(refused, "label").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        str(chosen, "id").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        str(chosen, "label").takeIf { it.isNotBlank() }?.let { tried.add(it) }
+        failovers++
+        clearError()
+        quietOrCenter("Trying another copy…")
+        val pos = if (positionMs > 0L) positionMs else player?.let { filmPosition(it) } ?: 0L
+        askSwitch(bodyFor(spec, pos, chosen, tried.toMutableSet()), pos,
+            playWhenReady = true, warmTries = 4, automatic = true)
+        return true
+    }
+
+    /** A structured terminal answer is "nothing here can play", not "this copy stalled". */
+    private fun noSourceHeading(reply: JSONObject?): String = when (str(reply, "code")) {
+        "torrents-need-gateway", "blocked", "no-copy" -> "No playable source"
+        else -> ""
     }
 
     private fun failoverToNext(preferLower: Boolean = false) {
@@ -1390,6 +1790,7 @@ class PlayerActivity : Activity() {
             str(it, "label").takeIf { v -> v.isNotBlank() }?.let { v -> tried.add(v) }
         }
         if (failovers >= MAX_FAILOVERS) {
+            if (live) markChannelDead()
             showError(if (live) "This channel is off the air. Try another channel."
                 else "Nothing on this hub would play this title. ${sourceAdvice()}")
             return
@@ -1461,10 +1862,16 @@ class PlayerActivity : Activity() {
         api.switchSource(body) { reply, status, transport ->
             if (gen != requestGen || isFinishing || isDestroyed) return@switchSource
             val url = str(reply, "url")
-            val warming = status == 503 || reply?.optBoolean("warming", false) == true ||
-                str(reply, "error").contains("prepar", ignoreCase = true)
+            // Same rule as the first press: only a reply that says it is warming is worth another
+            // ask. A terminal no-source answer must not masquerade as progress.
+            val cooldown = hubCooldownMs(reply)
+            val warming = warmingAnswer(reply, status) || cooldown > 0L
             if ((url.isBlank() || !isPlayable(url)) && warming && warmTries > 0) {
-                val wait = (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L)
+                warmingPending = true
+                val wait = maxOf(
+                    (reply?.optLong("retryAfterMs", 1500L) ?: 1500L).coerceIn(900L, 4000L),
+                    cooldown,
+                )
                 handler.postDelayed({
                     if (gen == requestGen && !isFinishing) {
                         askSwitch(body, positionMs, playWhenReady, warmTries - 1, automatic, quiet)
@@ -1472,6 +1879,7 @@ class PlayerActivity : Activity() {
                 }, wait)
                 return@switchSource
             }
+            warmingPending = false
             if (status !in 200..299 || url.isBlank() || !isPlayable(url)) {
                 hideCenter()
                 if (automatic) {
@@ -1481,12 +1889,16 @@ class PlayerActivity : Activity() {
                             "The hub is still preparing this copy. Give it a moment, then try again.",
                             title = "This copy is still being prepared",
                         )
+                    } else if (failOverToAlternative(reply, positionMs)) {
+                        return@switchSource
                     } else {
                         showError(
                             explainFailure(
                                 reply,
                                 transport ?: "No other copy of this title would open",
-                            )
+                            ),
+                            title = noSourceHeading(reply),
+                            reply = reply,
                         )
                     }
                 } else {
@@ -1662,6 +2074,7 @@ class PlayerActivity : Activity() {
         preloadOverlay = sheet
         preloadLine = line
         preloadShownAt = SystemClock.uptimeMillis()
+        preloadBufferMarkMs = bufferedMs()
         root.addView(sheet, match())
         sheet.animate().alpha(1f).setDuration(220L).start()
 
@@ -1677,6 +2090,13 @@ class PlayerActivity : Activity() {
         preloadFallback = Runnable {
             if (!preloading() || errorShowing || preloadDismissing) return@Runnable
             if (pendingSourceKey.isNotBlank() || chosenSourceKey.isNotBlank()) return@Runnable
+            // The hub said "preparing, ask again" — the retry chain is the one steering now. A second
+            // walk racing it would split a television's P2P engine between two copies at once.
+            if (warmingPending) return@Runnable
+            // Late is not dead: a peer-to-peer copy whose buffer is growing needs patience, not a
+            // switch. Failing over a copy that WAS filling starves the download mid-probe and the
+            // viewer watches a 1.3 MB buffer get thrown away (measured on a cold 1080p, 8th Nov).
+            if (bufferedMs() > preloadBufferMarkMs + 1_500L) return@Runnable
             preloadStatus?.text = "Still preparing — trying a lighter copy…"
             failoverToNext(preferLower = true)
             handler.postDelayed({
@@ -1686,7 +2106,7 @@ class PlayerActivity : Activity() {
                 // dead sources: the card and the preloader shared the screen for the rest of the reel.
                 if (!preloading()) return@postDelayed
                 finishPreloader()
-                if (!errorShowing) {
+                if (!errorShowing && !warmingPending && bufferedMs() <= preloadBufferMarkMs + 1_500L) {
                     showError(
                         "This copy is taking too long to start. Try again or pick another copy.",
                         "This copy is taking too long",
@@ -1777,9 +2197,28 @@ class PlayerActivity : Activity() {
         cancelHide()
         // The app's chrome opens with the ring on Play; the catalogue should show the same.
         focusSoon(playButton)
+        // The failure card quotes the hub's own verdicts, the copy it failed on and, on a channel, the
+        // number and name. A plate that shows none of those describes a card the app no longer draws.
+        if (state == "error" || state == "live-error") {
+            errorReply = JSONObject()
+                .put("tried", JSONArray()
+                    .put(if (live) "1080p stream: HTTP 403" else "1080p · 1.4 GB: no play target from framextv")
+                    .put(if (live) "576p stream: timeout" else "720p · 890 MB: HTTP 503 warming"))
+                .put("picked", JSONObject()
+                    .put("label", if (live) "576p stream" else "1080p · 1.4 GB"))
+            if (live) {
+                spec = PlaySpec("norm:and_tv", "channel", 0, 0, "&TV")
+                liveChannels = listOf(Item.from(JSONObject()
+                    .put("identity", "norm:and_tv")
+                    .put("title", "&TV")
+                    .put("type", "channel")
+                    .put("live", JSONObject().put("number", 12).put("health", "dead"))))
+            }
+        }
         if (state == "error") {
             showError("No source in this hub carries this title.")
         } else if (state == "live-error") {
+            markChannelDead()   // the card's footnote promises it, so the plate has to mean it
             showError("This channel is off the air. Try another channel.")
         }
     }
@@ -1962,9 +2401,7 @@ class PlayerActivity : Activity() {
             gravity = Gravity.CENTER
             visibility = View.GONE
         }
-        centerSpinner = ProgressBar(this).apply {
-            indeterminateTintList = ColorStateList.valueOf(playerInk)
-        }
+        centerSpinner = Views.spinner(app, playerInk, theme.px(5f))
         centerBox.addView(centerSpinner, LinearLayout.LayoutParams(theme.px(56f), theme.px(56f)))
         centerText = Views.text(app, "sub", 24f, playerInk, "", gravity = Gravity.CENTER, maxLines = 2)
         centerText.setPadding(theme.px(20f), theme.px(14f), theme.px(20f), 0)
@@ -2179,15 +2616,34 @@ class PlayerActivity : Activity() {
         sourceCatalog[key] = JSONObject(o.toString())
     }
 
-    /** Add every language the hub offered, keeping the best evidence for each one. */
+    /**
+     * Add every option the hub offered. A "track" row belongs to the copy on screen, so it is rebuilt
+     * from each answer and never carried over: the same `a:1` in the next copy may be another
+     * language. Donor ("mix") rows describe the TITLE, so those are merged by language and survive a
+     * quality switch. Within a language the copy's own tracks come first; a donor row for that same
+     * language is dropped because replacing a track with itself is not a choice.
+     */
     private fun mergeAudioOptions(fresh: JSONArray) {
+        val tracks = LinkedHashMap<String, JSONObject>()
         for (i in 0 until fresh.length()) {
             val o = fresh.optJSONObject(i) ?: continue
+            if (str(o, "kind") == "track") {
+                val id = str(o, "id")
+                if (id.isBlank()) continue
+                val had = tracks[id]
+                if (had == null || audioOptionScore(o) > audioOptionScore(had)) tracks[id] = o
+                continue
+            }
             val key = str(o, "language").lowercase()
             if (key.isBlank()) continue
             val had = audioCatalog[key]
             if (had == null || audioOptionScore(o) > audioOptionScore(had)) audioCatalog[key] = o
         }
+        val trackLangs = tracks.values.map { str(it, "language").lowercase() }.toSet()
+        val out = ArrayList<JSONObject>(tracks.size + audioCatalog.size)
+        out.addAll(tracks.values)
+        for ((lang, o) in audioCatalog) if (lang !in trackLangs) out.add(o)
+        audioOptions = JSONArray(out)
     }
 
     /** A real track in the picture beats a claimed language; a confirmed donor beats a filename. */
@@ -2242,6 +2698,10 @@ class PlayerActivity : Activity() {
                 val name = str(o, "languageName").ifBlank { langName(lang) }
                 val source = str(o, "source")
                 val mixed = kind == "mix"
+                // A filename can claim a language before the Hub has read that donor's tracks.
+                // Keep it selectable — the Hub checks it before it remuxes — but never make a
+                // person think an unmeasured claim is already a playable, verified dub.
+                val confirmed = o.optBoolean("confirmed")
                 val selected = if (mixed) {
                     !mixDisabled && str(mixHint, "language").equals(lang, true)
                 } else {
@@ -2249,7 +2709,11 @@ class PlayerActivity : Activity() {
                 }
                 parent.addView(menuRow(
                     name,
-                    if (mixed) "mixed from " + source.ifBlank { "another copy" } else "in this copy",
+                    if (mixed) {
+                        (if (confirmed) "mixed from " else "from ") +
+                            source.ifBlank { "another copy" } +
+                            if (confirmed) "" else " · verify before mixing"
+                    } else audioTrackNote(o),
                     selected,
                 ) {
                     if (mixed) reloadAudio(mix = true, language = lang, from = source)
@@ -2852,8 +3316,18 @@ class PlayerActivity : Activity() {
             val key = sourceKey(src)
             val picked = key.isNotBlank() && key == chosenSourceKey
             val unsupported = src.optBoolean("unsupported", false)
-            val note = (if (unsupported) "not on this TV · " else "") + sourceNote(src) +
-                if (key == currentKey) " · playing" else ""
+            // "· playing" on a copy and "576p" in the corner used to read as a contradiction. They are
+            // two true things — the copy in play, and the rung that copy's ladder is showing at this
+            // second — so the row now says both, and the sheet agrees with the corner.
+            val running = runningQuality()
+            val playNote = when {
+                key != currentKey -> ""
+                running.isNotBlank() && running != "Auto" &&
+                    !running.equals(qualityWord(sourceWords(src)), ignoreCase = true) ->
+                    " · playing · $running on screen right now"
+                else -> " · playing"
+            }
+            val note = (if (unsupported) "not on this TV · " else "") + sourceNote(src) + playNote
             parent.addView(menuRow(sourceWords(src), note, picked, enabled = !unsupported) {
                 switchTo(src)
             })
@@ -3865,6 +4339,8 @@ class PlayerActivity : Activity() {
 
     private var errorRetry: TextView? = null
     private var errorCard: View? = null
+    /** The hub reply this card is quoting, when the failure was a copy switch rather than the open. */
+    private var errorReply: JSONObject? = null
 
     /**
      * True once a picture from this session has actually reached the screen. The viewer's rule is
@@ -3901,30 +4377,31 @@ class PlayerActivity : Activity() {
     }
 
     /**
-     * "No playable source" is the hub's shortest possible sentence. When it also lists what it ruled
-     * out — "1080p stream: HTTP 403", "576p stream: timeout" — those two facts turn a dead end into an
-     * explanation: the feed is blocked by the channel, not missing from the house. Fold the first two
-     * reasons into the card; three lines is the whole space the card has.
+     * "No playable source" is the hub's shortest possible sentence. The card under this heading has the
+     * hub's own verdicts on separate lines ("1080p stream: HTTP 403", "576p stream: timeout" — see
+     * [failureReasons]), so this function's job is only the headline sentence: the feed is blocked by the
+     * channel, not missing from the house. It used to fold the first two verdicts into the paragraph,
+     * which left the same facts printed twice.
      */
     private fun explainFailure(reply: JSONObject?, fallback: String): String {
         // A rule's answer already names itself ("this title is not in the languages this profile
         // allows"), and there is nothing in `tried` to add to it. Use those words rather than dressing
         // up a machine label.
-        str(reply, "detail").takeIf { it.isNotBlank() }?.let { return humaniseError(it) }
-        val base = humaniseError(str(reply, "error").ifBlank { fallback })
-        val list = reply?.optJSONArray("tried") ?: return base
-        val reasons = ArrayList<String>()
-        for (i in 0 until list.length()) {
-            val r = list.optString(i).trim()
-            if (r.isNotEmpty()) reasons.add(r)
-        }
-        if (reasons.isEmpty()) return base
-        return base + " " + reasons.take(2).joinToString("; ") + "."
+        val detail = str(reply, "detail").takeIf { it.isNotBlank() }
+        val base = humaniseError(detail ?: str(reply, "error").ifBlank { fallback })
+        // A terminal no-source answer carries the one thing a viewer can act on ("turn on P2P in the
+        // hub", "pick another copy"). Leaving it in the JSON while the card says only "no playable
+        // source" is the spinner-then-nothing complaint in sentence form.
+        val next = str(reply, "nextAction").trim()
+        return if (next.isBlank()) base else "$base $next"
     }
 
-    private fun showError(rawMessage: String, title: String = "") {
+    private fun showError(rawMessage: String, title: String = "", reply: JSONObject? = null) {
         val message = humaniseError(rawMessage)
         val heading = title.ifBlank { if (live) "This channel is off the air" else "This copy could not be played" }
+        // The answer this card is about. On a failed copy switch it is the SWITCH reply, not the answer
+        // still on screen, or the card would quote the verdicts of a copy the viewer never tried.
+        errorReply = reply
         // A card over a running picture is the bug the viewer reported: the old copy is fine, the
         // hub was merely late with another one. Say it in the status line and leave the picture be.
         if (pictureLive()) {
@@ -3941,19 +4418,34 @@ class PlayerActivity : Activity() {
         errorShowing = true
         cancelHide()
         revealChrome()
-        val card = cardBox()
+        val card = errorPanel()
         // One heading language across the app: ink, never a coloured title — the pack's accent
         // already rides on the chips below.
         card.addView(Views.text(app, "panelTitle", 28f, playerInk, heading, bold = true))
-        card.addView(Views.text(app, "sub", 21f, playerInk2, message, maxLines = 3),
+        // Which thing failed, in the player's quiet uppercase label, next to the identity of the thing
+        // on screen: on a live channel that is the number and name the viewer put into the remote.
+        card.addView(Views.text(app, "meta", 15f, playerInk3, failureTag(), bold = true).apply {
+            setLetterSpacing(0.16f)
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = theme.px(8f) })
+        card.addView(Views.text(app, "sub", 21f, playerInk2, message, maxLines = 4),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = theme.px(10f) })
+            ).apply { topMargin = theme.px(12f) })
+        for (r in failureReasons()) {
+            card.addView(Views.text(app, "meta", 18f, playerInk3, r, maxLines = 2),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = theme.px(6f) })
+        }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val retry = chip("Try again") { retryCurrent() }
+        // The first chip is the answer this screen recommends, and the pack's accent marks it, so the
+        // card has one obvious press instead of four equal-looking ones.
+        val retry = chip("Try again", selected = true) { retryCurrent() }
         // A live feed has no shelf of copies to walk. The only honest next move is another channel,
         // and the dead one is parked so the zap ring will not hand it back on the next press.
         val other = if (live) chip("Next channel") {
@@ -3976,13 +4468,72 @@ class PlayerActivity : Activity() {
         row.addView(back, wrap().withStart(theme.px(12f)))
         card.addView(row, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = theme.px(18f) })
+        ).apply { topMargin = theme.px(22f) })
+        // What the player already did about it, so the card is not the only place this failure was
+        // recorded: a parked channel is skipped by the zap ring, a tried copy is not asked for again.
+        card.addView(Views.text(app, "meta", 17f, playerInk3, failureFootnote(), maxLines = 2),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = theme.px(14f) })
         errorRetry = retry
         errorCard = card
         overlay.addView(card, FrameLayout.LayoutParams(
-            theme.px(720f), ViewGroup.LayoutParams.WRAP_CONTENT
+            theme.px(760f), ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { gravity = Gravity.CENTER })
         retry.post { retry.requestFocus() }
+    }
+
+    /** The plate: the player's own sheet fill, radius, hairline and elevation (see [rebuildMenu]). */
+    private fun errorPanel(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(theme.px(34f), theme.px(28f), theme.px(34f), theme.px(26f))
+        background = Views.rounded(
+            Color.argb(0xFF, 16, 17, 24), theme.px(18f), theme.px(1f),
+            Color.argb(0x33, 255, 255, 255),
+        )
+        elevation = theme.px(16f).toFloat()
+    }
+
+    /** `OFF THE AIR  ·  12  ·  &TV` / `CANNOT PLAY  ·  1080p stream`. */
+    private fun failureTag(): String {
+        val parts = ArrayList<String>()
+        parts.add(if (live) "OFF THE AIR" else "CANNOT PLAY")
+        if (live) {
+            val number = liveChannels.firstOrNull { it.identity == spec?.identity }?.live?.number ?: 0
+            if (number > 0) parts.add(number.toString())
+            spec?.title?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        } else {
+            evidence()?.optJSONObject("picked")?.let { str(it, "label") }
+                ?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        }
+        return parts.joinToString("  ·  ")
+    }
+
+    /** The answer this card quotes: the failed switch reply if there was one, else what is on screen. */
+    private fun evidence(): JSONObject? = errorReply ?: answer
+
+    /**
+     * What the hub ruled out, one line each. `tried` carries the hub's own short verdicts
+     * ("1080p stream: HTTP 403", "576p stream: timeout"); three is what this card has room for, and the
+     * number left out is stated rather than dropped.
+     */
+    private fun failureReasons(): List<String> {
+        val list = evidence()?.optJSONArray("tried") ?: return emptyList()
+        val reasons = ArrayList<String>()
+        for (i in 0 until list.length()) {
+            val r = list.optString(i).trim()
+            if (r.isNotEmpty()) reasons.add(r)
+        }
+        if (reasons.isEmpty()) return emptyList()
+        val shown = reasons.take(3).map { "· $it" }
+        return if (reasons.size > shown.size)
+            shown + "· and ${reasons.size - shown.size} more this hub tried" else shown
+    }
+
+    private fun failureFootnote(): String = when {
+        live -> "This channel is set aside for this evening: zapping walks the others first."
+        tried.size > 0 -> "${tried.size} ${if (tried.size == 1) "copy" else "copies"} already tried, and the hub is not asked for them again."
+        else -> "Try again, or let the hub pick another copy with Next copy."
     }
 
     private fun retryCurrent() {
@@ -4018,6 +4569,7 @@ class PlayerActivity : Activity() {
     private fun clearErrorCard() {
         errorCard?.let { overlay.removeView(it) }
         errorCard = null
+        errorReply = null
     }
 
     // ---- next episode ---------------------------------------------------------------------
@@ -4043,6 +4595,7 @@ class PlayerActivity : Activity() {
                 }, 800L)
                 return
             }
+            markChannelDead()
             showError("This channel is off the air. Try another channel.")
             return
         }
@@ -4216,18 +4769,45 @@ class PlayerActivity : Activity() {
 
     private fun prefetchLiveChannels() {
         if (liveLoaded) return
-        liveLoaded = true
         // The zap ring is the whole channel list, not the 18-channel home-row preview it used to be
         // taken from: zapping a channel that never made the home row used to "wrap" to channel 1.
-        // /app/v1/row/live is the full live shelf, ordered by health then zap number — the order the
-        // hub itself publishes numbers in.
-        api.row(profileId, "live") { _, items, _ ->
-            if (isFinishing) return@row
+        // `/app/v1/live/channels` is the channel manager's own list — every channel this profile may
+        // watch, in the order the remote walks it, with the lineup and the hub's numbers on it. The
+        // row route is capped at a shelf; the manager screen and the ring have to walk the same list.
+        api.liveChannels(profileId) { wall, _ ->
+            if (isFinishing) return@liveChannels
             val seen = LinkedHashMap<String, Item>()
-            for (item in items.orEmpty()) {
-                if (item.isLive() && item.identity.isNotBlank()) seen.putIfAbsent(item.identity, item)
+            for (ch in wall?.channels.orEmpty()) {
+                if (ch.identity.isNotBlank()) {
+                    seen.putIfAbsent(ch.identity, Item.from(JSONObject()
+                        .put("identity", ch.identity)
+                        .put("title", ch.name)
+                        .put("type", "channel")
+                        .put("poster", ch.logo)
+                        .put("live", JSONObject()
+                            .put("number", ch.number)
+                            .put("health", ch.health)
+                            .put("now", JSONObject().put("title", ch.now)))))
+                }
             }
-            if (seen.isEmpty()) return@row
+            if (seen.isEmpty()) {
+                // An empty wall is not an answer, it is the hub still reading its playlist (or a row
+                // that missed its budget on a cold start). Marking the ring loaded here left the remote
+                // with no channel to walk for the rest of the evening: CH UP/DOWN did nothing at all.
+                // Ask again, a few times, and say so when the asking stops.
+                liveRetries++
+                if (liveRetries <= LIVE_RING_TRIES) {
+                    setStatus("The hub is still reading its channels — zapping will work in a moment", "warn")
+                    handler.postDelayed({
+                        if (!isFinishing && !isDestroyed) prefetchLiveChannels()
+                    }, 3000L)
+                } else {
+                    setStatus("This hub has no channels to zap", "warn")
+                }
+                return@liveChannels
+            }
+            liveRetries = 0
+            liveLoaded = true
             liveChannels = seen.values.toList()
             // The number is only known once the live row arrives; the header may already be up.
             if (live) updateHeader()
@@ -4245,10 +4825,33 @@ class PlayerActivity : Activity() {
     }
 
     private fun zap(delta: Int) {
-        if (liveChannels.size < 2) return
         val here = spec ?: return
+        if (liveChannels.size < 2) {
+            // A single-channel ring is a state, not a silent key press: it means the hub has one
+            // channel, or this profile's lineup holds one channel.
+            setStatus(
+                if (liveChannels.isEmpty()) "The hub has no channels to zap yet"
+                else "Your lineup has one channel — open Live TV to add more",
+                "warn",
+            )
+            return
+        }
         val at = liveChannels.indexOfFirst { it.identity == here.identity }
-        var next = if (at < 0) 0 else (at + delta + liveChannels.size) % liveChannels.size
+        var next: Int
+        if (at < 0) {
+            // The channel on screen is not in the ring this profile walks: its lineup is switched on
+            // and this channel is not in it, or the wall changed under the player. Zapping still has
+            // to do something, so it enters the ring at the end the key points to, and says so.
+            next = if (delta > 0) 0 else liveChannels.size - 1
+            val number = liveChannels[next].live?.number ?: 0
+            setStatus(
+                if (number > 0) "Not in your lineup — zapping walks it from channel $number"
+                else "Not in your lineup — zapping walks it from the start",
+                "warn",
+            )
+        } else {
+            next = (at + delta + liveChannels.size) % liveChannels.size
+        }
         var skipped = 0
         while (skipped < liveChannels.size - 1 &&
             deadChannels.contains(liveChannels[next].identity) &&
@@ -4260,12 +4863,13 @@ class PlayerActivity : Activity() {
             // Every other channel has been parked this session. Zapping further would loop forever,
             // so clear the ledger and tell the viewer what they are about to walk into.
             deadChannels.clear()
-            showZapBadge(liveChannels[next])
+            showZapBadge(liveChannels[next], next)
             setStatus("Every other channel dropped this session — trying them again", "warn")
+        } else {
+            showZapBadge(liveChannels[next], next)
         }
         val item = liveChannels[next]
         if (item.identity == here.identity) return
-        showZapBadge(item)
         saveProgress(force = true)
         spectrum(PlaySpec(item.identity, "channel", 0, 0, item.title))
     }
@@ -4328,11 +4932,14 @@ class PlayerActivity : Activity() {
         resolvePlay(spec, 0L, WARM_TRIES, null)
     }
 
-    private fun showZapBadge(item: Item) {
+    private fun showZapBadge(item: Item, at: Int = -1) {
         val number = item.live?.number ?: 0
         val text = buildString {
             if (number > 0) append(number).append("  ·  ")
             append(item.title)
+            // "of 358" is the fact the viewer is missing while they press the key for the fourth time:
+            // how far the wall actually goes, and where this channel sits in it.
+            if (at >= 0 && liveChannels.size > 1) append("   ").append(at + 1).append(" of ").append(liveChannels.size)
         }
         setStatus(text)
     }
@@ -4393,11 +5000,17 @@ class PlayerActivity : Activity() {
         cushionAheadMs = ahead
         if (prev < 0L || ahead > CUSHION_FLOOR_MS) {
             cushionFalling = 0
+            lastLiveCushionMs = ahead
+            lastLiveFallingTicks = 0
             return
         }
         // Only a real decline counts. Half a second of playback consumes 500 ms of cushion, so a source
         // keeping pace shows a roughly flat line and a source winning it shows a rising one.
         if (ahead < prev - 150L) cushionFalling++ else cushionFalling = 0
+        // Kept across the freeze this ends in: once the picture stops, [cushionAheadMs] is cleared, and
+        // this is the only surviving record of whether the copy was losing the race before it froze.
+        lastLiveCushionMs = ahead
+        lastLiveFallingTicks = cushionFalling
         if (cushionFalling < CUSHION_FALL_TICKS) return
         cushionFalling = 0
         cushionAheadMs = -1L
@@ -4724,6 +5337,15 @@ class PlayerActivity : Activity() {
         private val focusPlate = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(0x22, 255, 255, 255)
         }
+        // Transport glyphs redraw with playback/focus state. Reuse their tiny geometry and paints so
+        // a stationary player bar does not produce per-frame garbage on lower-memory TV hardware.
+        private val focusAccent = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val glyphPath = Path()
+        private val glyphBounds = RectF()
+        private val waveformHeights = floatArrayOf(5f, 10f, 16f, 21f, 15f, 9f, 4f)
+        private val speedTickDegrees = intArrayOf(210, 240, 270, 300, 330)
+        private val arrowWingDeltas = doubleArrayOf(2.7, -2.7)
+        private val secondsText = seconds.coerceAtLeast(1).toString()
 
         // A plain View measures AT_MOST as "fill the parent"; without this a wrap_content icon
         // button became the whole bottom bar. The glyph box is the suggested minimum.
@@ -4742,7 +5364,7 @@ class PlayerActivity : Activity() {
             if (focused) {
                 canvas.drawRoundRect(cx - 19 * u, cy - 15 * u, cx + 19 * u, cy + 15 * u,
                     12 * u, 12 * u, focusPlate)
-                val accent = (context.applicationContext as ScenixApp).ctx.let {
+                focusAccent.color = (context.applicationContext as ScenixApp).ctx.let {
                     val explicit = it.theme.colorOr("playerAccent", -1)
                     if (explicit != -1) explicit else {
                         val b = it.theme.color("brand", "#2D8CFF")
@@ -4752,7 +5374,7 @@ class PlayerActivity : Activity() {
                     }
                 }
                 canvas.drawRoundRect(cx - 13 * u, cy + 17 * u, cx + 13 * u, cy + 19.5f * u,
-                    1.5f * u, 1.5f * u, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
+                    1.5f * u, 1.5f * u, focusAccent)
             }
             when (glyph) {
                 GLYPH_PLAY -> if (playing) {
@@ -4761,12 +5383,12 @@ class PlayerActivity : Activity() {
                     canvas.drawRoundRect(cx - 8 * u, cy - h, cx - 8 * u + w, cy + h, 1.2f * u, 1.2f * u, solid)
                     canvas.drawRoundRect(cx + 4.6f * u, cy - h, cx + 4.6f * u + w, cy + h, 1.2f * u, 1.2f * u, solid)
                 } else {
-                    val path = Path()
-                    path.moveTo(cx - 6.5f * u, cy - 10.5f * u)
-                    path.lineTo(cx + 10 * u, cy)
-                    path.lineTo(cx - 6.5f * u, cy + 10.5f * u)
-                    path.close()
-                    canvas.drawPath(path, solid)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 6.5f * u, cy - 10.5f * u)
+                    glyphPath.lineTo(cx + 10 * u, cy)
+                    glyphPath.lineTo(cx - 6.5f * u, cy + 10.5f * u)
+                    glyphPath.close()
+                    canvas.drawPath(glyphPath, solid)
                 }
                 GLYPH_REWIND -> {
                     // A bar and two left chevrons: the same rewind mark the reference row uses.
@@ -4775,75 +5397,70 @@ class PlayerActivity : Activity() {
                     canvas.drawLine(cx - 11 * u, cy - y, cx - 11 * u, cy + y, stroke)
                     for (k in 0..1) {
                         val x = cx - 5 * u + k * 7.5f * u
-                        val p = Path()
-                        p.moveTo(x + 6 * u, cy - y)
-                        p.lineTo(x - 1 * u, cy)
-                        p.lineTo(x + 6 * u, cy + y)
-                        canvas.drawPath(p, stroke)
+                        glyphPath.reset()
+                        glyphPath.moveTo(x + 6 * u, cy - y)
+                        glyphPath.lineTo(x - 1 * u, cy)
+                        glyphPath.lineTo(x + 6 * u, cy + y)
+                        canvas.drawPath(glyphPath, stroke)
                     }
                 }
-                GLYPH_FORWARD -> seekIcon(canvas, cx, cy, u, seconds.coerceAtLeast(1), back = false)
+                GLYPH_FORWARD -> seekIcon(canvas, cx, cy, u, back = false)
                 GLYPH_BACK -> {
-                    val path = Path()
-                    path.moveTo(cx + 3.5f * u, cy - 8 * u)
-                    path.lineTo(cx - 4 * u, cy)
-                    path.lineTo(cx + 3.5f * u, cy + 8 * u)
-                    canvas.drawPath(path, stroke)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx + 3.5f * u, cy - 8 * u)
+                    glyphPath.lineTo(cx - 4 * u, cy)
+                    glyphPath.lineTo(cx + 3.5f * u, cy + 8 * u)
+                    canvas.drawPath(glyphPath, stroke)
                 }
                 GLYPH_VOLUME -> {
                     // A speaker with waves, crossed out when muted: this is the player's own trim,
                     // distinct from the Audio pill, which picks a language track.
-                    val speaker = Path()
-                    speaker.moveTo(cx - 12 * u, cy - 4.5f * u)
-                    speaker.lineTo(cx - 6.5f * u, cy - 4.5f * u)
-                    speaker.lineTo(cx - 1 * u, cy - 10 * u)
-                    speaker.lineTo(cx - 1 * u, cy + 10 * u)
-                    speaker.lineTo(cx - 6.5f * u, cy + 4.5f * u)
-                    speaker.lineTo(cx - 12 * u, cy + 4.5f * u)
-                    speaker.close()
-                    canvas.drawPath(speaker, solid)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 12 * u, cy - 4.5f * u)
+                    glyphPath.lineTo(cx - 6.5f * u, cy - 4.5f * u)
+                    glyphPath.lineTo(cx - 1 * u, cy - 10 * u)
+                    glyphPath.lineTo(cx - 1 * u, cy + 10 * u)
+                    glyphPath.lineTo(cx - 6.5f * u, cy + 4.5f * u)
+                    glyphPath.lineTo(cx - 12 * u, cy + 4.5f * u)
+                    glyphPath.close()
+                    canvas.drawPath(glyphPath, solid)
                     if (muted) {
                         canvas.drawLine(cx + 2 * u, cy - 4.5f * u, cx + 12 * u, cy + 4.5f * u, stroke)
                         canvas.drawLine(cx + 12 * u, cy - 4.5f * u, cx + 2 * u, cy + 4.5f * u, stroke)
                     } else {
-                        canvas.drawArc(
-                            RectF(cx + 1 * u, cy - 6 * u, cx + 9 * u, cy + 6 * u),
-                            -62f, 124f, false, stroke,
-                        )
-                        canvas.drawArc(
-                            RectF(cx + 1 * u, cy - 10 * u, cx + 15 * u, cy + 10 * u),
-                            -55f, 110f, false, stroke,
-                        )
+                        glyphBounds.set(cx + 1 * u, cy - 6 * u, cx + 9 * u, cy + 6 * u)
+                        canvas.drawArc(glyphBounds, -62f, 124f, false, stroke)
+                        glyphBounds.set(cx + 1 * u, cy - 10 * u, cx + 15 * u, cy + 10 * u)
+                        canvas.drawArc(glyphBounds, -55f, 110f, false, stroke)
                     }
                 }
                 GLYPH_AUDIO -> {
                     // A waveform, not a speaker: the control picks a language track, and the bars read
                     // as "sound" at a glance without implying a volume slider.
-                    val heights = floatArrayOf(5f, 10f, 16f, 21f, 15f, 9f, 4f)
-                    for (i in heights.indices) {
+                    for (i in waveformHeights.indices) {
                         val x = cx + (i - 3) * 3.6f * u
-                        val h = heights[i] * u
+                        val h = waveformHeights[i] * u
                         canvas.drawLine(x, cy - h / 2f, x, cy + h / 2f, stroke)
                     }
                 }
                 GLYPH_SUBS -> {
                     // A speech bubble with two cue lines and a tail, matching the reference's subtitle
                     // affordance; "CC" in a box read as a broadcast caption service.
-                    val r = RectF(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 6 * u)
-                    canvas.drawRoundRect(r, 3.2f * u, 3.2f * u, stroke)
+                    glyphBounds.set(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 6 * u)
+                    canvas.drawRoundRect(glyphBounds, 3.2f * u, 3.2f * u, stroke)
                     canvas.drawLine(cx - 7 * u, cy - 3.4f * u, cx + 7 * u, cy - 3.4f * u, stroke)
                     canvas.drawLine(cx - 7 * u, cy + 1.4f * u, cx + 2 * u, cy + 1.4f * u, stroke)
-                    val tail = Path()
-                    tail.moveTo(cx - 5 * u, cy + 6 * u)
-                    tail.lineTo(cx - 7.5f * u, cy + 12 * u)
-                    tail.lineTo(cx - 1 * u, cy + 6 * u)
-                    canvas.drawPath(tail, stroke)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 5 * u, cy + 6 * u)
+                    glyphPath.lineTo(cx - 7.5f * u, cy + 12 * u)
+                    glyphPath.lineTo(cx - 1 * u, cy + 6 * u)
+                    canvas.drawPath(glyphPath, stroke)
                 }
                 GLYPH_SPEED -> {
                     // A dial with ticks and a needle: the same speedometer language as the reference.
                     val r = 10 * u
                     canvas.drawCircle(cx, cy, r, stroke)
-                    for (deg in intArrayOf(210, 240, 270, 300, 330)) {
+                    for (deg in speedTickDegrees) {
                         val a = Math.toRadians(deg.toDouble())
                         canvas.drawCircle(
                             cx + (r - 2.8f * u) * Math.cos(a).toFloat(),
@@ -4857,8 +5474,8 @@ class PlayerActivity : Activity() {
                 }
                 GLYPH_QUALITY -> {
                     // A display: the quality/source sheet is about what the panel is receiving.
-                    val r = RectF(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 5 * u)
-                    canvas.drawRoundRect(r, 2.4f * u, 2.4f * u, stroke)
+                    glyphBounds.set(cx - 12 * u, cy - 10 * u, cx + 12 * u, cy + 5 * u)
+                    canvas.drawRoundRect(glyphBounds, 2.4f * u, 2.4f * u, stroke)
                     canvas.drawLine(cx, cy + 5 * u, cx, cy + 9.5f * u, stroke)
                     canvas.drawLine(cx - 5 * u, cy + 9.5f * u, cx + 5 * u, cy + 9.5f * u, stroke)
                 }
@@ -4875,12 +5492,12 @@ class PlayerActivity : Activity() {
                 }
                 GLYPH_NEXT -> {
                     // skip-forward: a solid triangle against a bar
-                    val path = Path()
-                    path.moveTo(cx - 9 * u, cy - 9 * u)
-                    path.lineTo(cx + 5 * u, cy)
-                    path.lineTo(cx - 9 * u, cy + 9 * u)
-                    path.close()
-                    canvas.drawPath(path, solid)
+                    glyphPath.reset()
+                    glyphPath.moveTo(cx - 9 * u, cy - 9 * u)
+                    glyphPath.lineTo(cx + 5 * u, cy)
+                    glyphPath.lineTo(cx - 9 * u, cy + 9 * u)
+                    glyphPath.close()
+                    canvas.drawPath(glyphPath, solid)
                     canvas.drawRoundRect(cx + 7 * u, cy - 9 * u, cx + 11 * u, cy + 9 * u,
                         1.2f * u, 1.2f * u, solid)
                 }
@@ -4889,10 +5506,8 @@ class PlayerActivity : Activity() {
                     // the same language the episode rows themselves use.
                     for (i in 0..2) {
                         val y = cy + (i - 1) * 7.4f * u
-                        canvas.drawRoundRect(
-                            RectF(cx - 12 * u, y - 3.2f * u, cx - 4.2f * u, y + 3.2f * u),
-                            1f * u, 1f * u, stroke,
-                        )
+                        glyphBounds.set(cx - 12 * u, y - 3.2f * u, cx - 4.2f * u, y + 3.2f * u)
+                        canvas.drawRoundRect(glyphBounds, 1f * u, 1f * u, stroke)
                         canvas.drawLine(cx - 1 * u, y, cx + 12 * u, y, stroke)
                     }
                 }
@@ -4903,12 +5518,12 @@ class PlayerActivity : Activity() {
         }
 
         /** A circular arrow with the seconds inside it — the television convention for "jump". */
-        private fun seekIcon(canvas: Canvas, cx: Float, cy: Float, u: Float, seconds: Int, back: Boolean) {
+        private fun seekIcon(canvas: Canvas, cx: Float, cy: Float, u: Float, back: Boolean) {
             val r = 10.5f * u
-            val rect = RectF(cx - r, cy - r, cx + r, cy + r)
+            glyphBounds.set(cx - r, cy - r, cx + r, cy + r)
             val start = if (back) 240f else 300f
             val sweep = if (back) -300f else 300f
-            canvas.drawArc(rect, start, sweep, false, stroke)
+            canvas.drawArc(glyphBounds, start, sweep, false, stroke)
             val end = Math.toRadians((start + sweep).toDouble())
             val ex = cx + (r * Math.cos(end)).toFloat()
             val ey = cy + (r * Math.sin(end)).toFloat()
@@ -4916,7 +5531,7 @@ class PlayerActivity : Activity() {
             val tx = if (back) Math.sin(end) else -Math.sin(end)
             val ty = if (back) -Math.cos(end) else Math.cos(end)
             val tip = Math.atan2(ty, tx)
-            for (delta in doubleArrayOf(2.7, -2.7)) {
+            for (delta in arrowWingDeltas) {
                 val a = tip + delta
                 canvas.drawLine(
                     ex, ey,
@@ -4926,7 +5541,7 @@ class PlayerActivity : Activity() {
                 )
             }
             letters.textSize = 9.4f * u
-            canvas.drawText(seconds.toString(), cx, cy + 3.5f * u, letters)
+            canvas.drawText(secondsText, cx, cy + 3.5f * u, letters)
         }
     }
 
@@ -4971,6 +5586,13 @@ class PlayerActivity : Activity() {
             textAlign = Paint.Align.CENTER
             typeface = Typeface.DEFAULT_BOLD
         }
+        private val knobGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(0x55, 140, 123, 255)
+        }
+        private val knobCradle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(0xCC, 0, 0, 0)
+        }
+        private val targetBounds = RectF()
 
         override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
             super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
@@ -5001,12 +5623,10 @@ class PlayerActivity : Activity() {
                 val kx = (w * fraction).coerceIn(knobR, w - knobR)
                 if (focused) {
                     // The knob is the only focus decoration a full-width timeline needs.
-                    canvas.drawCircle(kx, cy, knobR + theme.px(9f),
-                        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0x55, 140, 123, 255) })
+                    canvas.drawCircle(kx, cy, knobR + theme.px(9f), knobGlow)
                 }
                 // A dark cradle under the knob keeps it legible over the light played range.
-                canvas.drawCircle(kx, cy, knobR + theme.px(3f),
-                    Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(0xCC, 0, 0, 0) })
+                canvas.drawCircle(kx, cy, knobR + theme.px(3f), knobCradle)
                 canvas.drawCircle(kx, cy, knobR, knob)
             }
             if (targetMs >= 0L) drawTarget(canvas, w, cy, bar / 2f)
@@ -5028,8 +5648,8 @@ class PlayerActivity : Activity() {
             val left = (center - bubbleW / 2f).coerceIn(0f, (w - bubbleW).coerceAtLeast(0f))
             val bottom = (barCy - barHalf - theme.px(4f)).coerceAtLeast(bubbleH)
             val top = bottom - bubbleH
-            canvas.drawRoundRect(RectF(left, top, left + bubbleW, bottom),
-                bubbleH / 2f, bubbleH / 2f, bubbleBg)
+            targetBounds.set(left, top, left + bubbleW, bottom)
+            canvas.drawRoundRect(targetBounds, bubbleH / 2f, bubbleH / 2f, bubbleBg)
             canvas.drawText(label, left + bubbleW / 2f,
                 top + bubbleH / 2f + bubbleText.textSize * 0.35f, bubbleText)
         }
@@ -5229,8 +5849,17 @@ class PlayerActivity : Activity() {
         private const val GLYPH_NEXT = 9
         private const val GLYPH_VOLUME = 10
         private const val GLYPH_EXPAND = 11
-        private const val WARM_TRIES = 7
+        /**
+         * How many times a warming answer is asked again. A cold torrent's file list comes from the
+         * swarm and a hub that is already streaming may take half a minute to produce it; measured on
+         * the household box, copies still reading their metadata at the tenth ask often started at the
+         * twelfth or thirteenth - giving up earlier traded a patient spinner for a failover onto an
+         * even colder copy that pays the whole walk again. A dead copy is not retried at all.
+         */
+        private const val WARM_TRIES = 14
         private const val MAX_FAILOVERS = 3
+        /** How many times the live wall is asked for after it answers empty. */
+        private const val LIVE_RING_TRIES = 3
         private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
         private val LANG_NAMES = mapOf(

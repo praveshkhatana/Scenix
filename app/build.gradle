@@ -34,6 +34,72 @@ def hubUiDir = layout.buildDirectory.dir('generated/scenixAssets')
 // Carried in at build time so the Studio cannot show a component the contract folder does not know.
 def studioAssetsDir = layout.buildDirectory.dir('generated/studioAssets')
 
+// ---- release signing is declared, not assumed ---------------------------------------------------
+// This build declares a release signing config, so AGP validates its store and alias even
+// for unit tests. These properties are deliberately not checked in; supply them from the
+// Gradle properties file or CI secret.  A missing/incorrect file must not be silently
+// downgraded: it would make a debug-signed APK look like a distributable release.
+def releaseSigningPropertyNames = [
+    'scenix.release.storeFile',
+    'scenix.release.storePassword',
+    'scenix.release.keyAlias',
+    'scenix.release.keyPassword',
+]
+def releaseSigningValues = releaseSigningPropertyNames.collectEntries { propertyName ->
+    def value = findProperty(propertyName)?.toString()
+    [(propertyName): value ?: null]
+}
+def missingReleaseSigningProperties = releaseSigningValues.findAll { _, value ->
+    value == null || value.trim().isEmpty()
+}.keySet()
+def releaseStoreFile = releaseSigningValues['scenix.release.storeFile'] ?
+    file(releaseSigningValues['scenix.release.storeFile']) : null
+def releaseSigningProblem = !missingReleaseSigningProperties.isEmpty() ?
+    "missing Gradle properties: ${missingReleaseSigningProperties.join(', ')}" :
+    (!releaseStoreFile?.isFile() ? 'scenix.release.storeFile does not point to a readable keystore' : null)
+def releaseSigningReady = releaseSigningProblem == null
+def packageTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    def name = taskName.toLowerCase()
+    name.contains('assemble') || name.contains('bundle') || name.contains('package') ||
+        name.contains('sign') || name.contains('install')
+}
+if (packageTaskRequested && !releaseSigningReady) {
+    throw new GradleException("Packaging is disabled until release signing is configured: " +
+        releaseSigningProblem + ".")
+}
+if (releaseStoreFile && !releaseStoreFile.isFile()) {
+    logger.warn("Scenix release keystore is unavailable (${releaseSigningProblem}); " +
+        'test/debug builds remain available.')
+}
+
+def propertiesIsTruthy = { value ->
+    def text = value?.toString()?.trim()?.toLowerCase()
+    text && !['false', '0', 'no', 'off'].contains(text)
+}
+
+// A preview release is still signed with the release key (a distinct applicationId can
+// legitimately replace its own earlier preview), but it must not masquerade as the canonical
+// production package.  Require the explicit, non-default opt-in at the invocation.
+def previewRequested = propertiesIsTruthy(findProperty('scenix.preview.enabled'))
+def previewApplicationId = findProperty('scenix.preview.applicationId')?.toString()?.trim()
+def previewVersionCodeText = findProperty('scenix.preview.versionCode')?.toString()?.trim()
+def previewVersionName = findProperty('scenix.preview.versionName')?.toString()?.trim()
+def previewRequestedVersionCode = previewVersionCodeText ?
+    previewVersionCodeText.isInteger() ? Integer.parseInt(previewVersionCodeText) : -1 : 0
+def previewProblem = null
+if (previewRequested) {
+    if (!propertiesIsTruthy(findProperty('scenix.preview.allow'))) {
+        previewProblem = 'scenix.preview.enabled requires explicit scenix.preview.allow=true'
+    } else if (previewApplicationId != 'com.scenix.tv.preview') {
+        previewProblem = 'scenix.preview.applicationId must remain the reserved com.scenix.tv.preview identity'
+    } else if (!previewVersionName || previewVersionCodeText == null || previewRequestedVersionCode <= 0) {
+        previewProblem = 'scenix.preview.versionCode and a non-empty scenix.preview.versionName are required'
+    } else if (previewRequestedVersionCode == android.defaultConfig.versionCode) {
+        previewProblem = "preview versionCode must not overwrite the release package (${previewRequestedVersionCode})"
+    }
+    if (previewProblem != null) throw new GradleException("Invalid preview release configuration: ${previewProblem}.")
+}
+
 android {
     namespace 'com.scenix.tv'
     compileSdk 34
@@ -49,19 +115,58 @@ android {
         applicationId 'com.scenix.tv'
         minSdk 26          // the TV is Android 11 (SDK 30); 26 keeps the floor honest
         targetSdk 34
-        versionCode 1
-        versionName '0.1-p1'
+        // A release and its preview are separately versioned identities.  They must not
+        // implicitly replace one another on a TV.
+        versionCode 5
+        versionName '0.2-p5'
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }  // GeckoView's x86_64 is dead weight on TVs
     }
 
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile releaseStoreFile
+                storePassword releaseSigningValues['scenix.release.storePassword']
+                keyAlias releaseSigningValues['scenix.release.keyAlias']
+                keyPassword releaseSigningValues['scenix.release.keyPassword']
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            // A local/CI check is a separate installed app, never an overwrite of production.
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        // QA is a side-by-side test lane: same signing story as debug, its own identity
+        // (com.scenix.tv.qa) so a soak on the television never replaces the release app, and
+        // its own manifest (app/src/qa) that exports the harness activities production hides.
+        qa {
+            debuggable true
+            applicationIdSuffix '.qa'
+            versionNameSuffix '-qa'
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['debug']
+        }
         release {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
         }
-        // No abis restriction: the code is pure Kotlin, the same binary runs on 32- and 64-bit.
+    }
+    if (previewRequested) {
+        buildTypes.create('preview') { buildType ->
+            buildType.initFrom(release)
+            buildType.applicationIdSuffix = '.preview'
+            buildType.versionNameSuffix = '-preview'
+            // A local checkout without the release key can exercise the preview lane too.
+            // In that case it is an unsigned artifact and verify-android-artifact refuses it.
+            if (releaseSigningReady) buildType.signingConfig = signingConfigs.release
+        }
     }
 
     compileOptions {
@@ -83,8 +188,18 @@ android {
     }
 
     lint {
-        abortOnError false      // warnings are fine for the P1 acceptance build
-        checkReleaseBuilds false
+        abortOnError true
+        checkReleaseBuilds true
+    }
+}
+
+if (previewRequested) {
+    android.applicationVariants.configureEach { variant ->
+        if (variant.buildType.name == 'preview') {
+            variant.mergedFlavor.applicationId = previewApplicationId
+            variant.mergedFlavor.versionCode = previewRequestedVersionCode
+            variant.mergedFlavor.versionName = previewVersionName
+        }
     }
 }
 
@@ -97,6 +212,13 @@ def copyHubUi = tasks.register('copyHubUi', Copy) {
     into hubUiDir
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
     if (hubRoot != null) {
+        // The page this TV serves at :8787, carried in as a snapshot. `LoopbackServer` reads
+        // `assets/web/...`; without it the address the app prints has nothing behind it.
+        from(new File(hubRoot, 'web')) {
+            include '**'
+            exclude '**/prototypes/**'
+            into 'web'
+        }
         from(new File(hubRoot, 'characters.json')) { into 'characters' }
         from(new File(hubRoot, 'data/avatar-faces')) {
             include '**'
@@ -139,4 +261,15 @@ dependencies {
     implementation 'org.libtorrent4j:libtorrent4j-android-arm:2.1.0-35'
     // The same engine for 64-bit ARM, so the APK also installs on an arm64 TV emulator.
     implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-35'
+
+    // The glass of the Liquid Glass pack. Our own frost was a blurred bitmap: it had no lens, so the
+    // edge of a glass surface never bent the artwork behind it and the material read as flat grey
+    // frosting. This library is the View-system equivalent of the iOS 26 material — a rounded-rect
+    // SDF that bends the backdrop at the rim (API 33+), with a NEON blur + chromatic-aberration
+    // pipeline underneath, which is the tier this Android 11 television actually runs.
+    // MIT; `LiquidGlassKit.kt` is the only file that imports it, so the pack's numbers stay in tokens.
+    implementation 'com.github.QWEA0:liquidglass:v2.0.11'
+
+    // Phone-pairing QR is drawn by core/QrCode.kt: byte mode, error-correction M, no barcode library.
+    testImplementation 'junit:junit:4.13.2'
 }

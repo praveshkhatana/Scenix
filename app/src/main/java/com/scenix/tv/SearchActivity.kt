@@ -24,6 +24,7 @@ import com.scenix.tv.core.CardActionSheet
 import com.scenix.tv.core.CardActions
 import com.scenix.tv.core.Motion
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.PhoneRemote
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Screens
 import com.scenix.tv.core.Views
@@ -36,7 +37,7 @@ import com.scenix.tv.core.Views
  * A search request goes out after a short pause, never on every key, and a stale answer (the viewer
  * kept typing) is dropped by generation.
  */
-class SearchActivity : Activity() {
+class SearchActivity : Activity(), PhoneRemote.TextTarget {
 
     private lateinit var app: AppContext
     private lateinit var profileId: String
@@ -65,6 +66,9 @@ class SearchActivity : Activity() {
         app = (application as ScenixApp).ctx
         profileId = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
         if (profileId.isBlank()) { finish(); return }
+        // A phone can hand a finished query to the television's search, so the owner types on a
+        // real keyboard instead of hunting letters with the D-pad.
+        val seededQuery = intent?.getStringExtra(EXTRA_QUERY).orEmpty().trim()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -111,6 +115,10 @@ class SearchActivity : Activity() {
 
         Motion.enter(app.theme, root)
         buildKeyboard()
+        if (seededQuery.isNotBlank()) {
+            query.append(seededQuery.take(48))
+            scheduleSearch()
+        }
         renderQuery()
         queryView.postDelayed({
             (keys.getChildAt(0) as? ViewGroup)?.getChildAt(0)?.requestFocus()
@@ -158,6 +166,13 @@ class SearchActivity : Activity() {
             clipToPadding = false
             clipChildren = false
             visibility = View.INVISIBLE
+            // The focused tile's glass slab steps out while the grid moves and returns when it
+            // settles (GlassKit.slabScrolling).
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(rv: RecyclerView, state: Int) {
+                    GlassKit.slabScrolling(rv, app, state != RecyclerView.SCROLL_STATE_IDLE)
+                }
+            })
             // The pane is narrower than four fixed 230 px cards plus their halo gaps, and the cards
             // then drew over their neighbours — the overlapping rows in the audit shots. Count the
             // columns from the width actually measured, and let each card fill its own column.
@@ -232,6 +247,25 @@ class SearchActivity : Activity() {
         }
         renderQuery()
         scheduleSearch()
+    }
+
+    /**
+     * A phone typed (or dictated) these letters. They join the query exactly the way the on-screen
+     * keyboard's presses do — the same debounce, the same generation guard — instead of restarting
+     * the search from scratch.
+     */
+    override fun onRemoteText(text: String): Boolean {
+        var took = false
+        for (ch in text) {
+            if (query.length < 48) {
+                query.append(ch)
+                took = true
+            } else break
+        }
+        if (!took) return true
+        renderQuery()
+        scheduleSearch()
+        return true
     }
 
     private fun renderQuery() {
@@ -378,6 +412,7 @@ class SearchActivity : Activity() {
             })
             Focus.attach(card, ringOn, app, theme.radius("card", 6f), animateScale = false,
                 elevate = false, glowInset = glowPad)
+            GlassKit.onGlassFocus(card, art, app, theme.radius("card", 6f))
             return ResultHolder(card, art, name, logo, badge)
         }
 
@@ -438,5 +473,7 @@ class SearchActivity : Activity() {
 
     companion object {
         const val EXTRA_PROFILE = "profile"
+        /** A query typed on the paired phone, so the TV opens with the search already running. */
+        const val EXTRA_QUERY = "query"
     }
 }

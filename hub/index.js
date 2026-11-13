@@ -27,6 +27,10 @@ const zlib = require('zlib');
 const { URL, URLSearchParams } = require('url');
 
 const ROOT = __dirname;
+// This must run before the cores below are imported: most choose their state files at module load.
+const offlinePreview = require('./core/offline-preview').prepare(ROOT);
+const OFFLINE_PREVIEW = offlinePreview.enabled;
+const HUB_BIND = offlinePreview.bind;
 const THEME_DIR = path.join(ROOT, 'web', 'assets');
 const PORT = Number(process.env.PORT || 8788);
 const TLS_CERT = String(process.env.TLS_CERT || '').trim();
@@ -75,18 +79,32 @@ const HUB_ID = process.env.HUB_ID || 'scenix-hub';
 const HUB_VERSION = process.env.HUB_VERSION || '0.1.0';
 
 const registry = require('./core/registry').load(ROOT);
-const store = require('./core/store').create(ROOT);
+const store = require('./core/store').create(ROOT, OFFLINE_PREVIEW ? {
+  dataDir: offlinePreview.dataDir,
+  profilesSeedFile: offlinePreview.profilesSeedFile,
+} : undefined);
 const merge = require('./core/merge');
 const shelves = require('./core/catalogs');
 const taste = require('./core/taste');
 const prefs = require('./core/prefs');
 const gateway = require('./core/gateway');
 const liveHealth = require('./core/live-health');
+// The wall's own reader: /app/v1/live/channels and rows/live.js must hand out the same channels, so
+// they ask the same question of the same providers.
+const liveRow = require('./rows/live');
+const channelItems = liveRow.channelItems;
 // Optional: a paid resolver, off unless the owner configures a provider and a token. It is tried before
 // the gateway and is never a hard dependency of the play path.
 const debrid = require('./core/debrid');
 const addons = require('./core/addons');
+const reviewedAddons = require('./core/reviewed-addons');
+const communityDirectory = require('./core/community-directory');
+const sourceSetupCore = require('./core/source-setup');
+const sourceSetup = sourceSetupCore.create();
 const trailers = require('./core/trailers');
+// Phone remote: an in-memory key/text queue the TV polls while Settings is open. The phone carries
+// only the session token from the QR; see core/remote.js for the endpoint contract.
+const remote = require('./core/remote');
 const ratings = require('./core/ratings');
 const castApi = require('./core/cast');
 const probe = require('./core/probe');
@@ -102,6 +120,9 @@ const introdb = require('./core/introdb');
 // The hub's own read-ahead: one bounded cushion of torrent bytes per copy, shared by the player, the
 // remuxer and the Play press that measures the copy before promising it. See core/readahead.js.
 const readahead = require('./core/readahead');
+// The hub keeping itself current: this checkout is the repo, so a fast-forward pull is its release
+// channel and one route lets the TV, the browser and the hub's own timer all ask for it. See core/update.js.
+const hubupdate = require('./core/update');
 // What the owner chose (core/settings.js) and what this hub says about itself on the LAN
 // (core/discovery.js). Both are read when a request asks, so a change made in the hub's own UI lands on
 // the next request: a setting that needs a restart to take effect is a setting nobody really made.
@@ -150,11 +171,30 @@ const ALT_MAX = Number(process.env.ALT_MAX || 9);
 // that starts and keeps going beats a link that "succeeds" in 0.3s and dies in the player. The total
 // stays inside the 12s read timeout the TV app puts on this call, so the last candidate tried is one
 // that has actually been measured rather than one the app gave up waiting for.
-const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 2);
-const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 5000);
+// How many copies one press is allowed to check, in ranked order, before it gives up. This used to
+// be 2 "to bound the walk", but the walk is already bounded by PLAY_TOTAL_BUDGET_MS (the deadline
+// check inside it stops trying when the press is out of time). Two seats let a title with 13 copies
+// fail on two junk links: an aggregator's wrong-title answer and one dead hoster link occupied both
+// seats while five working torrent copies waited untried below. Seats only decide how far down the
+// ranking a press may reach; the clock still decides how many it can actually afford.
+const PLAY_MAX_TRIES = Number(process.env.PLAY_MAX_TRIES || 6);
+// Wall-clock the whole picker walk may spend before it answers. The walk is also what gives a torrent
+// its first 256 KB, so on a title whose HTTP copies are all dead this is the time it takes the engine
+// to prove a swarm works - 5 s was measured too tight for one engine mint plus proof.
+const PLAY_TOTAL_BUDGET_MS = Number(process.env.PLAY_TOTAL_BUDGET_MS || 8000);
 // How long a warming title asks the player to wait before pressing again. The hub says it rather than
 // the client guessing, because only the hub knows whether it is talking to an engine that is awake.
 const PLAY_RETRY_AFTER_MS = Number(process.env.PLAY_RETRY_AFTER_MS || 2000);
+// How many presses in a row a gateway copy may answer with not one byte before the hub stops calling it
+// "still being prepared" and says what it actually knows. Measured on this box: a 720p copy measured 0
+// Mbps over 4 s and produced nothing in the 1.5 s pre-roll either, so the hub answered `warming` and the
+// television pressed again every 7.6 s — nine identical refusals, ~70 s of "the hub is preparing this
+// copy", in front of a copy that had never handed over a single byte. The retry is what warms a cold
+// torrent, so it is allowed twice; after that the same open read hearing nothing again is evidence.
+const PLAY_NOBYTE_TRIES = Number(process.env.PLAY_NOBYTE_TRIES || 2);
+// Presses further apart than this are separate attempts rather than one retry loop, so each gets its
+// evidence again: a swarm can gain a peer at any moment.
+const PLAY_NOBYTE_WINDOW_MS = Number(process.env.PLAY_NOBYTE_WINDOW_MS || 90000);
 const GATEWAY_DELIVER_MS = Number(process.env.GATEWAY_DELIVER_MS || 1500);
 // A direct/adaptive addon can mint its playable URL at play time, so the hub has no measurement of that
 // exact link and cannot rank it honestly. One short check catches a service page answering 200 before a
@@ -203,9 +243,26 @@ const UPSTREAM_UA = process.env.ADDON_UA || 'Mozilla/5.0 (Linux; Android 11) App
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// This is surfaced only on the loopback preview's health response.  It gives the focused test a
+// machine-readable proof that the startup lane did not quietly start a provider, compat, avatar or
+// genre job.  Production never creates or reports this object.
+const previewTelemetry = OFFLINE_PREVIEW ? {
+  enabled: true,
+  bind: HUB_BIND,
+  dataDir: offlinePreview.dataDir,
+  externalNetwork: false,
+  readOnly: true,
+  warmups: { providerStarts: 0, compatibility: 0, avatars: 0, genres: 0 },
+  skipped: { providerStarts: 0, compatibility: 0, avatars: 0, genres: 0 },
+} : null;
+
 // ---- plugin lifecycle -----------------------------------------------------------------------------
 
 for (const p of registry.providers) {
+  if (OFFLINE_PREVIEW) {
+    previewTelemetry.skipped.providerStarts++;
+    continue;
+  }
   if (typeof p.start === 'function') {
     try {
       p.start();
@@ -224,7 +281,7 @@ for (const f of registry.failures) log('  FAILED', f.kind, f.file, '-', f.error)
  * enable/disable surface works for both kinds) and every installed external addon is hot-mounted,
  * which puts it in registry.providers before the first request is served.
  */
-const addonBoot = addons.init(registry, store);
+const addonBoot = addons.init(registry, store, { offlinePreview: OFFLINE_PREVIEW });
 log('ADDONS', addonBoot.external, 'external mounted from', addonBoot.file,
   '+', registry.providers.filter((p) => p.native).length, 'native');
 
@@ -268,7 +325,31 @@ function capabilities() {
     profileEdit: true, // profiles are created, renamed and removed over HTTP,
     cacheAdmin: true, // the answers this backend cached can be thrown away on purpose,
     avatarFaces: true, // profile faces are offered and served by this backend
+    hubUpdate: true, // this backend can pull its own newest build (core/update.js); a copied
+                     // folder with no git still reports itself honestly through that route
   };
+  if (OFFLINE_PREVIEW) {
+    // The preview is a renderer inspection surface, not an alternate household backend.  Do not let a
+    // browser imply that it can change state, install a source, fetch a face or start playback.
+    Object.assign(caps, {
+      gateway: false,
+      live: false,
+      localFiles: false,
+      remux: false,
+      tracks: false,
+      audioMix: false,
+      announce: false,
+      search: false,
+      subtitles: false,
+      settingsAdmin: false,
+      addonAdmin: false,
+      prefsEdit: false,
+      profileEdit: false,
+      cacheAdmin: false,
+      avatarFaces: false,
+      preview: true,
+    });
+  }
   // A flag only when the resolver can actually do something. Off, unconfigured or missing a token means
   // the capability is absent, exactly like an uninstalled addon: the clients need no "debrid is off" state.
   if (d.ready === true) caps.debrid = true;
@@ -291,11 +372,16 @@ function hasSubtitleSource() {
  * a door to a room the household built, so a hub that never had either must not draw one. Presence here
  * is a fact about the install, never about which build the client is talking to.
  */
-async function navCaps() {
+async function navCaps(profile) {
   const list = await addons.list();
   const games = list.some((a) => a.enabled !== false &&
     Array.isArray(a.resources) && a.resources.includes('games'));
-  return { live: capabilities().live, games };
+  // Live is a door, not a paint job: a profile whose scope refuses the live row (a child, by
+  // default) must not be offered a tab that opens on a refusal. The global capability still has to
+  // say yes — a household with no live add-on has no live row to show anyone.
+  const liveRow = registry.rows.find((r) => r.id === 'live');
+  const live = capabilities().live && (!liveRow || !profile || rowVisible(liveRow, profile));
+  return { live, games };
 }
 
 /**
@@ -353,6 +439,76 @@ function unlockFailed(id) {
   unlockTries.set(String(id), row);
 }
 function unlockSucceeded(id) { unlockTries.delete(String(id)); }
+
+// A successful PIN entry grants a short-lived, client-bound capability. The old implementation
+// returned `{ok:true}` but never attached that proof to later writes, so a direct request could
+// change household settings while the on-screen PIN pad was locked.
+const ADMIN_SESSION_HEADER = 'x-scenix-admin-session';
+const ADMIN_SESSION_TTL_MS = Math.max(60e3, Math.min(60 * 60e3,
+  Number(process.env.ADMIN_SESSION_TTL_MS || 30 * 60e3) || 30 * 60e3));
+const adminSessions = new Map(); // opaque token -> { client, expiresAt }
+
+function adminLockActive() {
+  const lock = settings.get().lock || {};
+  return lock.enabled === true && typeof lock.pinHash === 'string' && lock.pinHash.length > 0;
+}
+
+function adminClientKey(req) {
+  const address = String((req && req.socket && req.socket.remoteAddress) || '');
+  const userAgent = String((req && req.headers && req.headers['user-agent']) || '').slice(0, 512);
+  // A bearer hub token is already a client secret. Hash it into the binding rather than keeping it
+  // in session memory or returning it in an error/log.
+  const authorization = String((req && req.headers && req.headers.authorization) || '');
+  return crypto.createHash('sha256').update(address + '\n' + userAgent + '\n' + authorization).digest('hex');
+}
+
+function pruneAdminSessions(now = Date.now()) {
+  for (const [token, session] of adminSessions.entries()) {
+    if (!session || session.expiresAt <= now) adminSessions.delete(token);
+  }
+}
+
+function mintAdminSession(req) {
+  pruneAdminSessions();
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+  adminSessions.set(token, { client: adminClientKey(req), expiresAt });
+  return { token, expiresAt };
+}
+
+function validAdminSession(req) {
+  const token = String((req && req.headers && req.headers[ADMIN_SESSION_HEADER]) || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(token)) return false;
+  const session = adminSessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    if (session) adminSessions.delete(token);
+    return false;
+  }
+  return safeEqual(session.client, adminClientKey(req));
+}
+
+function clearAdminSessions() { adminSessions.clear(); }
+
+/** Enforce the server-side half of the household lock only while it is enabled. */
+function requireAdminSession(req, res) {
+  if (!adminLockActive() || validAdminSession(req)) return true;
+  send(res, 403, {
+    error: 'the household settings PIN is needed',
+    gate: 'settings-lock',
+    sessionRequired: true,
+  });
+  return false;
+}
+
+/** Preview is a renderer-only lane: sources may be inspected there but never altered or fetched. */
+function rejectPreviewSourceMutation(res) {
+  if (!OFFLINE_PREVIEW) return false;
+  send(res, 403, {
+    error: 'offline preview is read-only',
+    code: 'preview-read-only',
+  });
+  return true;
+}
 
 /** Hash every plaintext PIN the seed or an older build left behind, once, at boot. */
 function migratePins() {
@@ -468,6 +624,10 @@ function isAdultChange(held, patch) {
 const COMPAT_BUDGET_MS = Number(process.env.COMPAT_BUDGET_MS || 20000);
 
 async function ensureCompat(provider) {
+  if (OFFLINE_PREVIEW) {
+    previewTelemetry.skipped.compatibility++;
+    return null;
+  }
   if (typeof provider.legacy.ensure !== 'function') return;
   await withBudget(Promise.resolve().then(() => provider.legacy.ensure()), COMPAT_BUDGET_MS,
     null, 'compat warmup ' + provider.id);
@@ -516,21 +676,55 @@ const itemCache = new Map();
   }
 })();
 
+// Same rule as the add-on cache: this file is a restart convenience, not a live object, and a
+// synchronously stringified write after every row froze the event loop mid-request. At most one save
+// per ITEM_SAVE_MIN_MS, never while another is in flight, and skipped entirely when nothing changed.
+const ITEM_SAVE_MIN_MS = Number(process.env.SCENIX_ITEM_SAVE_MIN_MS || 30 * 1000);
 let itemCacheSave = null;
+let itemSaveDirty = false;
+let itemSaveRunning = false;
+let itemLastSavedAt = 0;
 function scheduleItemCacheSave() {
-  if (itemCacheSave) clearTimeout(itemCacheSave);
-  itemCacheSave = setTimeout(() => {
-    itemCacheSave = null;
-    try {
-      fs.mkdirSync(path.dirname(ITEM_CACHE_FILE), { recursive: true });
-      const out = {};
-      for (const [id, it] of itemCache) out[id] = it;
-      const tmp = ITEM_CACHE_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(out));
-      fs.renameSync(tmp, ITEM_CACHE_FILE);
-    } catch (e) { /* a tile that fails to persist cold-reopens once; the row will remember it again */ }
-  }, 800);
+  itemSaveDirty = true;
+  if (itemCacheSave) return;
+  const wait = Math.max(500, ITEM_SAVE_MIN_MS - (Date.now() - itemLastSavedAt));
+  itemCacheSave = setTimeout(() => { itemCacheSave = null; persistItemCache(); }, wait);
   if (itemCacheSave.unref) itemCacheSave.unref();
+}
+
+async function fsWriteChunk(fd, chunk) {
+  await new Promise((resolve, reject) => fs.write(fd, chunk, (e) => e ? reject(e) : resolve()));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function persistItemCache() {
+  if (itemSaveRunning || !itemSaveDirty) return;
+  itemSaveRunning = true;
+  itemSaveDirty = false;
+  try {
+    fs.mkdirSync(path.dirname(ITEM_CACHE_FILE), { recursive: true });
+    const tmp = ITEM_CACHE_FILE + '.tmp';
+    const fd = await new Promise((resolve, reject) =>
+      fs.open(tmp, 'w', (e, f) => e ? reject(e) : resolve(f)));
+    try {
+      let buf = '{';
+      let first = true;
+      for (const [id, it] of itemCache) {
+        buf += (first ? '' : ',') + JSON.stringify(id) + ':' + JSON.stringify(it);
+        first = false;
+        if (buf.length > 256 * 1024) { await fsWriteChunk(fd, buf); buf = ''; }
+      }
+      await fsWriteChunk(fd, buf + '}');
+    } finally {
+      await new Promise((resolve) => fs.close(fd, resolve));
+    }
+    fs.renameSync(tmp, ITEM_CACHE_FILE);
+    itemLastSavedAt = Date.now();
+  } catch (e) { /* a tile that fails to persist cold-reopens once; the row will remember it again */ }
+  finally {
+    itemSaveRunning = false;
+    if (itemSaveDirty) scheduleItemCacheSave();
+  }
 }
 
 function rememberItems(items) {
@@ -538,6 +732,13 @@ function rememberItems(items) {
   let changed = false;
   for (const it of items) {
     if (!it || !it.identity) continue;
+    // A row re-resolving a show from its thin catalog tile knows less than the detail page that
+    // already adopted the sibling's 4,862 episodes. Replacing every other field is right; the
+    // episode list never shrinks. Measured live: this overwrite is how a restart restored the thin
+    // record and the first open after it said "Season 1 - 1 episode" again.
+    const old = itemCache.get(it.identity);
+    if (old && Array.isArray(old.episodes) && old.episodes.length > (it.episodes || []).length)
+      it.episodes = merge.unionEpisodes(it.episodes, old.episodes);
     itemCache.delete(it.identity);
     itemCache.set(it.identity, it);
     changed = true;
@@ -567,6 +768,10 @@ function makeCtx(profile, metaBudget) {
     store,
     providers: registry.byId,
     rules: registry.rules,
+    // id -> priority, the order merge.dedupe keeps a channel or a title from when two providers
+    // publish the same identity. A row that reads one class of provider directly (rows/live.js)
+    // still has to dedupe like the whole-library walk does.
+    priorities: registry.priorities,
     prefs: prefs.resolve(profile),
     days: DAYS,
     now: Date.now(),
@@ -934,6 +1139,12 @@ const HOME_ROW_MAX = Number(process.env.HOME_ROW_MAX || 18);
 // The section page a "See all" tile opens is the shelf itself, not the rail: deeper, but bounded,
 // so one page can never ask an addon for its entire catalogue.
 const SECTION_MAX = Number(process.env.SECTION_MAX || 120);
+// The live wall is a wall, not a shelf: one playlist publishes 350-400 channels and the remote's zap
+// ring has to be able to reach the last one. The budget is wider than a row's because this one is read
+// out of the live provider's memory, and the row that used to walk the entire catalogue blew its
+// 1200 ms here and answered empty — an empty Live TV tab and a remote that could not change channel.
+const LIVE_WALL_MAX = Number(process.env.LIVE_WALL_MAX || 700);
+const LIVE_WALL_BUDGET_MS = Number(process.env.LIVE_WALL_BUDGET_MS || 4000);
 function generalItems(rowId, items) {
   if (!Array.isArray(items)) return items;
   if (rowId === ADULT_ROW_ID) return items;
@@ -1125,7 +1336,7 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type,range,accept-encoding',
+    'Access-Control-Allow-Headers': 'content-type,range,accept-encoding,x-scenix-admin-session',
     'Access-Control-Expose-Headers': 'content-range,accept-ranges,content-length',
   };
 }
@@ -1171,6 +1382,7 @@ function readBody(req) {
 
 let healthCache = null;
 let healthCacheAt = 0;
+let healthInflight = null; // the single build in flight, shared by concurrent /healthz callers
 
 async function healthBody() {
   if (healthCache && Date.now() - healthCacheAt < HEALTH_CACHE_MS) return healthCache;
@@ -1254,6 +1466,17 @@ async function healthBody() {
       },
       failed: registry.failures,
     },
+    ...(previewTelemetry ? {
+      // Keep the preview proof useful without exposing its temporary filesystem directory.
+      preview: {
+        enabled: true,
+        bind: previewTelemetry.bind,
+        externalNetwork: false,
+        readOnly: true,
+        warmups: { ...previewTelemetry.warmups },
+        skipped: { ...previewTelemetry.skipped },
+      },
+    } : {}),
   };
   healthCache = body;
   healthCacheAt = Date.now();
@@ -1734,7 +1957,10 @@ function wantFromStreamId(streamId) {
 function magnetOf(streamId, s) {
   if (!s || s.kind !== 'torrent') return null;
   const a = registry.byId[s && s._addon];
-  return a && typeof a.magnetFor === 'function' ? a.magnetFor(streamId, s) : null;
+  // A copy keeps the address it was found at when that differs from the one this press is using —
+  // the season-pack copies a series press carries alongside the episode's own. Asking the addon to
+  // re-resolve a copy under an address it never published it under is a question it cannot answer.
+  return a && typeof a.magnetFor === 'function' ? a.magnetFor(s._streamId || streamId, s) : null;
 }
 
 function attachTracks(sources, want, streamId) {
@@ -1827,11 +2053,16 @@ function episodeStreamId(item, ep) {
 async function fetchEpisodeSources(item) {
   const askers = registry.providers.filter((p) => typeof p.fetchStreams === 'function');
   const ask = async () => {
-    for (const p of askers) {
+    // Every addon at once. Asked one after another — which is how this read until it was measured — a
+    // press waited on the SUM of their round trips: four addons at this hub each get three seconds,
+    // and a Play on a series episode spent 12.7 s of a 8 s budget collecting a copy list before it
+    // looked at a single copy. The calls are independent, `withBudget` caps each one on its own, and
+    // the list is re-ranked below whatever order they land in.
+    await Promise.all(askers.map(async (p) => {
       const extra = await withBudget(Promise.resolve().then(() => p.fetchStreams(item.streamId)),
         META_BUDGET_MS, [], 'episode streams ' + p.id);
       if (extra && extra.length) item.sources.push(...extra);
-    }
+    }));
   };
   await ask();
   // The episode question was the right one and an addon is still fetching that very stream. Say
@@ -1858,12 +2089,31 @@ async function fetchEpisodeSources(item) {
  * a sibling has what this tile lacks, adopt its episode list onto this tile — the identity stays the
  * one rows, progress and Continue are built on. Returns the addressed episode, or null.
  */
+const adoptingSiblings = new Set(); // identities whose episode-sibling lookup is already running
 async function adoptEpisodeSibling(item, ctx, opts) {
   const title = String(item.title || '').trim();
   if (!title || item.type !== 'series') return null;
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const want = norm(title);
   const year = Number(item.year);
+  // The hub has often already completed this exact show under another id — the same soap under
+  // its imdb tile while the aggregator tile stays thin. Re-learning it from a throttled upstream
+  // is how \"one episode\" came back for a show the hub knew had 4,862: take what is already in
+  // the store before asking anyone.
+  for (const [, rec] of itemCache) {
+    if (!rec || rec.identity === item.identity || rec.type !== 'series') continue;
+    if (norm(rec.title) !== norm(title)) continue;
+    const have = (item.episodes || []).length;
+    if (Array.isArray(rec.episodes) && rec.episodes.length > have) {
+      item.episodes = merge.unionEpisodes(item.episodes, rec.episodes);
+      log('EPISODE SIBLING', item.identity, '<- remembered', rec.identity,
+        'episodes=' + item.episodes.length);
+    }
+  }
+  if ((item.episodes || []).length >= 5 && opts.fetchSources === false) {
+    rememberItems([item]);
+    return episodeOf(item, opts.season, opts.episode) || true;
+  }
   for (const p of registry.providers) {
     if (typeof p.catalog !== 'function') continue;
     let cats = [];
@@ -1875,13 +2125,23 @@ async function adoptEpisodeSibling(item, ctx, opts) {
         && norm(h.title) === want
         && (!Number.isFinite(year) || !Number.isFinite(Number(h.year)) || Number(h.year) === year));
       if (!sib) continue;
-      const full = await ctx.metaOnly(sib.identity, 'series', 1500);
+      const full = await ctx.metaOnly(sib.identity, 'series', opts.metaBudget || 1500);
       if (!full || !Array.isArray(full.episodes) || !full.episodes.length) continue;
       // Union, never replace. DesiFlix knowing 20 of Breaking Bad's 62 episodes must not erase the
       // 62 — the tile lost seasons 1-3 that way, and with the full list the copies indexed by the
       // show's shared ids.
       item.episodes = merge.unionEpisodes(item.episodes, full.episodes);
       log('EPISODE SIBLING', item.identity, '->', sib.identity, 'episodes=' + item.episodes.length);
+      if (opts.fetchSources === false) {
+        // The detail page only wants the episode list — the seasons and numbers it will print. An
+        // Indian soap whose global tile carries one episode sits complete under the catalogue addon's
+        // own id (4,922 of them for Taarak Mehta); the next press of that show lists them from cache.
+        // A thin sibling is not that: only a list with real depth ends the hunt, so a sibling that
+        // knows four episodes does not stop the search for the one that knows four thousand.
+        rememberItems([item]);
+        if ((item.episodes || []).length >= 5) return episodeOf(item, opts.season, opts.episode) || true;
+        continue;
+      }
       const ep = episodeOf(item, opts.season, opts.episode);
       if (!ep) continue;
       // Ask both addresses for the episode: the sibling's (the reason to adopt is that its addon
@@ -2078,7 +2338,7 @@ function donorProbeAsync(url, headers) {
  * donor is already an HTTP stream. This is deliberately separate from the primary picker: the donor is
  * allowed to be an audio-only row, and it must never be used as the picture.
  */
-async function resolveAudioDonor(source, identity, opts, deadline) {
+async function resolveAudioDonor(source, identity, opts, deadline, want) {
   const addon = registry.byId[source && source._addon];
   if (!addon || typeof addon.play !== 'function') return null;
   const left = deadline - Date.now();
@@ -2101,7 +2361,10 @@ async function resolveAudioDonor(source, identity, opts, deadline) {
     const r = await gateway.resolve(
       { ...source, url: o.url, infoHash: o.infoHash },
       { clientOrigin: opts.clientOrigin,
-        budgetMs: Math.max(1000, Math.min(2500, deadline - Date.now())) },
+        budgetMs: Math.max(1000, Math.min(2500, deadline - Date.now())),
+        // A season pack holding the donor language still has to be opened at *this* episode: mapping
+        // the audio of S02E12 over the picture of S02E35 is the silent wrong-film again.
+        want: want || null },
     );
     if (!r.url) return null;
     url = r.url;
@@ -2392,6 +2655,37 @@ function statesTheEpisode(label, ep) {
   return episodeInLabel(text, ep);
 }
 
+/**
+ * Presses in a row, per gateway copy, on which the hub's own read produced not one byte.
+ *
+ * The retry the player makes is what warms a cold torrent, so one or two zero-byte presses mean
+ * nothing — they are the hub's own reader still open on the copy, still waiting. What they add up to is
+ * the point: a third press that finds the same open read having heard nothing is the hub watching a copy
+ * that is not answering, and the viewer has been told "preparing" for a minute. A copy that hands over a
+ * byte clears this, and so does pressing again after the window closes.
+ */
+const noByte = new Map(); // hash:file -> { streak, at, waitedMs }
+function noByteKey(who) {
+  return who && who.hash ? String(who.hash) + ':' + who.fileId : '';
+}
+function noteNoByte(who, waitedMs) {
+  const k = noByteKey(who);
+  if (!k) return 0;
+  const now = Date.now();
+  const prev = noByte.get(k);
+  if (prev && prev.at + PLAY_NOBYTE_WINDOW_MS < now) noByte.delete(k);
+  const streak = ((noByte.get(k) || {}).streak || 0) + 1;
+  noByte.set(k, { streak, at: now, waitedMs: Math.round(waitedMs || 0) });
+  // Entries are only ever added here and expire when the copy is asked about again, so a hub that met a
+  // handful of dead torrents does not carry them forever.
+  if (noByte.size > 200) for (const [k2, v] of noByte) if (v.at + PLAY_NOBYTE_WINDOW_MS < now) noByte.delete(k2);
+  return streak;
+}
+function clearNoByte(who) {
+  const k = noByteKey(who);
+  if (k) noByte.delete(k);
+}
+
 function listAlternatives(candidates, source, title, ep = null) {
   const others = candidates.filter((s) => s !== source);
   // A copy whose parenthetical names a different title, or whose own SxxEyy is another episode,
@@ -2411,9 +2705,60 @@ function listAlternatives(candidates, source, title, ep = null) {
   ));
 }
 
+/**
+ * Where a Play press spent its seconds, logged as one line per press.
+ *
+ * "Play takes a minute" is the complaint, and without the split every fix for it is a guess: this is the
+ * same wall clock the viewer waits, broken into the steps that cost it. Phases are summed across every
+ * copy a press walks, so the line reads as the press rather than as one candidate.
+ */
+function playClock(identity) {
+  const start = Date.now();
+  const phases = new Map();
+  const counts = { sources: 0, seats: 0, tries: 0 };
+  return {
+    counts,
+    mark(name, ms) { if (ms > 0) phases.set(name, (phases.get(name) || 0) + ms); },
+    /** Await one step and keep what it cost, without changing what it returns. */
+    async time(name, fn) {
+      const at = Date.now();
+      try { return await fn(); } finally { this.mark(name, Date.now() - at); }
+    },
+    report(answer) {
+      const parts = [...phases.entries()]
+        .filter(([, ms]) => ms >= 5)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, ms]) => name + '=' + ms + 'ms');
+      log('PLAY TIMING', identity, 'total=' + (Date.now() - start) + 'ms',
+        'status=' + ((answer && answer.status) || '?'),
+        'sources=' + counts.sources, 'seats=' + counts.seats, 'tries=' + counts.tries,
+        parts.join(' ').slice(0, 300));
+    },
+  };
+}
+
+/**
+ * Did the host refuse this hub, rather than merely stay silent?
+ *
+ * A 401/403/404/410/451 is a verdict about this connection or the stored address: asking again in a
+ * couple of seconds finds the same wall. Silence — a timeout, no bytes, a dropped socket — is a copy
+ * that may still wake. The picker's warming bargain is only honest for the second kind, so the two
+ * must be told apart before an answer is chosen.
+ */
+function isRefusal(text) {
+  return /(?:HTTP\s*)?(?:401|403|404|410|451)\b|forbidden|blocked|geo-?blocked/i.test(String(text || ''));
+}
+
 async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
+  const clock = playClock(identity);
+  const answer = await pickMeasured(identity, profile, wanted, type, opts, clock);
+  clock.report(answer);
+  return answer;
+}
+
+async function pickMeasured(identity, profile, wanted, type, opts, clock) {
   const ctx = makeCtx(profile, META_BUDGET_MS);
-  const item = await ctx.resolve(identity, type);
+  const item = await clock.time('meta', () => ctx.resolve(identity, type));
   if (!item) {
     if (addons.pendingFor(identity)) {
       return { status: 503, body: {
@@ -2426,23 +2771,94 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // Address the episode before anything ranks or filters sources, so the rules and the picker all see
   // the streams for the episode the viewer is about to watch.
   let ep = episodeOf(item, opts.season, opts.episode);
+  if (!ep && type === 'series' && Number(opts.episode) > 0) {
+    // The wanted number is not in the list this tile carries — typical of a thin cached tile
+    // ("one episode, numbered 4863") that predates the full-list adoption. A sibling that indexes
+    // the complete run may hold this very number: adopt before treating the episode as absent.
+    await clock.time('adopt', () => adoptEpisodeSibling(item, ctx, opts));
+    ep = episodeOf(item, opts.season, opts.episode);
+  }
   const epAddr = ep ? episodeStreamId(item, ep) : null;
+  let packCopies = [];
   if (ep) {
+    if (process.env.PLAY_DEBUG) {
+      log('PLAY EP ADDR', identity, 'tile=' + String(item.streamId || item.identity).slice(0, 30),
+        'want=' + String(epAddr).slice(0, 30), 'had=' + (item.sources || []).length);
+    }
     if (item.streamId !== epAddr) {
+      // The show address and the episode address answer with two different sets of copies: season
+      // packs and whole-season torrents answer `tt7678620`, per-episode files answer
+      // `tt7678620:2:35`. This branch used to throw the first set away, and the cost was measured on
+      // a cold episode: the engine already had the season pack open (`Torrent working`, 785 files,
+      // 186 peers) while the press spent its whole walk on per-episode magnets it had never met, and
+      // answered `warming`. Keep them, tagged with the address they were published under, and fetch
+      // the episode's own copies on top. The picker's episode tests below decide whether a pack copy
+      // is this episode — the engine is told which file inside the pack the press means.
+      const showAddr = item.streamId || item.identity;
+      packCopies = (item.sources || [])
+        // Only copies that could be THIS episode carry over. A list this hub addressed at a previous
+        // episode holds that episode's own copies too, and re-inheriting them made the tile grow by a
+        // handful of copies on every press — measured at 160 rows for one children's show, with the
+        // seats drawn from a list mostly about other episodes. Tagged copies and the untagged list of a
+        // tile addressed at the show itself pass, and so does a season pack: its label names no
+        // episode (`1080p · 2.4 GB`), and it is the copy the engine is most likely to have open.
+        .filter((s) => s && s.kind === 'torrent'
+          && (s._streamId || !item.streamId || item.streamId === item.identity
+            || episodeInLabel(labelOf(s), ep)))
+        .map((s) => Object.assign({}, s, { _streamId: showAddr }));
       item.streamId = epAddr;
       item.sources = [];
     }
-    if (!(item.sources || []).length) await fetchEpisodeSources(item); // cheap when resolve already asked
-    if (!(item.sources || []).length && type === 'series' && await adoptEpisodeSibling(item, ctx, opts)) {
+    let usedWarmPack = false;
+    if (!(item.sources || []).length && packCopies.length && gateway.MODE === 'http') {
+      // A show-address copy the engine has already resolved is the fastest start this press can get:
+      // its file list costs a millisecond, while the episode's own addresses cost the hub a three-second
+      // round trip to the addons before the walk may begin (measured: `sources=3564ms` on a press whose
+      // winning copy was the season pack). When such a copy exists, walk it now and fetch the episode
+      // list in the background, so the NEXT press has it cached instead of paying for it twice.
+      const warmPack = packCopies.some((s) => episodeInLabel(labelOf(s), ep)
+        && gateway.holds({ ...s, url: magnetOf(s._streamId, s) }));
+      if (warmPack) {
+        // A separate item so the background fetch cannot mutate the list this press is walking.
+        const fill = Object.assign({}, item, { sources: [] });
+        fetchEpisodeSources(fill).then(() => {
+          // Keep what it found on the tile for the next press — the addons' own cache already has it,
+          // but a tile whose list is non-empty never asks again, so the copies have to land here too.
+          if (item.streamId !== epAddr) return; // the tile moved on to another address while it ran
+          const have = new Set((item.sources || []).map((s) => merge.sourceKey(s)));
+          for (const s of fill.sources || []) if (!have.has(merge.sourceKey(s))) item.sources.push(s);
+        }).catch(() => {});
+        item.sources = packCopies.slice();
+        usedWarmPack = true;
+      }
+    }
+    if (!usedWarmPack && !(item.sources || []).length) {
+      await clock.time('sources', () => fetchEpisodeSources(item)); // cheap when resolve already asked
+    }
+    // "Sources answered, but not one of them is this title" — the walk below would reject every copy
+    // with `its name is not <title>` — is the same dead end as silence, and must not block the join
+    // that exists for it: an aggregator that replies to an episode address with some other show's
+    // releases (measured live: "Grand Warden I" for a Taarak Mehta episode) is answering, wrongly.
+    const nothingRight = (item.sources || []).length > 0 && type === 'series'
+      && (item.sources || []).every((s) => labelNamesOtherTitle(labelOf(s), item.title));
+    if ((!(item.sources || []).length || nothingRight) && type === 'series'
+        && await adoptEpisodeSibling(item, ctx, opts)) {
       // The sibling carried the episode the show itself could not. Sources are on the item now.
-    } else if (!(item.sources || []).length) {
+    } else if (!(item.sources || []).length || nothingRight) {
       // Episode addressing is the right question, but some addons only list a show as a whole (a season
       // pack, or a catalog with no episode ids). An empty answer must not cost the title: fall back to
       // the show address the hub used before this existed.
       log('EPISODE MISS', item.streamId, 'falling back to the show address');
       item.streamId = null;
       ep = null;
-      await contributeSources(item);
+      await clock.time('sources', () => contributeSources(item));
+    }
+    if (ep && packCopies.length && !usedWarmPack) {
+      // The episode's own copies lead; the show-address packs sit behind them. `sourceKey` includes
+      // the label and size, so a pack never dedupes away an episode copy or the other way round,
+      // and `rankSources` preserves the `_streamId` tag because the objects themselves travel.
+      item.sources.push(...packCopies);
+      item.sources = merge.rankSources(item.sources, registry.priorities);
     }
   }
   // The intro window does not depend on which copy wins, so ask IntroDB while the sources rank. A
@@ -2451,9 +2867,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     ? introdb.introFor(identity, ep.season, ep.episode, { timeoutMs: 1200 })
     : Promise.resolve(null);
   const drops = [];
-  const [kept] = await pipeline([item], ctx, drops); // rules rank sources and enforce the profile's scope
+  const [kept] = await clock.time('rules',
+    () => pipeline([item], ctx, drops)); // rules rank sources and enforce the profile's scope
   if (!kept) return { status: 403, body: ruleDropBody(identity, drops) };
   let sources = kept.sources || [];
+  clock.counts.sources = sources.length;
+  if (process.env.PLAY_DEBUG) {
+    log('PLAY SOURCES', identity, kept.type + ' x' + sources.length,
+      sources.map((s) => (s._addon || '?') + ':' + String(s.label || s.name || '').slice(0, 28)).join(' | ').slice(0, 600));
+  }
   if (!sources.length) {
     // Same bargain as the missing item: if an addon is still fetching this title's streams, the
     // copies are in transit. The app's warming path retries; a bare 404 sends it to an error card.
@@ -2463,7 +2885,39 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         detail: 'the hub is still fetching sources for this title',
       } };
     }
-    return { status: 404, body: { error: 'no sources', identity } };
+    // No addon offered a copy for this title. That is a verdict, not a spinner: answer once in the
+    // same terminal shape the app's error card reads (code/detail/nextAction), so the press ends in
+    // a card instead of a retry loop that can learn nothing new.
+    return { status: 404, body: {
+      error: 'no playable source',
+      code: 'no-copy',
+      identity, title: kept.title || null,
+      detail: 'No add-on returned a copy of this title for this household.',
+      nextAction: 'Add a source that carries this title, or try another copy from Quality.',
+      tried: [],
+    } };
+  }
+  if (kept.type !== 'channel' && sources.length
+      && sources.every((s) => labelNamesOtherTitle(labelOf(s), kept.title))) {
+    // Every saved copy for this id carries some OTHER title's name (measured live: "Grand Warden I"
+    // answers for Taarak Mehta and for The Housemaid) — the aggregator's stored answer is for the
+    // wrong show, and the walk below would reject each copy with `its name is not`. Once per press,
+    // throw the saved answer away and let the addons mint a fresh one.
+    addons.forgetStreams(kept.streamId || identity);
+    log('PLAY REMINT', identity, sources.length + ' saved copies all named another title',
+      'asking the addons for fresh ones');
+    await clock.time('sources', () => contributeSources(kept));
+    sources = kept.sources || [];
+    if (!sources.length) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'no-copy',
+        identity, title: kept.title || null,
+        detail: 'The saved copies for this id named another title, and a fresh ask returned nothing.',
+        nextAction: 'Add a source that carries this title, or try another copy from Quality.',
+        tried: [],
+      } };
+    }
   }
   for (const s of sources) s.id = probe.sourceId(s); // the handle `exclude` names, assigned before filtering
 
@@ -2484,7 +2938,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     }
   }
   const open = sources.filter((s) => !isExcluded(s, skip));
-  await probePass(open.length ? open : sources, kept.streamId || identity, { force: opts.reprobe === true });
+  await clock.time('probe', () => probePass(open.length ? open : sources,
+    kept.streamId || identity, { force: opts.reprobe === true }));
   // A live channel that comes BACK to the hub (`/switch` with exclusions — the TV's own failover after
   // a stall or an error) is the freshest evidence that exists about this feed: a screen tried to watch
   // it and could not. The scheduled probe re-checks only every 30 minutes, so without this the dead
@@ -2504,7 +2959,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // that when the files themselves stated a language, ranking on that is worth the pass, and the rule
   // still refuses to invent a status or tagline without a measurement.
   if (probe.ENABLED || attached) {
-    await rerank(kept, ctx);
+    await clock.time('rerank', () => rerank(kept, ctx));
     sources = kept.sources || sources;
   }
 
@@ -2587,9 +3042,51 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const codec = codecFromName(name);
     if (codec) s.videoCodec = codec;
   }
+  // What the engine knows about this copy already. Both the seat order and the fit arithmetic ask
+  // it, and it is a memory read: `prepared` is filled by the title page's warm and by every earlier
+  // press, and `pickFile` inside it was given the very episode this press means.
+  const engineInfo = (s) => (s && s.kind === 'torrent' && gateway.MODE === 'http')
+    ? gateway.peekPrepared({ ...s, url: magnetOf(s._streamId || kept.streamId || identity, s) },
+      ep ? { season: ep.season, episode: ep.episode } : null)
+    : null;
+  const engineHas = (s) => { const i = engineInfo(s); return !!(i && i.fileId !== undefined); };
+  // A copy that handed over nothing on an earlier press must not spend this press's front seat on a
+  // repeat of that. The pack that is warm in metadata but whose pieces nobody in the swarm has
+  // measured 0 Mbps for four seconds, twice, while per-episode copies of the same episode played.
+  // The end of a press already records these strikes; the seat order is where they belong.
+  const provenDead = (s) => {
+    const i = engineInfo(s);
+    if (!i || i.fileId === undefined) return false;
+    const hit = noByte.get(noByteKey({ hash: i.hash, fileId: i.fileId }));
+    return !!(hit && hit.streak > 0 && hit.at + PLAY_NOBYTE_WINDOW_MS > Date.now());
+  };
   const rankDown = (s) => (s && s.status === 'down' ? 2 : 0) + (s && s.seeders === 0 ? 1 : 0)
     + (decodable.length && s && s.videoCodec
-      && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0);
+      && !decodable.includes(ranking.codecFamily(s.videoCodec)) ? 3 : 0)
+    // A copy whose own release name states another programme cannot pass the walk's name test — it
+    // is a certain rejection wearing a seat. Measured live: three such copies occupied the front of
+    // a 10-copy title while five working torrent copies waited behind a 5-second budget. Same
+    // predicates the walk applies (channels exempt, their labels are qualities, not release names;
+    // a copy that states the wanted episode is not treated as another film).
+    + (s && kept.type !== 'channel' && !kept.live
+      && !statesTheEpisode(labelOf(s), ep)
+      && nameIsntTheTitle(labelOf(s), kept.title) ? 4 : 0)
+    // A copy the engine has already read is the one this press can start now: its file list costs a
+    // millisecond, a cold magnet costs the engine ten to twenty seconds of metadata. Seated behind
+    // cold copies, the season pack this hub had warmed never got a press — the walk gave up after
+    // two cold per-episode magnets with the warm pack still untried. A copy that has already failed
+    // to hand over a byte is the one exception, and is pushed behind everything that has not.
+    - (engineHas(s) ? 1 : 0)
+    + (provenDead(s) ? 2 : 0);
+  // When every copy measured down, the fallback is not the first one the walk happened to meet: it is
+  // the copy that asks the least of the link. An adult HLS source hands the hub four separate rungs
+  // (1080p/720p/480p/240p); the 1080p one needs ~8 Mbps, measured 0 in its window, and was handed to
+  // the player anyway while a 240p rung of the same title was in the list. The low rung is the one
+  // that can actually start on a slow night.
+  const fallbackNeed = (s) => {
+    const n = Number(ranking.estimateMbps(s, kept));
+    return Number.isFinite(n) && n > 0 ? n : Number.POSITIVE_INFINITY;
+  };
   // The walk only ever seats PLAY_MAX_TRIES copies, so those seats go to what can fail this device least,
   // with the household's ranking intact underneath. Taking the seats straight off the top of the ranking
   // let an unplayable file hold one a playable copy was waiting further down for: measured on a series
@@ -2601,6 +3098,22 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // refused below may wake one more copy from further down the same ranking (bounded by the retry count).
   const ranked = explicit ? [source] : seated.slice();
   const queue = ranked.slice(0, PLAY_MAX_TRIES);
+  clock.counts.seats = queue.length;
+  // Ask the engine about every seated copy at once, before the walk starts.
+  //
+  // A cold torrent costs the press a couple of seconds of metadata wait each, and the walk used to pay
+  // that one copy at a time: a measured press spent 7.8 s of its 24 s asking the engine about three
+  // copies in turn. The title page already warms the top four of the list it was showing, but a series
+  // press addresses the EPISODE, whose copies are a different set of torrents — so that warm lands on
+  // hashes this press never asks about. Firing the same warm here, over the seats this press will
+  // actually walk, waits on nothing and makes the second and third copies arrive already resolved.
+  if (gateway.MODE === 'http' && queue.length > 1) {
+    gateway.prewarm(queue.map((s) => {
+      if (!s || s.kind !== 'torrent') return s;
+      const magnet = magnetOf(kept.streamId || identity, s);
+      return magnet ? Object.assign({}, s, { url: magnet }) : s;
+    }), ep ? { season: ep.season, episode: ep.episode } : null);
+  }
   // Then the copies this connection can actually feed. Once the hub has measured the engine's rate, a
   // 6 GB 4K copy stops competing with a 900 MB 720p one: the smaller is tried first because the bigger
   // one is known to stall. A source that is not a torrent gets the same standing as one that fits,
@@ -2608,20 +3121,42 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // quality and gets the top quality that plays — which is what "Auto" means in a paid app.
   const fitRank = (s) => {
     if (!swarmMbps || !s || s.kind !== 'torrent') return -1;
-    // `kept` is the merged item itself (pipeline returns the items it kept), so the runtime this
-    // arithmetic needs comes off it directly.
-    const need = ranking.estimateMbps(s, kept);
+    // A season pack's `sizeBytes` is the whole season, while this press plays one file inside it.
+    // Judged on that number a 2.4 GB pack needs 45 Mbps against this swarm's 2 and sorts behind every
+    // per-episode copy — which is how the pack the engine already had open never took a seat. The
+    // file this episode actually plays is the one that has to be carried: the engine knows its size
+    // once it has resolved the pack, and an unknown size is not a reason to seat a copy last.
+    const inside = s._streamId ? Number((engineInfo(s) || {}).fileSize) || 0 : 0;
+    const need = inside > 0
+      ? ranking.estimateMbps({ ...s, sizeBytes: inside }, kept)
+      : (s._streamId ? null : ranking.estimateMbps(s, kept));
     if (!need) return -1; // an adaptive ladder has no fixed bitrate; it adjusts itself
     return need <= swarmMbps * fitCeiling ? 0 : need;
   };
-  queue.sort((a, b) => fitRank(a) - fitRank(b));
+  // The seats keep their known-bad order under the fit pass: fitRank reorders WITHIN a rankDown tier,
+  // it may not promote past one. Reordering by fit alone let a dead hoster link and an aggregator's
+  // wrong-title answer keep the two front seats of a 13-copy title - they are HTTP (fit -1) so they
+  // led every time, while five working torrent copies waited below the 5-second budget.
+  queue.sort((a, b) => (rankDown(a) - rankDown(b)) || (fitRank(a) - fitRank(b)));
+  if (process.env.PLAY_DEBUG) {
+    log('PLAY QUEUE', identity, queue.length + ' seats: '
+      + queue.map((s) => (s._addon || '?') + '/' + rankDown(s) + '/' + fitRank(s)
+        + ':' + String(labelOf(s)).slice(0, 22)).join(' | ').slice(0, 700));
+  }
   // An explicit copy is the only copy this press may start: "try this copy" is a person's decision,
   // and the answer is either that copy or an honest refusal. Copies past the first seats are only
   // woken by an automatic walk.
-  const spare = explicit ? [] : ranked.slice(PLAY_MAX_TRIES).sort((a, b) => fitRank(a) - fitRank(b));
+  const spare = explicit ? [] : ranked.slice(PLAY_MAX_TRIES)
+    .sort((a, b) => (rankDown(a) - rankDown(b)) || (fitRank(a) - fitRank(b)));
 
   const deadline = Date.now() + PLAY_TOTAL_BUDGET_MS;
   const tried = [];
+  // A torrent only becomes an address the TV can open through a P2P gateway or a paid resolver. With
+  // both off, a torrent seat is a press this hub cannot finish, and a magnet is not a stream: the
+  // walk must not spend its seconds on copies whose only possible answer is a "warming" that will
+  // never warm. Keep the best magnet for clients that do own an engine, and for the log.
+  const canServeTorrents = gateway.MODE === 'http' || debrid.ready();
+  let magnetOnly = null; // the best torrent copy when this hub has no way to hand one over
   let mintedTries = 0; // how many minted links this press has actually had to check
   // What this response adds to the source's own reasoning: the container it chose and why, and whether
   // the engine is the one holding the copy back. Appended to `source.why` at the end, never replacing it.
@@ -2630,6 +3165,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   let lastResort = null; // a torrent the gateway could not serve: unplayable here, fine on an engine client
   let slowGateway = null; // a gateway link that resolved but has not proved it can carry this file
   let tooSlow = null; // a gateway link that produced bytes, just not fast enough for this file
+  let coldEngine = 0; // copies the engine has not read yet this press
 
   /**
    * The optional paid resolver, tried before the gateway. It only ever *adds* an answer: disabled, slow
@@ -2686,13 +3222,43 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   };
 
   let labelOverride = null; // set when a named pick plays despite its own release name
+  let reminted = false; // one throw-away of the cached stream answer per play press
+  const walkAt = Date.now();
   for (const cand of queue) {
+    clock.counts.tries++;
     const addon = addonOf(cand);
     if (!addon || typeof addon.play !== 'function') continue;
     const left = deadline - Date.now();
     if (left <= 0) { tried.push('out of time after ' + queue.indexOf(cand) + ' tries'); break; }
-    const o = await withBudget(Promise.resolve().then(() => addon.play(kept.streamId || identity, cand)),
-      Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id);
+    // The label tests, run BEFORE paying for the mint. Asking an aggregator for an address costs
+    // ~3 s per copy on this hub, and the copy it mints is the one its label already named: when the
+    // label states another programme the mint is spent and the rejection is certain. Measured live:
+    // three aggregator junk copies spent nine of a press's eight seconds minting answers the walk
+    // then threw away. An explicit Quality-menu pick still pays the mint first (it may play despite
+    // an odd release name), and every test below is re-applied to the minted copy unchanged.
+    const liveChannel = kept.type === 'channel' || !!kept.live;
+    const named = wanted && ((wanted.id && String(cand.id) === String(wanted.id))
+      || (wanted.label && labelOf(cand) === wanted.label));
+    if (!named && !liveChannel) {
+      if (labelNamesOtherTitle(labelOf(cand), kept.title)) {
+        tried.push(labelOf(cand) + ': its name is another title');
+        log('PLAY WRONG TITLE', identity, labelOf(cand), kept.title);
+        continue;
+      }
+      if (!episodeInLabel(labelOf(cand), ep)) {
+        tried.push(labelOf(cand) + ': its name is another episode');
+        log('PLAY WRONG EPISODE', identity, labelOf(cand), ep ? ('S' + ep.season + 'E' + ep.episode) : '?');
+        continue;
+      }
+      if (!statesTheEpisode(labelOf(cand), ep) && nameIsntTheTitle(labelOf(cand), kept.title)) {
+        tried.push(labelOf(cand) + ': its name is not ' + (kept.title || 'this title'));
+        log('PLAY LABEL MISMATCH', identity, labelOf(cand), kept.title);
+        continue;
+      }
+    }
+    const o = await clock.time('mint', () => withBudget(
+      Promise.resolve().then(() => addon.play(cand._streamId || kept.streamId || identity, cand)),
+      Math.min(META_BUDGET_MS, left), null, 'play ' + addon.id));
     if (!o || !o.url) {
       // The addon named this copy and then had no address for it. Saying which addon is the whole
       // diagnosis: one aggregator whose mint endpoint is failing looks nothing like a dead internet.
@@ -2705,7 +3271,6 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // A live channel's "label" is a quality ("576p stream"), not a release name. The film title
     // guard does not apply: it rejected every channel whose label was not its name, which was most
     // of the wall. Identity is the channel; the variants are its feeds.
-    const liveChannel = kept.type === 'channel' || !!kept.live;
     const otherTitle = liveChannel ? false : labelNamesOtherTitle(labelOf(cand), kept.title);
     // The episode number the file states about itself is a fact about the copy, and it is the strongest
     // one an aggregator's release name offers. "Titan VII - S01E01 Direct MP4" asked for as S01E01 is
@@ -2717,9 +3282,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     // A person who named this copy in the Quality menu outranks an odd release name: providers
     // mislabel real copies, and the better-quality one is often exactly the odd-named file. That
     // grace does NOT extend to a copy whose own name (or SxxEyy) is a different programme: an
-    // explicit pick must never put another title or another episode on screen.
-    const named = wanted && ((wanted.id && String(cand.id) === String(wanted.id))
-      || (wanted.label && labelOf(cand) === wanted.label));
+    // explicit pick must never put another title or another episode on screen. (`named` was settled
+    // before the mint above.)
     if (otherTitle) {
       tried.push(labelOf(cand) + ': its name is another title');
       log('PLAY WRONG TITLE', identity, labelOf(cand), kept.title);
@@ -2762,8 +3326,24 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         continue;
       }
       if (rankDown(cand) && queue.length > 1) {
-        tried.push(labelOf(cand) + ': measured down (' + ((cand.probe && cand.probe.error) || 'no bytes') + ')');
-        lastResort = lastResort || { o, cand };
+        const down = (cand.probe && cand.probe.error) || 'no bytes';
+        tried.push(labelOf(cand) + ': measured down (' + down + ')');
+        // Keep the least demanding down copy as the fallback, not the first one met: the rungs of an
+        // adaptive source arrive sharpest-first, and the sharpest is the one that just failed.
+        if (!lastResort || fallbackNeed(cand) < fallbackNeed(lastResort.cand)) lastResort = { o, cand };
+        // A measured 4xx proves the link the hub cached is dead, not that the title is — and the
+        // cached answer is exactly what the next press reads back for six hours. Once per press,
+        // drop the addon's stream answer for this title and give this copy one fresh mint at the
+        // addon itself; the unprobed clone walks the normal validation road, so a new link gets a
+        // real chance and a re-minted death stops here.
+        const refused = readahead.originRefusal(down);
+        if (!reminted && refused >= 400 && refused < 500) {
+          reminted = true;
+          addons.forgetStreams(kept.streamId || identity);
+          log('PLAY REMINT', identity, labelOf(cand),
+            'measured ' + down + ': asking ' + addon.id + ' for a fresh link');
+          queue.push(Object.assign({}, cand, { probe: null, checked: false }));
+        }
         continue;
       }
       // A link the addon minted inside play() has no probe result of its own, so nothing has asked what
@@ -2861,7 +3441,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           slowGateway = slowGateway || { o, cand };
           continue;
         }
-        const md = await readahead.cushionUrl(o.url, o.headers || {}, {
+        const cushion = () => readahead.cushionUrl(o.url, o.headers || {}, {
           needMbps: needDirect,
           // Measure and pre-roll the HEAD of the file, even resuming mid-film. A resume looks as if it
           // wants the byte the viewer sits on — computed from size over runtime, the same arithmetic the
@@ -2873,6 +3453,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           at: 0,
           leftMs: deadline - Date.now(),
         });
+        const md = await clock.time('measure', cushion);
         const gotD = md && Number.isFinite(md.mbps) ? md.mbps : null;
         const realD = !!md && !!md.real && gotD != null;
         if (md && md.bufferedMB != null) o.bufferedMB = md.bufferedMB;
@@ -2961,12 +3542,24 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       out = o; source = cand; break;
     }
 
+    if (!canServeTorrents) {
+      // The copy is a torrent and this hub has neither a gateway nor a debrid account. Asking the
+      // gateway here returns "gateway off" and leaves a magnet as the fallback, which the next
+      // branch then reports as "still warming" — true for nobody, since nothing is warming. Record
+      // the fact once per copy and keep the best magnet for the terminal answer below.
+      tried.push(labelOf(cand) + ': a torrent, and this hub has no P2P gateway or debrid account to serve it');
+      if (!magnetOnly || fallbackNeed(cand) < fallbackNeed(magnetOnly.cand)) magnetOnly = { o, cand };
+      o.checked = true;
+      continue;
+    }
+
     // mode is the whole difference between our three playback paths; the client contract never changes.
     // Async on purpose: the gateway has to ask the engine which file inside the torrent is the film.
     //
     // The gateway is given the *resolved* source, not the ranked row: an addon's entry in the list is a
     // display shape (label, quality, size) and the actual magnet/hash only exists in the answer play()
     // just built. Reading the link out of `out` is the one place where the two are guaranteed to agree.
+    const gwAt = Date.now();
     const r = await gateway.resolve(
       { ...cand, url: o.url, infoHash: o.infoHash },
       // The prepare budget is clamped to the time left, not left at its own default: the app puts a
@@ -2974,18 +3567,36 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       { clientOrigin: opts.clientOrigin,
         // A cold torrent's metadata can take much longer than a Play press may. One press gets a short
         // look; the engine keeps the torrent, so the client's own retry finds it already resolved.
-        budgetMs: Math.max(1200, Math.min(2500, deadline - Date.now() - 1200)),
+        // The seat at the front of the walk gets the long look, because it is the copy this press is
+        // most likely to play: measured on a cold episode, three copies handed two and a half seconds
+        // each produced three failures and a 24 s press, while the metadata the engine was fetching
+        // arrived a second or two after the last one gave up.
+        budgetMs: Math.max(1200, Math.min(
+          queue.indexOf(cand) === 0 ? 4000 : 2500,
+          deadline - Date.now() - 1200)),
         // A season pack is one torrent holding the whole season. The engine has to be told which file
         // inside it this press means, or the biggest file wins and a Play on S01E04 plays S01E01.
         want: ep ? { season: ep.season, episode: ep.episode } : null },
     );
+    clock.mark('gateway', Date.now() - gwAt);
     if (!r.url) {
       // The reason comes from the gateway itself, so the log can tell an engine that is down from a
       // torrent whose metadata never resolved and an addon that never gave us a hash.
       tried.push(labelOf(cand) + ': ' + r.reason);
       if (gateway.MODE === 'http') log('GATEWAY MISS', identity, r.reason);
       o.mode = 'direct';
-      lastResort = lastResort || { o, cand };
+      if (!lastResort || fallbackNeed(cand) < fallbackNeed(lastResort.cand)) lastResort = { o, cand };
+      // One cold copy is a fact about that copy. Two of them is a fact about this press: the engine is
+      // behind on the swarms and asking it about a third, fourth and fifth torrent in turn is how a
+      // 24 s press with nothing to show for it happens. Stop, answer honestly, and let the engine
+      // catch up on the conversations this press already started — the client's retry lands on them.
+      if (/metadata still arriving|has not read this copy/.test(r.reason)) coldEngine++;
+      if (coldEngine >= 2 && queue.indexOf(cand) < queue.length - 1) {
+        tried.push('the engine is still reading two copies, so the walk stopped and left it catching up');
+        log('PLAY COLD ENGINE', identity, coldEngine + ' copies not read yet',
+          'stopping the walk with ' + (queue.length - queue.indexOf(cand) - 1) + ' copies untried');
+        break;
+      }
       continue;
     }
     o.mode = 'gateway';
@@ -3022,23 +3633,34 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     //     all. Playback dies in the worst window, so the worst window is the verdict. The bytes this
     //     read pulls are not thrown away afterwards — they are the pre-roll the film starts with.
     //   · Read-ahead off: the old 256 KB probe, which can only ever produce a floor.
-    const needs = ranking.estimateMbps(cand, kept);
+    // What the link has to carry is the FILE this press plays, not the torrent it lives in: a season
+    // pack's `sizeBytes` is the whole season, and judging a 110 MB episode by it demands 45 Mbps and
+    // fails every measurement. The engine has just named the file, so its size is the honest number.
+    const needs = ranking.estimateMbps(
+      Number(r.fileSize) > 0 && (!Number(cand.sizeBytes) || Number(r.fileSize) < Number(cand.sizeBytes))
+        ? { ...cand, sizeBytes: Number(r.fileSize) } : cand, kept);
     // The engine has recently failed to answer for this torrent at all. Asking it again on the very next
     // press spends the viewer's whole patience budget finding that out again, so while any other copy is
     // on the list this one waits for its turn.
     const frozen = gateway.isCold(r.hash);
     if (frozen && queue.length > 1) {
       tried.push(labelOf(cand) + ': the engine has not answered for this copy for '
-        + Math.round((frozen.until - Date.now()) / 1000) + 's (no header ' + (frozen.tries || 1)
-        + 'x, last after ' + frozen.waitedMs + 'ms)');
+        + Math.round((frozen.until - Date.now()) / 1000) + 's ('
+        + (frozen.reason || 'no header ' + (frozen.tries || 1) + 'x, last after ' + frozen.waitedMs + 'ms') + ')');
       o.cold = true;
       slowGateway = slowGateway || { o, cand };
       continue;
     }
     let m = null;
+    // Before measuring, give this file the torrent's whole pipe: the title page's warm, an earlier
+    // press and this one can all be holding readers on the same torrent at different files, and a
+    // sample taken while the swarm is feeding those sees nothing arrive and calls a working copy dead.
+    try { readahead.dropSiblings(r.hash, r.fileId, 'this file is being measured now'); }
+    catch (e) { /* nothing open is nothing to close */ }
     const buf = readahead.acquire({ hash: r.hash, fileId: r.fileId });
     if (buf) {
       readahead.noteNeed({ hash: r.hash, fileId: r.fileId }, needs);
+      const susAt = Date.now();
       m = await readahead.sustain(buf, {
         needMbps: needs,
         // The head of the file, not the byte the resume sits on: the same lesson the direct path
@@ -3049,15 +3671,25 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         // A fair share of the time that is left, not all of it: three copies inside eleven seconds means
         // the copy tested third must not be judged on a 1.5 s glance while the first had four. The reader
         // is left open either way, so a copy passed over keeps warming in the background and the next
-        // press finds its bytes already in RAM.
+        // press finds its bytes already in RAM. The front seat is the exception: it is the copy this
+        // press is about to play (and, since seats are ordered by what the engine has already read,
+        // usually the warm one), and a sixth of the budget was measured to be less than this engine's
+        // own first-byte time on a season pack — six copies at 1.1 s each proved nothing about any of
+        // them, while one copy given four seconds proved everything.
         budgetMs: Math.max(1000, Math.min(readahead.cfg().sustainMs,
-          Math.floor(Math.max(0, deadline - Date.now() - 900) / Math.max(1, queue.length - queue.indexOf(cand))))),
+          queue.indexOf(cand) === 0
+            ? Math.max(0, deadline - Date.now() - 900)
+            : Math.floor(Math.max(0, deadline - Date.now() - 900)
+              / Math.max(1, queue.length - queue.indexOf(cand))))),
       });
+      clock.mark('measure', Date.now() - susAt);
     } else {
+      const probeAt = Date.now();
       const p = await probe.probeUrl(r.url, o.headers || {}, {
         timeoutMs: Math.max(800, Math.min(GATEWAY_DELIVER_MS, deadline - Date.now())),
         force: true,
       });
+      clock.mark('measure', Date.now() - probeAt);
       // A sample that arrived faster than it can be timed is a floor, not a rate — and a floor taken out
       // of the engine's own cache is not even that. One 100 KB sample served from RAM divided by its own
       // millisecond of transfer once looked like 8388 kbps, and the picker then ordered a 6 GB copy that
@@ -3090,6 +3722,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         'bufferedMB=' + m.bufferedMB, 'need=' + (needs == null ? '?' : needs.toFixed(1)));
       gateway.clearCold(r.hash);
       readahead.clearSlow(r.hash);
+      clearNoByte({ hash: r.hash, fileId: r.fileId });
     } else if (rateIsReal) {
       swarmMbps = swarmMbps ? swarmMbps * 0.6 + got * 0.4 : got;
       log('PLAY RATE MEASURED', identity, labelOf(cand),
@@ -3100,6 +3733,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       if (needs && got >= needs * speedBar) {
         gateway.clearCold(r.hash);
         readahead.clearSlow(r.hash);
+        clearNoByte({ hash: r.hash, fileId: r.fileId });
       }
     } else if (m && !m.bytes) {
       // Nothing arrived at all. That is a cold torrent still handshaking with its swarm, not a slow one,
@@ -3110,6 +3744,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         'seeders=' + (cand.seeders != null ? cand.seeders : '?'),
         'need=' + (needs == null ? '?' : needs.toFixed(1)));
       tried.push(labelOf(cand) + ': no byte of it arrived in ' + m.ms + 'ms (cold copy, still reading)');
+      // A look this long that produced nothing is evidence the file itself is not in the swarm — the
+      // season pack that is warm in metadata while its later episodes are unseeded is the measured case.
+      // Record it so the next press seats the copy behind the ones that have not failed, instead of
+      // spending the same four seconds proving the same thing again.
+      if (m.ms >= 3000 && (m.windows || []).length >= 2) noteNoByte({ hash: r.hash, fileId: r.fileId }, m.ms);
       o.warming = true;
       o.measuredBytes = 0;
       o.neededMbps = Number.isFinite(needs) ? Number(needs.toFixed(2)) : null;
@@ -3186,6 +3825,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     }
     out = o; source = cand; break;
   }
+  clock.mark('walk', Date.now() - walkAt);
 
   // A copy that is merely slow is a better answer than one that never answered, which is better than a
   // magnet this TV cannot open at all.
@@ -3201,6 +3841,28 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }));
   scored.sort((x, y) => (y.bytes - x.bytes) || (y.seeders - x.seeders) || (x.size - y.size));
   const fallback = (scored[0] && scored[0].f) || lastResort;
+  if (!out && !fallback && magnetOnly && !explicit) {
+    // This is the honest end of the adult/late-night report: every copy the hub found is a torrent,
+    // and this hub has no way to turn one into an address the TV can open. It is a capability fact,
+    // not a copy that is still preparing, so answer once — not with a 503 the app will retry seven
+    // times while the spinner sits there. The magnet stays in the answer for a client with its own
+    // engine, and the alternatives let the app offer a different copy if one ever becomes playable.
+    log('PLAY NO GATEWAY', identity, 'only torrent copies; ' + tried.join(' | '));
+    return { status: 404, body: {
+      error: 'no playable source',
+      code: 'torrents-need-gateway',
+      identity,
+      title: kept.title || null,
+      copy: explicit ? labelOf(source) : null,
+      detail: 'Every copy of this title the hub found is a torrent. This hub has P2P streaming off'
+        + ' and no debrid account, so it cannot turn one into a link the TV can play.',
+      nextAction: 'Turn on P2P streaming in the hub (set GATEWAY=http with a torrent engine) or connect'
+        + ' a debrid account, then try again.',
+      magnet: (magnetOnly.o && magnetOnly.o.url) || null,
+      tried,
+      alternatives: listAlternatives(candidates, magnetOnly.cand, kept.title, ep),
+    } };
+  }
   if (!out && explicit) {
     // A direct copy whose short validation window was silent is not proof it cannot play: a busy
     // archive/CDN node often takes longer to first byte than the window. Hand the player the URL it
@@ -3216,6 +3878,42 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const reason = tried.find((t) => t.startsWith(labelOf(source))) || tried[0]
       || 'it answered with nothing the player could open';
     log('PLAY EXPLICIT FAIL', identity, labelOf(source), reason);
+    // The viewer picked a torrent on a hub that cannot serve one. Say that specifically instead of
+    // the generic "that copy could not be opened", and do not imply another torrent would help.
+    const pickedTorrent = magnetOnly && !canServeTorrents
+      && (magnetOnly.cand === source
+        || (source && magnetOnly.cand
+          && String(magnetOnly.cand.id || '') === String(source.id || '')));
+    if (pickedTorrent) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'torrents-need-gateway',
+        identity, title: kept.title || null,
+        copy: labelOf(source),
+        detail: 'You picked a torrent copy, and this hub has P2P streaming off and no debrid account,'
+          + ' so it cannot hand the TV a link.',
+        nextAction: 'Turn on P2P streaming in the hub (set GATEWAY=http with a torrent engine) or connect'
+          + ' a debrid account, then try again. Or pick a direct copy in Quality.',
+        magnet: (magnetOnly.o && magnetOnly.o.url) || null,
+        tried,
+        alternatives: listAlternatives(candidates, magnetOnly.cand, kept.title, ep),
+      } };
+    }
+    // A 4xx is the host refusing this hub, not a copy that needs another second. Retrying it only
+    // repeats the same wall, so it is a terminal answer even though "measured down" also appears on
+    // silent hosts.
+    if (tried.length > 0 && tried.every((t) => isRefusal(t))) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'blocked',
+        identity, title: kept.title || null,
+        copy: labelOf(source),
+        detail: 'The host refuses this hub for that copy (it blocked the request or the copy is gone).',
+        nextAction: 'Pick another copy in Quality, or add a direct source that will serve this hub.',
+        tried,
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
+      } };
+    }
     const silenceOnly = tried.length > 0 && tried.every((t) =>
       /timeout|no answer|silence|stream read failed|ECONN|socket|closed|measured down|cold copy/i.test(t));
     if (silenceOnly) {
@@ -3238,6 +3936,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     source = fallback.cand;
     tried.push('nothing better than ' + labelOf(source));
   }
+  // One torrent, one pipe. The readers this box keeps open for other files of the same torrent split
+  // whatever the swarm delivers, and a measured press then sees nothing arrive for the very file it is
+  // judging. The copy that won keeps its cushion; its siblings in the same torrent are closed.
+  if (out && out.mode === 'gateway' && out.torrent) {
+    try { readahead.dropSiblings(out.torrent.hash, out.torrent.fileId, 'press picked another file of this torrent'); }
+    catch (e) { /* a buffer that is already gone is not a reason to fail a press */ }
+  }
   if (!out || !out.url) {
     // The viewer sees "nothing played" either way; the difference is whether the log can say why.
     log('PLAY FAIL', identity, tried.join(' | '));
@@ -3253,6 +3958,22 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         detail: 'the copies this hub was told about had no address behind them; asking the addons again',
       } };
     }
+    // A 4xx from every copy is not a sleeping swarm: it is the host refusing this hub (geo/Cloudflare
+    // blocks are the common adult-catalogue case) or a cached address that is gone. There is nothing
+    // to warm and the old "measured down" silence test wrongly put it behind a 503, which the app
+    // retried for a minute. Say it once.
+    if (tried.length > 0 && tried.every((t) => isRefusal(t))) {
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'blocked',
+        identity, title: kept.title || null,
+        detail: 'The copies of this title were refused by their host (blocked or unavailable from this'
+          + ' hub).',
+        nextAction: 'Try another copy in Quality, or add a direct source that will serve this hub.',
+        tried,
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
+      } };
+    }
     // When every refusal was of the silence kind — timeouts, no bytes, dropped sockets — rather than
     // a refusal of the content (an HTML page, the wrong film's filename), the copies may simply be
     // sleeping hosts that have not woken yet. Answer the hub's warming bargain and the app waits and
@@ -3266,7 +3987,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         detail: 'every copy answered too slowly to measure; they stay candidates, not verdicts',
       } };
     }
-    return { status: 404, body: { error: 'no playable source', identity, tried } };
+    return { status: 404, body: {
+      error: 'no playable source',
+      code: 'no-copy',
+      identity, title: kept.title || null,
+      detail: 'The hub found copies of this title, but none of them could be opened as a stream.',
+      nextAction: 'Try another copy in Quality, or add a source that serves direct video.',
+      tried,
+      alternatives: listAlternatives(candidates, source, kept.title, ep),
+    } };
   }
 
   // A native provider may answer with a hub-relative address (`/app/v1/proxy?u=file://…` for a file
@@ -3282,6 +4011,24 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // answering 200 with something unopenable and letting the screen call it a broken file. The magnet is
   // still in the answer, for the sake of any client that can use one and for the log.
   if (!hubRelative && !/^https?:\/\//i.test(String(out.url || ''))) {
+    if (!canServeTorrents) {
+      // Defence in depth: a candidate shaped as "direct" handed back a magnet even though no gateway
+      // or debrid can serve it. Waiting cannot change that, so it is the same terminal answer as the
+      // all-torrents case above.
+      log('PLAY NO GATEWAY', identity, labelOf(source), String(out.url).slice(0, 42));
+      return { status: 404, body: {
+        error: 'no playable source',
+        code: 'torrents-need-gateway',
+        identity, title: kept.title || null,
+        detail: 'The only copy the hub could find is a torrent, and this hub has P2P streaming off and'
+          + ' no debrid account, so it cannot turn it into a link the TV can play.',
+        nextAction: 'Turn on P2P streaming in the hub (set GATEWAY=http with a torrent engine) or connect'
+          + ' a debrid account, then try again.',
+        magnet: out.url,
+        tried,
+        alternatives: listAlternatives(candidates, source, kept.title, ep),
+      } };
+    }
     log('PLAY WARMING', identity, labelOf(source), String(out.url).slice(0, 42));
     return {
       status: 503,
@@ -3305,7 +4052,9 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // Enough to prove the copy is moving, not a six-second wait in front of a black screen. The
       // cushion keeps filling while the player reads it, so the rest of the pre-roll is free.
       const leftMs = Math.max(0, Math.min(1500, deadline - Date.now() - 400));
+      const preAt = Date.now();
       const pb = await readahead.preBuffer(buf, { budgetMs: leftMs });
+      clock.mark('prebuffer', Date.now() - preAt);
       const need = ranking.estimateMbps(source, kept);
       out.prebuffer = {
         ms: pb.ms,
@@ -3323,7 +4072,30 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // and finds the head already in RAM. A 200 here is what produced "This copy has not started moving
       // yet" on the TV after a twelve-second wait.
       if (!pb.complete && !(Number(out.measuredBytes) > 0) && out.warming !== false) {
-        log('PLAY WARMING', identity, labelOf(source), 'prebuffer incomplete, no measured byte');
+        const strikes = noteNoByte(bufWho, pb.ms);
+        // Twice the retry is the bargain a cold torrent is owed — its first byte has been measured
+        // arriving seventeen seconds after we asked. Past that, with this same buffer never having taken
+        // a byte of the copy, "still preparing" is a guess the hub has now watched fail, and the viewer
+        // has spent a minute being asked to wait for a copy that is not answering. Say which copy was
+        // tried and that another is likelier, and stop offering this one first while one exists.
+        if (strikes >= PLAY_NOBYTE_TRIES && !buf.everBytes) {
+          gateway.noteCold(out.torrent.hash, pb.ms, 'not one byte in ' + strikes + ' presses of an open read');
+          log('PLAY COPY SILENT', identity, labelOf(source), 'presses=' + strikes, 'ms=' + pb.ms,
+            'the hub has had this copy open and never received a byte of it');
+          return {
+            status: 404,
+            body: {
+              identity, title: kept.title || null, tried,
+              error: 'this copy has not handed the hub a single byte, ' + strikes + ' presses in a row',
+              detail: 'This copy has not sent the hub one byte, ' + strikes
+                + ' presses in a row, while the hub was reading it. Another copy of this title is likelier to play.',
+              silent: true, strikes,
+              alternatives: listAlternatives(candidates, source, kept.title, ep),
+            },
+          };
+        }
+        log('PLAY WARMING', identity, labelOf(source), 'prebuffer incomplete, no measured byte',
+          'presses=' + strikes);
         return {
           status: 503,
           body: {
@@ -3334,6 +4106,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
           },
         };
       }
+      // A byte is a byte: the copy is answering, so the count that would have condemned it starts over.
+      if (Number(pb.bytes) > 0 || Number(out.measuredBytes) > 0) clearNoByte(bufWho);
     }
   }
 
@@ -3389,13 +4163,13 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     && (settings.get().adaptive || {}).transcode !== false
     && out.kind !== 'hls' && !out.remuxed && !out.audioMix;
   const tracks = playHash
-    ? await media.tracksFor(out.torrent.hash, out.torrent.fileId, null,
-      { waitMs: Math.max(0, Math.min(1200, deadline - Date.now())) })
+    ? await clock.time('picture', () => media.tracksFor(out.torrent.hash, out.torrent.fileId, null,
+      { waitMs: Math.max(0, Math.min(1200, deadline - Date.now())) }))
     : null;
   const probed = (!tracks && adaptiveWanted && /^https?:\/\//i.test(out.url))
-    ? await media.probeUrl(out.url, {
+    ? await clock.time('picture', () => media.probeUrl(out.url, {
       timeoutMs: Math.max(700, Math.min(3000, deadline - Date.now() - 300)),
-    })
+    }))
     : null;
   const picture = tracks || probed;
   const pictureHeight = picture && picture.video && Number(picture.video.height) > 0
@@ -3502,6 +4276,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       // the playhead is where the film is. ffmpeg would otherwise fetch each of them itself at the front
       // of a 25 s first-byte budget, and on a host that rationes reads that wait is the difference
       // between switching language in a second and the viewer giving up.
+      const bufAt = Date.now();
       const head = await readahead.preBuffer(buf, {
         bytes: 8, sec: readahead.cfg().preSec, budgetMs: Math.max(500, Math.min(1500, deadline - Date.now())),
       });
@@ -3514,6 +4289,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         needMbps: Number.isFinite(out.neededMbps) ? out.neededMbps : 0,
         budgetMs: Math.max(500, Math.min(2000, deadline - Date.now())),
       }) : head;
+      clock.mark('prebuffer', Date.now() - bufAt);
       log('REMUX INPUT CUSHIONED', identity, labelOf(source), 't=' + tok, 'at=' + at,
         'headMB=' + (head && head.MB != null ? head.MB : '?'),
         'mbps=' + (warm && Number.isFinite(warm.mbps) ? warm.mbps.toFixed(1) : '?'),
@@ -3522,9 +4298,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   }
   if (desiredLang && mixRequested && !hasAudioTrack(source, desiredLang)
       && /^https?:\/\//i.test(String(engineUrl || '')) && deadline - Date.now() > 1200) {
+    const audioProbeAt = Date.now();
     pictureProbe = await media.probeUrl(engineUrl, {
       timeoutMs: Math.max(700, Math.min(2000, deadline - Date.now() - 400)),
     });
+    clock.mark('audio-probe', Date.now() - audioProbeAt);
     if (!pictureProbe) {
       log('AUDIO PICTURE PROBE FAIL', identity, labelOf(source), String(out.url).slice(0, 70));
     }
@@ -3557,6 +4335,14 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const donorPool = (allExcluded ? sources : pool).filter((s) => s !== source && !isExcluded(s, skip));
     let list = donorPool.filter((s) =>
       audioEvidence(s, desiredLang).fromTracks || audioEvidence(s, desiredLang).fromClaims);
+    if (!list.length) {
+      // A missing mix with nothing said about it is the hardest thing to diagnose afterwards: the copy
+      // list the picker shows is a trimmed one, so "no donor" usually means "no donor was ever kept".
+      log('AUDIO DONOR NONE', identity, desiredLang,
+        'copies=' + donorPool.length,
+        'byName=' + donorPool.filter((s) => audioEvidence(s, desiredLang).fromClaims).length,
+        'byTrack=' + donorPool.filter((s) => audioEvidence(s, desiredLang).fromTracks).length);
+    }
     if (mixOpt && mixOpt.source) {
       const want = mixOpt.source;
       list = list.filter((s) => String(s.id) === String(want) || s.label === want
@@ -3583,12 +4369,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     if (!pictureMs && list.length && out && out.url && source.kind !== 'torrent'
         && /^https?:/i.test(out.url) && deadline - Date.now() > 1400) {
       const hit = donorPeek(out.url);
-      const p = hit || await probeDonorUrl(out.url, out.headers || {}, 1200);
+      const p = hit || await clock.time('audio',
+        () => probeDonorUrl(out.url, out.headers || {}, 1200));
       if (p && Number(p.durationMs) > 0) pictureMs = Number(p.durationMs);
     }
     for (const cand of list.slice(0, 6)) {
       if (Date.now() >= deadline) break;
-      const target = await resolveAudioDonor(cand, kept.streamId || identity, opts, deadline);
+      const target = await clock.time('audio',
+        () => resolveAudioDonor(cand, cand._streamId || kept.streamId || identity, opts, deadline,
+          ep ? { season: ep.season, episode: ep.episode } : null));
       if (!target) continue;
       // A donor measured a different length than the film is a different cut; mapping it would play
       // the right language over the wrong scene, silently. Only a measured disagreement refuses —
@@ -3660,12 +4449,18 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   // to carry. A mixed output replaces the file's audio with one donor; this list is what lets the
   // Quality/Audio menu ask for another language without changing the picture copy.
   const audioOptions = [];
-  const optionByLang = new Map();
+  // Two keys, because the two kinds answer different questions. A "track" row is a stream inside
+  // the copy on screen and a language can hold several of them (the Bluey copy carries AC3 5.1 and
+  // AAC 2.0, both English) — keying those by language hid the AAC one, so a panel that refuses AC3
+  // was offered the very track it had already failed on. A "mix" row is a donor language the hub
+  // can remux, and there is only ever one of those per language.
+  const optionByKey = new Map();
   const optionScore = (o) => (o.kind === 'track' ? 4 : 0) + (o.confirmed ? 2 : 0)
     + (o.provider !== 'torrent' ? 1 : 0);
-  const addAudioOption = (raw, kind, sourceLabel, confirmed, trackId) => {
+  const addAudioOption = (raw, kind, sourceLabel, confirmed, trackId, codec, channels) => {
     const lang = media.langOf(raw);
     if (!lang || lang === 'und' || lang === 'mis') return;
+    const key = kind === 'track' ? 't:' + (trackId || lang) : 'm:' + lang;
     const next = {
       id: (kind === 'track' && trackId ? trackId : 'mix:' + lang),
       language: lang,
@@ -3673,12 +4468,16 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       kind,
       source: sourceLabel || null,
       confirmed: confirmed === true,
+      // What the stream is, so two rows in the same language read differently: "English · AC3 5.1"
+      // next to "English · AAC 2.0". Without this the menu showed two identical English rows.
+      codec: kind === 'track' ? (codec || null) : null,
+      channels: kind === 'track' ? (channels || null) : null,
       title: kind === 'track'
         ? (ranking.LANG_NAMES[lang] || lang) + ' · in this copy'
         : (ranking.LANG_NAMES[lang] || lang) + (sourceLabel ? ' · from ' + sourceLabel : ''),
     };
-    const before = optionByLang.get(lang);
-    if (!before || optionScore(next) > optionScore(before)) optionByLang.set(lang, next);
+    const before = optionByKey.get(key);
+    if (!before || optionScore(next) > optionScore(before)) optionByKey.set(key, next);
   };
   const pickedLabel = (out.picked && out.picked.label) || source.label || null;
   // When a donor is active the output carries only that track; the picture's original language is
@@ -3686,7 +4485,8 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   for (const t of out.audioTracks || []) {
     const mixed = t.kind === 'audio-mix';
     addAudioOption(t.language, mixed ? 'mix' : 'track',
-      mixed ? (donor && donor.source.label) : pickedLabel, true, mixed ? null : t.id);
+      mixed ? (donor && donor.source.label) : pickedLabel, true, mixed ? null : t.id,
+      mixed ? null : t.codec, mixed ? null : t.channels);
   }
   // The audio menu is a property of the TITLE, not of the copy the viewer happens to be watching.
   // Deriving it from the playable pool meant the language list changed with the resolution: a copy
@@ -3712,8 +4512,15 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
     const i = prefAudio.indexOf(media.langOf(o.language));
     return i < 0 ? 99 : i;
   };
-  out.audioOptions = [...optionByLang.values()]
-    .sort((a, b) => langRank(a) - langRank(b) || String(a.languageName).localeCompare(String(b.languageName)))
+  // A language the picture already carries is not a donor request. Keeping both a track row and a
+  // "mix from another copy" row for English made the menu offer to replace a track with itself.
+  const trackLangs = new Set([...optionByKey.values()]
+    .filter((o) => o.kind === 'track').map((o) => o.language));
+  out.audioOptions = [...optionByKey.values()]
+    .filter((o) => o.kind === 'track' || !trackLangs.has(o.language))
+    .sort((a, b) => langRank(a) - langRank(b)
+      || (a.kind === 'track' ? 0 : 1) - (b.kind === 'track' ? 0 : 1)
+      || String(a.languageName).localeCompare(String(b.languageName)))
     .slice(0, 12);
 
   const remuxNeeded = !!donor || (out.mode === 'gateway' && out.torrent
@@ -3904,7 +4711,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       || eps.find((x) => x.season === ep.season + 1) || null;
     out.nextEpisode = nx ? { season: nx.season, episode: nx.episode, title: nx.title || null } : null;
   }
-  const intro = await introPromise;
+  const intro = await clock.time('intro', () => introPromise);
   if (intro) {
     out.introStartMs = intro.startMs;
     out.introEndMs = intro.endMs;
@@ -3925,7 +4732,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         ? out.audioTracks.filter((t) => t && t.streamIndex != null)
         : [];
       const chosen = sourceTracks.find((t) => t && t.id === out.selectedAudio) || sourceTracks[0] || null;
-      const built = await ladder.create({
+      const built = await clock.time('ladder', () => ladder.create({
         url: out.url,
         headers: out.headers || {},
         quality: out.picked && out.picked.quality,
@@ -3943,7 +4750,7 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
         // the playhead, and the player carries `startMs` so the timeline still reads in film time.
         positionMs: Number(opts.positionMs || 0),
         sourceDurationMs: picture && Number(picture.durationMs) > 0 ? Number(picture.durationMs) : 0,
-      });
+      }));
       if (built && built.ready) {
         const base = opts.clientOrigin || ('http://127.0.0.1:' + PORT);
         out.url = base + built.path;
@@ -4008,9 +4815,11 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
       }
       readahead.noteNeed({ url: out.url }, out.neededMbps);
       if (!out.prebuffer) {
+        const preAt2 = Date.now();
         const pb = await readahead.preBuffer(buf, {
           bytes: 6, sec: readahead.cfg().preSec, budgetMs: 1200,
         });
+        clock.mark('prebuffer', Date.now() - preAt2);
         out.prebuffer = {
           ms: pb.ms, bytes: pb.bytes, sec: pb.sec, MB: pb.MB,
           neededMbps: out.neededMbps, complete: pb.complete,
@@ -4048,28 +4857,157 @@ async function pickAndPlay(identity, profile, wanted, type, opts = {}) {
   return { status: 200, body: out };
 }
 
-/** The theme registry and the selected theme's tokens, for the web boot and the settings picker. */
+/** The browser projection of the curated registry, for web boot and its settings picker. */
 function themeCatalog() {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(THEME_DIR, 'themes.json'), 'utf8'));
-    return Array.isArray(j.themes) ? j.themes : [];
+    return Array.isArray(j.themes) ? j.themes.filter((theme) => (
+      theme && typeof theme.id === 'string' && typeof theme.asset === 'string'
+      && Array.isArray(theme.targets) && theme.targets.includes('web')
+    )) : [];
   } catch (e) {
     return [];
   }
 }
-function themePayload() {
+
+/** A requested theme and the browser renderer's truthful effective choice. */
+function resolveWebTheme(requested = String(settings.get().theme || 'scenix-apple')) {
   const themes = themeCatalog();
-  // "Clean" is the shipped default; a household holding a pack that was retired between builds
-  // lands on the first entry of the shipped catalog rather than a theme the build cannot draw.
-  const wanted = String(settings.get().theme || 'scenix-apple');
-  const choice = themes.find((t) => t.id === wanted) || themes[0]
-    || { id: 'scenix-apple', name: 'Clean', asset: 'theme-apple.json' };
+  const wanted = String(requested || '').trim() || 'scenix-apple';
+  const requestedChoice = themes.find((theme) => theme.id === wanted);
+  const fallback = themes.find((theme) => theme.id === 'scenix-apple') || themes[0]
+    || { id: 'scenix-apple', name: 'Apple', asset: 'theme-apple.json', targets: ['web'] };
+  return {
+    themes,
+    wanted,
+    choice: requestedChoice || fallback,
+    available: !!requestedChoice,
+  };
+}
+
+function isSharedTheme(id) {
+  return themeCatalog().some((theme) => theme.id === String(id || '').trim());
+}
+
+function themePayload() {
+  const { themes, wanted, choice, available } = resolveWebTheme();
   let tokens = null;
   try {
     // The manifest is the allow-list; an id from a request never becomes a path.
     tokens = JSON.parse(fs.readFileSync(path.join(THEME_DIR, path.basename(String(choice.asset))), 'utf8'));
   } catch (e) { /* the page keeps app.css defaults */ }
-  return { id: choice.id, name: choice.name, themes, tokens };
+  return {
+    // `id` keeps older web shells working. New callers must render effectiveId and can surface a
+    // clear explanation when an old household setting names a TV-only pack.
+    id: choice.id,
+    name: choice.name,
+    requestedId: wanted,
+    effectiveId: choice.id,
+    available,
+    reason: available ? '' : 'This theme is available on this TV only',
+    themes,
+    tokens,
+  };
+}
+
+/** Registry ids are kept in local provenance, so browse state never needs to expose an add-on URL. */
+function reviewedInstalledIds() {
+  const ids = new Set();
+  for (const addon of addons.entries()) {
+    const provenance = addon && addon.provenance;
+    if (provenance && provenance.kind === 'reviewed' && typeof provenance.registryId === 'string') {
+      ids.add(provenance.registryId);
+    }
+  }
+  return ids;
+}
+
+function reviewedDirectoryOptions(u) {
+  return {
+    category: u.searchParams.get('category'),
+    type: u.searchParams.get('type'),
+    q: u.searchParams.has('q') ? u.searchParams.get('q') : u.searchParams.get('query'),
+    installedIds: reviewedInstalledIds(),
+  };
+}
+
+/** Community provenance remains separate from reviewed provenance even after a source is installed. */
+function communityInstalledIds() {
+  const ids = new Set();
+  for (const addon of addons.entries()) {
+    const provenance = addon && addon.provenance;
+    if (provenance && provenance.kind === 'community' && typeof provenance.directoryId === 'string') {
+      ids.add(provenance.directoryId);
+    }
+  }
+  return ids;
+}
+
+function communityDirectoryOptions(u) {
+  return {
+    type: u.searchParams.get('type'),
+    q: u.searchParams.has('q') ? u.searchParams.get('q') : u.searchParams.get('query'),
+    installedIds: communityInstalledIds(),
+  };
+}
+
+/** Safe data retained in a one-time configuration handoff — never a manifest/config address. */
+function sourceSetupSessionSource(kind, entry) {
+  if (!entry || !entry.configurationRequired) return null;
+  return {
+    kind,
+    id: kind === 'reviewed' ? entry.id : entry.id,
+    name: entry.name,
+    revision: entry.version,
+  };
+}
+
+/** A registry/cache refresh while somebody is configuring is a safety event, not an install fallback. */
+function sourceSetupMatches(sessionSource, entry, kind) {
+  return !!(sessionSource && entry && sessionSource.kind === kind
+    && sessionSource.id === entry.id && sessionSource.name === entry.name
+    && sessionSource.revision === entry.version && entry.configurationRequired === true);
+}
+
+/**
+ * Resolve and install the original descriptor only after a one-time code has been reserved.  The
+ * configured address comes from the web body, is validated against the original HTTPS origin, and
+ * is passed straight to the existing add-on boundary; it is never included in a response or log.
+ */
+async function installConfiguredSourceSetup(sessionSource, configuredManifest) {
+  if (sessionSource.kind === 'reviewed') {
+    let entry;
+    try { entry = reviewedAddons.find(sessionSource.id); } catch (error) {
+      return { ok: false, status: 503, error: 'reviewed source setup is unavailable' };
+    }
+    if (!sourceSetupMatches(sessionSource, entry, 'reviewed')) {
+      return { ok: false, status: 409, error: 'this reviewed source changed; start setup again' };
+    }
+    const url = sourceSetupCore.configuredManifestUrl(configuredManifest, entry.manifest);
+    if (!url.ok) return { ok: false, status: 422, error: url.error };
+    return addons.add(url.value, entry.name, {
+      provenance: { kind: 'reviewed', registryId: entry.id, revision: entry.version },
+      redirectPolicy: 'same-origin',
+      validateManifest: (manifest) => reviewedAddons.validateRemoteManifest(entry, manifest),
+    });
+  }
+  if (sessionSource.kind === 'community') {
+    let entry;
+    try { entry = await communityDirectory.find(sessionSource.id); } catch (error) {
+      return { ok: false, status: 503, error: 'community source setup is unavailable' };
+    }
+    if (!sourceSetupMatches(sessionSource, entry, 'community')) {
+      return { ok: false, status: 409, error: 'this Community source changed; start setup again' };
+    }
+    const url = sourceSetupCore.configuredManifestUrl(configuredManifest, entry.manifestUrl);
+    if (!url.ok) return { ok: false, status: 422, error: url.error };
+    return addons.add(url.value, entry.name, {
+      provenance: { kind: 'community', directoryId: entry.id, revision: entry.version },
+      redirectPolicy: 'same-origin',
+      validateManifest: (manifest) => communityDirectory.validateConfiguredManifest(entry, manifest),
+    });
+  }
+  return { ok: false, status: 409, error: 'this setup code has an unsupported source' };
 }
 
 async function handle(req, res) {
@@ -4103,7 +5041,12 @@ async function handle(req, res) {
 
     // A token is an access gate, not a second identity system. The public health answer is the one
     // thing pairing needs before it has a token, and it carries no library, paths or counts.
-    if (!authorized(req)) {
+    // The scanned remote page and its session routes are the other exception: a phone has only the
+    // random token from the QR, not the household's hub credential. Registering and closing a
+    // session still pass the normal gate inside core/remote.js.
+    const phoneRemote = path === '/remote' || path === '/remote/' ||
+      path === '/app/v1/remote/events' || path === '/app/v1/remote/state' || path === '/app/v1/remote/send';
+    if (!authorized(req) && !phoneRemote) {
       if (path === '/healthz') {
         return send(res, 200, { status: 'ok', hub: HUB_ID, version: HUB_VERSION });
       }
@@ -4111,6 +5054,9 @@ async function handle(req, res) {
         'WWW-Authenticate': 'Basic realm="Scenix", charset="UTF-8"',
       });
     }
+
+    // The phone remote's routes and page. The page is served by webui below; these are the queue.
+    if (await remote.handle(req, res, path, u, send, readBody, authorized)) return;
 
     // ---- the front-end itself ----
     // One UI everywhere: a browser loads the app straight from the hub, and the TV app shows the very
@@ -4120,7 +5066,11 @@ async function handle(req, res) {
 
     // ---- health ----
     if (path === '/healthz') {
-      return send(res, 200, await healthBody());
+      // The body is memoised for HEALTH_CACHE_MS, but two pollers landing inside the same gap used to
+      // each build a fresh one — every row through the pipeline, twice, while the TV waited. One
+      // in-flight build serves them all.
+      if (!healthInflight) healthInflight = healthBody().finally(() => { healthInflight = null; });
+      return send(res, 200, await healthInflight);
     }
 
     // ---- legacy addon-compat (byte-compatible with the predecessor addon) ----
@@ -4171,7 +5121,25 @@ async function handle(req, res) {
     // downloading the manifest to count add-ons. A household without the games add-on, or without a
     // live playlist, gets no tab for a mode it cannot enter.
     if (path === '/app/v1/caps') {
-      return send(res, 200, await navCaps());
+      const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
+      return send(res, 200, await navCaps(profile));
+    }
+
+    // ---- the hub's own build ----
+    // The household updates its television from GitHub Releases; this route is how the hub follows
+    // on the same day instead of becoming the one stale piece. GET answers the git facts (current
+    // commit, how far behind, and the honest reason when a self-pull is not allowed); POST pulls and
+    // restarts the process — which is why any client may press it: the TV after installing a new
+    // APK, the browser's Settings, or the hub's own six-hourly pass.
+    if (path === '/app/v1/hub/update') {
+      if (req.method === 'POST') {
+        const r = await hubupdate.update();
+        if (r.updated && hubupdate.selfRestart()) {
+          log('HUB SELF UPDATE', r.from + ' -> ' + r.to, 'restarting for the new code');
+        }
+        return send(res, 200, r);
+      }
+      return send(res, 200, await hubupdate.status(u.searchParams.has('check')));
     }
 
     if (path === '/app/v1/manifest') {
@@ -4217,7 +5185,13 @@ async function handle(req, res) {
       }
       if (pinMatches({ pinHash: lock.pinHash }, body && body.pin)) {
         unlockSucceeded('settings-lock');
-        return send(res, 200, { ok: true, pinSet: true });
+        const session = mintAdminSession(req);
+        return send(res, 200, {
+          ok: true,
+          pinSet: true,
+          adminSession: session.token,
+          adminSessionExpiresAt: session.expiresAt,
+        });
       }
       unlockFailed('settings-lock');
       return send(res, 403, { error: 'wrong PIN', ok: false });
@@ -4227,10 +5201,20 @@ async function handle(req, res) {
       const body = await readBody(req);
       const cur = settings.get().lock || {};
       const wantsEnabled = body && body.enabled === true;
+      const sessionIsValid = validAdminSession(req);
       if (cur.pinHash) {
         const given = (body && (body.pinCurrent || body.current)) || '';
-        if (!pinMatches({ pinHash: cur.pinHash }, given)) {
-          return send(res, 403, { error: 'the current settings PIN is needed', gate: 'settings-lock' });
+        if (!sessionIsValid) {
+          // Changing or disabling the lock is also a PIN-verification route.  It must share the
+          // unlock rate limit; otherwise this endpoint becomes an unlimited PIN oracle.
+          if (!unlockAllowed('settings-lock')) {
+            return send(res, 429, { error: 'too many attempts', retryAfterMs: 300000 });
+          }
+          if (!pinMatches({ pinHash: cur.pinHash }, given)) {
+            unlockFailed('settings-lock');
+            return send(res, 403, { error: 'the current settings PIN is needed', gate: 'settings-lock' });
+          }
+          unlockSucceeded('settings-lock');
         }
       }
       let pinHash = cur.pinHash || '';
@@ -4246,9 +5230,18 @@ async function handle(req, res) {
         return send(res, 400, { error: 'set a PIN before turning the lock on' });
       }
       const next = settings.set({ lock: { enabled: wantsEnabled, pinHash } });
+      // A changed lock/PIN invalidates every outstanding capability. When it remains enabled, the
+      // request that just proved the PIN receives one fresh session so the settings visit continues.
+      clearAdminSessions();
+      const session = (next.lock || {}).enabled === true && (next.lock || {}).pinHash
+        ? mintAdminSession(req) : null;
       return send(res, 200, {
         ok: true,
         lock: { enabled: (next.lock || {}).enabled === true, pinSet: !!((next.lock || {}).pinHash) },
+        ...(session ? {
+          adminSession: session.token,
+          adminSessionExpiresAt: session.expiresAt,
+        } : {}),
       });
     }
 
@@ -4297,10 +5290,10 @@ async function handle(req, res) {
             }
             : { channels: [], groups: [] };
         })(),
-        file: settings.FILE,
       });
     }
     if (path === '/app/v1/settings' && req.method === 'PUT') {
+      if (!requireAdminSession(req, res)) return;
       const raw = await readBody(req);
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return send(res, 400, { error: 'expected a JSON object of settings' });
@@ -4315,6 +5308,15 @@ async function handle(req, res) {
       // the hash). Settings screens send back the whole settings object they read, so an unmodified
       // `lock: {enabled, pinSet}` in this PUT must never be allowed to erase the stored hash.
       delete body.lock;
+      if (Object.prototype.hasOwnProperty.call(body, 'theme') && !isSharedTheme(body.theme)) {
+        return send(res, 400, {
+          error: 'this theme is available on this TV only',
+          requestedId: String(body.theme || ''),
+          themes: themeCatalog().map((theme) => ({
+            id: theme.id, name: theme.name, targets: theme.targets,
+          })),
+        });
+      }
       const before = settings.get();
       const next = settings.set(body);
       const effects = {};
@@ -4376,6 +5378,10 @@ async function handle(req, res) {
     // verified by this process and never read back, which is what turns "ask for four digits" from
     // theatre into a gate.
     if (path === '/app/v1/profiles' && req.method === 'POST') {
+      // The household Settings lock protects the whole administration surface, including profile
+      // creation. Profile *unlock* below stays reachable without this capability: it proves a
+      // profile's own PIN and must not become circular when an owner needs either proof.
+      if (!requireAdminSession(req, res)) return;
       const body = await readBody(req);
       /* The ceiling a new profile starts behind is the whole point of the household's locks, so choosing it is
          an adult act: a Kids profile is held to the hub's ceiling by its rules whatever the number on it says,
@@ -4388,6 +5394,7 @@ async function handle(req, res) {
     }
     m = /^\/app\/v1\/profiles\/([^/]+)$/.exec(path);
     if (m && (req.method === 'PUT' || req.method === 'PATCH')) {
+      if (!requireAdminSession(req, res)) return;
       const body = await readBody(req);
       const patch = {};
       for (const k of ['name', 'kind', 'age', 'languages', 'rules', 'prefs', 'pin', 'pinRequired', 'avatar']) {
@@ -4407,6 +5414,12 @@ async function handle(req, res) {
       // refuses to hold the half-state at all.
       if ('pin' in patch) {
         const v = patch.pin == null ? '' : String(patch.pin).trim().slice(0, 12);
+        // The television, the web pad and the hub all promise the same thing: a profile PIN is 4 to 8
+        // digits. A shorter number stored by an older client left a profile its own gate could never
+        // accept, so new numbers are held to the rule even when a client forgets to ask.
+        if (v && (v.length < 4 || v.length > 8)) {
+          return send(res, 400, { error: 'a profile PIN is 4 to 8 digits' });
+        }
         // The client sends digits; the box keeps a scrypt hash and a per-profile salt, never the digits.
         patch.pinHash = v ? hashPin(v) : null;
         patch.pin = null;
@@ -4454,6 +5467,7 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, profile: wireProfile(store.profile(m[1])) });
     }
     if (m && req.method === 'DELETE') {
+      if (!requireAdminSession(req, res)) return;
       /* Removing a person takes their gate down with them, so the number on the profile has to be produced to
          remove it. Without this, every lock in this file could be undone by a DELETE that asks nothing — a child
          cannot lift their own ceiling, but they could delete the profile that had it and start a new one.
@@ -4581,7 +5595,11 @@ async function handle(req, res) {
         return send(res, 403, { error: 'row not for this profile', rowId: row.id, scope: row.scope });
       }
       const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
-      const items = generalItems(row.id, await buildRow(row, ctx, undefined, SECTION_MAX));
+      // A section page is the shelf itself, so it gets the deeper cap — but a row that says "I am a
+      // wall" (rows/live.js declares 700 channels) gets its own number. Capping a 358-channel wall at
+      // 120 is how the remote's zap ring ran out of channels it had never heard of.
+      const cap = Math.max(SECTION_MAX, Number(row.max) || 0);
+      const items = generalItems(row.id, await buildRow(row, ctx, undefined, cap));
       await taste.decorate(ctx, items);
       const title = typeof row.label === 'function'
         ? (await Promise.resolve(row.label(ctx)).catch(() => null)) || row.title
@@ -4589,6 +5607,77 @@ async function handle(req, res) {
       return send(res, 200, {
         id: row.id, title, card: row.card, order: row.order, scope: row.scope || 'all',
         items: shelfItems(items),
+      });
+    }
+
+    if (path === '/app/v1/live/channels') {
+      // The channel manager's list, and the zap ring's list, from one place: the live row itself, with
+      // the profile's rules and lineup already applied. `channels` is in zap order — the order the
+      // remote walks — and `unlisted` says how many channels the profile's lineup is holding back, so a
+      // screen can say "your lineup shows 12 of 358" instead of quietly hiding the rest.
+      const profile = store.profile(u.searchParams.get('profile') || u.searchParams.get('profileId'));
+      const row = registry.rows.find((r) => r.id === 'live');
+      const live = registry.byId['live-tv'];
+      if (!row) {
+        return send(res, 200, {
+          channels: [], lineup: { only: [], order: [], hidden: [] },
+          status: { playlist: null, channels: 0, lastError: 'this hub has no live row' },
+        });
+      }
+      if (!rowVisible(row, profile)) {
+        return send(res, 403, { error: 'live TV is not for this profile', scope: row.scope });
+      }
+      const ctx = makeCtx(profile, HEALTH_BUDGET_MS);
+      const items = generalItems('live', await buildRow(row, ctx, LIVE_WALL_BUDGET_MS, LIVE_WALL_MAX));
+      const local = (profile.prefs && profile.prefs.live) || {};
+      const wall = await channelItems(ctx);
+      // The lineup vocabulary is the profile's channel ids. The provider's tvg id would be nicer for
+      // a person editing by hand, but the prefs editor, the live-health numbers and the zap ring all
+      // speak `norm:<slug>` today, so the wall's identity is the lineup key everywhere. `channel` is
+      // still published so a future editor can show the operator's name beside it.
+      const only = Array.isArray(local.only) ? local.only : [];
+      const order = Array.isArray(local.order) ? local.order : [];
+      const hiddenLocal = Array.isArray(local.hidden) ? local.hidden : [];
+      const channelOf = (it) => (it.live && it.live.channel) || it.identity;
+      // In the lineup = it is one of the profile's chosen channels: in the watch-only gate OR anywhere
+      // in the favourites order. Order alone still means "chosen" — the gate only decides whether the
+      // OTHER channels are hidden from Live TV, not whether these belong to the viewer.
+      const inLineup = (it) => only.includes(it.identity) || only.includes(channelOf(it))
+        || order.includes(it.identity) || order.includes(channelOf(it));
+      return send(res, 200, {
+        channels: items.map((it) => {
+          const lv = it.live || {};
+          return {
+            identity: it.identity,
+            channel: channelOf(it),
+            name: it.title,
+            group: (it.genres || [])[0] || '',
+            groups: it.genres || [],
+            logo: it.logo || it.poster || null,
+            number: lv.number || null,
+            quality: lv.quality || null,
+            health: lv.health || 'unknown',
+            error: lv.error || null,
+            checkedAt: lv.checkedAt || null,
+            now: lv.now || null,
+            next: lv.next || null,
+            inLineup: inLineup(it),
+            languages: it.languages || null,
+          };
+        }),
+        lineup: { only, order, hidden: hiddenLocal },
+        unlisted: Math.max(0, (wall?.length ?? 0) - items.length),
+        groups: (() => {
+          const set = new Set();
+          for (const it of items) for (const g of it.genres || []) set.add(g);
+          return [...set].sort((a, b) => a.localeCompare(b));
+        })(),
+        // Why the wall is what it is: the playlist address, how many channels it published, and the
+        // last thing that went wrong fetching it. A wall that came up empty after a DNS blip used to
+        // be indistinguishable from a hub with no live TV at all.
+        status: (live && typeof live.status === 'function')
+          ? live.status()
+          : { playlist: null, channels: 0, lastError: null },
       });
     }
 
@@ -4739,6 +5828,38 @@ async function handle(req, res) {
         kept.reaction = store.reactionFor(profile.id, identity) || null;
         kept.seen = store.seenFor(profile.id, identity);
       }
+      // A series whose tile is thin is usually complete somewhere else under its own title. Run
+      // that join BEFORE the answer goes out: a sibling that answers inside the window is listed on
+      // THIS open - the first open of a thin soap no longer shows "one episode" while the family
+      // waits for a second tap to list the 4,862. A sibling that is slower ships the thin record
+      // and lands in the store for the next open, exactly as the old post-send behaviour did.
+      if (kept && kept.type === 'series' && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)
+          && !adoptingSiblings.has(kept.identity)) {
+        adoptingSiblings.add(kept.identity);
+        const job = adoptEpisodeSibling(kept, makeCtx(profile, 9000),
+          { fetchSources: false, metaBudget: 9000 })
+          .then((got) => {
+            if (got) log('META EPISODES ADOPTED', kept.identity,
+              'episodes=' + ((kept.episodes || []).length));
+            return !!got;
+          })
+          .catch((e) => { log('META EPISODES ADOPT FAIL', kept.identity, e.message); return false; })
+          .finally(() => adoptingSiblings.delete(kept.identity));
+        // The job is not cancelled by the race: a late sibling still lands in the store for the
+        // next open - the old post-send behaviour is the floor, not the plan.
+        const late = await Promise.race([
+          job.then(() => false),
+          new Promise((r) => setTimeout(() => r(true), 9000)),
+        ]);
+        if (late && (!Array.isArray(kept.episodes) || kept.episodes.length < 5)) {
+          log('META EPISODES ADOPT LATE', kept.identity,
+            'this open carries the cached list; the full one lands when the sibling answers');
+        }
+      }
+      if (process.env.PLAY_DEBUG) {
+        log('META SEND', identity, 'type=' + (kept && kept.type) +
+          ' eps=' + (kept && Array.isArray(kept.episodes) ? kept.episodes.length : 'none'));
+      }
       send(res, kept ? 200 : 403, kept || ruleDropBody(identity, metaDrops));
       // Then start measuring the rest, after the bytes are out: the person is reading the synopsis,
       // and by the time they press play the answer is in the cache instead of costing 1.5 s.
@@ -4829,11 +5950,34 @@ async function handle(req, res) {
         const list = await withBudget(Promise.resolve().then(() => p.subtitles(identity, want)),
           SUBS_BUDGET_MS, [], 'subs ' + p.id);
         for (const s of list || []) {
-          // The community protocol names a subtitle and states its language, but never its container, and a
-          // decoder has to be told one. The extension inside the name the addon chose is the only honest
-          // signal available; when it is missing `format` stays absent rather than being guessed at.
-          const ext = /\.(srt|ass|ssa|vtt)\b/i.exec(String(s.name || ''));
-          found.push({ ...s, ...(ext ? { format: ext[1].toLowerCase() } : {}), addon: p.name || p.id });
+          // A subtitle provider that sniffed its file (see core/addons.js sniffSubtitleFormats) states
+          // `format` as a fact about the bytes, so it wins. Only when a provider did not (or could not)
+          // sniff does the extension inside the name the addon chose remain as the fallback: when both
+          // are missing `format` stays absent rather than being guessed at.
+          const normalizeFmt = addons.util && typeof addons.util.normalizeSubtitleFormat === 'function'
+            ? addons.util.normalizeSubtitleFormat : null;
+          const declared = normalizeFmt
+            ? normalizeFmt(s.format)
+            : (() => {
+              const bare = String(s.format || '').trim().toLowerCase().replace(/^\./, '');
+              return ['srt', 'ass', 'ssa', 'vtt', 'ttml', 'dfxp', 'sub'].includes(bare)
+                ? (bare === 'webvtt' ? 'vtt' : bare) : null;
+            })();
+          const ext = /\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i.exec(String(s.name || ''));
+          let format = declared || null;
+          if (!format && ext) format = ext[1].toLowerCase() === 'webvtt' ? 'vtt' : ext[1].toLowerCase();
+          const next = { ...s, addon: p.name || p.id };
+          if (format) {
+            next.format = format;
+            if (typeof next.name === 'string' && next.name
+              && !new RegExp('\\.' + format + '\\b', 'i').test(next.name)
+              && /\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i.test(next.name)) {
+              next.name = next.name.replace(/\.(srt|ass|ssa|vtt|webvtt|ttml|dfxp|sub)\b/i, '.' + format);
+            }
+          } else {
+            delete next.format;
+          }
+          found.push(next);
         }
       }
       found.sort((a, b) => {
@@ -4844,8 +5988,234 @@ async function handle(req, res) {
       return send(res, 200, { identity, langs: want, subs: found });
     }
 
-    // Addons: the list the app's Settings renders, and the install/remove surface.
+    // Reviewed sources are an intentionally small, repository-owned catalogue — never a remote
+    // marketplace. Its public projection omits the upstream manifest URL; install accepts only an
+    // immutable registry id and verifies the fetched manifest before it is persisted.
+    if (path === '/app/v1/addon-registry' && req.method === 'GET') {
+      try {
+        const directory = reviewedAddons.publicDirectory(reviewedDirectoryOptions(u));
+        return send(res, 200, {
+          // The legacy reviewed array remains for clients already on the original endpoint. It now
+          // carries the same safe metadata as the explicit directory envelope, never a manifest URL.
+          reviewed: directory.entries,
+          directory,
+          manualInstall: { available: true, safety: 'advanced-unreviewed' },
+        });
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+    }
+    if (path === '/app/v1/addon-registry/directory' && req.method === 'GET') {
+      try {
+        const directory = reviewedAddons.publicDirectory(reviewedDirectoryOptions(u));
+        return send(res, 200, {
+          ...directory,
+          manualInstall: { available: true, safety: 'advanced-unreviewed' },
+        });
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/addon-registry\/([a-z0-9-]+)$/.exec(path);
+    if (m && req.method === 'GET') {
+      try {
+        const entry = reviewedAddons.publicEntry(m[1], { installedIds: reviewedInstalledIds() });
+        if (!entry) return send(res, 404, { error: 'no such reviewed source', id: m[1] });
+        return send(res, 200, { entry });
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/addon-registry\/([a-z0-9-]+)\/setup-session$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      let entry;
+      try {
+        entry = reviewedAddons.find(m[1]);
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed source setup is unavailable' });
+      }
+      if (!entry) return send(res, 404, { error: 'no such reviewed source', id: m[1] });
+      const source = sourceSetupSessionSource('reviewed', entry);
+      if (!source) return send(res, 409, {
+        error: 'this reviewed source does not require browser setup',
+        code: 'configuration-not-required',
+        id: entry.id,
+      });
+      const setup = sourceSetup.createSession(source);
+      return send(res, 200, { ok: true, setup });
+    }
+    m = /^\/app\/v1\/addon-registry\/([a-z0-9-]+)\/install$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      let entry;
+      try {
+        entry = reviewedAddons.find(m[1]);
+      } catch (error) {
+        log('REVIEWED ADDON REGISTRY FAIL', error.message);
+        return send(res, 503, { error: 'reviewed sources are unavailable' });
+      }
+      if (!entry) return send(res, 404, { error: 'no such reviewed source', id: m[1] });
+      if (entry.configurationRequired) {
+        return send(res, 409, {
+          error: 'this reviewed source requires browser setup before installation',
+          code: 'configuration-required',
+          id: entry.id,
+        });
+      }
+      const out = await addons.add(entry.manifest, entry.name, {
+        provenance: { kind: 'reviewed', registryId: entry.id, revision: entry.version },
+        validateManifest: (manifest) => reviewedAddons.validateRemoteManifest(entry, manifest),
+      });
+      if (!out.ok) return send(res, out.status || 502, { error: out.error, id: entry.id });
+      invalidateCaches();
+      return send(res, 200, {
+        ok: true,
+        addon: out.addon.stats(),
+        addons: await addons.list(),
+      });
+    }
+
+    // Community sources are intentionally a separate, non-endorsed directory. The Hub fetches only
+    // the fixed protocol catalogue, returns a redacted projection, and accepts only its opaque cached
+    // descriptor id for installation. This route never treats a caller-supplied URL as a community item.
+    if (path === '/app/v1/community-addon-directory' && req.method === 'GET') {
+      try {
+        return send(res, 200, await communityDirectory.publicDirectory(communityDirectoryOptions(u)));
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community sources are unavailable', code: 'community-directory-unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/community-addon-directory\/(community-[a-f0-9]{24})$/.exec(path);
+    if (m && req.method === 'GET') {
+      try {
+        const entry = await communityDirectory.publicEntry(m[1], { installedIds: communityInstalledIds() });
+        if (!entry) return send(res, 404, { error: 'no such community source', id: m[1] });
+        return send(res, 200, { entry });
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community sources are unavailable', code: 'community-directory-unavailable' });
+      }
+    }
+    m = /^\/app\/v1\/community-addon-directory\/(community-[a-f0-9]{24})\/setup-session$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      const body = await readBody(req);
+      if (!communityDirectory.hasNonEndorsementAcknowledgement(body)) {
+        return send(res, 428, {
+          error: 'community setup requires an explicit non-endorsement acknowledgement',
+          code: 'community-acknowledgement-required',
+          id: m[1],
+          acknowledgement: { field: 'nonEndorsementAcknowledged', value: true },
+        });
+      }
+      let entry;
+      try {
+        entry = await communityDirectory.find(m[1]);
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community source setup is unavailable', code: 'community-directory-unavailable' });
+      }
+      if (!entry) return send(res, 404, { error: 'no such community source', id: m[1] });
+      const source = sourceSetupSessionSource('community', entry);
+      if (!source) return send(res, 409, {
+        error: 'this Community source does not require browser setup',
+        code: 'configuration-not-required',
+        id: entry.id,
+      });
+      const setup = sourceSetup.createSession(source);
+      return send(res, 200, { ok: true, setup });
+    }
+    m = /^\/app\/v1\/community-addon-directory\/(community-[a-f0-9]{24})\/install$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      const body = await readBody(req);
+      if (!communityDirectory.hasNonEndorsementAcknowledgement(body)) {
+        return send(res, 428, {
+          error: 'community installation requires an explicit non-endorsement acknowledgement',
+          code: 'community-acknowledgement-required',
+          id: m[1],
+          acknowledgement: { field: 'nonEndorsementAcknowledged', value: true },
+        });
+      }
+      let entry;
+      try {
+        entry = await communityDirectory.find(m[1]);
+      } catch (error) {
+        log('COMMUNITY ADDON DIRECTORY FAIL', error.message);
+        return send(res, 503, { error: 'community sources are unavailable', code: 'community-directory-unavailable' });
+      }
+      // An id is useful only while it resolves from the bounded server-side cache. A guessed or expired
+      // id fails closed rather than becoming a pass-through URL installer.
+      if (!entry) return send(res, 404, { error: 'no such community source', id: m[1] });
+      if (entry.configurationRequired) {
+        return send(res, 409, {
+          error: 'this community source requires browser setup before installation',
+          code: 'configuration-required',
+          id: entry.id,
+        });
+      }
+      const out = await addons.add(entry.manifestUrl, entry.name, {
+        provenance: { kind: 'community', directoryId: entry.id, revision: entry.version },
+        // Same-origin redirects, like the reviewed lane and the configured handoff: a community
+        // host must not 301 the install onto a different origin's manifest.
+        redirectPolicy: 'same-origin',
+        validateManifest: (manifest) => communityDirectory.validateRemoteManifest(entry, manifest),
+      });
+      if (!out.ok) return send(res, out.status || 502, { error: out.error, id: entry.id });
+      invalidateCaches();
+      return send(res, 200, {
+        ok: true,
+        addon: out.addon.stats(),
+        addons: await addons.list(),
+      });
+    }
+
+    // The generic handoff endpoints deliberately accept only an opaque one-time code. They are
+    // administrator-gated even for GET, so a code does not become a LAN-visible source probe.
+    m = /^\/app\/v1\/source-setups\/([^/]+)$/.exec(path);
+    if (m && req.method === 'GET') {
+      if (!requireAdminSession(req, res)) return;
+      const setup = sourceSetup.status(m[1]);
+      return setup
+        ? send(res, 200, { ok: true, setup })
+        : send(res, 404, { error: 'setup code is unavailable or expired' });
+    }
+    m = /^\/app\/v1\/source-setups\/([^/]+)\/complete$/.exec(path);
+    if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
+      const body = await readBody(req);
+      const reservation = sourceSetup.beginCompletion(m[1]);
+      if (!reservation.ok) return send(res, reservation.status, { error: reservation.error });
+      const out = await installConfiguredSourceSetup(reservation.source, body && body.manifestUrl);
+      if (!out.ok) {
+        sourceSetup.releaseCompletion(reservation.code);
+        return send(res, out.status || 502, { error: out.error || 'configured source could not be installed' });
+      }
+      const setup = sourceSetup.complete(reservation.code);
+      invalidateCaches();
+      return send(res, 200, {
+        ok: true,
+        setup,
+        addon: out.addon.stats(),
+        addons: await addons.list(),
+      });
+    }
+
+    // Add-ons: the list the app's Settings renders, and the explicitly advanced manual install/remove surface.
     if (path === '/app/v1/addons' && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
       const body = await readBody(req);
       const out = await addons.add(body && body.url, body && body.name);
       invalidateCaches();
@@ -4854,6 +6224,8 @@ async function handle(req, res) {
     }
     m = /^\/app\/v1\/addons\/([^/]+)\/(enable|disable)$/.exec(path);
     if (m && req.method === 'POST') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
       const st = addons.setEnabled(m[1], m[2] === 'enable');
       invalidateCaches();
       return st
@@ -4897,6 +6269,7 @@ async function handle(req, res) {
     // should not keep serving hour-old answers, and "clear the cache" is the first thing a support
     // conversation reaches for. Standalone hosts answer the same route, so one UI can offer one button.
     if (path === '/app/v1/cache/clear' && req.method === 'POST') {
+      if (!requireAdminSession(req, res)) return;
       // Everything this process remembers about the outside world, not just the addon responses: a stale
       // track listing or a link written off last week is just as much cache as a catalog page, and an
       // owner pressing "clear" cannot tell which of the three the button actually meant.
@@ -4909,6 +6282,8 @@ async function handle(req, res) {
 
     m = /^\/app\/v1\/addons\/([^/]+)$/.exec(path);
     if (m && req.method === 'DELETE') {
+      if (rejectPreviewSourceMutation(res)) return;
+      if (!requireAdminSession(req, res)) return;
       const ok = addons.remove(m[1]);
       invalidateCaches();
       return ok
@@ -4918,7 +6293,6 @@ async function handle(req, res) {
     if (path === '/app/v1/addons') {
       return send(res, 200, {
         addons: await addons.list(),
-        file: addons.paths.ADDONS_FILE,
         limits: addons.limits,
       });
     }
@@ -4958,15 +6332,19 @@ async function handle(req, res) {
         : null;
       if (src.rows && typeof src.rows === 'object') {
         const rows = {};
-        const h = cleanIds(src.rows.hidden); if (h) rows.hidden = h;
-        const o = cleanIds(src.rows.order); if (o) rows.order = o;
+        // Same rule as the live lineup: an empty list says "nothing hidden" / "no order of my own", and
+        // dropping it left a profile unable to put a Home row back.
+        if (Array.isArray(src.rows.hidden)) rows.hidden = cleanIds(src.rows.hidden);
+        if (Array.isArray(src.rows.order)) rows.order = cleanIds(src.rows.order);
         if (Object.keys(rows).length) out.rows = rows;
       }
       if (src.live && typeof src.live === 'object') {
         const live = {};
         for (const k of ['hidden', 'order', 'only']) {
-          const a = cleanIds(src.live[k]);
-          if (a) live[k] = a;
+          // An absent key leaves the stored list alone; an EMPTY array is a decision — "this profile has
+          // no lineup" — and dropping it (the old behaviour) meant a lineup could never be switched off.
+          if (!Array.isArray(src.live[k])) continue;
+          live[k] = cleanIds(src.live[k]);
         }
         if (Object.keys(live).length) out.live = live;
       }
@@ -5197,11 +6575,18 @@ async function handle(req, res) {
 // machine the television actually talks to.
 const server = tlsOptions ? https.createServer(tlsOptions, handle) : http.createServer(handle);
 
-server.listen(PORT, '0.0.0.0', () => {
-  log(HUB_ID, HUB_VERSION, 'on ' + SCHEME + '://0.0.0.0:' + PORT + '  (clients: /app/v1/home?profile=<id>)');
+server.listen(PORT, HUB_BIND, () => {
+  const bindLabel = HUB_BIND.includes(':') ? '[' + HUB_BIND + ']' : HUB_BIND;
+  log(HUB_ID, HUB_VERSION, 'on ' + SCHEME + '://' + bindLabel + ':' + PORT
+    + '  (clients: /app/v1/home?profile=<id>)');
   // ffmpeg reads a torrent through this hub's own proxy so the cushion sits in front of it too; it needs
   // to know the address to loop back to.
   readahead.setSelfOrigin(SCHEME + '://127.0.0.1:' + PORT);
+  // The hub follows its own origin on a slow timer, so "update the app" never leaves an old hub
+  // behind — and a hub that cannot self-pull (dirty checkout, no git) logs why once per pass.
+  // A loopback offline preview is deliberately a sealed renderer-inspection lane: even its delayed
+  // status check must not fetch a remote Git origin while someone is evaluating the UI.
+  if (!OFFLINE_PREVIEW) hubupdate.start(log);
   log('addons:', registry.providers.map((p) => p.id + (p.native ? '' : '@' + p.priority)).join(', '));
   log('rows:', registry.rows.map((r) => r.id + '/' + (r.scope || 'all') + '@' + r.order).join(', '));
   log('rules:', registry.rules.map((r) => r.id + '@' + r.order).join(', '));
@@ -5244,12 +6629,17 @@ server.listen(PORT, '0.0.0.0', () => {
   for (const p of compatProviders()) ensureCompat(p);
   // Faces are the first thing a household sees, before they have watched a single thing, so the pictures
   // are fetched at boot and kept. A profile screen then answers from this box in milliseconds.
-  avatars.warm();
-  // Genre shelves read whatever the addons have already said. On a fresh process that is nothing, so the
-  // first home page a household sees after a restart is missing Action, Comedy and Horror entirely, and it
-  // only fills in once someone happens to look at them. Warm the genres the addons themselves declare, in
-  // the background, never inside a request.
-  addons.warmGenres()
-    .then((n) => { if (n) console.log(`genres: ${n} catalog pages warmed from what the addons declare`); })
-    .catch(() => {});
+  if (OFFLINE_PREVIEW) {
+    previewTelemetry.skipped.avatars++;
+    previewTelemetry.skipped.genres++;
+  } else {
+    avatars.warm();
+    // Genre shelves read whatever the addons have already said. On a fresh process that is nothing, so the
+    // first home page a household sees after a restart is missing Action, Comedy and Horror entirely, and it
+    // only fills in once someone happens to look at them. Warm the genres the addons themselves declare, in
+    // the background, never inside a request.
+    addons.warmGenres()
+      .then((n) => { if (n) console.log('genres: ' + n + ' catalog pages warmed from what the addons declare'); })
+      .catch(() => {});
+  }
 });

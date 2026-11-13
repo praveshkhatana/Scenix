@@ -50,6 +50,10 @@ internal class Ps5HomeLayout(
         /** The household's optional modes: a category for a mode nobody installed is a dead end. */
         val showsLive: Boolean = true,
         val showsGames: Boolean = true,
+        /** "" on Home; the section route ("movies", "series") when a section page hosts this surface.
+         *  The category strip boxes the filter the page is actually showing, exactly as the console's
+         *  own categories do — a Movies page that still shows ALL selected is a lie about the page. */
+        val section: String = "",
     )
 
     private data class Tile(
@@ -87,6 +91,8 @@ internal class Ps5HomeLayout(
     private val rail: LinearLayout
     private val tileScroll: HorizontalScrollView
     private val details: TextView
+    /** Last rail box this surface fitted to, so a re-measure does not rewrite the same params. */
+    private var fittedHeight = -1
     private val categoryStops = ArrayList<View>()
     private val utilityStops = ArrayList<View>()
 
@@ -166,8 +172,9 @@ internal class Ps5HomeLayout(
             "Games" to "games",
             "Live" to "live",
         ).filter { (_, route) -> offered(route) }
-        sections.forEachIndexed { index, (label, route) ->
-            val stop = makeCategory(label, route, index == 0)
+        sections.forEach { (label, route) ->
+            // Home boxes ALL; a section page boxes the filter whose titles it is showing.
+            val stop = makeCategory(label, route, route == callbacks.section)
             categoryStops += stop
             categories.addView(stop)
         }
@@ -263,6 +270,47 @@ internal class Ps5HomeLayout(
             rightMargin = theme.gutter
             bottomMargin = theme.px(40f)
         })
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+            fitRailToHeight(MeasureSpec.getSize(heightMeasureSpec))
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
+    /**
+     * Rail metrics are design pixels and [Theme.px] multiplies them by the television's UI zoom.
+     * The host caps this surface to the room under the top chrome, so at a tall zoom the scaled
+     * bottom anchor rides up over the category strip and buries the filters under the artwork.
+     * A cramped height pins the rail between the strip and the lower action cluster instead, and
+     * returns its inner padding so the tiles still fit the shorter box.
+     */
+    private fun fitRailToHeight(height: Int) {
+        if (height <= 0 || height == fittedHeight) return
+        val params = tileScroll.layoutParams as LayoutParams
+        val horizontal = theme.px(56f)
+        val wantedHeight = theme.px(theme.packInt("ps5RailHeight", 300).toFloat())
+        val wantedBottom = theme.px(theme.packInt("ps5RailBottom", 150).toFloat())
+        val wantedPad = theme.px(30f)
+        val floor = theme.px(112f) + theme.px(44f) + theme.px(18f)
+        val clusterTop = height - theme.px(40f) - theme.px(56f)
+        val wantedTop = height - wantedBottom - wantedHeight
+        var targetHeight = wantedHeight
+        var targetBottom = wantedBottom
+        var targetPad = wantedPad
+        if (wantedTop < floor || height - wantedBottom > clusterTop) {
+            val ceiling = (clusterTop - theme.px(18f))
+                .coerceAtLeast(floor + theme.px(96f))
+            targetHeight = (ceiling - floor).coerceAtMost(wantedHeight)
+            targetBottom = height - floor - targetHeight
+            val tileHeight = theme.px(theme.packInt("ps5TileHeight", 225).toFloat())
+            targetPad = ((targetHeight - tileHeight) / 2).coerceIn(theme.px(2f), wantedPad)
+        }
+        fittedHeight = height
+        params.height = targetHeight
+        params.bottomMargin = targetBottom
+        rail.setPadding(horizontal, targetPad, horizontal, targetPad)
     }
 
     private fun makeLegendMark(glyph: String, label: String): View {

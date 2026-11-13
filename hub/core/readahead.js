@@ -53,6 +53,14 @@ const { URL } = require('url');
 
 const settings = require('./settings');
 
+/**
+ * The identity every origin read carries when the copy itself states no headers. Free hosts have
+ * learned to answer bare script UAs with 403s and fake 404s; an ordinary browser line and a same-host
+ * Referer cost nothing and are what a person's own browser would have sent.
+ */
+const ORIGIN_UA = 'Mozilla/5.0 (Linux; Android 11; Smart TV) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 /** Where this hub answers HTTP on its own box; the router sets it at listen so ffmpeg can read through it. */
@@ -162,6 +170,12 @@ class Copy {
     // short backoff, and a screen watching a healthy body must not be told otherwise. `givenUp` is the
     // state that means "this copy will not answer", and only that state may cut a delivery short.
     this.givenUp = false;
+    // The engine sometimes closes an open-ended read before the file's end: a paused reader, its own
+    // stream timeout, or a swarm that has not produced the next piece. That is a shortfall, not the end
+    // of the film. `shortReads` counts consecutive closes with no bytes in between, so a copy that keeps
+    // doing it still gives up instead of looping.
+    this.shortReads = 0;
+    this.shortEnd = false;
   }
 
   tag() {
@@ -219,6 +233,8 @@ class Copy {
     this.eof = false;
     this.error = null;
     this.givenUp = false;
+    this.shortReads = 0;
+    this.shortEnd = false;
     if (this.ranges) this.planFetch(cfg());
     else this.openReader(this.base);
   }
@@ -251,7 +267,15 @@ class Copy {
     // reopens readers against it all evening. http.get on an https URL doesn't fail politely — it
     // throws and takes the whole hub with it, so the library is chosen from the URL, not the habit.
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.get(u, { headers: { Range: 'bytes=' + at + '-' }, agent: false, timeout: 120000 }, (got) => {
+    const req = lib.get(u, { headers: {
+      // A browser-less client is the cheapest bot fingerprint there is; hosts that die on a bare
+      // Java/curl UA are a common enough free-host habit that every read asks as a browser first.
+      // Copy-specific headers can still override these; the seek's own Range outranks all of them.
+      'User-Agent': ORIGIN_UA,
+      Referer: u.protocol + '//' + u.host + '/',
+      ...this.originHeaders,
+      Range: 'bytes=' + at + '-',
+    }, agent: false, timeout: 120000 }, (got) => {
       const cr = got.headers && got.headers['content-range'];
       if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) this.fileSize = Number(m[1]); }
       if (got.statusCode === 416 || got.statusCode >= 400) {
@@ -271,7 +295,26 @@ class Copy {
       }
       this.newWindow();
       got.on('data', (b) => this.append(b));
-      got.on('end', () => { this.eof = true; this.closeReader(); this.wake(); });
+      got.on('end', () => {
+        // `end` only means the file is finished when the read actually reached its end. The cushion
+        // pauses this reader at its bound to respect a TV's bitrate; TorrServer then closes the idle
+        // connection, and treating that as EOF told the player a 114 MB film ended at 23.8 MB. media3
+        // read the cut as a corrupt Matroska header ("No valid varint length mask found") and failed a
+        // copy that plays. A short close is remembered and reopened from `pos` by the body loop.
+        const known = Number.isFinite(this.fileSize) && this.fileSize > 0;
+        if (!known || this.pos >= this.fileSize) {
+          this.eof = true;
+        } else {
+          this.shortReads = (this.shortReads || 0) + 1;
+          this.shortEnd = true;
+          this.error = this.error || 'engine closed early at ' + this.pos + ' of ' + this.fileSize;
+          if (this.shortReads >= 4) this.givenUp = true;
+          log('READAHEAD SHORT END', this.tag(), 'pos=' + this.pos, 'size=' + this.fileSize,
+            'shortReads=' + this.shortReads);
+        }
+        this.closeReader();
+        this.wake();
+      });
       got.on('error', () => { this.closeReader(); this.wake(); });
       got.on('close', () => { if (this.up === got) { this.up = null; this.closeReader(); this.wake(); } });
     });
@@ -336,7 +379,14 @@ class Copy {
     const ent = { start, end, got: 0, req: null, res: null, dead: false };
     this.inflight.set(start, ent);
     const req = mod.get(u, {
-      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...this.originHeaders, Range: 'bytes=' + start + '-' + end },
+      headers: {
+        Accept: '*/*',
+        'Accept-Encoding': 'identity',
+        'User-Agent': ORIGIN_UA,
+        Referer: u.protocol + '//' + u.host + '/',
+        ...this.originHeaders,
+        Range: 'bytes=' + start + '-' + end,
+      },
       agent: false,
       timeout: 60000,
     }, (res) => {
@@ -462,7 +512,22 @@ class Copy {
   append(buf) {
     if (!buf || !buf.length) return;
     this.everBytes = true;
+    // Bytes after a short close: the reader reopened and the host is answering again, so neither the
+    // shortfall nor its counter is the current truth about this copy.
+    if (this.shortEnd) { this.shortEnd = false; this.shortReads = 0; this.error = null; }
     if (this.ttfbMs === null) this.ttfbMs = Date.now() - this.openedAt;
+    // A sequential stream's next byte goes after the last byte it actually handed over. `cursor` is meant
+    // to say exactly that, and any bookkeeping that disagrees with the stream has to lose: file bytes at
+    // the wrong offsets and the window serves the film out of order, which the player reads as a broken
+    // container. Cheap to check, and it says so when it fires.
+    if (!this.ranges && this.chunks.length) {
+      const prev = this.chunks[this.chunks.length - 1];
+      const end = prev.start + prev.buf.length;
+      if (end !== this.cursor) {
+        log('READAHEAD ALIGN', this.tag(), 'cursor=' + this.cursor, 'windowEnd=' + end);
+        this.cursor = end;
+      }
+    }
     this.chunks.push({ start: this.cursor, buf });
     this.cursor += buf.length;
     this.pos = this.cursor;
@@ -610,7 +675,16 @@ class Copy {
     let guard = 0;
     while (this.held() > cap && this.chunks.length && guard++ < 256) {
       if (this.chunks[0].start >= low) {
-        const last = this.chunks.pop();
+        const last = this.chunks[this.chunks.length - 1];
+        // A sequential read has no ranges to re-request: its last chunk is the tail of the stream we are
+        // standing inside, and the next byte it hands over belongs after THAT, not after a rewound
+        // cursor. Measured tonight: the player's bandwidth estimate fell, `bound` fell with it from 96 MB
+        // to 23.6 MB, this loop popped the live tail and rewound the cursor, and the response kept
+        // streaming into a window filed at the wrong offsets — the TV then reported a source error on a
+        // file that plays, at a different byte every time. A ranged fill can rewind because it just asks
+        // for those bytes again; here the honest answer to "over the ceiling" is to pause the read below.
+        if (!this.ranges && this.isActive() && last.start < this.cursor) break;
+        this.chunks.pop();
         this.pos = this.cursor = Math.min(this.pos, last.start);
         // Out-of-order pieces past the new end are dead weight; the hole in front of them is where the
         // window is, so they would never be reachable from it.
@@ -713,6 +787,44 @@ function clearSlow(hash) { slow.delete(String(hash || '')); }
 /** The same bookkeeping for a copy named by url rather than by hash. */
 function slowFor(who) { const k = keyOf(who); return k ? isSlow(k) : null; }
 function clearSlowFor(who) { const k = keyOf(who); if (k) clearSlow(k); }
+
+/**
+ * Hosts that answered a real byte request with "not there" — a 4xx out of the origin itself, not our
+ * slowness bookkeeping — and how long they stay out of favour. This matters because one addon's links
+ * share a host: measured on the live cache, 309 DesiFlix copies sat on a Heroku app that had been
+ * deleted, each answering 404 for every path, and the picker offered them one after another because
+ * each URL is signed and unique so every copy looked freshly measured-and-fine until it was opened.
+ * One host refusing bytes is a fact about the host, so the ranking rule is allowed to say so.
+ */
+const deadHost = new Map(); // host -> { until, status }
+function hostOf(who) {
+  try { return new URL(String(who && who.url ? who.url : who)).host; } catch (e) { return ''; }
+}
+function markDeadHost(who, status) {
+  const h = hostOf(who);
+  if (h) deadHost.set(h, { until: Date.now() + 30 * 60 * 1000, status: Number(status) || 404 });
+}
+function deadHostFor(who) {
+  const h = hostOf(who);
+  if (!h) return null;
+  const s = deadHost.get(h);
+  if (!s) return null;
+  if (s.until < Date.now()) { deadHost.delete(h); return null; }
+  return s;
+}
+
+/**
+ * The HTTP status a read failure names ("HTTP 404"), when the host actually spoke — as opposed to our
+ * own silence ("no bytes yet", timeouts), which is warming and stays warming.
+ */
+function originRefusal(err) {
+  const m = /HTTP (\d{3})/.exec(String(err || ''));
+  if (!m) return 0;
+  const n = Number(m[1]);
+  if (n >= 400 && n < 500 && n !== 416) return n;
+  if (n >= 500) return 502; // the hub's own word for "my upstream failed"
+  return 0;
+}
 
 /** The engine's own address for a copy — the only thing this hub reads a torrent through. */
 function engineUrlOf(who) {
@@ -826,6 +938,28 @@ function drop(copy, why) {
   copies.delete(copy.key);
   copy.closeReader();
   log('READAHEAD DROP', copy.tag(), 'heldMB=' + Math.round(copy.held() / MB), 'reason=' + why);
+}
+
+/**
+ * Close every buffer of one torrent except the file that is about to play.
+ *
+ * A torrent is one pipe: whatever the swarm can deliver is split between the readers this box keeps
+ * open. Measured on a season pack with three readers at once — the title page's warm, an earlier press,
+ * and this one — the file being measured received nothing in four seconds while the swarm was carrying
+ * 1.5 Mbps to another file of the same torrent, and the press answered "warming" for a show that plays.
+ * Only the file the viewer is about to watch keeps its cushion; the others cost the film the bandwidth
+ * they hold.
+ */
+function dropSiblings(hash, fileId, why) {
+  if (!hash) return 0;
+  const keep = String(hash) + ':' + String(fileId);
+  let dropped = 0;
+  for (const [k, copy] of [...copies]) {
+    if (k === keep || !k.startsWith(String(hash) + ':')) continue;
+    drop(copy, why || 'another file of this torrent is the one playing');
+    dropped++;
+  }
+  return dropped;
 }
 
 /** Tell a buffer what bitrate its copy needs, so "slow" can mean something other than a guess. */
@@ -1043,10 +1177,41 @@ function sideRead(res, copy, want, t0) {
     try { u = new URL(copy.url); } catch (e) { resolve(false); return; }
     const mod = u.protocol === 'https:' ? https : http;
     const range = 'bytes=' + from + '-' + (to == null ? '' : to);
+    // The end of a torrent is the last thing the swarm has and the first thing a container asks for:
+    // Matroska keeps its seek head (Cues) there, MP4 its `moov`. Asking the engine for that short tail as
+    // a CLOSED range made it hang up without ever sending headers — measured on file 6 of 3eeb380d, where
+    // `bytes=114407314-114412495` produced nothing in 60 s, while the same start written as an OPEN read
+    // (`bytes=114407314-`) pulled those pieces and answered in 12 s, and answered in 20 ms on every read
+    // after that. So a probe that runs to the end of a known-length file is asked for the way the engine
+    // streams it, and the player still gets exactly the bytes it asked for: the engine's own content-range
+    // ends on the last byte of the file, which is exactly the end of this probe.
+    const size = Number(copy.fileSize);
+    const openTail = Number.isFinite(size) && size > 0 && to === size - 1 && (to - from) < 8 * MB;
+    const engineRange = openTail ? 'bytes=' + from + '-' : range;
+    // A cold tail is a swarm fetch, not a seek: give it longer than the 30 s a normal probe gets, or the
+    // screen pays that 30 s, gets nothing, re-tunes, and pays it again.
+    const probeTimeoutMs = openTail
+      ? Math.max(30000, Number(process.env.READAHEAD_TAIL_PROBE_MS || 75000))
+      : 30000;
+    // A range the engine has just failed to answer is not worth another 30 s of the viewer's evening.
+    // A player reloads the same tail probe (Matroska Cues / MP4 moov) on every retry, so a swarm that
+    // could not produce those bytes once kept the screen black for minutes: 30 s here, then the
+    // player's own retries, then the app's same-copy retries. Answer the repeat at once instead, and
+    // let the failover ask for a copy whose tail is actually cached.
+    if (copy.sideFailRange === range && Date.now() - (copy.sideFailAt || 0) < 60000) {
+      res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2' });
+      res.end(JSON.stringify({
+        error: 'warming', warming: true, retryAfterMs: 2000,
+        detail: 'the engine did not produce this range a moment ago',
+      }));
+      log('PROXY FAIL', copy.tag(), 'phase=headers', 'cause=probe-read-failed-recent', 'range=' + range);
+      resolve(true);
+      return;
+    }
     const req = mod.get(u, {
-      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...copy.originHeaders, Range: range },
+      headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...copy.originHeaders, Range: engineRange },
       agent: false,
-      timeout: 30000,
+      timeout: probeTimeoutMs,
     }, (up) => {
       const cr = up.headers && up.headers['content-range'];
       if (cr) { const m = /\/(\d+)\s*$/.exec(String(cr)); if (m) copy.fileSize = Number(m[1]); }
@@ -1061,7 +1226,8 @@ function sideRead(res, copy, want, t0) {
       res.writeHead(up.statusCode || 200, headers);
       res.flushHeaders();
       log('PROXY TTFB', copy.tag(), 'ms=' + (Date.now() - t0), 'status=' + up.statusCode,
-        'range=' + range, 'note=probe', 'windowMB=' + Math.round(copy.held() / MB));
+        'range=' + range, openTail ? 'note=probe-open-tail' : 'note=probe',
+        'windowMB=' + Math.round(copy.held() / MB));
       let bytes = 0;
       let done = false;
       const finish = (cause) => {
@@ -1074,6 +1240,8 @@ function sideRead(res, copy, want, t0) {
         // the end would point the continuation test at bytes that were never fetched.
         copy.sideEnd = (up.statusCode === 206 || from === 0) ? from + bytes : null;
         copy.sideAt = Date.now();
+        if (cause === 'probe-read-failed') { copy.sideFailRange = range; copy.sideFailAt = Date.now(); }
+        else if (cause === 'eof') { copy.sideFailRange = null; copy.sideFailAt = 0; }
         if (!res.writableEnded) { try { res.end(); } catch (e) { /* gone */ } }
         const secs = Math.max(0.001, (Date.now() - t0) / 1000);
         log(cause === 'eof' ? 'PROXY END' : 'PROXY CUT', copy.tag(), 'phase=body', 'cause=' + cause,
@@ -1082,6 +1250,12 @@ function sideRead(res, copy, want, t0) {
         resolve(true);
       };
       up.on('data', (b) => { bytes += b.length; if (!res.write(b)) { try { up.pause(); } catch (e) { /* gone */ } } });
+      // Backpressure must be released, not just applied. The engine answers a ranged read far faster
+      // than a TV drains it, so `write()` returns false after the first socket buffer and the pause
+      // above parks the upstream forever — the side read then sat for its 30 s timeout, delivered
+      // ~160 KB, and the player saw a truncated body ("UnrecognizedInputFormatException" on a file the
+      // engine had cached in full). Resume on drain, exactly like the cushion and the remux pump do.
+      res.on('drain', () => { try { up.resume(); } catch (e) { /* gone */ } });
       up.on('end', () => finish('eof'));
       up.on('error', () => finish('probe-read-failed'));
       res.on('close', () => finish('client-disconnect'));
@@ -1089,6 +1263,10 @@ function sideRead(res, copy, want, t0) {
     req.on('timeout', () => { req.destroy(); });
     req.on('error', (e) => {
       if (res.headersSent) { finishSide(res); resolve(true); return; }
+      // The usual dead-tail shape: the engine never sends headers at all, so `finish` (which owns the
+      // failure memory) is not on this path. Record it here too, or the next retry pays 30 s again.
+      copy.sideFailRange = range;
+      copy.sideFailAt = Date.now();
       res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' });
       res.end(JSON.stringify({ error: 'warming', warming: true, detail: 'probe read failed: ' + (e.message || e.code) }));
       log('PROXY FAIL', copy.tag(), 'phase=headers', 'cause=probe-read-failed', String(e.message || e.code || ''),
@@ -1180,6 +1358,31 @@ async function serve(req, res, who, opts = {}) {
       String(copy.error || (copy.req ? 'no bytes yet' : 'engine not answering')).slice(0, 120));
     if (typeof opts.onCold === 'function') opts.onCold(waited, copy.error);
     if (res.headersSent) { try { res.end(); } catch (e) { /* gone */ } return true; }
+    // The host refused with a status, not with slowness. Every chunk came back HTTP 404 (or 403, or
+    // 410) and the copy gave up on it — "warming, try again in 2 s" is then a lie that costs the
+    // player a minute of retries and hides the failover it should be making. Answer with the origin's
+    // own verdict, and remember it against the host: its other copies are in the same cold water.
+    const refusal = originRefusal(copy.givenUp && !copy.everBytes ? copy.error : '');
+    if (refusal) {
+      // Only "this is not here" (404/410) is a fact about the HOST. A 403 or a 429 is the host
+      // throttling THIS request: the same host happily serves the next one, and marking it dead
+      // for half an hour took down working copies of other titles — the throttle we answer with
+      // became an outage we caused. 5xx is the host's bad day, not its verdict.
+      if (refusal === 404 || refusal === 410) markDeadHost(copy.url, refusal);
+      log('PROXY ORIGIN REFUSED', tag, 'http=' + refusal,
+        'host=' + hostOf(copy.url), 'the host answered that when the hub asked for bytes');
+      res.writeHead(refusal >= 400 && refusal < 500 ? refusal : 502, {
+        'content-type': 'application/json',
+      });
+      res.end(JSON.stringify({
+        error: 'gone',
+        originStatus: refusal,
+        detail: 'the host holding this copy answered HTTP ' + refusal + ' when the hub asked it for bytes',
+        hash: copy.hash,
+        fileId: copy.fileId,
+      }));
+      return true;
+    }
     res.writeHead(503, {
       'content-type': 'application/json',
       'retry-after': String(Math.ceil(((opts.retryAfterMs || 5000)) / 1000)),
@@ -1257,6 +1460,10 @@ async function serve(req, res, who, opts = {}) {
       const ch = copy.find(cursor);
       if (!ch) {
         if (cursor < copy.base) { copy.seekTo(cursor); consumer.off = cursor; continue; }
+        // This reader has caught up with the window. Ask trim whether the cushion is still full before
+        // deciding the host is slow: trim counts what this screen has already read as free space, and a
+        // paused upstream stays paused forever if nothing calls it.
+        copy.trim(cfg());
         if (!copy.isActive() && !copy.eof) copy.ensureReader(cursor);
         await copy.waitFor(() => !!copy.find(cursor) || copy.base > cursor || copy.eof || copy.givenUp
           || closedByClient, BODY_WAIT_MS);
@@ -1275,6 +1482,12 @@ async function serve(req, res, who, opts = {}) {
       cursor += slice.length;
       consumer.off = cursor;
       delivered += slice.length;
+      // The cushion only shrinks when `trim` moves `base`, and nothing called trim while a screen was
+      // reading. So a cushion that filled to its bound stayed "full" for the whole film: trim kept the
+      // upstream paused, the engine closed the idle read, and the viewer ran into the end of a window
+      // that should have been refilling behind them. Releasing what this reader has passed is what
+      // resumes the read.
+      copy.trim(cfg());
       if (!res.write(slice)) {
         await new Promise((r) => { res.once('drain', r); res.once('close', r); });
         if (res.destroyed || closedByClient) { cause = 'client-disconnect'; break; }
@@ -1467,7 +1680,8 @@ async function cushionUrl(url, headers, opts = {}) {
 }
 
 module.exports = {
-  cfg, acquire, get, drop, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
+  cfg, acquire, get, drop, dropSiblings, noteNeed, isSlow, clearSlow, keyOf, slowFor, clearSlowFor,
+  markDeadHost, deadHostFor, originRefusal,
   sustain, preBuffer, prime, serve, status, wrapInput, parseWho, setSelfOrigin, engineUrlOf, live,
   statsFor, cushionUrl,
 };

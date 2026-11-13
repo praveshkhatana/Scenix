@@ -50,16 +50,21 @@ const PUBLIC_ENGINE = process.env.TORR_PUBLIC_URL ? String(process.env.TORR_PUBL
 const PREPARE_BUDGET_MS = Number(process.env.GATEWAY_BUDGET_MS || 6000);
 // A title page has all the time in the world; the Play button has none, so warming runs long.
 const WARM_BUDGET_MS = Number(process.env.GATEWAY_WARM_MS || 15000);
+// How long to wait for the engine's answer to `add` itself. Different from the metadata wait above:
+// on this engine a cold magnet takes 10-20 s just to answer the add, and the engine keeps working on
+// it whether or not anyone is still holding the socket. Giving up at three seconds — which is what
+// this used to be — made the hub abandon work it had started itself and call the copy unready.
+const ADD_WAIT_MS = Number(process.env.GATEWAY_ADD_MS || 12000);
+// How long one poll of the engine's file list may take. Idle, this engine answers `/torrents` in a
+// millisecond; while it is streaming a file for a viewer it takes seconds — and the file it is
+// streaming is usually the very one this press is waiting to be told about.
+const GET_POLL_MS = Number(process.env.GATEWAY_GET_MS || 4000);
 const PROBE_TIMEOUT_MS = 1500;
 
 // How long a torrent we could not prepare stays blacklisted. "Not yet" and "never" are different facts
-// and must not share one timeout: a cold copy whose metadata is still arriving only needs to be asked
-// again in a moment — that is exactly what the player's *wait and try again* asks for — while a torrent
-// the engine read from end to end and found no video inside is not going to change its mind tonight.
-// Kept short on purpose: the player tells the viewer to press again in fifteen seconds, and a
-// blacklist longer than that promise would answer them from memory instead of asking the engine
-// whether the metadata has arrived yet.
-const MISS_WAITING_MS = Number(process.env.GATEWAY_MISS_WAITING_MS || 30e3);
+// and must not share one timeout: a copy whose metadata is still arriving is not blacklisted at all
+// (prepareTorrent returns it as warming), while a torrent the engine read from end to end and found no
+// video inside is not going to change its mind tonight.
 const MISS_ENGINE_MS = Number(process.env.GATEWAY_MISS_ENGINE_MS || 45e3);
 const MISS_DEAD_MS = Number(process.env.GATEWAY_MISS_DEAD_MS || 10 * 60e3);
 // How long an engine reachability answer is trusted before it is asked again. The same value drives
@@ -294,7 +299,7 @@ const COLD_MS = Number(process.env.GATEWAY_COLD_MS || 90000);
  * household's description of the product. The ceiling stays well short of a day because a swarm can gain
  * a peer at any moment, and nothing here forbids the copy: it stops it being chosen automatically.
  */
-function noteCold(hash, waitedMs) {
+function noteCold(hash, waitedMs, reason) {
   if (!hash) return;
   const key = String(hash);
   const prev = cold.get(key);
@@ -303,6 +308,9 @@ function noteCold(hash, waitedMs) {
   cold.set(key, {
     until: Date.now() + penalty, waitedMs: Math.round(waitedMs || 0), at: Date.now(),
     tries: tries, penaltyMs: penalty,
+    // Which kind of no-answer this was, in the words the play picker quotes. `null` is the common case:
+    // the engine would not answer the request at all.
+    reason: reason ? String(reason) : null,
   });
 }
 /** A torrent that has produced bytes since is not cold, and the next press should not be told it is. */
@@ -375,6 +383,37 @@ function pump(hash, fileId, fileSize) {
  * And a torrent that contains a folder numbers its files from 1, because index 0 is the folder —
  * asking `/play/<hash>/0` on such a torrent is a 404, so the file id always comes from the engine.
  */
+/**
+ * One engine conversation per torrent, shared by everyone who asks.
+ *
+ * Without this the hub stampededed its own engine. A Play press that finds the metadata not there
+ * yet calls prepare() again, the title page's warm calls it at the same moment, and each call opened
+ * its own `add` — which is the one engine call that is slow (a cold magnet takes the engine 10-20 s
+ * to answer, and it answers its other endpoints in a millisecond). Four seats, a warm and a retry
+ * was six concurrent adds for the same torrent, each with a three-second patience of its own, and
+ * every one of them timed out and blacklisted a copy the engine was still reading.
+ */
+const preparing = new Map(); // ckey -> promise of the engine conversation
+/** How many different torrents may be `add`ed to the engine at once. */
+const ADD_CONCURRENCY = Math.max(1, Number(process.env.GATEWAY_ADD_CONCURRENCY || 2));
+let addBusy = 0;
+const addWaiting = [];
+/** Take one of the engine's add slots; the returned function gives it back. */
+function addSlot() {
+  return new Promise((grant) => {
+    const take = () => {
+      addBusy++;
+      grant(() => {
+        addBusy--;
+        const next = addWaiting.shift();
+        if (next) next(); // hand the slot straight to whoever was waiting for it
+      });
+    };
+    if (addBusy < ADD_CONCURRENCY) take();
+    else addWaiting.push(take);
+  });
+}
+
 async function prepare(source, budgetMs, want) {
   const hash = hashOf(source);
   if (!hash) return null;
@@ -399,19 +438,80 @@ async function prepare(source, budgetMs, want) {
   // The blacklist expires by kind of failure, not by one global timer.
   if (failed && Date.now() - failed.at < (failed.ttl || MISS_DEAD_MS)) return null;
 
-  // Adding is idempotent; doing it again on a live torrent is free. Prefer the magnet when the addon
-  // gave us one (it carries trackers), and fall back to the bare hash, which the engine resolves over
-  // the DHT — slower, but it works.
-  const link = String(source.url || source.link || source.magnet || '').trim() || hash;
-  await enginePost('/torrents', { action: 'add', link, save_to_db: true }, 3000);
+  // One conversation with the engine per torrent, whatever number of callers want it.
+  let job = preparing.get(ckey);
+  if (!job) {
+    job = prepareTorrent(source, hash, ckey, want);
+    preparing.set(ckey, job);
+    job.finally(() => { if (preparing.get(ckey) === job) preparing.delete(ckey); });
+  }
+  // Each caller waits only as long as it is allowed to. The conversation carries on either way, so a
+  // press that ran out of time is not a verdict on the torrent: the next one — the viewer's own retry,
+  // a second and a half later — joins the same conversation and reads its answer instead of being told
+  // the engine had already failed. That mislabel was costing a whole extra press per cold copy.
+  const mine = Math.max(300, budgetMs || PREPARE_BUDGET_MS);
+  const settled = await Promise.race([
+    job.then((v) => ({ done: true, v })).catch(() => ({ done: true, v: null })),
+    new Promise((res) => {
+      const t = setTimeout(() => res({ done: false }), mine);
+      if (t.unref) t.unref();
+    }),
+  ]);
+  if (settled.done) return settled.v;
+  // Not a failure and not a success: the engine is answering this torrent, this press just is not
+  // allowed to keep waiting. Deliberately not written to the miss blacklist — the conversation below
+  // records the real outcome when the engine gives one.
+  return { hash, error: 'metadata still arriving', kind: 'waiting' };
+}
 
-  const deadline = Date.now() + (budgetMs || PREPARE_BUDGET_MS);
+/**
+ * Add this torrent to the engine and wait for it to name the files inside, then record what the
+ * engine said — the good answer in `prepared`, the bad one in the miss blacklist, once per torrent.
+ */
+async function prepareTorrent(source, hash, ckey, want) {
+  // Prefer the magnet when the addon gave us one (it carries trackers), and fall back to the bare
+  // hash, which the engine resolves over the DHT — slower, but it works.
+  const link = String(source.url || source.link || source.magnet || '').trim() || hash;
+  // Whether the engine already holds this torrent. `prepared` is keyed by the episode a pack was
+  // resolved for, so any key that starts with this hash is an answer about the same torrent.
+  let known = prepared.has(hash);
+  if (!known) for (const k of prepared.keys()) if (k.startsWith(hash + ':')) { known = true; break; }
+  // `add` is fired, never awaited. It is the engine's slowest call by far — a cold magnet takes ten to
+  // twenty seconds to answer, and a torrent this engine already holds was measured holding the socket
+  // open for thirty while `/torrents {action:get}` answered about it in four milliseconds. Waiting for
+  // the add before the first poll is what made a warm pack look unreachable: the press's whole gateway
+  // budget went into a call whose answer the poll below does not need.
+  let addFired = false;
+  const fireAdd = () => {
+    if (addFired) return;
+    addFired = true;
+    (async () => {
+      const releaseAdd = await addSlot();
+      try {
+        await enginePost('/torrents', { action: 'add', link, save_to_db: true }, ADD_WAIT_MS);
+      } catch (e) {
+        log('GATEWAY ADD FAIL', 'hash=' + String(hash).slice(0, 12), e.message);
+      } finally {
+        releaseAdd();
+      }
+    })();
+  };
+  if (!known) fireAdd();
+
+  // The engine's clock, not the press's: this is where the metadata actually lands, and a Play press
+  // that gave up two seconds ago should find the answer here rather than start a third add.
+  const deadline = Date.now() + WARM_BUDGET_MS;
   let lastError = 'metadata not resolved';
   let sawFiles = 0;        // did the engine ever show us the contents of this torrent
+  let answered = false;    // did the engine reply to any question about this torrent at all
   let engineFailed = false; // did the engine itself stop answering mid-prepare
   do {
-    const r = await enginePost('/torrents', { action: 'get', hash }, 2000);
+    // An entry in `prepared` can outlive what the engine remembers (a restart between two presses).
+    // If the first polls show it has no file list, ask it to add the torrent after all — once.
+    if (!addFired && !sawFiles && Date.now() > deadline - WARM_BUDGET_MS + 1500) fireAdd();
+    const r = await enginePost('/torrents', { action: 'get', hash }, GET_POLL_MS);
     if (r.json) {
+      answered = true;
       const files = filesOf(r.json);
       sawFiles = Math.max(sawFiles, files.length);
       const chosen = pickFile(files, want);
@@ -438,14 +538,39 @@ async function prepare(source, budgetMs, want) {
       lastError = (r.json.stat_string || 'unknown') + ', ' + files.length + ' files';
     } else {
       lastError = r.error || 'engine said nothing';
-      if (/unreachable|timeout|bad TORR_URL/.test(lastError)) { engineFailed = true; break; }
+      // Only an engine that refuses the socket outright is a down engine. A poll that ran out of its
+      // own timeout means the engine is busy — most often serving a read this hub itself started —
+      // and the metadata this press is waiting on is the same torrent that read is pulling. Giving up
+      // on the first slow poll is what turned a busy engine into "engine has not read this copy" and
+      // a 45 s blacklist on a torrent whose files arrived ten seconds later.
+      if (/unreachable|bad TORR_URL/.test(lastError)) { engineFailed = true; break; }
     }
     await new Promise((res) => setTimeout(res, 600));
   } while (Date.now() < deadline);
 
+  // A conversation that never got one answer is not a verdict on the torrent — it is a fact about how
+  // busy the engine was while we were asking. It goes nowhere near the blacklist, because writing it
+  // there is what made the next press (the viewer's own retry, a second later) fail from memory while
+  // the engine was on its way to answering.
+  if (!answered && !engineFailed) {
+    log('GATEWAY SILENT', 'hash=' + String(hash).slice(0, 12),
+      'asked for ' + WARM_BUDGET_MS + 'ms and the engine said nothing', lastError);
+    return { hash, error: 'the engine is busy and said nothing about this copy', kind: 'busy' };
+  }
   // Classify before caching, because the cache entry decides whether the next press even tries.
   const kind = engineFailed ? 'engine' : (sawFiles === 0 ? 'waiting' : 'dead');
-  const ttl = kind === 'engine' ? MISS_ENGINE_MS : (kind === 'waiting' ? MISS_WAITING_MS : MISS_DEAD_MS);
+  if (kind === 'waiting') {
+    // The engine answered, it simply has not read the file list out of the swarm yet. That is the
+    // normal state of a cold copy, and it is not a verdict. It used to be written to the miss
+    // blacklist for 30 s, which is what made "every play fails" self-fulfilling: the first press
+    // spent its 15 s, wrote the entry, and every retry the player sent for the next half-minute was
+    // refused from memory while the engine was fetching the very list the retry needed. Leave the
+    // cache alone, so the next press asks again.
+    log('GATEWAY WARM', 'hash=' + String(hash).slice(0, 12),
+      'no file list yet, next press asks again', lastError);
+    return { hash, error: lastError, kind, warming: true };
+  }
+  const ttl = kind === 'engine' ? MISS_ENGINE_MS : MISS_DEAD_MS;
   prepared.set('miss:' + hash, { error: lastError, at: Date.now(), ttl, kind });
   log('GATEWAY WAIT', 'hash=' + String(hash).slice(0, 12), 'kind=' + kind,
     'retryIn=' + ttl + 'ms', lastError);
@@ -495,9 +620,25 @@ function parsePlayUrl(u) {
   return m ? { hash: m[1].toLowerCase(), fileId: Number(m[2]) } : { hash: null, fileId: null };
 }
 
+/**
+ * Does the engine already hold this torrent — any file of it?
+ *
+ * A season pack is resolved per episode (`hash:2:35`), so `peekPrepared` for a different episode misses
+ * a pack the engine is serving right now. The metadata is the expensive part and it is shared by every
+ * file in the torrent; naming the file for a new episode costs one `get`. This answers the cheap
+ * question the picker needs before it decides whether to wait for an addon round trip.
+ */
+function holds(source) {
+  if (MODE !== 'http' || !source) return false;
+  const hash = hashOf(source);
+  if (!hash) return false;
+  if (prepared.has(hash)) return true;
+  for (const k of prepared.keys()) if (k.startsWith(hash + ':')) return true;
+  return false;
+}
+
 /** The prepared answer for a source, from the cache only: never asks the engine, never waits. */
-function peekPrepared(source, want) {
-  if (MODE !== 'http' || !source) return null;
+function peekPrepared(source, want) {  if (MODE !== 'http' || !source) return null;
   const hash = hashOf(source);
   if (!hash) return null;
   const ws = Number(want && want.season);
@@ -697,6 +838,7 @@ module.exports = {
   enginePlayUrl,
   parsePlayUrl,
   peekPrepared,
+  holds,
   readBegin,
   readEnd,
   isReading,

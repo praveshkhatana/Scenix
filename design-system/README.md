@@ -41,24 +41,32 @@ the same frame every run. Start it and target it explicitly:
 
 ```sh
 $ANDROID_HOME/emulator/emulator -avd scenix-tv -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
-ADB_SERIAL=emulator-5554 scripts/studio-capture.sh --write
+ADB_SERIAL=emulator-5554 SCENIX_CAPTURE_APP_ID=com.scenix.tv.debug scripts/studio-capture.sh --write
 ```
 
-The panel in the living room is still the acceptance target for *feel*; the emulator is the
-reference for *pixels in the repository*.
+The capture runner refuses a physical serial and the production package. The panel in the living
+room is still the acceptance target for *feel*; the emulator is the reference for *pixels in the
+repository*.
+
+Capture mode always uses the default 100% interface scale, regardless of a tester's saved zoom.
+It never changes that saved preference; this keeps a golden a product baseline rather than an
+accessibility setting from a previous run.
 
 ## Run the gates
 
 ```sh
 node design-system/tools/tokens.mjs check     # app assets vs canonical tokens
+node design-system/tools/platform-tokens.mjs check  # Swift / WinUI exports vs canonical tokens
 node design-system/tools/coverage.mjs         # contract -> catalog -> goldens, report
 node design-system/tools/coverage.mjs --strict
-scripts/studio-capture.sh --check             # capture the catalog from the TV and diff
+ADB_SERIAL=emulator-5556 SCENIX_CAPTURE_APP_ID=com.scenix.tv.qa scripts/studio-capture.sh --strict
 ```
 
-`coverage --strict` fails when a contract has no real catalog entry or a golden is missing. The
-Android set is green (12 contracts); a newly added component stays red until its Studio entry and
-goldens exist, which is the point.
+`coverage --strict` proves catalog completeness: it fails when a contract has no real catalog entry
+or golden. The emulator capture command is the separate pixel gate; it must also pass before an
+Android component is considered green. The current set has 12 contracts and 53 canonical captures.
+A newly added component stays red until both its Studio entry and reproducible goldens exist, which
+is the point.
 
 ## The catalog on Android
 
@@ -67,7 +75,7 @@ goldens exist, which is the point.
 its preview intent.
 
 - Open it from Settings → *Component studio* (debug builds only), or:
-  `adb shell am start -n com.scenix.tv/.StudioActivity --es theme scenix-glass`
+  `adb shell am start -n com.scenix.tv.debug/com.scenix.tv.StudioActivity --es theme scenix-glass`
 - The manifest is `design-system/studio.json`; Gradle carries it into the APK as an asset.
 - Screen entries launch the real screen with a preview intent instead of being embedded, because a
   player is a screen, not a widget.
@@ -85,10 +93,20 @@ its preview intent.
 ## Platform rollout
 
 - **Android TV** — the reference; Views; Studio + goldens.
-- **iOS / macOS** — SwiftUI; `tokens/` generates `DesignTokens.swift`; contracts are implemented
-  against the same fixtures and verified with snapshot tests (`swift-snapshot-testing`).
-- **Windows** — WinUI 3; `tokens/` generates `Tokens.xaml`; a gallery page mirrors `studio.json`;
-  captures are diffed against the same golden naming scheme under `goldens/windows/`.
+- **iOS / macOS** — `generated/ios/ScenixDesignTokens.swift` is an exact, checked export of all
+  canonical tokens for a future SwiftUI package. The SwiftUI renderer and its snapshot suite are
+  still a delivery target, not something this Android repository claims has shipped.
+- **Windows** — `generated/windows/ScenixTokens.xaml` is the matching checked WinUI resource
+  dictionary. A WinUI renderer, gallery and Windows golden set remain delivery targets.
 
 Allowed differences are written in each contract's `platformDeltas`. Anything not listed there is a
 parity bug, not a platform convention.
+
+### Native token boundary
+
+Run `node design-system/tools/platform-tokens.mjs write` after an intentional canonical token
+change, then commit the generated Swift and XAML files with that change. `check` compares both
+outputs byte-for-byte to the canonical token catalog and fails if a platform would receive stale
+values. The export deliberately contains tokens only: host behaviour, focus, navigation, playback
+and component renderers remain native implementations governed by the same contracts. This is the
+shared-library boundary; it is not a false claim that iOS or Windows apps already exist.

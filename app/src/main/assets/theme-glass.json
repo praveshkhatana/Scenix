@@ -1,7 +1,7 @@
 {
   "id": "scenix-glass",
   "brandMark": "S",
-  "_read": "Liquid Glass pack, replicated from refs/glass/reference.png (design-contracts/glass.md): the whole page stands on a soft photographic wash; a dark centred pill carries section words with a LIGHT active segment and a light search knob; the wordmark floats white at left, one frosted household pill at right (no bell — no notifications feature); two UNEQUAL tinted glass plates — steel-blue 741 beside periwinkle 1067 — with white titles anchored top-left, dark-disc Play bottom-left, key art bleeding from the facing edge, hairline specular rims and inner sheens instead of drop shadows; frost chips (icon + label) jump to the household's real shelves; rails caption posters below the art with an accent-dot rating line. An original Scenix composition; no marks or assets copied from the reference.",
+  "_read": "Liquid Glass pack, replicated from refs/glass/reference.png (design-contracts/glass.md): the whole page stands on a soft photographic wash; a dark centred pill carries section words with a LIGHT active segment and a light search knob; the wordmark floats white at left, one frosted household pill at right (no bell — no notifications feature); two UNEQUAL tinted glass plates — steel-blue 741 beside periwinkle 1067 — with white titles anchored top-left, dark-disc Play bottom-left, key art bleeding from the facing edge, hairline specular rims and inner sheens instead of drop shadows; frost chips (icon + label) jump to the household's real shelves; rails caption posters below the art with an accent-dot rating line. An original Scenix composition; no marks or assets copied from the reference. Glass surfaces are real lenses, not tinted rectangles: the rim bends and blurs the wall and artwork behind it (frostBevel band, frostRefr bend, frostFall falloff, frostDisp spectral fringe), and the same material carries frostTint/frostBlur/frostSat/frostAberr/frostEdge on the blur tier older televisions run. The wash underneath sits on the pack canvas rather than above it, so the glass has something to be glass against.",
   "canvas": {
     "width": 1920,
     "height": 1080
@@ -52,8 +52,8 @@
     "numeralStrokeRed": "#FF453A",
     "matBorder": "rgba(255,255,255,0.28)",
     "hdInk": "#F2F3F5",
-    "wallA": "#6E92AE",
-    "wallB": "#A6AAAC",
+    "wallA": "#55708C",
+    "wallB": "#7B8794",
     "pill": "rgba(8,16,28,0.86)",
     "pillActive": "rgba(255,255,255,0.08)",
     "segInk": "#FFFFFF",
@@ -87,7 +87,9 @@
     "keyGlass": "rgba(255,255,255,0.10)",
     "wallInk": "#101821",
     "wallInk2": "#41505C",
-    "wallLine": "rgba(16,24,32,0.50)"
+    "wallLine": "rgba(16,24,32,0.50)",
+    "frostTint": "rgba(12,22,34,0.30)",
+    "focusGlassTint": "rgba(10,20,32,0.10)"
   },
   "spacing": {
     "gutter": 57,
@@ -122,8 +124,10 @@
     "plateElevation": 16,
     "chipElevation": 6,
     "posterElevation": 10,
-    "frostBevel": 26,
-    "frostRefr": 14
+    "frostBevel": 34,
+    "frostRefr": 58,
+    "focusGlassBevel": 46,
+    "focusGlassRefr": 64
   },
   "radii": {
     "card": 21,
@@ -311,12 +315,39 @@
     "stage": "off",
     "rank": "outline",
     "featuredMarker": "rim",
-    "wallBlobs": "12,8,55:#5A7EA6:0.22;96,10,40:#7E93A8:0.16;10,72,58:#D8BC96:0.45;60,97,40:#C0BAB2:0.18;2,45,45:#B8CCD8:0.20",
+    "wallBlobs": "12,8,55:#41586E:0.34;96,10,40:#8FA8BC:0.22;10,72,58:#C9A87E:0.20;60,97,40:#9FB0BE:0.14;2,45,45:#3A4E60:0.30;78,70,9:#E4C79A:0.34;88,58,5:#F0DCC0:0.30;34,88,7:#BFD2E0:0.26;68,26,6:#7E93A8:0.30;22,30,4:#DCE7EE:0.24",
     "heroFadePct": 78,
     "chipGlyph": 34,
-    "wallGrain": 1,
+    "wallGrain": 2,
     "tileMaterial": "glass",
-    "frostFall": 3,
-    "frostDisp": 12
+    "frostFall": 2,
+    "frostDisp": 34,
+    "frostBlur": 6,
+    "frostSat": 145,
+    "frostAberr": 30,
+    "frostDisplace": 95,
+    "frostEdge": 20,
+    "frostEdgeAlpha": 92,
+    "frostDownsample": 3,
+    "frostMaterial": "regular",
+    "frostCapture": "wall",
+    "frostCpuScale": 4, "frostCpuBlur": 0, "frostAberrScale": 8,
+    "frostDebug": 0,
+    "wallRaster": 1,
+    "focusGlass": 1,
+    "focusGlassBlur": 3,
+    "focusGlassSat": 112,
+    "focusGlassAberr": 0,
+    "focusGlassDisplace": 170,
+    "focusGlassEdge": 26,
+    "focusGlassEdgeAlpha": 95,
+    "focusGlassFall": 2,
+    "focusGlassDisp": 40,
+    "focusGlassMaxH": 420,
+    "focusGlassCpuScale": 4,
+    "focusGlassCpuBlur": 0,
+    "frostOutward": 1,
+    "focusGlassOutward": 1,
+    "focusGlassAberrScale": 5
   }
 }

@@ -10,6 +10,7 @@
  */
 
 import { api, apiBase, setApiBase } from '/ui/js/api.js';
+import { hubBuild, buildLabel } from '/ui/js/build.js';
 import { el, byId, clear, layer, toast } from '/ui/js/dom.js';
 import * as focus from '/ui/js/focus.js';
 import { initInput, pushHandler, popHandler, setDigitSink,
@@ -29,6 +30,7 @@ const SCREENS = {
   play:     () => import('/ui/js/screens/player.js'),
   search:   () => import('/ui/js/screens/search.js'),
   browse:   () => import('/ui/js/screens/browse.js'),
+  games:    () => import('/ui/js/screens/games.js'),
   list:     () => import('/ui/js/screens/list.js'),
   settings: () => import('/ui/js/screens/settings.js'),
   profiles: () => import('/ui/js/screens/profiles.js'),
@@ -135,7 +137,13 @@ const ctx = {
   closeModals,
   askPin,
   /** Ask for a new PIN rather than checking one: resolves the digits, or null when the viewer backs out. */
-  enterPin: (profile, reason = 'Choose a PIN') => askPin(profile, { reason, mode: 'set' }),
+  enterPin: (profile, reason = 'Choose a PIN', length = {}) => askPin(profile, {
+    reason, mode: 'set', ...length,
+  }),
+  /** The household Settings PIN is deliberately independent of profile-theme PIN length: the hub accepts 4–8 digits. */
+  enterSettingsPin: (reason = 'Enter the household Settings PIN') => askPin(
+    { name: 'Settings PIN' }, { reason, mode: 'set', minLength: 4, maxLength: 8 },
+  ),
   enterText: (opts) => askText(opts),
   setProfile,
   switchProfile,
@@ -162,11 +170,14 @@ function parseHash() {
 }
 
 function hashFor(route) {
-  return `#/${route.name}${route.arg != null ? `/${encodeURIComponent(route.arg)}` : ''}`;
+  /* The episode window a native Detail page hands over lives in the route's query, so the hash has to carry
+     it or a reload puts the viewer back at the start of the series. */
+  const q = route.query ? (route.query.toString ? route.query.toString() : String(route.query)) : '';
+  return `#/${route.name}${route.arg != null ? `/${encodeURIComponent(route.arg)}` : ''}${q ? `?${q}` : ''}`;
 }
 
-function navigate(name, arg) {
-  const route = { name, arg: arg == null ? null : arg };
+function navigate(name, arg, query) {
+  const route = { name, arg: arg == null ? null : arg, query: query || null };
   const top = routeStack[routeStack.length - 1];
   if (top && top.name === route.name && top.arg === route.arg) return mount(route, false);
   routeStack.push(route);
@@ -269,15 +280,31 @@ async function mount(route, _pushed) {
   wireNavScroll(node);
 
   const chromeless = route.name === 'play' || GATE_SCREENS.indexOf(route.name) >= 0;
-  nav.style.display = chromeless ? 'none' : 'flex';
+  // `utility` and `none` are explicit Home contracts: their composition supplies its own real
+  // navigation stops, so leaving the host bar in place would create the duplicate Apple-like
+  // header those packs deliberately reject. The contract applies to Home only; every other route
+  // retains the durable app bar and its normal browser/remote scope.
+  const homeOwnsNavigation = route.name === 'home'
+    && (node.dataset.homeNavigation === 'utility' || node.dataset.homeNavigation === 'none');
+  nav.style.display = chromeless || homeOwnsNavigation ? 'none' : 'flex';
   setNavActive(route);
   syncSectionTabs();
+  // The build mark goes at the foot of Home, where the household actually looks at the interface. Each
+  // screen is its own scroll container, so it is appended inside the screen rather than to the stage —
+  // a line under the last shelf belongs to whichever pack drew that shelf.
+  if (route.name === 'home') {
+    const stamp = buildStamp();
+    if (stamp && stamp.parentNode !== node) node.appendChild(stamp);
+  } else if (stampEl && stampEl.parentNode) {
+    stampEl.parentNode.removeChild(stampEl);
+  }
   document.body.classList.toggle('watching', route.name === 'play');
 
   // The menu bar lives beside the screen in #stage. Scoping the ring to the screen alone made the
-  // tabs unreachable on a remote, so a chromeless screen keeps its own scope and everything else
-  // can walk up into the bar.
-  focus.pushScope(chromeless ? node : stage());
+  // tabs unreachable on a remote, so a chromeless or Home-owned menu keeps its own scope and
+  // everything else can walk up into the shared bar. This excludes hidden host controls from the
+  // focus graph rather than merely painting them invisible.
+  focus.pushScope(chromeless || homeOwnsNavigation ? node : stage());
   let target = focusTargetFor(route);
   // A screen may choose where the ring lands: the profile grid puts it on the last person who watched.
   if (!target && node.__defaultFocus) {
@@ -365,6 +392,7 @@ function buildNav() {
       item('home', 'Home', 'home'),
       item('movies', 'Movies', 'browse', 'movies'),
       item('series', 'Series', 'browse', 'series'),
+      item('games', 'Games', 'games'),
       item('live', 'Live TV', 'channels'),
       item('list', 'My list', 'list'),
       item('search', 'Search', 'search'),
@@ -376,6 +404,30 @@ function buildNav() {
     nav.classList.toggle('solid', top > token('anim', 'navFadeAt', 50));
   }, { passive: true });
   return nav;
+}
+
+/*
+  The build mark at the foot of the page: which hub commit this interface is standing on.
+  The household's first question when a screen looks wrong is "am I looking at the newest one", and until
+  now that could only be answered from a terminal on the hub box. The page and the hub are two different
+  things — a phone can hold an old page while the hub is current — so the mark says which one is stale
+  instead of leaving it as a guess. It is one read of a fact the hub already reports.
+*/
+let stampEl = null;
+function buildStamp() {
+  if (stampEl) return stampEl;
+  stampEl = el('div', { class: 'hub-stamp', 'aria-hidden': 'true' });
+  hubBuild().then((s) => {
+    const label = buildLabel(s);
+    if (!label && stampEl.parentNode) stampEl.parentNode.removeChild(stampEl);
+    else if (label) {
+      stampEl.textContent = label;
+      if (s && s.measuredAt) {
+        stampEl.title = `The hub's own build, read ${new Date(s.measuredAt).toLocaleString()}`;
+      }
+    }
+  });
+  return stampEl;
 }
 
 /* A screen whose module is missing from the bundle has to leave the nav bar: on a remote, a focused item that
@@ -402,7 +454,16 @@ function syncSectionTabs() {
   const home = state.session.home;
   const liveFilled = home && Array.isArray(home.rows)
     && home.rows.some((r) => r.id === 'live' && (r.items || []).length);
-  const on = { movies: hasRow('movies'), series: hasRow('series'), live: !!liveFilled };
+  // Live TV and Games open onto optional add-ons, so the hub's own answer about what is installed decides
+  // them. Until that answer exists, Live TV waits for the proof of a filled live wall on Home, and Games
+  // keeps its door open — the same pair of fallbacks the television's bar uses.
+  const caps = state.session.caps;
+  const on = {
+    movies: hasRow('movies'),
+    series: hasRow('series'),
+    live: (caps ? !!caps.live : false) || !!liveFilled,
+    games: caps ? caps.games !== false : true,
+  };
   for (const [tab, show] of Object.entries(on)) {
     const b = nav.querySelector(`.nav-item[data-tab="${tab}"]`);
     if (b) b.hidden = !show;
@@ -570,15 +631,23 @@ function askText({ title = '', reason = '', placeholder = '', initial = '', acti
   });
 }
 
-function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
+function askPin(profile, { reason = 'Enter your PIN', mode = 'verify', minLength = null, maxLength = null } = {}) {
   return new Promise((resolve) => {
-    const need = Number(token('pin', 'length', 4));
+    // Profile PINs keep the themed, exact length they have always had. The household Settings PIN is
+    // the one deliberate exception: the API contract allows 4–8 digits, so its shared pad shows the
+    // full range and waits for OK rather than guessing which length an owner meant.
+    const themedLength = Math.max(1, Math.round(Number(token('pin', 'length', 4)) || 4));
+    const lower = Number.isFinite(Number(minLength)) ? Math.max(1, Math.round(Number(minLength))) : themedLength;
+    const upper = Number.isFinite(Number(maxLength)) ? Math.max(lower, Math.round(Number(maxLength))) : lower;
+    const min = Math.min(lower, 12);
+    const max = Math.min(Math.max(min, upper), 12);
+    const variableLength = min !== max;
     const expected = String(profile.pin || '');
     let got = '';
     let busy = false;
     const dots = el('div', { class: 'dots' });
-    for (let i = 0; i < need; i++) dots.appendChild(el('i'));
-    const err = el('div', { class: 'err' });
+    for (let i = 0; i < max; i++) dots.appendChild(el('i'));
+    const err = el('div', { class: 'err', role: 'alert', 'aria-live': 'assertive' });
     const pad = el('div', { class: 'p9' });
     const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'ok'];
     for (const k of keys) {
@@ -598,11 +667,11 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
     focus.focusable(x);
     const box = el('div', { class: 'mbox pin' }, x,
       el('div', { class: 'pmark' }, el('span', { text: 'Scenix' })),
-      el('h2', { text: profile.name }),
+      el('h2', { text: profile.name || 'PIN' }),
       el('p', { text: reason }),
       dots, pad, err,
       el('div', { class: 'mfoot' }, cancel));
-    const draw = () => { for (let i = 0; i < need; i++) dots.children[i].classList.toggle('on', i < got.length); };
+    const draw = () => { for (let i = 0; i < max; i++) dots.children[i].classList.toggle('on', i < got.length); };
     /* The pad answers once, and it has to claim the answer before it closes: `closeModals()` runs this modal's
        own close callback, whose job is to answer "no" when the viewer walked out of the pad without finishing.
        Answered afterwards, that callback fires first and every PIN a viewer types is thrown away on the way
@@ -617,8 +686,8 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
       closeTopModal();
       resolve(mode === 'set' ? (ok ? got : null) : ok);
     };
-    function refuse(message) {
-      got = '';
+    function showError(message, clearValue = true) {
+      if (clearValue) got = '';
       draw();
       err.textContent = message;
       box.classList.remove('shake');
@@ -626,18 +695,24 @@ function askPin(profile, { reason = 'Enter your PIN', mode = 'verify' } = {}) {
       box.classList.add('shake');
       focus.setFocus(pad.querySelector('.key'), { scroll: false });
     }
+    function refuse(message) { showError(message, true); }
     function press(k) {
       if (busy) return;
       if (k === 'clear') { got = ''; draw(); err.textContent = ''; return; }
       if (k === 'ok') return check();
-      if (got.length >= need) return;
+      if (got.length >= max) return;
       got += k;
       draw();
-      if (got.length === need) check();
+      if (!variableLength && got.length === max) check();
     }
     async function check() {
       // Setting a PIN there is nothing to compare against yet: the number only has to be complete.
-      if (mode === 'set') return finish(got.length === need);
+      if (mode === 'set') {
+        if (got.length < min) return showError(variableLength
+          ? `Enter ${min} to ${max} digits`
+          : `Enter ${min} digits`, false);
+        return finish(true);
+      }
       if (expected && got === expected) return finish(true);
       if (profile.id) {
         busy = true;
@@ -864,6 +939,19 @@ async function boot() {
     const m = await api.manifest();
     state.session.manifest = m;
     syncSectionTabs();
+    // Movies and Series are gated by the manifest just above; Live TV and Games are doors into optional
+    // add-ons, so the hub is asked which of them this household has installed. The answer is small and it
+    // runs beside the profile fetch rather than in front of it. Until it arrives the Games door stays open —
+    // the same rule the television's bar follows — because a tab that leaves is easier to understand than
+    // one that never appeared for a household that does have games.
+    api.caps().then((c) => {
+      state.session.caps = c || null;
+      syncSectionTabs();
+      // A Home-owned navigation contract does not keep the hidden host bar as a source of truth.
+      // Let its mounted semantic controls add/remove the same optional doors after this parallel
+      // capability request resolves.
+      window.dispatchEvent(new Event('scenix:caps'));
+    }).catch(() => { /* no answer: the doors stay as they were painted */ });
     const p = await api.profiles();
     state.setProfiles(p.profiles);
     state.loadMyList();
@@ -878,11 +966,15 @@ async function boot() {
   // over with it, and a PIN-gated profile still has to be unlocked.
   const wanted = q.get('profile');
   const gated = route.name === 'home' || GATE_SCREENS.indexOf(route.name) >= 0;
+  const needsProfilePicker = gated && !state.session.profile && !wanted;
 
-  // The landing screen mounts *under* the intro rather than after it, so the two crossfade.
-  if (gated && !state.session.profile && !wanted) navigate('profiles');
+  // The landing screen mounts *under* the intro rather than after it, so the two crossfade.  This
+  // path must finish here after the splash: `route` still names the deep link (usually Home), and
+  // falling through to the later no-profile fallback would mount Profiles a second time.
+  if (needsProfilePicker) await navigate('profiles');
 
   await hideBoot();
+  if (needsProfilePicker) return;
 
   if (wanted && !state.session.profile) {
     const p = state.profileById(wanted);
@@ -903,7 +995,7 @@ async function boot() {
     return;
   }
   document.body.classList.toggle('kids', state.isKids(state.session.profile));
-  navigate(route.name, route.arg);
+  navigate(route.name, route.arg, route.query);
 }
 
 boot().catch((e) => {

@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Media playback libraries can post transport notifications on Android 13+. The app does
+         not request this at runtime unless it starts such a foreground/notification flow, but the
+         declared permission keeps that platform-owned path lawful when it is used. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The multicast lock is what lets a hub's LAN announcement reach this TV at all; without it
          most Wi-Fi firmwares drop group traffic. Held only for the length of one search. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
@@ -30,6 +34,9 @@
 
     <!-- TV-only: this app is never a phone app. -->
     <uses-feature android:name="android.software.leanback" android:required="true" />
+    <!-- Multicast discovery can use Wi-Fi when it exists, but the app must remain installable on
+         Ethernet-only televisions. The permission above is a capability, not a hardware demand. -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <!-- Game mode wants a controller but never demands one: plenty of browser ports play with the
          remote, and the TV may have no pad paired yet. -->
@@ -109,6 +116,22 @@
 
         <activity
             android:name=".GamesActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- One console-library grammar for every zone: Home, Movies, Series, Games, Live. -->
+        <activity
+            android:name=".ShelfActivity"
+            android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- A game's own console-style page: tabs, facts, sessions, and the START box. -->
+        <activity
+            android:name=".GameHubActivity"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="false"
             android:screenOrientation="sensorLandscape"

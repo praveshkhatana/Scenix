@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.example.liquidglass.LiquidGlassView
 import com.scenix.tv.core.AppContext
 import com.scenix.tv.core.Focus
 import com.scenix.tv.core.Views
@@ -78,20 +79,21 @@ internal object GlassKit {
         return knob
     }
 
-    class ProfilePill(val root: LinearLayout, val initials: TextView,
+    class ProfilePill(val root: View, val initials: TextView,
                       val face: ImageView, val name: TextView)
 
     /** One household stop: avatar + name + chevron in a single frosted pill. */
     fun profilePill(context: Context, app: AppContext, onClick: () -> Unit): ProfilePill {
         val theme = app.theme
+        val glass = LiquidGlassKit.isGlass(app)
         val pill = LinearLayout(context).apply {
-            id = View.generateViewId()
-            isFocusable = true
-            isClickable = true
+            isFocusable = !glass
+            isClickable = !glass
             contentDescription = "Profiles"
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = Views.rounded(theme.color("profilePill", "rgba(8,16,28,0.80)"), theme.px(999f))
+            if (!glass) background = Views.rounded(
+                theme.color("profilePill", "rgba(8,16,28,0.80)"), theme.px(999f))
             setPadding(theme.px(6f), theme.px(6f), theme.px(18f), theme.px(6f))
         }
         val initials = Views.text(app, "meta", 17f, theme.ink, "?", bold = true,
@@ -124,8 +126,12 @@ internal object GlassKit {
         }, LinearLayout.LayoutParams(theme.px(30f), theme.px(30f)).apply {
             marginStart = theme.px(8f)
         })
-        Focus.attach(pill, pill, app, theme.px(999f), scale = false, elevate = false, onClick = onClick)
-        return ProfilePill(pill, initials, face, name)
+        // The lens is what the remote selects, so the id the D-pad graph points at and the halo both
+        // live on the glass, not on the row of parts inside it.
+        val surface = if (glass) LiquidGlassKit.wrap(app, pill, theme.px(999f)) else pill
+        surface.id = View.generateViewId()
+        Focus.attach(surface, surface, app, theme.px(999f), scale = false, elevate = false, onClick = onClick)
+        return ProfilePill(surface, initials, face, name)
     }
 
     /**
@@ -214,12 +220,13 @@ internal object GlassKit {
         onClick: () -> Unit,
     ): View {
         val theme = app.theme
+        val glass = LiquidGlassKit.isGlass(app)
         val stop = FrameLayout(context).apply {
-            id = View.generateViewId()
-            isFocusable = true
-            isClickable = true
+            isFocusable = !glass
+            isClickable = !glass
             contentDescription = description
-            background = Views.rounded(theme.color("profilePill", "rgba(8,16,28,0.80)"), theme.px(999f))
+            if (!glass) background = Views.rounded(
+                theme.color("profilePill", "rgba(8,16,28,0.80)"), theme.px(999f))
         }
         stop.addView(ImageView(context).apply {
             setImageResource(iconRes)
@@ -228,8 +235,10 @@ internal object GlassKit {
             setPadding((sizePx * 0.25f).toInt(), (sizePx * 0.25f).toInt(),
                 (sizePx * 0.25f).toInt(), (sizePx * 0.25f).toInt())
         }, FrameLayout.LayoutParams(sizePx, sizePx))
-        Focus.attach(stop, stop, app, theme.px(999f), scale = false, elevate = false, onClick = onClick)
-        return stop
+        val surface = if (glass) LiquidGlassKit.wrap(app, stop, theme.px(999f)) else stop
+        surface.id = View.generateViewId()
+        Focus.attach(surface, surface, app, theme.px(999f), scale = false, elevate = false, onClick = onClick)
+        return surface
     }
 
     /**
@@ -296,24 +305,52 @@ internal object GlassKit {
      */
     class HeroOverlay(context: Context, private val app: AppContext) : View(context) {
         private val paint = android.graphics.Paint()
+        // These shaders are only geometry/theme dependent. Recreating them for every frame made
+        // the glass hero allocate twice per draw while the artwork was otherwise completely still.
+        // Keep the exact same stops and rebuild only when a size, wash, or relevant pack token moves.
+        private var leftShader: android.graphics.LinearGradient? = null
+        private var bottomShader: android.graphics.LinearGradient? = null
+        private var shaderWidth = -1f
+        private var shaderHeight = -1f
+        private var shaderWash = 0
+        private var shaderFade = Float.NaN
+        private var shaderScrim = 0
         // The fixed pack tint for this plate slot (heroWashDeep / heroWashLight) — the reference
         // plates keep their tints whatever artwork loads beneath them.
         private var wash = 0
         fun setWash(color: Int) { if (color != wash) { wash = color; invalidate() } }
         fun currentWash(): Int = wash
+
+        private fun ensureShaders(width: Float, height: Float, fade: Float, scrim: Int) {
+            if (leftShader != null && bottomShader != null && shaderWidth == width &&
+                shaderHeight == height && shaderWash == wash && shaderFade == fade &&
+                shaderScrim == scrim
+            ) return
+            leftShader = android.graphics.LinearGradient(
+                0f, 0f, width, 0f, intArrayOf(wash, Color.TRANSPARENT),
+                floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP,
+            )
+            bottomShader = android.graphics.LinearGradient(
+                0f, 0f, 0f, height, intArrayOf(Color.TRANSPARENT, scrim),
+                floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP,
+            )
+            shaderWidth = width
+            shaderHeight = height
+            shaderWash = wash
+            shaderFade = fade
+            shaderScrim = scrim
+        }
+
         override fun onDraw(canvas: android.graphics.Canvas) {
             val w = width.toFloat(); val h = height.toFloat()
             if (w < 1f || h < 1f || wash == 0) return
             val theme = app.theme
             val fade = theme.packInt("heroFadePct", 62).coerceIn(25, 95) / 100f
-            paint.shader = android.graphics.LinearGradient(
-                0f, 0f, w, 0f, intArrayOf(wash, Color.TRANSPARENT),
-                floatArrayOf(0f, fade), android.graphics.Shader.TileMode.CLAMP)
+            val scrim = theme.color("heroScrim", "rgba(6,16,30,0.50)")
+            ensureShaders(w, h, fade, scrim)
+            paint.shader = leftShader
             canvas.drawRect(0f, 0f, w, h, paint)
-            paint.shader = android.graphics.LinearGradient(
-                0f, 0f, 0f, h,
-                intArrayOf(Color.TRANSPARENT, theme.color("heroScrim", "rgba(6,16,30,0.50)")),
-                floatArrayOf(0.42f, 1f), android.graphics.Shader.TileMode.CLAMP)
+            paint.shader = bottomShader
             canvas.drawRect(0f, 0f, w, h, paint)
         }
     }
@@ -371,23 +408,23 @@ internal object GlassKit {
     ): View {
         val theme = app.theme
         val radius = theme.radius("chip", 999f)
+        val glass = LiquidGlassKit.isGlass(app)
         val chip = LinearLayout(context).apply {
-            id = View.generateViewId()
-            isFocusable = true
-            isClickable = true
+            isFocusable = !glass
+            isClickable = !glass
             orientation = LinearLayout.HORIZONTAL
             // Measured on the reference chip crop: the pictogram+label pair sits CENTERED in the
             // chip, not set off the left padding — the left-set version read cramped.
             gravity = Gravity.CENTER
             contentDescription = "Jump to $label"
             setPadding(theme.px(18f), 0, theme.px(18f), 0)
-            background = Views.rounded(
+            // The lens IS the fill: a flat wash under it hides the bent backdrop and the chip is a
+            // grey pill again. Only a pack without the lens wears the token fill.
+            if (!glass) background = Views.rounded(
                 theme.color(if (active) "chipFillActive" else "chipFill",
                     if (active) "rgba(255,255,255,0.22)" else "rgba(255,255,255,0.10)"),
                 radius, theme.px(1f), theme.color("glassRim", "rgba(255,255,255,0.38)"),
             )
-            // Cast shadow separate from the rim, like every other Glass surface.
-            elevation = theme.space("chipElevation", 6f).toFloat()
         }
         // Measured: reference glyphs are filled pictograms ~30px tall, far heavier than a text
         // dot; they are vector icons (deviation closed 2026-11-02: unicode text glyphs read as
@@ -413,8 +450,180 @@ internal object GlassKit {
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { marginStart = theme.px(14f) })
-        Focus.attach(chip, chip, app, radius, scale = false, elevate = false, onClick = onClick)
-        return chip
+        // A chosen chip is the same glass, lit from inside: the fill sits INSIDE the lens, so the
+        // chosen chip is brighter glass rather than a grey pill pasted over it.
+        if (glass && active) chip.background =
+            Views.rounded(theme.color("chipFillActive", "rgba(255,255,255,0.22)"), radius)
+        // The lens carries the selection: the halo and any lift belong to the whole surface, and a
+        // focus ring drawn on the content inside it would be clipped by the glass's own shape.
+        val surface = if (glass) LiquidGlassKit.wrap(app, chip, radius) else chip
+        surface.id = View.generateViewId()
+        // Cast shadow separate from the rim, like every other Glass surface.
+        surface.elevation = theme.space("chipElevation", 6f).toFloat()
+        Focus.attach(surface, surface, app, radius, scale = false, elevate = false, onClick = onClick)
+        return surface
+    }
+
+    /**
+     * The focused tile's glass slab: a lens laid OVER a tile's artwork that refracts and rim-lights
+     * that artwork while the card holds focus, so the selected poster reads as a slab of liquid glass
+     * rather than a picture with a ring drawn around it.
+     *
+     * There is exactly ONE slab per screen ([host]), re-bound to whichever tile is focused. A lens of
+     * its own per tile was the obvious design and the wrong one: the library allocates a backdrop
+     * bitmap for every lens it builds, and a scrolling shelf builds and recycles dozens of holders,
+     * which is how a 2 GB panel ended up with 150+ MB of native heap. One lens, one bitmap, one blur.
+     *
+     * The slab's material is the `focusGlass*` token family (each token falling back to the `frost*`
+     * chrome tokens). `focusGlass: 0` turns it off; `focusGlassMaxH` (canvas px) keeps it off surfaces
+     * too big to afford — on the CPU tier a lens costs a capture of the region under it plus an
+     * effect pass over that region, measured on the Android 11 panel at ~1.5 ms for a chip's patch
+     * and ~120 ms for a poster's, and far worse for the billboard's plate.
+     */
+    fun onGlassFocus(card: View, art: View, app: AppContext, radiusPx: Int) {
+        if (!LiquidGlassKit.isGlass(app)) return
+        if (app.theme.packInt("focusGlass", 1) == 0) return
+        val previous = card.onFocusChangeListener
+        card.onFocusChangeListener = View.OnFocusChangeListener { v, has ->
+            previous?.onFocusChange(v, has)
+            if (has) showGlassSlab(art, app, radiusPx)
+            else hideGlassSlab(app)
+        }
+    }
+
+    /** The page's content view — the one surface every tile, and the slab, stand in. */
+    private fun pageOf(view: View): ViewGroup? {
+        var ctx = view.context
+        while (ctx is android.content.ContextWrapper && ctx !is android.app.Activity)
+            ctx = ctx.baseContext
+        return (ctx as? android.app.Activity)?.findViewById(android.R.id.content)
+    }
+
+    /**
+     * The screen's one slab, standing in that screen's content view above every tile. Keyed by the
+     * page because each screen hosts its own: a slab borrowed by Home must not follow the viewer
+     * into Detail.
+     */
+    private val slabs = java.util.WeakHashMap<ViewGroup, LiquidGlassView>()
+
+    private fun showGlassSlab(art: View, app: AppContext, radiusPx: Int) {
+        val theme = app.theme
+        if (art.width <= 0 || art.height <= 0) return
+        val inset = theme.packInt("focusGlassInset", 0)
+        val h = art.height - inset * 2
+        // A lens costs a capture of the region it covers plus an effect pass over it, and on the
+        // Android 11 panel that was measured at ~120 ms for a poster and far more for the billboard's
+        // plate. So a surface taller than `focusGlassMaxH` (canvas px) keeps the pack's halo and
+        // gets no slab.
+        if (h > theme.px(theme.packInt("focusGlassMaxH", 420).toFloat())) {
+            hideGlassSlab(app)
+            return
+        }
+        val page = pageOf(art) ?: return
+        val glass = slabs[page] ?: LiquidGlassKit.viewLens(page, app, radiusPx, "focusGlass",
+            behind = false).apply {
+            visibility = View.INVISIBLE
+            alpha = 0f
+            // No elevation: the slab is the last child of the page's own content view, so a page
+            // paints it above every tile and every chrome surface already, and giving a 425x596
+            // software-drawn lens a hardware layer on this panel costs more than the glass does.
+            elevation = 0f
+            page.addView(this, ViewGroup.LayoutParams(0, 0))
+            slabs[page] = this
+        }
+        held[page] = art to radiusPx
+        glass.cornerRadius = radiusPx.toFloat()
+        LiquidGlassKit.rebind(glass, art)
+        placeSlab(page, glass, art, inset)
+        // The slab stands where the tile was when focus landed on it. When the page moves that tile —
+        // a shelf leaving the page, a row re-laying out — the glass must come with it, or it stays
+        // painted over the wall where the poster used to be.
+        val past = slabMovers[page]
+        if (past == null || past.first !== art) {
+            past?.second?.let { m -> past.first.removeOnLayoutChangeListener(m) }
+            val mover = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                if (held[page]?.first === art) placeSlab(page, glass, art, inset)
+            }
+            art.addOnLayoutChangeListener(mover)
+            slabMovers[page] = art to mover
+        }
+        glass.visibility = View.VISIBLE
+        if (fadeSlab(app)) glass.animate().alpha(1f).setDuration(120L).start()
+        else { glass.animate().cancel(); glass.alpha = 1f }
+    }
+
+    /** The slab over the artwork, not over the card: a poster's name sits under the tile and stays
+     *  bare text on the wall, exactly as the pack draws every unfocused tile. */
+    private fun placeSlab(
+        page: ViewGroup,
+        glass: LiquidGlassView,
+        art: View,
+        inset: Int,
+    ) {
+        val a = IntArray(2); art.getLocationInWindow(a)
+        val p = IntArray(2); page.getLocationInWindow(p)
+        (glass.layoutParams as android.view.ViewGroup.MarginLayoutParams).let { lp ->
+            lp.width = art.width - inset * 2
+            lp.height = art.height - inset * 2
+            lp.leftMargin = a[0] - p[0] + inset
+            lp.topMargin = a[1] - p[1] + inset
+            glass.layoutParams = lp
+        }
+    }
+
+    /** Each page's slab is glued to the tile it belongs to; this is the glue, and the tile. */
+    private val slabMovers =
+        java.util.WeakHashMap<ViewGroup, Pair<View, View.OnLayoutChangeListener>>()
+
+    /**
+     * The fade is free on the shader tier and expensive on the CPU tier, where every frame of it
+     * re-blurs the poster under the slab. On the panel that cannot afford it, the slab arrives with
+     * the focus itself, which is also how the rest of the pack's focus feedback behaves there.
+     */
+    private fun fadeSlab(app: AppContext): Boolean =
+        android.os.Build.VERSION.SDK_INT >= 33 && app.theme.motionEnabled
+
+    /**
+     * A page tells the slab when it is moving, and the slab steps out. A lens costs a fresh capture
+     * and refraction of whatever tile it stands on, every frame of the scroll, for a poster that is
+     * on its way past: measured on the Android 11 panel, keeping it up while the shelves scrolled
+     * doubled the median frame time (24 ms to 48 ms) for something nobody looks at. When the page
+     * settles, the slab comes back to the tile that holds focus.
+     */
+    fun slabScrolling(view: View, app: AppContext, scrolling: Boolean) {
+        if (!LiquidGlassKit.isGlass(app)) return
+        // Same rule as the slab, one tier out: while the page is moving, every lens on it replays
+        // its last honest frame instead of recapturing and refracting the page each frame. When the
+        // page settles, the lenses come back — full glass on the frame after.
+        LiquidGlassKit.scrollFreeze(scrolling)
+        if (app.theme.packInt("focusGlass", 1) == 0) return
+        val page = pageOf(view) ?: return
+        if (scrolling) hideGlassSlab(app)
+        else held[page]?.let { (art, radius) ->
+            if (art.isFocused && art.isAttachedToWindow) showGlassSlab(art, app, radius)
+        }
+    }
+
+    /** The tile each page's slab was last standing on, so it can come back to it. */
+    private val held = java.util.WeakHashMap<ViewGroup, Pair<View, Int>>()
+
+    /**
+     * The page re-laid itself out under the slab — a shelf left the page and every row below it came
+     * up — so the glass is standing on bare wall where the tile used to be. Put it back on the tile
+     * that holds focus.
+     */
+    fun reseatSlab(view: View, app: AppContext) = slabScrolling(view, app, false)
+
+    private fun hideGlassSlab(app: AppContext) {
+        for ((_, glass) in slabs) {
+            if (fadeSlab(app)) {
+                glass.animate().alpha(0f).setDuration(120L).withEndAction {
+                    if (glass.alpha <= 0.01f) glass.visibility = View.INVISIBLE
+                }.start()
+            } else {
+                glass.animate().cancel(); glass.alpha = 0f; glass.visibility = View.INVISIBLE
+            }
+        }
     }
 
     /**
@@ -427,17 +636,28 @@ internal object GlassKit {
      */
     private var grainCache: android.graphics.Bitmap? = null
     private var grainStrength = -1
+    private data class WallBlob(val xPct: Float, val yPct: Float, val radiusPct: Float, val color: Int, val alpha: Float)
+    private data class DrawBlob(
+        val centerX: Float,
+        val centerY: Float,
+        val radius: Float,
+        val shader: android.graphics.RadialGradient,
+    )
+
     private fun grainBitmap(strength: Int): android.graphics.Bitmap {
         grainCache?.takeIf { !it.isRecycled && grainStrength == strength }?.let { return it }
         val side = 160
         val bmp = android.graphics.Bitmap.createBitmap(side, side, android.graphics.Bitmap.Config.ARGB_8888)
-        val rnd = java.util.Random(20261102L)
         val px = IntArray(side * side)
         val r = java.util.Random(20261102L)
+        // Film grain: a salt-and-pepper jitter of faint light and dark specks around the
+        // wash — symmetric so it never tints the wall one way. Its strength is the pack's dial,
+        // because a lens has nothing to bend out of a smooth gradient: this speckle, and the bokeh
+        // discs the same wall carries, are what make the rim of a glass surface visible at all.
+        val speck = (0x0A * strength.coerceAtLeast(1)).coerceAtMost(0x40)
         for (i in px.indices) {
-            // Film grain: a salt-and-pepper jitter of faint light and dark specks around the
-            // wash — symmetric so it never tints the wall one way.
-            px[i] = if (r.nextBoolean()) 0x0BFFFFFF else 0x0B000000
+            px[i] = if (r.nextBoolean()) (speck shl 24) or 0x00FFFFFF
+            else (speck shl 24) or 0x00000000
         }
         bmp.setPixels(px, 0, side, 0, 0, side, side)
         grainCache = bmp
@@ -445,7 +665,55 @@ internal object GlassKit {
         return bmp
     }
 
+    /**
+     * The wall, painted once per (size, tokens) into a bitmap everyone then blits.
+     *
+     * The wash is a gradient plus a dozen bokeh discs plus a grain tile, and it is the background of
+     * every Glass page: Home, Detail, Settings, the PIN gate — and the backdrop every lens samples.
+     * Painted from the tokens each time, that is a gradient, a dozen radial discs and a grain tile
+     * over 1920x1080, ten-plus times a second on a 2 GB panel. Rasterised once per (size, wall
+     * tokens) it is one blit, which is what made the wall affordable next to the lenses.
+     */
+    private var wallCache: android.graphics.Bitmap? = null
+    private var wallCacheKey = ""
+
+    /** The wall, painted once per (size, wall tokens) into a bitmap everything else blits. */
+    fun wallRaster(app: AppContext, w: Int, h: Int): android.graphics.Bitmap {
+        val theme = app.theme
+        val key = "$w x $h " + theme.id + theme.color("wallA", "") + theme.color("wallB", "") +
+            theme.packString("wallBlobs", "") + theme.packInt("wallGrain", 0)
+        wallCache?.takeIf { !it.isRecycled && wallCacheKey == key }?.let { return it }
+        val bmp = android.graphics.Bitmap.createBitmap(
+            w.coerceAtLeast(1), h.coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+        val painted = wallPaint(app)
+        painted.setBounds(0, 0, bmp.width, bmp.height)
+        painted.draw(android.graphics.Canvas(bmp))
+        wallCache = bmp
+        wallCacheKey = key
+        return bmp
+    }
+
+    /**
+     * The page background. With `wallRaster` on (the Glass pack's default) the page blits the
+     * painted wall instead of re-painting a gradient, a dozen bokeh discs and a grain tile every
+     * frame the page redraws — on the 2 GB Android 11 panel that repaint was a large part of what
+     * made scrolling the rails feel heavy, and it is also what every lens samples.
+     */
     fun wall(app: AppContext): android.graphics.drawable.Drawable {
+        if (app.theme.packInt("wallRaster", 1) == 0) return wallPaint(app)
+        return object : android.graphics.drawable.Drawable() {
+            override fun draw(canvas: android.graphics.Canvas) {
+                canvas.drawBitmap(
+                    wallRaster(app, bounds.width(), bounds.height()), 0f, 0f, null)
+            }
+            override fun setAlpha(alpha: Int) {}
+            override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+            override fun getOpacity() = android.graphics.PixelFormat.OPAQUE
+        }
+    }
+
+    /** The wall, drawn from its tokens: the base wash, the bokeh discs, the film grain. */
+    private fun wallPaint(app: AppContext): android.graphics.drawable.Drawable {
         val theme = app.theme
         val base = GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
@@ -457,7 +725,7 @@ internal object GlassKit {
             val g = f[0].split(",")
             if (g.size != 3) return@mapNotNull null
             try {
-                Triple(Triple(g[0].toFloat(), g[1].toFloat(), g[2].toFloat()),
+                WallBlob(g[0].toFloat(), g[1].toFloat(), g[2].toFloat(),
                     Color.parseColor(f[1]), f[2].toFloat())
             } catch (e: Exception) { null }
         }
@@ -465,24 +733,56 @@ internal object GlassKit {
         if (blobs.isEmpty() && grain <= 0) return base
         return object : android.graphics.drawable.Drawable() {
             private val paint = android.graphics.Paint()
+            // The wall is kept under static content for long stretches. Its blur-like radial
+            // glows therefore need to be constructed only when its bounds change, not for every
+            // frame that merely composites the page above it.
+            private var cachedWidth = -1
+            private var cachedHeight = -1
+            private var drawBlobs: List<DrawBlob> = emptyList()
+            private var grainShader: android.graphics.BitmapShader? = null
+
+            private fun prepareDrawAssets(width: Int, height: Int) {
+                if (cachedWidth == width && cachedHeight == height) return
+                val longest = maxOf(width, height).toFloat()
+                drawBlobs = blobs.map { blob ->
+                    val centerX = blob.xPct / 100f * width
+                    val centerY = blob.yPct / 100f * height
+                    val radius = blob.radiusPct / 100f * longest
+                    val color = (blob.color and 0x00FFFFFF) or
+                        ((blob.alpha * 255).toInt().coerceIn(0, 255) shl 24)
+                    DrawBlob(
+                        centerX,
+                        centerY,
+                        radius,
+                        android.graphics.RadialGradient(
+                            centerX, centerY, radius, color, 0,
+                            android.graphics.Shader.TileMode.CLAMP,
+                        ),
+                    )
+                }
+                if (grain > 0 && grainShader == null) {
+                    grainShader = android.graphics.BitmapShader(
+                        grainBitmap(grain),
+                        android.graphics.Shader.TileMode.REPEAT,
+                        android.graphics.Shader.TileMode.REPEAT,
+                    )
+                }
+                cachedWidth = width
+                cachedHeight = height
+            }
+
             override fun draw(canvas: android.graphics.Canvas) {
                 val w = bounds.width(); val h = bounds.height()
                 base.setBounds(0, 0, w, h); base.draw(canvas)
-                val m = maxOf(w, h).toFloat()
-                for ((pos, color, alpha) in blobs) {
-                    val cx = pos.first / 100f * w; val cy = pos.second / 100f * h
-                    val r = pos.third / 100f * m
-                    val a = (color and 0x00FFFFFF) or ((alpha * 255).toInt().coerceIn(0, 255) shl 24)
-                    paint.shader = android.graphics.RadialGradient(
-                        cx, cy, r, a, 0, android.graphics.Shader.TileMode.CLAMP)
-                    canvas.drawCircle(cx, cy, r, paint)
+                prepareDrawAssets(w, h)
+                for (blob in drawBlobs) {
+                    paint.shader = blob.shader
+                    canvas.drawCircle(blob.centerX, blob.centerY, blob.radius, paint)
                 }
                 if (grain > 0) {
                     // The reference wash is photographic film, not a vector gradient: procedural
                     // grain (built once, tiled) breaks the banding without copying its asset.
-                    paint.shader = android.graphics.BitmapShader(
-                        grainBitmap(grain), android.graphics.Shader.TileMode.REPEAT,
-                        android.graphics.Shader.TileMode.REPEAT)
+                    paint.shader = grainShader
                     canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
                 }
             }

@@ -9,6 +9,7 @@ import com.scenix.tv.core.HubEndpoint
 import com.scenix.tv.core.Item
 import com.scenix.tv.core.Prefs
 import com.scenix.tv.core.s
+import com.scenix.tv.core.stringList
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -48,6 +49,41 @@ data class ProfileInfo(
 data class AvatarChoice(val label: String, val image: String)
 
 /**
+ * One channel on the hub's live wall, in the zap order the remote walks. `number` is the hub's stable
+ * channel number (it survives a restart); `health` is what the hub's own probe last saw — `working`,
+ * `dead`, `unknown`, or `blocked` when the channel's host refused this house rather than being absent.
+ */
+data class LiveChannel(
+    val identity: String,
+    val name: String,
+    val group: String,
+    val groups: List<String>,
+    val logo: String,
+    val number: Int,
+    val quality: String,
+    val health: String,
+    val error: String,
+    val now: String,
+    val next: String,
+    val inLineup: Boolean,
+)
+
+/** The live wall as one profile may watch it: the channels, the lineup, and why the wall is its size. */
+data class LiveWall(
+    val channels: List<LiveChannel>,
+    /** The profile's lineup: the channels it switched on. Empty means "everything this profile may watch". */
+    val only: List<String>,
+    /** The lineup's order — the order the remote walks. */
+    val order: List<String>,
+    val hidden: List<String>,
+    val groups: List<String>,
+    /** Channels the lineup is holding back from this profile, stated rather than hidden. */
+    val unlisted: Int,
+    val playlist: String,
+    val wallError: String,
+)
+
+/**
  * The native read path: Home, Detail, the player and the progress writes that keep Continue Watching
  * alive. The hub is still the source of truth — this only speaks the same `/app/v1` contract the web
  * page does, with the same optional Basic token, and never ranks or re-shapes a source itself.
@@ -71,16 +107,72 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
 
     /**
      * The optional add-ons this hub has installed. The navigation asks this before it draws a Games
-     * or Live TV door: a tab for a mode the household never added is a door to an empty room. A hub
-     * too old to answer returns null, and the caller keeps its previous shape.
+     * or Live TV door: a tab for a mode the household never added is a door to an empty room. The
+     * answer is per profile — a child's scope refuses the live row, and a Live tab that opens on
+     * "not for this profile" is worse than no tab. A hub too old to answer returns null, and the
+     * caller keeps its previous shape.
      */
-    fun caps(done: (FeatureCaps?) -> Unit) {
-        request("/app/v1/caps", "", "GET", null, 8000) { root, status, _ ->
+    fun caps(profileId: String, done: (FeatureCaps?) -> Unit) {
+        request("/app/v1/caps", "profile=" + enc(profileId), "GET", null, 8000) { root, status, _ ->
             val body = root
             done(
                 if (status in 200..299 && body != null && body.has("live") && body.has("games")) {
                     FeatureCaps(body.optBoolean("live", false), body.optBoolean("games", false))
                 } else null
+            )
+        }
+    }
+
+    /**
+     * The live wall as this profile may watch it — the same list `/app/v1/row/live` builds, with the
+     * channel manager's extra facts (numbers, health, now/next, the lineup itself). One source for the
+     * wall and the zap ring is the point: a manager that offers channels the player cannot reach is how
+     * "channel 214" becomes a key press that does nothing.
+     */
+    fun liveChannels(profileId: String, done: (wall: LiveWall?, error: String?) -> Unit) {
+        request("/app/v1/live/channels", "profile=" + enc(profileId), "GET", null, 20000) { root, status, error ->
+            if (root == null) { done(null, error); return@request }
+            if (status == 404) { done(null, null); return@request }   // a hub too old to have this route
+            if (status == 403) {
+                done(null, error ?: "Live TV is not for this profile")
+                return@request
+            }
+            val channels = ArrayList<LiveChannel>()
+            root.optJSONArray("channels")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val c = arr.optJSONObject(i) ?: continue
+                    channels.add(
+                        LiveChannel(
+                            identity = s(c, "identity", ""),
+                            name = s(c, "name", ""),
+                            group = s(c, "group", ""),
+                            groups = stringList(c.optJSONArray("groups")),
+                            logo = s(c, "logo", ""),
+                            number = c.optInt("number", 0),
+                            quality = s(c, "quality", ""),
+                            health = s(c, "health", "unknown"),
+                            error = s(c, "error", ""),
+                            now = c.optJSONObject("now")?.let { s(it, "title", "") }.orEmpty(),
+                            next = c.optJSONObject("next")?.let { s(it, "title", "") }.orEmpty(),
+                            inLineup = c.optBoolean("inLineup", false),
+                        )
+                    )
+                }
+            }
+            val lineup = root.optJSONObject("lineup")
+            val status1 = root.optJSONObject("status")
+            done(
+                LiveWall(
+                    channels = channels,
+                    only = stringList(lineup?.optJSONArray("only")),
+                    order = stringList(lineup?.optJSONArray("order")),
+                    hidden = stringList(lineup?.optJSONArray("hidden")),
+                    groups = stringList(root.optJSONArray("groups")),
+                    unlisted = root.optInt("unlisted", 0),
+                    playlist = s(status1, "playlist", ""),
+                    wallError = s(status1, "lastError", ""),
+                ),
+                error,
             )
         }
     }
@@ -111,7 +203,18 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     /** The household settings PIN: verify it, or change the lock (the current PIN is required). */
     fun unlockSettings(pin: String, done: (ok: Boolean, error: String?) -> Unit) {
         request("/app/v1/settings/unlock", "", "POST", JSONObject().put("pin", pin), 10000) { root, status, error ->
-            done(root?.optBoolean("ok") == true, error ?: if (status == 403) "That PIN is not right" else null)
+            val ok = root?.optBoolean("ok") == true
+            if (ok) {
+                val session = root?.optString("adminSession", "")?.trim().orEmpty()
+                if (session.isNotBlank()) {
+                    prefs.setAdminSession(session, HubEndpoint.base(context),
+                        root?.optLong("adminSessionExpiresAt", 0L) ?: 0L)
+                } else {
+                    // Unlocked/legacy hubs need no capability; do not retain one for a different lock.
+                    prefs.clearAdminSession()
+                }
+            }
+            done(ok, error ?: if (status == 403) "That PIN is not right" else null)
         }
     }
 
@@ -124,7 +227,18 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         val body = JSONObject().put("enabled", enabled)
         if (!pin.isNullOrBlank()) body.put("pin", pin)
         if (!current.isNullOrBlank()) body.put("pinCurrent", current)
-        request("/app/v1/settings/lock", "", "POST", body, 12000) { root, _, error -> done(root, error) }
+        request("/app/v1/settings/lock", "", "POST", body, 12000) { root, _, error ->
+            if (root?.optBoolean("ok") == true) {
+                val session = root.optString("adminSession", "").trim()
+                if (session.isNotBlank()) {
+                    prefs.setAdminSession(session, HubEndpoint.base(context),
+                        root.optLong("adminSessionExpiresAt", 0L))
+                } else {
+                    prefs.clearAdminSession()
+                }
+            }
+            done(root, error)
+        }
     }
 
     /** Installed add-ons, with the same enable/remove/add calls the web settings uses. */
@@ -132,6 +246,72 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         request("/app/v1/addons", "", "GET", null, 12000) { root, _, error ->
             done(root?.optJSONArray("addons"), error)
         }
+    }
+
+    /** The Hub-owned, reviewed source directory. Older/standalone backends may answer an empty list. */
+    fun reviewedAddons(done: (addons: JSONArray?, error: String?) -> Unit) {
+        request("/app/v1/addon-registry", "", "GET", null, 12000) { root, _, error ->
+            // `directory.entries` is the richer, manifest-derived directory contract.  Keep the
+            // original `reviewed` field as a fallback so a TV can pair with an already-deployed
+            // Hub without a coordinated update.  Neither shape contains a manifest URL.
+            val entries = root?.optJSONObject("directory")?.optJSONArray("entries")
+                ?: root?.optJSONArray("reviewed")
+            done(entries, error)
+        }
+    }
+
+    /**
+     * The non-endorsed Community directory is Hub-owned. The native client accepts only its fixed
+     * media-type vocabulary and an 80-character search term; it never receives provider addresses.
+     */
+    fun communityAddonDirectory(
+        type: String,
+        query: String,
+        done: (directory: JSONObject?, error: String?) -> Unit,
+    ) {
+        val safeType = communityType(type)
+        val safeQuery = query.trim().take(80)
+        request(
+            "/app/v1/community-addon-directory",
+            "type=${enc(safeType)}&q=${enc(safeQuery)}",
+            "GET",
+            null,
+            15000,
+        ) { root, _, error -> done(root, error) }
+    }
+
+    /** Reads one opaque Community entry; the activity validates its non-endorsement contract. */
+    fun communityAddonDetail(
+        opaqueId: String,
+        done: (entry: JSONObject?, error: String?) -> Unit,
+    ) {
+        val id = opaqueId.trim()
+        if (id.isBlank()) {
+            done(null, "That community source is unavailable")
+            return
+        }
+        request("/app/v1/community-addon-directory/${enc(id)}", "", "GET", null, 15000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** Community installation is opaque-ID-only and always carries the explicit acknowledgement. */
+    fun installCommunityAddon(
+        opaqueId: String,
+        done: (root: JSONObject?, error: String?) -> Unit,
+    ) {
+        val id = opaqueId.trim()
+        if (id.isBlank()) {
+            done(null, "That community source is unavailable")
+            return
+        }
+        request(
+            "/app/v1/community-addon-directory/${enc(id)}/install",
+            "",
+            "POST",
+            JSONObject().put("nonEndorsementAcknowledged", true),
+            15000,
+        ) { root, _, error -> done(root, error) }
     }
 
     fun setAddon(id: String, on: Boolean, done: (root: JSONObject?, error: String?) -> Unit) {
@@ -149,6 +329,47 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         }
     }
 
+    /** Install only by the Hub's reviewed registry id; a TV never supplies the upstream URL. */
+    fun addReviewedAddon(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addon-registry/" + enc(id) + "/install", "", "POST", null, 15000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /**
+     * Starts an opaque, expiring browser handoff for a configuration-required reviewed source.
+     * The response contains only a short code and source label — never an upstream manifest or
+     * configuration field/value — so the TV cannot become a place where setup secrets appear.
+     */
+    fun startReviewedSourceSetup(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/addon-registry/" + enc(id) + "/setup-session", "", "POST", null, 12000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** Community setup keeps the same acknowledgement as installation before the Hub mints a code. */
+    fun startCommunitySourceSetup(id: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request(
+            "/app/v1/community-addon-directory/" + enc(id) + "/setup-session",
+            "",
+            "POST",
+            JSONObject().put("nonEndorsementAcknowledged", true),
+            12000,
+        ) { root, _, error -> done(root, error) }
+    }
+
+    /** Polls only the code's safe receipt state after the owner has finished setup on the web. */
+    fun sourceSetupStatus(code: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        val clean = code.trim()
+        if (clean.isBlank()) {
+            done(null, "That setup code is unavailable")
+            return
+        }
+        request("/app/v1/source-setups/" + enc(clean), "", "GET", null, 10000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
     /** The hub's settings document plus the row metadata the Home editor needs. */
     fun settings(done: (root: JSONObject?, error: String?) -> Unit) {
         request("/app/v1/settings", "", "GET", null, 12000) { root, _, error -> done(root, error) }
@@ -157,6 +378,31 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
     /** A settings patch (the hub merges it, as the web settings writer does). */
     fun saveSettings(patch: JSONObject, done: (root: JSONObject?, error: String?) -> Unit) {
         request("/app/v1/settings", "", "PUT", patch, 12000) { root, _, error -> done(root, error) }
+    }
+
+    /**
+     * The phone remote's session channel (hub/core/remote.js and core/RemoteSession.kt share this
+     * contract). Registration is the only call that needs the household's hub credential; the phone
+     * then proves itself with the random token alone.
+     */
+    fun remoteRegister(token: String, code: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        val body = JSONObject().put("token", token)
+        if (code.isNotBlank()) body.put("code", code)
+        request("/app/v1/remote/register", "", "POST", body, 10000) { root, _, error -> done(root, error) }
+    }
+
+    /** Long-poll-free event read: the TV asks after the last sequence it injected. */
+    fun remoteEvents(token: String, after: Int, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/remote/events", "t=" + enc(token) + "&after=$after", "GET", null, 8000) { root, _, error ->
+            done(root, error)
+        }
+    }
+
+    /** End the phone session when Settings closes; it also expires on its own after 15 minutes. */
+    fun remoteClose(token: String, done: (root: JSONObject?, error: String?) -> Unit) {
+        request("/app/v1/remote/close", "", "POST", JSONObject().put("token", token), 8000) { root, _, error ->
+            done(root, error)
+        }
     }
 
     /** The person's playback preferences, as the web settings page reads them. */
@@ -343,7 +589,7 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                 // profile say no" — and deserves those words, not a status code. The hub now names
                 // the rule and the evidence, so the screen can say which setting did it.
                 if (status == 403 && (root?.opt("droppedByRule") != null || root?.has("tier") == true)) {
-                    val why = root?.optString("detail")?.takeIf { it.isNotBlank() }
+                    val why = root.optString("detail").takeIf { it.isNotBlank() }
                         ?: "this profile can't watch this title"
                     done(null, why)
                     return@request
@@ -482,6 +728,10 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                         val basic = Base64.encodeToString("scenix:$token".toByteArray(), Base64.NO_WRAP)
                         conn.setRequestProperty("Authorization", "Basic $basic")
                     }
+                    val adminSession = prefs.adminSessionFor(base)
+                    if (adminSession.isNotBlank()) {
+                        conn.setRequestProperty("X-Scenix-Admin-Session", adminSession)
+                    }
                     if (body != null) {
                         conn.doOutput = true
                         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -501,6 +751,12 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
                     if (status !in 200..299) {
                         error = root?.optString("error", "")?.takeIf { it.isNotBlank() }
                             ?: "The hub answered $status"
+                        // A short-lived settings capability is only useful while the server accepts
+                        // it. Drop an expired/revoked proof immediately so the next protected visit
+                        // reopens the PIN gate instead of repeatedly sending a known-bad token.
+                        if (status == 403 && root?.optBoolean("sessionRequired", false) == true) {
+                            prefs.clearAdminSession()
+                        }
                     }
                 } finally {
                     conn.disconnect()
@@ -545,5 +801,10 @@ class BrowseApi(private val context: Context, private val prefs: Prefs) {
         /** A path segment that survives a title identity and never doubles a slash. */
         fun enc(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun communityType(value: String): String = when (value.trim().lowercase()) {
+            "movie", "series", "channel", "other" -> value.trim().lowercase()
+            else -> "movie"
+        }
     }
 }

@@ -5,21 +5,21 @@
   "platforms": ["android-tv"],
   "purpose": "The confirmation behind a press-and-hold on a card or hero. It names the title, lists only the actions that card supports, and acts on a deliberate second OK.",
   "source": { "android": "core/CardActionSheet.kt" },
-  "tokens": ["color.surface", "color.line", "color.ink", "color.ink3", "radius.panel", "radius.listItem", "type.panelTitle", "type.sub"],
+  "tokens": ["color.surface", "color.line", "color.ink", "color.ink3", "radius.panel", "radius.listItem", "type.panelTitle", "type.panelRow", "type.panelNote"],
   "anatomy": [
     { "part": "scrim", "note": "0xA6 black, clickable, focusable=false; click closes unchanged." },
-    { "part": "panel", "note": "560dp wide, pack surface, 1dp line, radius.panel, 22/18/22/16 padding." },
-    { "part": "title", "note": "The card's title, 24dp bold." },
-    { "part": "note", "note": "'Choose what to do with this title', 16dp ink3." },
-    { "part": "rows", "note": "One row per action: 20dp bold, 16/14 padding, 8dp gap, first row 18dp after the note." },
-    { "part": "footer", "note": "'Back closes without changing anything', 15dp ink3." }
+    { "part": "panel", "note": "560dp wide, pack surface, 1dp line, radius.panel, 22/18/22/16 padding. The Glass pack wears a liquid-glass lens here (radius.panel) instead of the painted plate." },
+    { "part": "title", "note": "The card's title, type.panelTitle bold." },
+    { "part": "note", "note": "'Choose what to do with this title', type.panelNote ink3." },
+    { "part": "rows", "note": "One row per action: type.panelRow bold, 16/14 padding, 8dp gap, first row 18dp after the note. Sizes come from the pack's type scale, never raw SP, so a large system font scale cannot grow the rows out of the panel." },
+    { "part": "footer", "note": "'Back closes without changing anything', type.panelNote ink3, 12dp below the last row." }
   ],
   "geometry": { "panelWidth": "560dp", "rowRadius": "radius.listItem", "focus": "rows show a 0x2E white plate on focus" },
   "states": ["open", "focused", "pressed", "closing"],
   "copy": {
     "note": "Choose what to do with this title",
     "footer": "Back closes without changing anything",
-    "actions": ["Add to My List", "Remove from My List", "Remove from Continue watching"]
+    "actions": ["Add to My List", "Remove from My List", "Remove from Continue watching", "Hide \u201C<row>\u201D from Home"]
   },
   "focus": {
     "rules": [
@@ -32,7 +32,10 @@
   "behaviour": [
     "Choosing a row closes the sheet first, then runs the action.",
     "The action list is derived from the card's current state, never hard-coded to two entries.",
-    "The sheet is pack furniture (surface, radius, ink), not a system dialog."
+    "The sheet is pack furniture (surface, radius, ink), not a system dialog.",
+    "A card opens it on a hold, on a press the input stack itself marks long-press or repeats while down, and on the MENU (⋮) key.",
+    "Only a sheet still attached to a window counts as open, so a screen destroyed under one cannot silence later holds.",
+    "Hiding a row writes the hub's rows record (GET then POST /app/v1/prefs), the same record Settings › Home rows edits; the page drops that shelf in place and moves focus to the shelf that took its place."
   ],
   "platformDeltas": {
     "ios": "Present as a context menu/action sheet with the same actions and copy; long-press opens it.",

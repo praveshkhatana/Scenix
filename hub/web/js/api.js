@@ -28,17 +28,59 @@ function initialBase() {
 }
 
 let base = initialBase();
+// Kept in memory only: closing/reloading the page ends the browser's administrator session. The
+// server binds it to this API origin as well, so an override cannot carry a household capability to
+// another hub.
+let adminSession = null;
 
 export function apiBase() { return base || window.location.origin; }
 export function apiOverrideSet() { return !!base; }
 
 export function setApiBase(value) {
   base = clean(value);
+  clearAdminSession();
   try {
     if (base) localStorage.setItem(LS_KEY, base);
     else localStorage.removeItem(LS_KEY);
   } catch (e) { /* private mode */ }
   return base;
+}
+
+/** Forget the in-memory capability. It is intentionally never persisted across a page reload. */
+export function clearAdminSession() { adminSession = null; }
+
+/**
+ * The hub returns its expiry with the opaque capability. Clearing it on this side avoids an avoidable
+ * rejected write and lets the UI ask again before an owner reaches a dead-looking row. A legacy hub
+ * that did not return an expiry remains safe: its server still rejects an expired capability and the
+ * refusal below clears it before the UI retries once.
+ */
+export function adminSessionActive() {
+  if (!adminSession) return false;
+  if (adminSession.expiresAt && adminSession.expiresAt <= Date.now()) {
+    clearAdminSession();
+    return false;
+  }
+  return true;
+}
+
+/** The one refusal shape that means a Settings-PIN capability is absent or has expired. */
+export function isSettingsSessionRefusal(error) {
+  return !!(error && error.status === 403 && error.body && error.body.sessionRequired === true);
+}
+
+function rememberAdminSession(answer) {
+  // A lock/PIN change invalidates every old capability on the hub. Mirror that immediately so a
+  // browser never keeps replaying a token the hub has already revoked.
+  clearAdminSession();
+  const token = answer && typeof answer.adminSession === 'string' ? answer.adminSession.trim() : '';
+  if (!/^[a-f0-9]{64}$/i.test(token)) return;
+  const rawExpiry = Number(answer && answer.adminSessionExpiresAt);
+  adminSession = {
+    token,
+    origin: new URL(apiBase(), window.location.href).origin,
+    expiresAt: Number.isFinite(rawExpiry) && rawExpiry > Date.now() ? rawExpiry : null,
+  };
 }
 
 /** Turn a path from the hub (often root-relative, sometimes absolute) into a URL we can open. */
@@ -63,10 +105,15 @@ async function request(path, { method = 'GET', body, timeout = 12000, headers = 
   const t0 = Date.now();
   let res;
   try {
+    const requestHeaders = Object.assign({}, headers);
+    const targetOrigin = new URL(apiUrl(path), window.location.href).origin;
+    if (adminSessionActive() && adminSession.origin === targetOrigin) {
+      requestHeaders['X-Scenix-Admin-Session'] = adminSession.token;
+    }
     res = await fetch(apiUrl(path), {
       method,
       signal: ctrl.signal,
-      headers: body ? Object.assign({ 'Content-Type': 'application/json' }, headers) : headers,
+      headers: body ? Object.assign({ 'Content-Type': 'application/json' }, requestHeaders) : requestHeaders,
       body: body ? JSON.stringify(body) : undefined,
       // A stale billboard on a TV is worse than one extra round trip; the hub caches everything anyway.
       cache: 'no-store',
@@ -81,7 +128,11 @@ async function request(path, { method = 'GET', body, timeout = 12000, headers = 
   let json = null;
   const text = await res.text();
   try { json = text ? JSON.parse(text) : null; } catch (e) { json = { raw: text }; }
-  if (!res.ok) throw new ApiError((json && json.error) || `HTTP ${res.status}`, res.status, json);
+  if (!res.ok) {
+    const error = new ApiError((json && json.error) || `HTTP ${res.status}`, res.status, json);
+    if (isSettingsSessionRefusal(error)) clearAdminSession();
+    throw error;
+  }
   if (json) json.__tookMs = Date.now() - t0;
   return json;
 }
@@ -91,6 +142,13 @@ async function request(path, { method = 'GET', body, timeout = 12000, headers = 
 export const api = {
   manifest: () => request('/app/v1/manifest', { timeout: 8000 }),
   profiles: () => request('/app/v1/profiles', { timeout: 8000 }),
+  // What the navigation may offer, in one small answer. The bar asks this at start-up rather than
+  // guessing: a hub without a games add-on (or without a live playlist) must not offer a tab it
+  // cannot fill. The native client gates its doors on the same two facts.
+  caps: () => request('/app/v1/caps', { timeout: 6000 }),
+  // Game mode shelves. A game is not a title — it carries `playUrl`, `fallbackUrl` and a controller
+  // flag instead of sources — so this stays its own endpoint, the same one the TV reads.
+  games: () => request('/app/v1/games', { timeout: 12000 }),
   home: (profile) => request(`/app/v1/home?profile=${encodeURIComponent(profile)}`, { timeout: 10000 }),
   row: (rowId, profile) => request(`/app/v1/row/${encodeURIComponent(rowId)}?profile=${encodeURIComponent(profile)}`, { timeout: 8000 }),
   search: (q, profile) => request(`/app/v1/search?q=${encodeURIComponent(q)}&profile=${encodeURIComponent(profile)}`, { timeout: 8000 }),
@@ -122,6 +180,39 @@ export const api = {
   // Add-on management. The hub keeps the registry, so this is only a view of it: what is installed,
   // whether it is switched on, and what it last failed at.
   addons: () => request('/app/v1/addons', { timeout: 9000 }),
+  reviewedAddons: () => request('/app/v1/addon-registry', { timeout: 9000 }),
+  installReviewedAddon: (id) => request(`/app/v1/addon-registry/${encodeURIComponent(id)}/install`,
+    { method: 'POST', timeout: 15000 }),
+  // Config-required sources begin on the TV or web, but complete only in this browser with an
+  // expiring opaque code. Neither the directory nor this client receives an upstream manifest URL.
+  startReviewedSourceSetup: (id) => request(`/app/v1/addon-registry/${encodeURIComponent(id)}/setup-session`,
+    { method: 'POST', timeout: 9000 }),
+  // Community entries are a separately labelled, non-endorsed directory.  The browser never receives
+  // a transport or manifest address: it can browse a Hub-redacted descriptor and install only its
+  // short-lived opaque id after the source screen has recorded an explicit acknowledgement.
+  communityAddonDirectory: ({ type = '', q = '' } = {}) => {
+    const query = [];
+    if (type) query.push(`type=${encodeURIComponent(String(type))}`);
+    if (q) query.push(`q=${encodeURIComponent(String(q))}`);
+    const suffix = query.length ? `?${query.join('&')}` : '';
+    return request(`/app/v1/community-addon-directory${suffix}`, { timeout: 12000 });
+  },
+  communityAddonEntry: (id) => request(`/app/v1/community-addon-directory/${encodeURIComponent(id)}`,
+    { timeout: 12000 }),
+  installCommunityAddon: (id, nonEndorsementAcknowledged) => request(
+    `/app/v1/community-addon-directory/${encodeURIComponent(id)}/install`,
+    { method: 'POST', body: { nonEndorsementAcknowledged: nonEndorsementAcknowledged === true }, timeout: 15000 },
+  ),
+  startCommunitySourceSetup: (id, nonEndorsementAcknowledged) => request(
+    `/app/v1/community-addon-directory/${encodeURIComponent(id)}/setup-session`,
+    { method: 'POST', body: { nonEndorsementAcknowledged: nonEndorsementAcknowledged === true }, timeout: 12000 },
+  ),
+  sourceSetup: (code) => request(`/app/v1/source-setups/${encodeURIComponent(String(code || '').trim())}`,
+    { timeout: 9000 }),
+  completeSourceSetup: (code, manifestUrl) => request(
+    `/app/v1/source-setups/${encodeURIComponent(String(code || '').trim())}/complete`,
+    { method: 'POST', body: { manifestUrl: String(manifestUrl || '').trim() }, timeout: 20000 },
+  ),
   setAddon: (id, on) => request(`/app/v1/addons/${encodeURIComponent(id)}/${on ? 'enable' : 'disable'}`,
     { method: 'POST', timeout: 9000 }),
   removeAddon: (id) => request(`/app/v1/addons/${encodeURIComponent(id)}`, { method: 'DELETE', timeout: 9000 }),
@@ -132,9 +223,18 @@ export const api = {
   /* Settings and administration — the hub owns all of it, and the manifest says which of it exists. */
   settings: () => request('/app/v1/settings', { timeout: 8000 }),
   saveSettings: (body) => request('/app/v1/settings', { method: 'PUT', body, timeout: 8000 }),
+  saveSettingsLock: async (body) => {
+    const answer = await request('/app/v1/settings/lock', { method: 'POST', body, timeout: 6000 });
+    rememberAdminSession(answer);
+    return answer;
+  },
   // The household's admin PIN is checked by the hub, never compared on this page: `settings.lock.enabled`
   // says a PIN is wanted, and this route is the only one that can say whether the number is right.
-  unlockSettings: (pin) => request('/app/v1/settings/unlock', { method: 'POST', body: { pin }, timeout: 6000 }),
+  unlockSettings: async (pin) => {
+    const answer = await request('/app/v1/settings/unlock', { method: 'POST', body: { pin }, timeout: 6000 });
+    rememberAdminSession(answer);
+    return answer;
+  },
   unlockProfile: (id, pin) => request(`/app/v1/profiles/${encodeURIComponent(id)}/unlock`, { method: 'POST', body: { pin }, timeout: 6000 }),
   createProfile: (body) => request('/app/v1/profiles', { method: 'POST', body, timeout: 6000 }),
   updateProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body, timeout: 6000 }),
@@ -142,6 +242,11 @@ export const api = {
   // browser without the number travelling in a URL that gets logged. No body, no PIN: an unlocked profile.
   deleteProfile: (id, body) => request(`/app/v1/profiles/${encodeURIComponent(id)}`, { method: 'DELETE', body, timeout: 6000 }),
   clearCache: () => request('/app/v1/cache/clear', { method: 'POST', body: {}, timeout: 9000 }),
+  // The hub's own build: GET states which commit this hub runs, how far behind its origin it is, and
+  // why it would not pull if it would not; POST pulls and restarts the hub process. The gap is a
+  // second long — the same gap any hub restart makes.
+  hubUpdate: () => request('/app/v1/hub/update', { timeout: 20000 }),
+  hubUpdateNow: () => request('/app/v1/hub/update', { method: 'POST', body: {}, timeout: 120000 }),
   characters: (seed, limit = 40, refresh = false) => request(
     `/app/v1/avatars/characters?limit=${Number(limit) || 40}&seed=${encodeURIComponent(String(seed || 'scenix'))}${refresh ? '&refresh=1' : ''}`,
     { timeout: 9000 }),

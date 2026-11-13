@@ -1,7 +1,9 @@
 package com.scenix.tv
 
 import android.app.Activity
+import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.hardware.input.InputManager
 import android.net.Uri
@@ -24,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.scenix.tv.core.Focus
+import com.scenix.tv.core.GameSessions
 import com.scenix.tv.core.Views
 import java.io.ByteArrayInputStream
 
@@ -58,6 +61,8 @@ class GameActivity : Activity() {
     private var titleText = "Game"
     private var padReady = false
     private var desktopUa = false
+    /** The hub's stable game id: the key the page's session history is stored under. */
+    private var sessionIdentity = ""
     private var hudVisible = false
     // True from the first pass that found the game's stage: the remote becomes a finger only
     // once there is a stage to touch.
@@ -70,6 +75,7 @@ class GameActivity : Activity() {
     private var domNav = false
     private var hidHud = Runnable { hideHud() }
 
+    @SuppressLint("SetJavaScriptEnabled") // The controlled game WebView is hardened below; games require JS.
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -77,6 +83,7 @@ class GameActivity : Activity() {
         url = intent?.getStringExtra(EXTRA_URL).orEmpty()
         fallbackUrl = intent?.getStringExtra(EXTRA_FALLBACK).orEmpty()
         titleText = intent?.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "Game" }
+        sessionIdentity = intent?.getStringExtra(EXTRA_IDENTITY).orEmpty().ifBlank { titleText }
         padReady = intent?.getBooleanExtra(EXTRA_PAD, false) ?: false
         needsCoi = intent?.getBooleanExtra(EXTRA_COI, false) ?: false
         desktopUa = intent?.getBooleanExtra(EXTRA_DESKTOP_UA, false) ?: false
@@ -85,12 +92,21 @@ class GameActivity : Activity() {
         val theme = app.theme
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
-        // Devtools on the built-in browser: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`
-        // and the portal's live DOM is inspectable — the only way to see what a portal page really does.
-        WebView.setWebContentsDebuggingEnabled(true)
+        // Devtools are useful in the side-by-side QA package, but never expose a production game's
+        // live DOM over an inspectable WebView socket.
+        WebView.setWebContentsDebuggingEnabled(
+            (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0,
+        )
         web = WebView(this).apply {
+            // Games are JavaScript applications; this is the smallest explicit opt-in boundary.
+            // There is no JavaScript bridge, file/content access is disabled, and production cannot
+            // reach this player through the exported launcher QA harness.
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.setSupportMultipleWindows(false)
             // A portal page appends "; wv" so sites can refuse embeds to WebViews. Here the game IS
             // the page — a plain Chrome identity is the honest one, and it stops ports from serving
             // their "open in a browser" fallback instead of starting.
@@ -603,11 +619,13 @@ class GameActivity : Activity() {
 
     override fun onPause() {
         if (::web.isInitialized) web.onPause()   // freeze drawing while Bluetooth settings sit on top
+        GameSessions.recordEnd(this, sessionIdentity)
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        GameSessions.recordStart(this, sessionIdentity)
         if (::web.isInitialized) web.onResume()
         updatePadChip()
     }
@@ -625,6 +643,7 @@ class GameActivity : Activity() {
     companion object {
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_IDENTITY = "identity"
         const val EXTRA_PAD = "pad"
         const val EXTRA_FALLBACK = "fallback"
         const val EXTRA_COI = "coi"

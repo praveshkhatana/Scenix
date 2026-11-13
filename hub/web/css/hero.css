@@ -12,9 +12,9 @@
 .billboard .bb-art img { object-position: center top; }
 .billboard .scrim {
   background:
-    linear-gradient(90deg, #141414 0%, #141414 38%, rgba(20,20,20,.96) 44%,
-      rgba(20,20,20,.78) 52%, rgba(20,20,20,0) 72%),
-    linear-gradient(0deg, #141414 0%, rgba(20,20,20,.55) 6%, rgba(20,20,20,0) 38%);
+    linear-gradient(90deg, var(--bg) 0%, var(--bg) 38%, rgba(20,20,20,.96) 44%,
+      rgba(20,20,20,.78) 52%, rgba(0, 0, 0, 0) 72%),
+    linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,.55) 6%, rgba(0, 0, 0, 0) 38%);
 }
 .billboard .bb { width: calc(860px * var(--s)); }
 .bb .logo { max-width: calc(480px * var(--s)); max-height: calc(150px * var(--s)); }
@@ -26,13 +26,13 @@
   .billboard .bb { width: auto; }
   .billboard .scrim {
     background:
-      linear-gradient(90deg, rgba(20,20,20,.94) 4%, rgba(20,20,20,.58) 30%, rgba(20,20,20,0) 55%),
-      linear-gradient(0deg, var(--bg) 8%, rgba(20,20,20,.55) 32%, rgba(20,20,20,0) 60%);
+      linear-gradient(90deg, rgba(20,20,20,.94) 4%, rgba(20,20,20,.58) 30%, rgba(0, 0, 0, 0) 55%),
+      linear-gradient(0deg, var(--bg) 8%, rgba(20,20,20,.55) 32%, rgba(0, 0, 0, 0) 60%);
   }
 }
 /* The poster's left edge is a seam unless it falls into the page background; this is the short wash
    that turns two columns into one picture. */
 .billboard .bb-art::after {
   content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(90deg, #141414 0%, rgba(20,20,20,.88) 7%, rgba(20,20,20,0) 30%);
+  background: linear-gradient(90deg, var(--bg) 0%, rgba(20,20,20,.88) 7%, rgba(0, 0, 0, 0) 30%);
 }

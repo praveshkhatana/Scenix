@@ -20,6 +20,20 @@ object Motion {
         (0 until root.childCount)
             .map { root.getChildAt(it) }
             .filter { it.visibility == View.VISIBLE }
+            // A list or scroll container redraws a substantial part of the 1080p surface every
+            // frame while it is translated and faded. It is content, not a small staged element;
+            // animating it produces missed input deadlines on the 2 GB target before the viewer
+            // can act. The root still gets the pack's short opacity transition, while list content
+            // appears at its final geometry immediately and stays D-pad responsive.
+            // Horizontal profile and chip strips are just as expensive as vertical lists on a TV
+            // compositor: translating the viewport re-rasterizes every large child behind it.
+            // Keep their final geometry on the first frame; the root's opacity transition still
+            // gives the screen a coherent entrance without making a D-pad target arrive late.
+            .filter {
+                it !is android.widget.ScrollView &&
+                    it !is android.widget.HorizontalScrollView &&
+                    it !is androidx.recyclerview.widget.RecyclerView
+            }
             .take(4)
 
     /** Call once, right after setContentView. Stages default to the root's visible sections. */

@@ -14,6 +14,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url 'https://maven.mozilla.org/maven2/' }
+        // The Liquid Glass pack's glass itself (see `LiquidGlassKit.kt`): the library is published on
+        // JitPack, not Maven Central. MIT, and the artifact is one 470 KB AAR with the NEON blur
+        // already built for both of this APK's ABIs.
+        maven { url 'https://jitpack.io' }
     }
 }
 rootProject.name = 'scenix-tv'

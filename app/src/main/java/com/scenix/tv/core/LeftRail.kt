@@ -123,6 +123,25 @@ class LeftRail(
         rows.getOrNull(next)?.requestFocus()
     }
 
+    /**
+     * While the door is open the D-pad belongs to the door. Without this, LEFT/RIGHT ran Android's
+     * default focus search THROUGH the scrim onto the dimmed tiles behind — the page changed under
+     * a half-looked-at menu and the rail was left stranded. UP/DOWN walk the destinations and hold
+     * at the ends; LEFT holds at the screen edge; RIGHT exits through the same door it came in,
+     * handing focus back to the tile the viewer stood on. OK still activates the row itself.
+     */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (isOpen && event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> { move(-1); return true }
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { move(1); return true }
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> return true
+                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { close(); return true }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     fun focusedRow(): View? = rows.firstOrNull { it.isFocused }
 
     private fun railRow(entry: Entry): View {

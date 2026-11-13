@@ -11,22 +11,49 @@ import org.json.JSONObject
  * routes on loopback, answered by the same [LocalHub] the native screens call.
  *
  * One consequence worth stating: there is no second backend implementation to keep in step. The JSON
- * a hub answers and the JSON this answers come from the same functions, so the page cannot tell
- * which machine it is talking to.
+ * a hub answers and the JSON this answers come from the same functions, so the native client cannot
+ * tell which machine it is talking to.
  */
 class LocalServer private constructor(
     private val hub: LocalHub,
     assets: AssetManager,
-) : LoopbackServer(assets) {
+) : LoopbackServer(
+    assets,
+    // Every interface, on a fixed port: a standalone TV is a hub for this house too, and typing
+    // `http://<this TV>:8787` on a laptop must be possible, not a promise the loopback bind broke.
+    java.net.InetAddress.getByName("0.0.0.0"),
+    8787,
+) {
 
     override fun route(method: String, target: String, body: String, res: Res) {
         // substringBefore's second argument is the value returned when the delimiter is ABSENT, so asking
         // for "/" there silently renamed every path without a query string to the site root.
         val path = target.substringBefore('?')
         val query = queryOf(target)
+
+        // A TV paired to a hub keeps the page and hands the data questions to that hub, so
+        // `http://<this TV>:8787` and `http://<the hub>:8788` open the same household. The person on the
+        // sofa has one address in their phone, not two, and whichever one they typed has to work.
+        val upstream = pairedHub
+        if (!upstream.isNullOrBlank() && path != "/healthz") {
+            res.send(302, "text/html; charset=utf-8", ByteArray(0), mapOf("Location" to upstream + target))
+            return
+        }
+
         when {
-            path == "/healthz" ->
-                res.json(200, JSONObject().put("ok", true).put("backend", "standalone"))
+            path == "/" || path == "/index.html" || path == "/remote" || path == "/remote/" ||
+                path.startsWith("/ui/") -> {
+                // Standalone phone pairing: the TV itself hosts the web Settings UI on :8787.
+                // A phone scanning the QR opens "/" or "/remote" and the hub's adminlock.js then
+                // prompts for the Settings PIN before any protected write.
+                if (!serveWeb(res, method, path)) notFound(res, path)
+            }
+
+            path == "/healthz" || path == "/app/v1/healthz" ->
+                res.json(200, JSONObject()
+                    .put("ok", true)
+                    .put("backend", "standalone")
+                    .put("status", "ok"))
 
             path == "/app/v1/manifest" ->
                 res.json(200, hub.manifestJson())
@@ -34,7 +61,37 @@ class LocalServer private constructor(
             path == "/app/v1/caps" ->
                 res.json(200, hub.capsJson())
 
+            // Phone remote. The same five routes the hub answers in core/remote.js: the scanned
+            // page posts keys/text here, and the Settings screen polls them back over loopback.
+            path == "/app/v1/remote/register" && method == "POST" -> {
+                val bodyObject = parse(body) ?: JSONObject()
+                val out = RemoteSession.register(bodyObject)
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/events" && method == "GET" -> {
+                val out = RemoteSession.events(query["t"].orEmpty(), query["after"]?.toIntOrNull() ?: 0)
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/send" && method == "POST" -> {
+                val bodyObject = parse(body) ?: JSONObject()
+                val out = RemoteSession.send(bodyObject)
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/state" && method == "GET" -> {
+                val out = RemoteSession.state(query["t"].orEmpty())
+                res.json(out.status, out.body)
+            }
+            path == "/app/v1/remote/close" && method == "POST" -> {
+                val bodyObject = parse(body) ?: JSONObject()
+                val out = RemoteSession.close(bodyObject)
+                res.json(out.status, out.body)
+            }
+
             path == "/app/v1/profiles" && method == "POST" -> {
+                // Profile creation is household administration when the Settings lock is enabled.
+                // The profile-unlock route below deliberately stays outside this gate: it verifies a
+                // profile's own PIN and is needed to obtain that independent proof.
+                if (!requireAdminSession(res)) return
                 val o = parse(body)
                 val out = if (o == null) JSONObject().put("error", "body must be JSON") else hub.addProfile(o)
                 if (out.has("error")) res.json(400, out)
@@ -56,6 +113,7 @@ class LocalServer private constructor(
             }
 
             path.startsWith("/app/v1/profiles/") && (method == "PUT" || method == "PATCH") -> {
+                if (!requireAdminSession(res)) return
                 val id = decode(path.removePrefix("/app/v1/profiles/"))
                 val o = parse(body)
                 val out = if (o == null) JSONObject().put("error", "body must be JSON") else hub.patchProfile(id, o)
@@ -65,6 +123,7 @@ class LocalServer private constructor(
             }
 
             path.startsWith("/app/v1/profiles/") && method == "DELETE" -> {
+                if (!requireAdminSession(res)) return
                 val id = decode(path.removePrefix("/app/v1/profiles/"))
                 val out = hub.removeProfile(id)
                 if (s(out, "error", "") == "no such profile") res.json(404, out)
@@ -171,18 +230,53 @@ class LocalServer private constructor(
 
             path == "/app/v1/theme" -> res.json(200, hub.themeJson())
 
+            path == "/app/v1/settings/unlock" && method == "POST" -> {
+                val bodyObject = parse(body)
+                if (bodyObject == null) {
+                    res.json(400, JSONObject().put("error", "body must be JSON"))
+                } else {
+                    val out = hub.unlockSettings(bodyObject.optString("pin", ""), res.headers)
+                    when {
+                        out.optString("error") == "too many attempts" -> res.json(429, out)
+                        out.has("error") -> res.json(403, out)
+                        else -> res.json(200, out)
+                    }
+                }
+            }
+
+            path == "/app/v1/settings/lock" && method == "POST" -> {
+                val bodyObject = parse(body)
+                if (bodyObject == null) {
+                    res.json(400, JSONObject().put("error", "body must be JSON"))
+                } else {
+                    val out = hub.setSettingsLock(bodyObject, res.headers)
+                    when {
+                        out.optString("error") == "too many attempts" -> res.json(429, out)
+                        out.has("error") -> res.json(403, out)
+                        else -> res.json(200, out)
+                    }
+                }
+            }
+
             path == "/app/v1/settings" -> {
                 val o = parse(body)
                 when {
                     // A hub is patched with PUT; POST is accepted too so a page has one less thing to
                     // know about which machine it is on.
                     (method == "PUT" || method == "POST") && o != null -> {
+                        if (!requireAdminSession(res)) return
                         // `addonsResynced` is the one effect a TV can cause: new addon URLs mean the shelves
                         // are fetched again. There is no live tuner here to reload.
                         // A caller may send the patch itself or wrap it in `{settings: {...}}`, the shape
                         // a hub's PUT accepts and every native settings screen sends. Unwrapping here is
                         // what made a standalone save look successful while writing nothing.
                         val patch = o.optJSONObject("settings") ?: o
+                        if (patch.has("theme") && !hub.supportsWebTheme(patch.optString("theme", ""))) {
+                            res.json(400, JSONObject()
+                                .put("error", "this theme is available on this TV only")
+                                .put("requestedId", patch.optString("theme", "")))
+                            return
+                        }
                         val touchedAddons = patch.has("addons")
                         hub.setSettings(patch)
                         // The token is write-only: answer with the redacted settings envelope, never the
@@ -200,7 +294,18 @@ class LocalServer private constructor(
                 }
             }
 
+            // Standalone owns no remotely reviewed catalogue. Keep the contract explicit so a TV
+            // never mistakes an empty directory for a failed request or tries to send a URL here.
+            path == "/app/v1/addon-registry" && method == "GET" ->
+                res.json(200, JSONObject()
+                    .put("reviewed", JSONArray())
+                    .put("manualInstall", JSONObject().put("available", true).put("safety", "advanced-unreviewed")))
+
+            path.startsWith("/app/v1/addon-registry/") && method == "POST" ->
+                res.json(404, JSONObject().put("error", "no such reviewed source"))
+
             path == "/app/v1/addons" && method == "POST" -> {
+                if (!requireAdminSession(res)) return
                 val o = parse(body)
                 val out = if (o == null) JSONObject().put("error", "an addon is a URL")
                     else hub.addAddon(o.optString("url", o.optString("manifest", "")), o.optString("name", ""))
@@ -216,6 +321,7 @@ class LocalServer private constructor(
             }
 
             path.startsWith("/app/v1/addons/") && method == "POST" -> {
+                if (!requireAdminSession(res)) return
                 val rest = path.removePrefix("/app/v1/addons/")
                 val which = decode(rest.substringBefore('/'))
                 val verb = rest.substringAfter('/', "")
@@ -226,6 +332,7 @@ class LocalServer private constructor(
             }
 
             path.startsWith("/app/v1/addons/") && method == "DELETE" -> {
+                if (!requireAdminSession(res)) return
                 val which = decode(path.removePrefix("/app/v1/addons/"))
                 val removed = hub.removeAddon(which)
                 if (removed == null) res.json(404, JSONObject().put("error", "no such addon").put("id", which))
@@ -235,13 +342,13 @@ class LocalServer private constructor(
             path == "/app/v1/addons" ->
                 res.json(
                     200,
-                    JSONObject().put("addons", hub.addonsJson())
-                        // A hub names the file its addons are stored in, so an owner can go look at it. Here
-                        // that file is the settings file, and it is named the same way.
-                        .put("file", hub.settingsPath()),
+                    // Add-on metadata is enough to manage sources. Do not disclose this TV's private
+                    // settings path to the embedded browser or another loopback caller.
+                    JSONObject().put("addons", hub.addonsJson()),
                 )
 
             path == "/app/v1/cache/clear" && method == "POST" -> {
+                if (!requireAdminSession(res)) return
                 // Every addon response is kept for a while so a shelf redraws without the network. This
                 // throws that away: the next look at a catalogue is a real one.
                 res.json(200, JSONObject().put("ok", true).put("cleared", hub.clearAddonCache()))
@@ -294,8 +401,18 @@ class LocalServer private constructor(
 
             path.startsWith("/app/v1/torrent/") -> torrent(res, method, path)
 
-            else -> static(res, path)
+            else -> notFound(res, path)
         }
+    }
+
+    /** Mirror the Hub's lock gate without turning an unlocked standalone TV into a new setup step. */
+    private fun requireAdminSession(res: Res): Boolean {
+        if (!hub.settingsLockActive() || hub.hasAdminSession(res.headers)) return true
+        res.json(403, JSONObject()
+            .put("error", "the household settings PIN is needed")
+            .put("gate", "settings-lock")
+            .put("sessionRequired", true))
+        return false
     }
 
     /**
@@ -429,22 +546,54 @@ class LocalServer private constructor(
     companion object {
         private const val TORRENT_CHUNK = 256 * 1024
         private const val LOCAL_CHUNK = 128 * 1024
+
+        /**
+         * Set while the TV is paired to a hub: the address this TV hands every question about data to.
+         * It is what lets `http://<this TV>:8787` open the household's page while the TV is paired — one
+         * household, two addresses, so whichever one a person happens to have typed works.
+         */
+        @Volatile @JvmStatic var pairedHub: String? = null
+
         @Volatile private var instance: LocalServer? = null
 
         /**
-         * One server per process, on one port, started when the WebView front end asks for it. The
-         * port is ephemeral and never written down: the page is loaded from it and every call the page
-         * makes is relative, so nothing else in this app has to know the number.
+         * One server per process, on one port, started when the native client asks for it. The port is
+         * ephemeral and never written down: the client uses it only as its local API origin, so nothing
+         * outside this app has to know the number.
          */
         fun portFor(context: Context): Int {
             instance?.let { return it.port }
             synchronized(this) {
                 instance?.let { return it.port }
-                val s = LocalServer(LocalHub.get(context), context.assets)
+                val s = try {
+                    LocalServer(LocalHub.get(context), context.assets)
+                } catch (t: Throwable) {
+                    // The screens fall back to the paired hub when this answers 0; leave a record of
+                    // why the TV's own server did not start, or the fallback looks like a config bug.
+                    android.util.Log.w("ScenixLocalServer", "own server not started", t)
+                    return 0
+                }
                 s.start()
                 instance = s
                 return s.port
             }
+        }
+
+        /**
+         * The TV-local API's LAN address. This is not a browser-management address: standalone keeps
+         * browser controls on a paired Hub until it ships an independently secured web surface.
+         */
+        fun webBase(context: Context): String {
+            val port = portFor(context)
+            val ip = runCatching {
+                java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+                    .asSequence()
+                    .filter { it.isUp && !it.isLoopback }
+                    .flatMap { n -> java.util.Collections.list(n.inetAddresses).asSequence() }
+                    .firstOrNull { a -> a is java.net.Inet4Address && !a.isLoopbackAddress && a.isSiteLocalAddress }
+                    ?.hostAddress
+            }.getOrNull()
+            return if (ip.isNullOrBlank()) "" else "http://$ip:$port"
         }
     }
 }

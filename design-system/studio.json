@@ -84,7 +84,7 @@
       "title": "Player chrome (real screen)",
       "kind": "screen",
       "builder": "player.preview",
-      "states": ["default", "live", "error"],
+      "states": ["default", "live", "error", "live-error"],
       "status": "real"
     },
     {

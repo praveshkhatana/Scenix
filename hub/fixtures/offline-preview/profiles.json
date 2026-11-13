@@ -1,0 +1,11 @@
+{
+  "profiles": [
+    {
+      "id": "preview",
+      "name": "Preview",
+      "kind": "adult",
+      "pinRequired": false,
+      "rules": {}
+    }
+  ]
+}

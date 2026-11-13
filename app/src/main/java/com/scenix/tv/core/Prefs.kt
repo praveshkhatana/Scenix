@@ -17,12 +17,53 @@ class Prefs(context: Context) {
     private val sp: SharedPreferences =
         context.getSharedPreferences("scenix", Context.MODE_PRIVATE)
 
-    /** The visual theme's id in assets/themes.json; a device preference, mirrored to the hub. */
+    // This capability is intentionally process-memory only. It is proof for a single unlocked
+    // Settings visit, not a preference that should survive app restart or be replayed to another Hub.
+    @Volatile private var adminSessionToken = ""
+    @Volatile private var adminSessionOrigin = ""
+    @Volatile private var adminSessionExpiresAt = 0L
+
+    /**
+     * The visual theme's id in assets/themes.json. It is device-local; Settings mirrors only a
+     * theme explicitly declared for both TV and web, so a TV-only layout cannot make another
+     * surface silently fall back to a different look.
+     */
     // Apple is the product's reference TV treatment.  Existing households keep their explicit
     // choice, while a new television opens directly into the polished remote-first theme instead
     // of inheriting the legacy dark pack.
     fun theme(): String = sp.getString(KEY_THEME, "scenix-apple") ?: "scenix-apple"
     fun setTheme(id: String) = sp.edit().putString(KEY_THEME, id.trim()).apply()
+
+    fun setAdminSession(token: String, origin: String, expiresAt: Long) {
+        val cleanToken = token.trim()
+        val cleanOrigin = origin.trim().trimEnd('/').lowercase()
+        val now = System.currentTimeMillis()
+        if (cleanToken.isBlank() || cleanOrigin.isBlank() || expiresAt <= now) {
+            clearAdminSession()
+            return
+        }
+        adminSessionToken = cleanToken
+        adminSessionOrigin = cleanOrigin
+        // A malformed remote timestamp cannot turn a short-lived session into a process-lifetime one.
+        adminSessionExpiresAt = minOf(expiresAt, now + 60L * 60L * 1000L)
+    }
+
+    fun adminSessionFor(origin: String): String {
+        val cleanOrigin = origin.trim().trimEnd('/').lowercase()
+        if (cleanOrigin.isBlank() || cleanOrigin != adminSessionOrigin ||
+            System.currentTimeMillis() >= adminSessionExpiresAt
+        ) {
+            if (System.currentTimeMillis() >= adminSessionExpiresAt) clearAdminSession()
+            return ""
+        }
+        return adminSessionToken
+    }
+
+    fun clearAdminSession() {
+        adminSessionToken = ""
+        adminSessionOrigin = ""
+        adminSessionExpiresAt = 0L
+    }
 
     /**
      * A decoder that says it supports HEVC but fails on the first 10-bit file is a fact about this
@@ -31,6 +72,23 @@ class Prefs(context: Context) {
      */
     fun hevcBlocked(): Boolean = sp.getBoolean(KEY_HEVC_BLOCKED, false)
     fun setHevcBlocked(blocked: Boolean) = sp.edit().putBoolean(KEY_HEVC_BLOCKED, blocked).apply()
+
+    /**
+     * Audio codecs this panel advertised but could not actually open. A Sony BRAVIA lists AC3/EAC3
+     * decoders and answers `format_supported=YES`, then `AudioTrack` creation fails on the built-in
+     * speakers ("AudioTrack init failed 0 Config(48000, 252, 40000)") — the picture never starts even
+     * though the hub was told the codec is fine. Remember it once, stop advertising it, and pick
+     * another track in the same file instead of failing the copy.
+     */
+    fun audioBlockedCodecs(): Set<String> = sp.getString(KEY_AUDIO_BLOCKED, "")
+        .orEmpty().split(',').map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+
+    fun blockAudioCodec(codec: String) {
+        val c = codec.trim().lowercase()
+        if (c.isBlank()) return
+        val next = (audioBlockedCodecs() + c).sorted().joinToString(",")
+        sp.edit().putString(KEY_AUDIO_BLOCKED, next).apply()
+    }
 
     // ---- auto-update (core/Updates.kt) -----------------------------------------------------
     // On by default: a TV nobody thinks to update is a TV that quietly falls behind. The prompt
@@ -47,28 +105,20 @@ class Prefs(context: Context) {
     fun setHubUrl(url: String) = sp.edit().putString(KEY_HUB, url.trim()).apply()
 
     /**
-     * Every hub this TV is allowed to talk to, in the order it should try them.
+     * Every Hub this TV may probe at startup, in trusted order.
      *
-     * A hub is just a Node process the user can run on any machine, so the same TV may face a LAN
-     * address today, a hosted address tomorrow and a different machine next year. Listing several
-     * and remembering which one last answered means the TV keeps working when the hub moves,
-     * without anyone re-typing an address on a 10-foot remote.
-     *
-     * Order is the order of trust: the address this TV chose, then wherever it last actually got an
-     * answer, then whatever the LAN announcement has seen, then a pre-seeded default list.
+     * A selected address is intentionally the complete list. A failed explicit choice must not
+     * turn into hidden probes of other discovered/default LAN machines; reconnecting elsewhere is
+     * a choice made from the pairing surface. Before an address has been selected, recovery and
+     * first-run discovery may use the remembered/discovered/default candidates.
      */
     fun hubUrlCandidates(defaultCsv: String): List<String> {
-        val out = ArrayList<String>()
-        fun add(u: String?) {
-            val t = u?.trim()?.trimEnd('/') ?: return
-            if (t.isNotEmpty() && !out.contains(t)) out.add(t)
-        }
-        // explicit choice in Settings wins, then wherever the TV last actually got an answer.
-        add(sp.getString(KEY_HUB, null))
-        add(sp.getString(KEY_HUB_LAST, null))
-        discoveredHubs().forEach { add(it.url) }
-        defaultCsv.split(',').forEach { add(it) }
-        return out
+        return HubCandidatePolicy.candidates(
+            selected = sp.getString(KEY_HUB, null),
+            lastWorking = sp.getString(KEY_HUB_LAST, null),
+            discovered = discoveredHubs().map { it.url },
+            defaultsCsv = defaultCsv,
+        )
     }
 
     fun setHubLastWorking(url: String) = sp.edit().putString(KEY_HUB_LAST, url.trim()).apply()
@@ -214,6 +264,7 @@ class Prefs(context: Context) {
         private const val KEY_DISCOVERED = "discovered_hubs"
         private const val KEY_THEME = "theme"
         private const val KEY_HEVC_BLOCKED = "hevc_blocked"
+        private const val KEY_AUDIO_BLOCKED = "audio_blocked_codecs"
         private const val KEY_AUTO_UPDATE = "auto_update"
         private const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         private const val KEY_TOKEN = "hub_token"

@@ -7,24 +7,25 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The bundled preview backend: the same page a hub serves, answered from `assets/fixtures` instead
- * of a network.
+ * The bundled preview backend: the same API shape a hub serves, answered from `assets/fixtures`
+ * instead of a network.
  *
  * `--es fixture fixtures/home.json` used to swap an in-process client, which was enough when the
- * native screens read models directly. The product is now one web page that only speaks HTTP, so the
- * fixtures are served over loopback exactly as standalone serves its own data. The page cannot tell
- * the difference, which is the point: the same code path as a real backend is what is being
- * previewed.
+ * native screens read models directly. The product now reads a local HTTP contract, so fixtures are
+ * served over loopback exactly as standalone serves its own data. The native client cannot tell the
+ * difference, which is the point: the same code path as a real backend is what is being previewed.
  *
  * It is deliberately read-only. Nothing in this mode is an owner setting: there is no addon admin,
  * no profile change and no progress write that outlives the session.
  */
 class FixtureServer private constructor(
-    private val context: Context,
     private val assetPath: String,
     assets: AssetManager,
 ) : LoopbackServer(assets) {
 
+    // A process-wide fixture server must not retain an Activity. Assets carry the immutable preview
+    // data this backend needs, while the caller keeps ownership of any Android Context.
+    private val fixtureAssets: AssetManager = assets
     private val dir: String = assetPath.substringBeforeLast('/', "fixtures")
 
     override fun route(method: String, target: String, body: String, res: Res) {
@@ -140,7 +141,7 @@ class FixtureServer private constructor(
             path.startsWith("/app/v1/trailer/") ->
                 res.json(404, JSONObject().put("error", "no trailer in the bundled fixtures"))
 
-            else -> static(res, path)
+            else -> notFound(res, path)
         }
     }
 
@@ -152,7 +153,7 @@ class FixtureServer private constructor(
     private fun root(): JSONObject {
         cached?.let { return it }
         val o = try {
-            context.assets.open(assetPath).bufferedReader().use { JSONObject(it.readText()) }
+            fixtureAssets.open(assetPath).bufferedReader().use { JSONObject(it.readText()) }
         } catch (t: Throwable) {
             Log.w(TAG, "fixture $assetPath unreadable", t)
             JSONObject()
@@ -163,7 +164,7 @@ class FixtureServer private constructor(
 
     private fun sibling(name: String): JSONObject = try {
         val path = if (dir.isEmpty()) name else "$dir/$name"
-        context.assets.open(path).bufferedReader().use { JSONObject(it.readText()) }
+        fixtureAssets.open(path).bufferedReader().use { JSONObject(it.readText()) }
     } catch (t: Throwable) {
         Log.w(TAG, "fixture sibling $name missing", t)
         JSONObject()
@@ -219,7 +220,7 @@ class FixtureServer private constructor(
             instance?.let { if (activePath == assetPath) return it.port }
             synchronized(this) {
                 instance?.let { if (activePath == assetPath) return it.port }
-                val s = FixtureServer(context.applicationContext, assetPath, context.assets)
+                val s = FixtureServer(assetPath, context.assets)
                 s.start()
                 instance = s
                 activePath = assetPath

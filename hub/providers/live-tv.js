@@ -15,6 +15,8 @@
 
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const { URL } = require('url');
 
 const liveHealth = require('../core/live-health');
@@ -54,6 +56,13 @@ const LANG_NAMES = {
 };
 const ID_PREFIX = 'inlive___';
 const REFRESH_MS = 6 * 60 * 60 * 1000; // playlist re-fetch every 6 h
+// A playlist that failed to fetch used to wait six hours for its next try, and on a fresh start there
+// was nothing to fall back on: one DNS blip during boot (`getaddrinfo ENOTFOUND iptv-org.github.io`)
+// left the Live TV tab empty for the rest of the evening. So a failure retries on a short ladder, and
+// the last good playlist is kept on disk and parsed back if the network cannot produce a new one.
+const RETRY_STEPS_MS = [30000, 2 * 60000, 10 * 60000, 60 * 60000];
+const PLAYLIST_CACHE_FILE = process.env.LIVE_PLAYLIST_FILE
+  || path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'live-playlist.json');
 // A feed can go down inside an evening, so health is re-checked far more often than the playlist.
 const HEALTH_REFRESH_MS = Number(process.env.LIVE_HEALTH_REFRESH_MS || 30 * 60 * 1000);
 const UA = 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 ScenixHub/1.0';
@@ -63,7 +72,11 @@ let channels = []; // the selected list the rest of the hub sees: {id, name, gro
 let loading = null;
 let lastFetch = 0;
 let lastPlaylistUrl = ''; // what the last successful fetch actually pulled, so changing it takes effect
+let listFetchedAt = 0; // when the list now in memory was actually read from the playlist host
+let fromDisk = false; // true when that list came off this box's disk rather than over the network
 let lastError = null;
+let failureStreak = 0;
+let retryTimer = null;
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 function get(url, timeoutMs = 20000) {
@@ -156,6 +169,112 @@ function nameSiblings(name) {
   const key = canon(name);
   if (!key) return [];
   return channels.filter((c) => c.name !== name && canon(c.name) === key);
+}
+
+// ---- same-channel mirrors from the iptv-org database ----------------------------------------------
+//
+// A `403 Token required` from an ISP panel does not mean the channel is off the air — it means THAT
+// listing declines this request. iptv-org's own database (streams.json) lists, for many channels, a
+// second and third feed under the same channel id: measured on this household's blocked list, exact
+// same-id matches revived 9XM, Colors HD, Sony ET, Star Jalsha, Travelxp and more — no key, no relay,
+// no geo trick, just another honest listing of the same channel. Name twins (a Samsung-AU "Pogo") are
+// deliberately ignored: the join is the tvg-id the playlist itself declares, never the name.
+const MIRROR_API = 'https://iptv-org.github.io/api/streams.json';
+const MIRROR_CACHE_FILE = process.env.LIVE_MIRRORS_FILE
+  || path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'live-mirrors.json');
+const MIRROR_MAX_PER_CHANNEL = 2;
+const MIRROR_TOTAL_MAX = 900;
+
+let mirrorMap = null; // iptv-org channel id (lowercase, @quality stripped) -> [urls]
+let mirrorsAt = 0;
+
+function readMirrorDisk() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(MIRROR_CACHE_FILE, 'utf8'));
+    return { map: new Map(Object.entries(raw.map || {})), at: Number(raw.at) || 0 };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function loadMirrors() {
+  if (mirrorMap && Date.now() - mirrorsAt < REFRESH_MS) return mirrorMap;
+  try {
+    const body = JSON.parse(await get(MIRROR_API, 25000));
+    const map = new Map();
+    for (const s of Array.isArray(body) ? body : []) {
+      const id = String(s && s.channel || '').split('@')[0].trim().toLowerCase();
+      const url = String(s && s.url || '');
+      if (!id || !url || url.startsWith('udp://') || url.startsWith('rtmp')) continue;
+      if (!map.has(id)) map.set(id, []);
+      const arr = map.get(id);
+      if (arr.length < 6 && !arr.includes(url)) arr.push(url);
+    }
+    mirrorMap = map;
+    mirrorsAt = Date.now();
+    try {
+      fs.mkdirSync(path.dirname(MIRROR_CACHE_FILE), { recursive: true });
+      const tmp = MIRROR_CACHE_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify({ at: mirrorsAt, map: Object.fromEntries(map) }));
+      fs.renameSync(tmp, MIRROR_CACHE_FILE);
+    } catch (e) {
+      log('mirror list cache write failed:', e.message);
+    }
+    log('MIRROR DB', map.size, 'channels from iptv-org streams.json');
+    return map;
+  } catch (e) {
+    const saved = readMirrorDisk();
+    if (saved) {
+      mirrorMap = saved.map;
+      mirrorsAt = saved.at || Date.now(); // serve the remembered mirror set rather than none
+      log('mirror list restored from disk · because', e.message);
+      return mirrorMap;
+    }
+    log('mirror list unavailable:', e.message, '· mirrors off until the next refresh');
+    return new Map();
+  }
+}
+
+/**
+ * Extra urls for channels the playlist already carries, keyed by the tvg-id the playlist itself
+ * declares. Clones keep name/group/logo so they fold into the same wall tile and zap identity; the
+ * health prober then ranks every variant like always, and a panel that says "Token required" simply
+ * loses to a mirror that answers.
+ */
+function withMirrors(list) {
+  if (!mirrorMap) {
+    const saved = readMirrorDisk(); // a restart keeps mirrors even before the network round trip
+    if (saved) { mirrorMap = saved.map; mirrorsAt = saved.at || Date.now(); }
+  }
+  const map = mirrorMap;
+  if (!map || !map.size || !list.length) return list;
+  const urlsByName = new Map();
+  for (const c of list) {
+    if (!urlsByName.has(c.name)) urlsByName.set(c.name, new Set());
+    urlsByName.get(c.name).add(c.url);
+  }
+  // Interleaved, not appended: the prober and the player look at a channel's first few urls, so a
+  // mirror must sit directly behind the listing it stands in for, not behind 792 other channels.
+  const out = [];
+  let added = 0;
+  for (const c of list) {
+    out.push(c);
+    if (c.mirror || added >= MIRROR_TOTAL_MAX) continue;
+    const id = String(c.tvgId || '').split('@')[0].trim().toLowerCase();
+    if (!id) continue;
+    const have = urlsByName.get(c.name);
+    let taken = 0;
+    for (const u of map.get(id) || []) {
+      if (taken >= MIRROR_MAX_PER_CHANNEL || added >= MIRROR_TOTAL_MAX) break;
+      if (!u || have.has(u)) continue;
+      out.push({ ...c, id: c.id + '_m' + (taken + 1), url: u, quality: '', mirror: true });
+      have.add(u);
+      taken++;
+      added++;
+    }
+  }
+  if (added) log('MIRRORS', added, 'same-channel feeds added to', list.length, 'playlist entries');
+  return out;
 }
 
 
@@ -254,12 +373,79 @@ async function languageByStreamUrl(langs) {
   return map;
 }
 
+// The last good parse, on disk. A playlist is a text file someone else hosts; the wall the household
+// watches should not depend on that host answering the one time this box happens to boot.
+function readSavedPlaylist(url) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PLAYLIST_CACHE_FILE, 'utf8'));
+    if (!raw || !Array.isArray(raw.channels) || !raw.channels.length) return null;
+    // A different playlist URL is a different household decision: the old wall is not the one on screen.
+    if (raw.url !== url) return null;
+    return raw;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveSavedPlaylist(url, list) {
+  try {
+    fs.mkdirSync(path.dirname(PLAYLIST_CACHE_FILE), { recursive: true });
+    const tmp = PLAYLIST_CACHE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ url, fetchedAt: Date.now(), channels: list }));
+    fs.renameSync(tmp, PLAYLIST_CACHE_FILE);
+  } catch (e) {
+    log('playlist cache write failed:', e.message); // costs a re-fetch later, nothing else
+  }
+}
+
+function install(list, url, fetchedAt) {
+  allChannels = list;
+  channels = selected(withMirrors(list));
+  lastFetch = Date.now();
+  listFetchedAt = Number(fetchedAt) || Date.now();
+  lastPlaylistUrl = url;
+  lastError = null;
+  failureStreak = 0;
+}
+
+/** A failed fetch asks again on a short ladder, never six hours later. */
+function scheduleRetry() {
+  if (retryTimer) return;
+  const step = RETRY_STEPS_MS[Math.min(failureStreak, RETRY_STEPS_MS.length - 1)];
+  failureStreak++;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    refresh(true).catch(() => {});
+  }, step);
+  if (retryTimer.unref) retryTimer.unref();
+  log('playlist retry in', Math.round(step / 1000) + 's');
+}
+
+/**
+ * The network gave nothing. Keep whatever this process already has; if this process has nothing, put
+ * back the last parse this box read from disk; either way, ask again soon instead of at the next tick
+ * of the six-hour clock. An empty Live TV tab that lasts an evening was the whole cost of the old code.
+ */
+function fallBack(url, why) {
+  if (!allChannels.length) {
+    const saved = readSavedPlaylist(url);
+    if (saved) {
+      install(saved.channels, url, saved.fetchedAt);
+      fromDisk = true;
+      log('playlist restored from disk:', channels.length, 'channels, last fetched',
+        new Date(listFetchedAt).toISOString(), '· because', why);
+    }
+  }
+  scheduleRetry();
+}
+
 async function refresh(force = false) {
   if (loading) return loading;
   const url = playlistUrl();
   // No playlist is a decision, not a broken install: the owner has not chosen a live source, so there is
   // no live TV here to show. Say what is missing instead of fetching a default nobody asked for.
   if (!url) {
+    allChannels = [];
     channels = [];
     lastError = 'no live playlist configured (settings.live.playlist is empty)';
     lastFetch = Date.now();
@@ -291,21 +477,23 @@ async function refresh(force = false) {
               parsed.filter((c) => (c.langs || []).length).length, 'of', parsed.length);
           }
         }
-        allChannels = parsed;
-        channels = selected(parsed);
-        lastFetch = Date.now();
-        lastPlaylistUrl = url;
-        lastError = null;
+        await loadMirrors(); // same-channel feeds from the iptv-org db, folded in below
+        install(parsed, url);
+        fromDisk = false;
+        saveSavedPlaylist(url, parsed);
         console.log(new Date().toISOString(), 'playlist ok:', channels.length, 'channels');
       } else {
         lastError = 'playlist parsed to 0 channels';
-        console.error(new Date().toISOString(), lastError);
+        console.error(new Date().toISOString(), lastError, '·', allChannels.length, 'channels kept');
+        fallBack(url, lastError);
       }
       return channels;
     })
     .catch((e) => {
       lastError = e.message;
-      console.error(new Date().toISOString(), 'playlist fetch failed:', e.message);
+      console.error(new Date().toISOString(), 'playlist fetch failed:', e.message, '·',
+        allChannels.length ? allChannels.length + ' channels already in memory' : 'nothing in memory yet');
+      fallBack(url, e.message);
       return channels;
     })
     .finally(() => {
@@ -483,13 +671,16 @@ function hubItems(list) {
 
   // Additive on the §1 `live` object: what the prober saw, the stable zap number, and — when the
   // owner pointed settings.live.xmltv at a guide — what is on this channel right now and what follows.
-  //   live.health   "working" | "dead" | "unknown"  (unknown = never checked, or the evidence is old)
+  //   live.health   "working" | "blocked" | "dead" | "unknown"
+  //                 blocked = the channel exists and the provider declined this request (country,
+  //                 token, hotlink rule) — different news from "nothing is answering".
   //   live.checkedAt / live.latencyMs / live.error   the probe record behind that verdict
   //   live.number   1, 2, 3 … assigned once and kept across restarts (core/live-health.js)
   //   live.now / live.next  { title, start, stop, minsLeft, progress } from core/guide.js, or null
   for (const item of byName.values()) {
     const h = liveHealth.get(item.identity);
-    item.live.health = h ? (h.ok ? 'working' : 'dead') : 'unknown';
+    item.live.health = !h || liveHealth.rank(item.identity) === 1 ? 'unknown'
+      : h.ok ? 'working' : h.status === 'blocked' ? 'blocked' : 'dead';
     item.live.checkedAt = h ? h.checkedAt : null;
     item.live.latencyMs = h ? h.latencyMs : null;
     item.live.error = h && !h.ok ? h.error : null;
@@ -598,6 +789,16 @@ module.exports = {
     // Playlist first, then the health pass behind it — both in the background, never awaited, so a
     // slow playlist or a wall of dead feeds cannot delay the hub coming up. The guide (if the owner
     // configured one) rides along: now/next is header polish and must never gate playback.
+    // Put the last good wall up before the network has said anything: a hub that boots with a dead
+    // DNS used to open Live TV as an empty room for six hours.
+    const url = playlistUrl();
+    const saved = url ? readSavedPlaylist(url) : null;
+    if (saved) {
+      install(saved.channels, url, saved.fetchedAt);
+      fromDisk = true;
+      log('playlist loaded from disk:', channels.length, 'channels, fetched',
+        new Date(listFetchedAt).toISOString());
+    }
     refresh(true).then(() => probePass('startup'));
     guide.refresh(true);
     const t = setInterval(() => refresh(true).then(() => probePass('playlist refresh')), REFRESH_MS);
@@ -638,6 +839,22 @@ module.exports = {
   reload() {
     loading = null;
     return refresh(true).catch((e) => console.log(new Date().toISOString(), 'live reload failed:', e.message));
+  },
+
+  /**
+   * Why the wall is the size it is, for the Live settings screen and the channel manager. A hub whose
+   * playlist host hiccuped used to look exactly like a hub with no live TV: an empty row, no words.
+   */
+  status() {
+    return {
+      playlist: playlistUrl() || null,
+      channels: channels.length, // what the household may watch, after the owner's hidden list
+      published: allChannels.length,
+      fetchedAt: listFetchedAt || null,
+      lookedAt: lastFetch || null,
+      fromDisk,
+      lastError,
+    };
   },
 
   /** The playlist did not change, only which channels the owner wants. No network, no re-probe. */

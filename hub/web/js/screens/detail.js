@@ -21,7 +21,7 @@ import * as focus from '/ui/js/focus.js';
 import { icon } from '/ui/js/icons.js';
 import { api } from '/ui/js/api.js';
 import { session, rememberMeta, metaCache, inMyList } from '/ui/js/state.js';
-import { clock, runtime, langList, since, episodeLabel, seasonLabel, timeLeft, initials } from '/ui/js/format.js';
+import { clock, runtime, langList, since, episodeLabel, seasonLabel, maturityLabel, timeLeft, initials } from '/ui/js/format.js';
 import { rowFor, lazyMount, dropMountedRows } from '/ui/js/plugins.js';
 import { startPreview, stopPreview } from '/ui/js/video.js';
 import { pushHandler, popHandler } from '/ui/js/input.js';
@@ -583,9 +583,4 @@ export function screen(ctx, identity) {
     dropMountedRows(root);
   };
   return root;
-}
-
-/** Kept local so the detail screen never needs a maturity table of its own — the hub's word, formatted. */
-function maturityLabel(item) {
-  return item.maturity || (item.minAge ? `${item.minAge}+` : '');
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * design-system/tools/capture.mjs — the catalog, captured from the television.
+ * design-system/tools/capture.mjs — the catalog, captured from an isolated emulator.
  *
  * The Studio and the player preview render the real components; this script walks every entry in
  * studio.json, launches it in capture mode with one theme and state, takes a screenshot and either
@@ -12,12 +12,17 @@
  *   node design-system/tools/capture.mjs --only settings.rows
  *   node design-system/tools/capture.mjs --strict            # fail on any missing or changed golden
  *
- * Requires adb on PATH (or ADB=...); the TV must be connected and awake.
+ * Requires adb on PATH (or ADB=...), `ADB_SERIAL=emulator-…`, and a side-by-side debug/QA build.
+ * It refuses physical devices and the production package by construction.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { captureTarget } = require('./capture-target.cjs');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -25,11 +30,17 @@ const REPO = path.join(ROOT, '..');
 const GOLDENS = path.join(ROOT, 'goldens', 'android');
 const TMP = path.join(ROOT, '.captures');
 const ADB = process.env.ADB || 'adb';
-const SERIAL = process.env.ADB_SERIAL || '';
-const ADB_BASE = SERIAL ? ['-s', SERIAL] : [];
+const target = captureTarget({
+  serial: process.env.ADB_SERIAL,
+  applicationId: process.env.SCENIX_CAPTURE_APP_ID,
+});
+const SERIAL = target.serial;
+const APP_ID = target.applicationId;
+const ACTIVITY_PACKAGE = target.activityPackage;
+const ADB_BASE = ['-s', SERIAL];
 const PY = process.env.PYTHON || '/usr/bin/python3';
-const STUDIO = 'com.scenix.tv/.StudioActivity';
-const PLAYER = 'com.scenix.tv/.PlayerActivity';
+const STUDIO = `${APP_ID}/${ACTIVITY_PACKAGE}.StudioActivity`;
+const PLAYER = `${APP_ID}/${ACTIVITY_PACKAGE}.PlayerActivity`;
 
 const args = process.argv.slice(2);
 const write = args.includes('--write');
@@ -75,7 +86,7 @@ function launch(t) {
   // A television sleeps when nobody presses a key. `screencap` on a sleeping panel is a black
   // rectangle, which is how half the first golden set came out empty.
   try { adb(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']); } catch (e) { /* ignore */ }
-  adb(['shell', 'am', 'force-stop', 'com.scenix.tv']);
+  adb(['shell', 'am', 'force-stop', APP_ID]);
   // `adb shell` re-splits its argument through the device shell. Passing the whole `am start`
   // command as ONE argument keeps a quoted title with spaces intact; passing it as argv entries
   // turned "The Last of Us" into title=The (and the player rightly refused it).
@@ -137,15 +148,15 @@ function diff(a, b) {
   }
 }
 
-// The goldens are a 1280x720 canvas. A television that renders at 1080p and is then scaled down does
-// not produce the same frame as one that renders at 720p: glyph rasterisation and every hairline move,
-// which tripped all 53 goldens at once. Ask the device for the canvas the goldens were made at, and put
-// its own setting back when the run is over.
-const CANVAS = '1280x720';
+// Goldens are stored at, and deliberately rendered on, a fixed 1280x720 canvas. Theme geometry
+// therefore sees the same dimensions for each run; normalizing afterward only protects against a
+// device that refuses the requested size. Keep this emulator-only setting isolated from household
+// hardware and restore it after the run.
+const CAPTURE_CANVAS = '1280x720';
 function pinCanvas() {
   try {
-    adb(['shell', 'wm', 'size', CANVAS]);
-    console.log(`canvas pinned to ${CANVAS} (the golden size)`);
+    adb(['shell', 'wm', 'size', CAPTURE_CANVAS]);
+    console.log(`canvas pinned to ${CAPTURE_CANVAS} (the golden canvas)`);
   } catch (e) { console.log('could not pin the capture canvas:', e.message); }
 }
 function releaseCanvas() {
@@ -184,7 +195,7 @@ try {
   releaseCanvas();
 }
 
-adb(['shell', 'am', 'force-stop', 'com.scenix.tv']);
+adb(['shell', 'am', 'force-stop', APP_ID]);
 if (write) {
   console.log(`\nwrote ${written} goldens`);
 } else {

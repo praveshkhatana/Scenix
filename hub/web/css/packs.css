@@ -21,7 +21,7 @@
 :root[data-hero="full"] .billboard .scrim {
   background:
     linear-gradient(90deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.30) 44%, rgba(0,0,0,0) 72%),
-    linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,.55) 10%, rgba(20,20,20,0) 44%);
+    linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,.55) 10%, rgba(0, 0, 0, 0) 44%);
 }
 :root[data-hero="full"] .billboard .bb-art::after { display: none; }
 :root[data-hero="full"] .billboard .bb { left: var(--gutter); width: calc(900px * var(--s)); }
@@ -192,6 +192,49 @@
 :root[data-card="below"] .cards .card.foc .ctitle { font-weight: 600; }
 :root[data-card="below"] .cards .card .art .clogo { left: calc(16px * var(--s)); right: calc(16px * var(--s)); bottom: calc(14px * var(--s)); }
 
+/* The television's hero is a plate, not a wall: the art is inset by the page's own gutter, carries the
+   same corner radius as every card below it, and the copy sits inside the plate rather than over a
+   full-bleed still. One plate instead of the television's two-up slider, but the same shape of page. */
+:root[data-hero="plate"] .billboard { background: none; }
+:root[data-hero="plate"] .billboard .bb-arts,
+:root[data-hero="plate"] .billboard .preview,
+:root[data-hero="plate"] .billboard .scrim {
+  left: var(--gutter); right: var(--gutter);
+  top: calc(26px * var(--s)); bottom: calc(56px * var(--s));
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+:root[data-hero="plate"] .billboard .scrim {
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, .88) 6%, rgba(0, 0, 0, .46) 36%, rgba(0, 0, 0, 0) 66%),
+    linear-gradient(0deg, rgba(0, 0, 0, .72) 6%, rgba(0, 0, 0, 0) 48%);
+}
+:root[data-hero="plate"] .bb {
+  left: calc(var(--gutter) + 64px * var(--s)); bottom: calc(92px * var(--s));
+  width: calc(820px * var(--s));
+}
+:root[data-hero="plate"] .bb h1 { font-size: calc(var(--t-h1) * .62); text-shadow: none; }
+:root[data-hero="plate"] .bb .mark { display: none; }
+:root[data-hero="plate"] .bb-thumbs,
+:root[data-hero="plate"] .bb-dots { left: calc(var(--gutter) + 64px * var(--s)); }
+
+/* Rail badges in the scene pack are dark glass pills, not slabs of brand: the brand is near-white here,
+   so a filled badge over near-white art reads as an empty box. The new flag is amber, the score white,
+   live is the pack's own red — the same three marks the television's rails carry. */
+:root[data-card="below"] .badge {
+  background: rgba(8, 10, 14, .72); border: calc(1px * var(--s)) solid rgba(255, 255, 255, .16);
+  color: var(--ink1); font-weight: 600; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+:root[data-card="below"] .badge.new { color: var(--kids); }
+:root[data-card="below"] .badge.mt { color: var(--match); }
+:root[data-card="below"] .badge.rate { color: var(--ink); }
+:root[data-card="below"] .badge.live { color: var(--live); }
+:root[data-card="below"] .badge.live i { background: currentColor; }
+
+/* The rails hold art only; the name arrives with the focus, the way the television's do. */
+:root[data-card="below"] .cards .card .ctitle { opacity: 0; }
+:root[data-card="below"] .cards .card.foc .ctitle { opacity: 1; }
+
 /* The scene pack's focus is a hairline and a bloom, not a thick outline. */
 :root[data-theme="scenix-apple"][data-focus="glow"] .card.foc {
   box-shadow: 0 0 0 calc(1.5px * var(--s)) rgba(255,255,255,.78),
@@ -233,3 +276,708 @@
   filter: brightness(.55) saturate(.8);
 }
 :root[data-stage="focus"] .screen.home .card { transition: filter 280ms ease, transform var(--focus-ms) ease-out; }
+
+/* ==========================================================================
+   The wall packs — Liquid Glass, Kids.
+
+   These themes are not a background colour with cards on top of them: the television lights the
+   page with a field of soft blobs and a grain over it, and `pack.wallBlobs` / `pack.wallGrain` carry
+   that field as numbers (js/theme.js turns the list into gradients). The screens go transparent so the
+   light reads *behind* the shelves rather than being painted over by the page.
+   ========================================================================== */
+
+:root[data-wall="pack"]::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-color: var(--bg);
+  background-image: var(--wall);
+}
+/* The grain is one small tiled noise, fixed and never animated: on a panel this is a single
+   composited layer rather than a filter over the page. */
+:root[data-wall="pack"]::after {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  opacity: var(--wall-grain, 0);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+:root[data-wall="pack"] .screen { background: transparent; }
+:root[data-wall="pack"] .billboard { background: none; }
+
+/* ===========================================================================
+   Curated desktop packs
+
+   These are not alternate dashboards.  They keep the hub's real rows, profile
+   switcher and section controls, then give the three authored TV compositions
+   their own material, geometry and focus language when they are viewed with a
+   mouse or keyboard in the browser.  The only extra home markup is the two
+   feature plates and shelf shortcuts declared by the packs themselves.
+   =========================================================================== */
+
+/* Shared two-plate hero primitives for the Glass and Kids authored layouts. */
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-hero,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-hero {
+  position: relative;
+  display: grid;
+  align-items: stretch;
+  overflow: visible;
+  background: transparent;
+}
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-card,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-card {
+  position: relative;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink1);
+  text-align: left;
+  transform-origin: center;
+  /* Focus uses a compositor-only transform; expensive filter and backdrop layers stay off the rail. */
+  transition: transform var(--focus-ms) ease-out;
+  cursor: pointer;
+}
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-art,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-art,
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-art img,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-art img,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-art img { object-fit: cover; }
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-wash,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+:root[data-web-pack="curated"][data-home-layout="glass"] .feature-copy,
+:root[data-web-pack="curated"][data-home-layout="kids"] .feature-copy {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  max-width: 72%;
+  pointer-events: none;
+}
+.feature-title {
+  font-size: clamp(20px, calc(34px * var(--s)), 38px);
+  font-weight: 800;
+  line-height: 1.03;
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+.feature-meta {
+  margin-top: calc(10px * var(--s));
+  font-size: clamp(12px, var(--t-meta), 18px);
+  font-weight: 600;
+  line-height: 1.25;
+}
+.feature-play {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(10px * var(--s));
+  font-size: clamp(13px, var(--t-button), 22px);
+  font-weight: 700;
+  pointer-events: none;
+}
+.feature-play-disc {
+  display: grid;
+  width: calc(46px * var(--s));
+  height: calc(46px * var(--s));
+  place-items: center;
+  border-radius: 50%;
+}
+.feature-play-disc .ico { width: calc(19px * var(--s)); height: calc(19px * var(--s)); }
+.home-chips {
+  display: flex;
+  gap: var(--theme-space-chip-gap, var(--chip-gap));
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: calc(26px * var(--s)) var(--gutter) calc(16px * var(--s));
+  scroll-behavior: auto;
+}
+.home-chip {
+  position: relative;
+  flex: none;
+  min-height: calc(50px * var(--s));
+  padding: calc(10px * var(--s)) calc(20px * var(--s));
+  border-radius: var(--theme-radius-chip, var(--r-chip));
+  font-size: var(--t-chip);
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  transition: transform var(--focus-ms) ease-out;
+  cursor: pointer;
+}
+
+/* Liquid Glass: a soft wall, quiet central nav pill, unequal specular plates and frost shelf jumps. */
+:root[data-web-pack="curated"][data-theme="scenix-glass"] body {
+  background:
+    radial-gradient(ellipse at 8% 72%, color-mix(in srgb, var(--theme-color-wall-b, var(--bg)) 68%, transparent), transparent 42%),
+    radial-gradient(ellipse at 88% 8%, color-mix(in srgb, var(--theme-color-wall-a, var(--surface)) 72%, transparent), transparent 46%),
+    linear-gradient(135deg, var(--theme-color-wall-a, var(--surface)), var(--theme-color-wall-b, var(--bg)));
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .screen.home {
+  background:
+    radial-gradient(ellipse at 11% 68%, color-mix(in srgb, var(--theme-color-wall-b, var(--bg)) 42%, transparent), transparent 36%),
+    radial-gradient(ellipse at 96% 12%, color-mix(in srgb, var(--theme-color-wall-a, var(--surface)) 26%, transparent), transparent 32%),
+    linear-gradient(135deg, var(--theme-color-wall-a, var(--surface)), var(--theme-color-wall-b, var(--bg)));
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav {
+  top: calc(16px * var(--s));
+  height: var(--theme-space-nav-band, var(--nav-h));
+  padding: 0 var(--gutter);
+  background: transparent;
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav.solid { background: var(--theme-color-scrim, var(--surface)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav .brand { color: var(--theme-color-ink-on-wall, var(--ink1)); z-index: 1; }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-items {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  gap: calc(2px * var(--s));
+  max-width: min(calc(760px * var(--s)), 64vw);
+  padding: calc(4px * var(--s));
+  border: calc(1px * var(--s)) solid var(--theme-color-glass-rim, var(--line));
+  border-radius: 999px;
+  background: var(--theme-color-pill, var(--surface));
+  box-shadow: inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2)),
+              0 calc(8px * var(--s)) calc(26px * var(--s)) color-mix(in srgb, var(--theme-color-scrim, var(--surface)) 24%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav .avatar-chip {
+  position: fixed;
+  top: calc(28px * var(--s));
+  right: var(--gutter);
+  width: calc(48px * var(--s));
+  height: calc(48px * var(--s));
+  border-radius: 50%;
+  border: calc(1px * var(--s)) solid var(--theme-color-glass-rim, var(--line));
+  background: var(--theme-color-profile-pill, var(--surface));
+  box-shadow: inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2));
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-item {
+  padding: calc(10px * var(--s)) calc(15px * var(--s));
+  border-radius: 999px;
+  color: var(--theme-color-pill-ink, var(--ink2));
+  font-size: min(var(--t-nav), 18px);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-item.on { color: var(--theme-color-seg-ink, var(--ink1)); background: var(--theme-color-pill-active, var(--surface2)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-item.foc,
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav .brand.foc,
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .nav .avatar-chip.foc {
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--theme-color-focus-ring, var(--focus-ring)),
+              0 0 calc(18px * var(--s)) color-mix(in srgb, var(--focus-color) 58%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-hero {
+  height: var(--theme-space-hero-height, calc(397px * var(--s)));
+  grid-template-columns: 7fr 10fr;
+  gap: var(--theme-space-hero-gap, calc(20px * var(--s)));
+  margin: calc(116px * var(--s)) var(--gutter) 0;
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card {
+  border: calc(1px * var(--s)) solid var(--theme-color-glass-rim, var(--line));
+  border-radius: var(--theme-radius-hero, calc(34px * var(--s)));
+  background: linear-gradient(135deg, var(--theme-color-card-tint-a, var(--surface)), var(--theme-color-card-tint-b, var(--surface2)));
+  box-shadow: inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2)),
+              inset 0 0 calc(26px * var(--s)) color-mix(in srgb, var(--theme-color-sheen-top, var(--surface2)) 52%, transparent),
+              0 calc(10px * var(--s)) calc(28px * var(--s)) color-mix(in srgb, var(--theme-color-scrim, var(--surface)) 30%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card:nth-child(2) {
+  background: linear-gradient(135deg, var(--theme-color-card-glass-a, var(--surface2)), var(--theme-color-card-glass-b, var(--surface)));
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(110deg, var(--theme-color-sheen-top, var(--surface2)), transparent 35%, color-mix(in srgb, var(--theme-color-sheen-top, var(--surface2)) 66%, transparent) 100%);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card:nth-child(1) .feature-wash {
+  background: linear-gradient(90deg, var(--theme-color-hero-wash-deep, var(--surface)) 0%, var(--theme-color-hero-scrim, var(--scrim)) 50%, transparent 88%);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card:nth-child(2) .feature-wash {
+  background: linear-gradient(90deg, var(--theme-color-hero-wash-light, var(--surface2)) 0%, color-mix(in srgb, var(--theme-color-hero-wash-light, var(--surface2)) 24%, transparent) 54%, transparent 90%);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-copy { top: calc(32px * var(--s)); left: calc(34px * var(--s)); color: var(--theme-color-ink-on-card, var(--ink1)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-meta { color: var(--theme-color-ink-on-wall-muted, var(--ink2)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-play { left: calc(30px * var(--s)); bottom: calc(26px * var(--s)); color: var(--theme-color-ink-on-card, var(--ink1)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-play-disc { background: var(--theme-color-play-disc, var(--surface)); border: calc(1px * var(--s)) solid var(--theme-color-glass-rim, var(--line)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card.foc {
+  transform: scale(var(--focus-scale));
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color), 0 0 calc(32px * var(--s)) color-mix(in srgb, var(--focus-color) 82%, transparent),
+              inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2)), 0 calc(16px * var(--s)) calc(34px * var(--s)) color-mix(in srgb, var(--theme-color-scrim, var(--surface)) 42%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .home-chips { padding-top: calc(38px * var(--s)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .home-chip {
+  min-height: var(--theme-space-chip-height, calc(68px * var(--s)));
+  color: var(--theme-color-ink-on-wall, var(--ink1));
+  border: calc(1px * var(--s)) solid var(--theme-color-glass-rim, var(--line));
+  background: var(--theme-color-chip-fill, var(--surface2));
+  box-shadow: inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2)),
+              0 calc(6px * var(--s)) calc(12px * var(--s)) color-mix(in srgb, var(--theme-color-scrim, var(--surface)) 24%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .home-chip.foc {
+  transform: scale(1.03);
+  color: var(--theme-color-ink-on-wall, var(--ink1));
+  background: var(--theme-color-chip-fill-active, var(--surface2));
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color), 0 0 calc(22px * var(--s)) color-mix(in srgb, var(--focus-color) 72%, transparent), inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2));
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .rows.pulled { margin-top: var(--theme-space-rail-top-gap, calc(64px * var(--s))); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .row > h3 { color: var(--theme-color-row-ink, var(--ink1)); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .cards.poster {
+  --card-w: var(--theme-space-poster-width, calc(283px * var(--s)));
+  --card-h: var(--theme-space-poster-height, calc(397px * var(--s)));
+  --gap: var(--theme-space-poster-gap, calc(21px * var(--s)));
+}
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .cards .card .art { border-radius: var(--theme-radius-card, calc(21px * var(--s))); border-color: var(--theme-color-glass-rim, var(--line)); box-shadow: inset 0 calc(1px * var(--s)) var(--theme-color-sheen-top, var(--surface2)), 0 calc(8px * var(--s)) calc(20px * var(--s)) color-mix(in srgb, var(--theme-color-scrim, var(--surface)) 42%, transparent); }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .card .ctitle { color: var(--theme-color-caption-ink, var(--ink1)); text-shadow: none; }
+:root[data-web-pack="curated"][data-theme="scenix-glass"] .card.foc { box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color), 0 0 calc(28px * var(--s)) color-mix(in srgb, var(--focus-color) 82%, transparent), 0 calc(14px * var(--s)) calc(28px * var(--s)) color-mix(in srgb, var(--theme-color-scrim, var(--surface)) 42%, transparent); }
+
+/* Kids: a true flat yellow sheet, black utility capsule and the pack's wide warm focus band. */
+:root[data-web-pack="curated"][data-theme="scenix-kids"] body,
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .screen.home { background: var(--theme-color-stage-sheet, var(--bg)); color: var(--theme-color-ink, var(--ink)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav {
+  top: calc(24px * var(--s));
+  height: var(--theme-space-kids-nav-h, var(--nav-h));
+  padding: 0 var(--gutter);
+  background: transparent;
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav.solid { background: color-mix(in srgb, var(--theme-color-stage-sheet, var(--bg)) 92%, transparent); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav .brand {
+  display: grid;
+  width: calc(64px * var(--s));
+  height: calc(64px * var(--s));
+  place-items: center;
+  border-radius: 50%;
+  color: var(--theme-color-key-ink, var(--ink1));
+  background: var(--theme-color-pill, var(--brand));
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav .brand-mark { width: calc(38px * var(--s)); height: calc(20px * var(--s)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-items {
+  position: absolute;
+  left: calc(var(--gutter) + 84px * var(--s));
+  gap: 0;
+  max-width: min(calc(920px * var(--s)), 62vw);
+  padding: calc(3px * var(--s));
+  border-radius: 999px;
+  background: var(--theme-color-pill, var(--brand));
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav .avatar-chip {
+  position: fixed;
+  top: calc(36px * var(--s));
+  right: var(--gutter);
+  width: var(--theme-space-kids-avatar, calc(64px * var(--s)));
+  height: var(--theme-space-kids-avatar, calc(64px * var(--s)));
+  border-radius: 50%;
+  border: calc(3px * var(--s)) solid var(--theme-color-stage-sheet, var(--bg));
+  background: var(--theme-color-pill, var(--brand));
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-item {
+  padding: calc(13px * var(--s)) calc(17px * var(--s));
+  border-radius: 999px;
+  color: var(--theme-color-key-ink, var(--ink1));
+  font-size: min(var(--t-nav), 19px);
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-item.on { color: var(--theme-color-stage-sheet, var(--bg)); background: transparent; }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-item[data-tab="search"] { padding-right: calc(23px * var(--s)); color: var(--theme-color-plate-ink, var(--ink)); background: var(--theme-color-accent-yellow, var(--kids)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav .brand.foc,
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-item.foc,
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .nav .avatar-chip.foc {
+  box-shadow: 0 0 0 calc(var(--theme-focus-keyline-width, 4) * var(--s)) var(--theme-focus-keyline-color, var(--focus-color)),
+              0 0 calc(28px * var(--s)) calc(10px * var(--s)) var(--theme-color-focus-glow, var(--focus-color));
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-hero {
+  height: var(--theme-space-kids-hero-h, calc(355px * var(--s)));
+  grid-template-columns: 2fr 3fr;
+  gap: var(--theme-space-kids-hero-gap, calc(54px * var(--s)));
+  margin: calc(24px * var(--s)) var(--gutter) 0;
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card {
+  border: 0;
+  border-radius: var(--theme-radius-card, calc(32px * var(--s)));
+  background: linear-gradient(105deg, var(--theme-color-hero-plate-l, var(--surface)), var(--theme-color-hero-plate-r, var(--surface2)));
+  box-shadow: 0 calc(7px * var(--s)) calc(12px * var(--s)) color-mix(in srgb, var(--theme-color-plate-ink, var(--ink)) 14%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card:nth-child(1) { background: var(--theme-color-card-tint, var(--surface)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card:nth-child(1) .feature-wash { background: linear-gradient(180deg, var(--theme-color-modal-dim, var(--scrim)), transparent 48%, var(--theme-color-modal-dim, var(--scrim))); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card:nth-child(2) .feature-wash { background: linear-gradient(90deg, var(--theme-color-hero-plate-l, var(--surface)) 0%, color-mix(in srgb, var(--theme-color-hero-plate-l, var(--surface)) 39%, transparent) 52%, transparent 92%); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-copy { top: calc(28px * var(--s)); left: calc(30px * var(--s)); color: var(--theme-color-ink-on-card, var(--ink1)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card:nth-child(2) .feature-copy { max-width: 55%; color: var(--theme-color-plate-ink, var(--ink)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-meta { color: inherit; opacity: .82; }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-play { left: calc(26px * var(--s)); bottom: calc(22px * var(--s)); color: var(--theme-color-key-ink, var(--ink1)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card:nth-child(2) .feature-play { color: var(--theme-color-plate-ink, var(--ink)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-play-disc { width: var(--theme-space-kids-play, calc(44px * var(--s))); height: var(--theme-space-kids-play, calc(44px * var(--s))); color: var(--theme-color-key-ink, var(--ink1)); background: var(--theme-color-plate-ink, var(--ink)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card.foc,
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .home-chip.foc,
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .card.foc {
+  transform: scale(var(--focus-scale));
+  box-shadow: 0 0 0 calc(var(--theme-focus-keyline-width, 4) * var(--s)) var(--theme-focus-keyline-color, var(--focus-color)),
+              0 0 calc(34px * var(--s)) calc(12px * var(--s)) var(--theme-color-focus-glow, var(--focus-color)),
+              0 calc(12px * var(--s)) calc(22px * var(--s)) color-mix(in srgb, var(--theme-color-plate-ink, var(--ink)) 20%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .home-chips { padding-top: var(--theme-space-kids-chip-top-gap, calc(50px * var(--s))); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .home-chip {
+  min-width: var(--theme-space-kids-chip-w, calc(180px * var(--s)));
+  min-height: var(--theme-space-kids-chip-h, calc(62px * var(--s)));
+  color: var(--theme-color-key-ink, var(--ink1));
+  background: var(--theme-color-pill, var(--brand));
+  text-align: center;
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .rows.pulled { margin-top: calc(24px * var(--s)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .row > h3 { color: var(--theme-color-ink, var(--ink)); font-size: var(--t-row-title); font-weight: 800; }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .row > h3 .explore { color: var(--theme-color-ink2, var(--ink2)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .cards.poster {
+  --card-w: calc(270px * var(--s));
+  --card-h: calc(389px * var(--s));
+  --gap: var(--theme-space-card-gap, calc(62px * var(--s)));
+}
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .cards .card .art { border-radius: var(--theme-radius-tile, var(--theme-radius-card, calc(24px * var(--s)))); border-color: transparent; background: var(--theme-color-card-tint, var(--surface)); }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .card .ctitle { color: var(--theme-color-ink, var(--ink)); background: none; text-align: center; text-shadow: none; }
+:root[data-web-pack="curated"][data-theme="scenix-kids"] .card .art .clogo { filter: drop-shadow(0 calc(2px * var(--s)) calc(6px * var(--s)) color-mix(in srgb, var(--theme-color-plate-ink, var(--ink)) 45%, transparent)); }
+
+/* Console rail: scenery recedes, a compact tile hub stays prominent, and focus is electric blue. */
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] body,
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .screen.home {
+  background:
+    radial-gradient(ellipse at 72% 20%, color-mix(in srgb, var(--theme-color-brand, var(--brand)) 19%, transparent), transparent 42%),
+    radial-gradient(ellipse at 20% 78%, color-mix(in srgb, var(--theme-color-brand-deep, var(--surface2)) 22%, transparent), transparent 46%),
+    linear-gradient(155deg, var(--bg), var(--surface));
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav {
+  height: var(--nav-h);
+  background: linear-gradient(180deg, var(--theme-color-scrim-ink, var(--scrim)) 0%, var(--theme-color-scrim-mid, var(--scrim)) 70%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav.solid { background: var(--theme-color-scrim-ink, var(--scrim)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav .brand { color: var(--theme-color-brand, var(--brand)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav-item { color: var(--theme-color-nav-idle, var(--ink2)); border-radius: var(--r-badge); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav-item.on { color: var(--theme-color-ink1, var(--ink1)); background: var(--theme-color-chip-bg, var(--surface2)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav-item.foc,
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav .brand.foc,
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .nav .avatar-chip.foc {
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color), 0 0 calc(20px * var(--s)) color-mix(in srgb, var(--focus-color) 76%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"][data-home-layout="ps5"] .billboard {
+  height: var(--pack-ps5-home-height, var(--pack-hero-height, var(--billboard-h)));
+  background: transparent;
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .billboard .scrim {
+  background:
+    linear-gradient(90deg, var(--theme-color-scrim-ink, var(--scrim)) 0%, var(--theme-color-scrim-mid, var(--scrim)) 42%, transparent 75%),
+    linear-gradient(0deg, var(--bg) 0%, var(--theme-color-scrim-mid, var(--scrim)) 18%, transparent 56%);
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .billboard .bb { width: min(calc(700px * var(--s)), 58vw); bottom: calc(var(--pack-ps5-rail-bottom, 150px) + var(--theme-space-hero-bottom, 0px)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb h1 { font-size: calc(var(--t-h1) * var(--pack-hero-title-scale, .78)); max-width: 13ch; }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb .tagline,
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb .why,
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb .chips { display: none; }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb .sub { max-width: 36ch; color: var(--theme-color-ink2, var(--ink2)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-thumbs {
+  position: absolute;
+  left: 0;
+  bottom: calc(-1 * var(--pack-ps5-rail-bottom, 150px));
+  display: flex;
+  gap: calc(16px * var(--s));
+  width: max-content;
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-thumb {
+  width: var(--pack-ps5-tile-width, calc(150px * var(--s)));
+  height: var(--pack-ps5-tile-height, calc(225px * var(--s)));
+  opacity: .74;
+  border-radius: var(--r-card);
+  box-shadow: inset 0 0 0 calc(1px * var(--s)) var(--theme-color-glass-line, var(--line));
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-thumb.foc,
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-thumb.on {
+  opacity: 1;
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color), 0 0 calc(24px * var(--s)) color-mix(in srgb, var(--focus-color) 82%, transparent);
+}
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-dots { display: none; }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .rows.pulled { margin-top: calc(-36px * var(--s)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .cards.poster { --gap: calc(24px * var(--s)); }
+:root[data-web-pack="curated"][data-theme="scenix-ps5"] .card.foc {
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color), 0 0 calc(30px * var(--s)) color-mix(in srgb, var(--focus-color) 80%, transparent),
+              0 calc(16px * var(--s)) calc(34px * var(--s)) color-mix(in srgb, var(--theme-color-scrim-ink, var(--scrim)) 62%, transparent);
+}
+
+/* ===========================================================================
+   Home surface contract
+
+   `homeHero`, `homeRails` and `homeNavigation` are authored alongside a pack's
+   tokens.  The host marks the mounted Home surface with the same values, so a
+   third-party visual reskin can inherit a verified composition without a
+   `theme-id` selector or a second, silent layout vocabulary.  Pack-specific
+   rules above may add material; these rules define the safe structural base.
+   =========================================================================== */
+
+/* Scene / shared-slider: an inset theatre plate with direct, focusable preview tiles. */
+.screen.home[data-home-hero="shared-slider"] .home-billboard {
+  background: transparent;
+}
+.screen.home[data-home-hero="shared-slider"] .home-billboard .bb-arts,
+.screen.home[data-home-hero="shared-slider"] .home-billboard .preview,
+.screen.home[data-home-hero="shared-slider"] .home-billboard .scrim {
+  left: var(--gutter);
+  right: var(--gutter);
+  top: calc(26px * var(--s));
+  bottom: calc(56px * var(--s));
+  overflow: hidden;
+  border-radius: var(--r-card);
+}
+.screen.home[data-home-hero="shared-slider"] .home-billboard .scrim {
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, .88) 6%, rgba(0, 0, 0, .46) 36%, rgba(0, 0, 0, 0) 66%),
+    linear-gradient(0deg, rgba(0, 0, 0, .72) 6%, rgba(0, 0, 0, 0) 48%);
+}
+.screen.home[data-home-hero="shared-slider"] .home-billboard .bb {
+  left: calc(var(--gutter) + 64px * var(--s));
+  bottom: calc(92px * var(--s));
+  width: min(calc(820px * var(--s)), calc(100vw - (2 * var(--gutter))));
+}
+.screen.home[data-home-hero="shared-slider"] .home-billboard .bb h1 {
+  font-size: calc(var(--t-h1) * .62);
+  text-shadow: none;
+}
+.screen.home[data-home-hero="shared-slider"] .home-billboard .bb-thumbs {
+  gap: calc(18px * var(--s));
+}
+
+/* Cinema billboard: the image is the stage; the controls remain the same shared controls. */
+.screen.home[data-home-hero="cinema-billboard"] .home-billboard .bb-dots {
+  display: none;
+}
+.screen.home[data-home-hero="cinema-billboard"] .home-billboard .bb-thumbs {
+  gap: calc(18px * var(--s));
+}
+
+/* Focused hub: its poster strip is a stable chooser, never a timer-driven billboard. */
+.screen.home[data-home-hero="focused-hub"] .home-billboard {
+  height: var(--pack-ps5-home-height, var(--pack-hero-height, var(--billboard-h)));
+  background: transparent;
+}
+.screen.home[data-home-hero="focused-hub"] .home-billboard .bb {
+  width: min(calc(700px * var(--s)), 58vw);
+  bottom: calc(var(--pack-ps5-rail-bottom, 150px) + var(--theme-space-hero-bottom, 0px));
+}
+.screen.home[data-home-hero="focused-hub"] .home-billboard .bb-thumbs {
+  position: absolute;
+  left: 0;
+  bottom: calc(-1 * var(--pack-ps5-rail-bottom, 150px));
+  display: flex;
+  width: max-content;
+  gap: calc(16px * var(--s));
+}
+.screen.home[data-home-hero="focused-hub"] .home-billboard .bb-thumb {
+  width: var(--pack-ps5-tile-width, calc(150px * var(--s)));
+  height: var(--pack-ps5-tile-height, calc(225px * var(--s)));
+  border-radius: var(--r-card);
+  opacity: .74;
+  box-shadow: inset 0 0 0 calc(1px * var(--s)) var(--border);
+}
+.screen.home[data-home-hero="focused-hub"] .home-billboard .bb-thumb.foc,
+.screen.home[data-home-hero="focused-hub"] .home-billboard .bb-thumb.on {
+  opacity: 1;
+  box-shadow: 0 0 0 calc(2px * var(--s)) var(--focus-color),
+              0 0 calc(24px * var(--s)) color-mix(in srgb, var(--focus-color) 82%, transparent);
+}
+.screen.home[data-home-rails="hub"] .home-rails--hub {
+  margin-top: calc(-36px * var(--s));
+}
+
+/* Browser widths below a TV canvas keep the authored hierarchy without letting controls overlap. */
+@media (max-width: 900px) {
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-items,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-items { max-width: calc(100vw - 168px); overflow-x: auto; }
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-item,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-item { flex: none; }
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-hero,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-hero { height: auto; min-height: 0; grid-template-columns: 1fr; }
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-card,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-card { min-height: min(48vw, calc(300px * var(--s))); }
+  :root[data-web-pack="curated"][data-theme="scenix-ps5"] .billboard .bb { width: min(calc(620px * var(--s)), 72vw); }
+  :root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-thumbs { bottom: calc(-1 * min(120px, 13vw)); }
+  .screen.home[data-home-hero="focused-hub"] .home-billboard .bb { width: min(calc(620px * var(--s)), 72vw); }
+  .screen.home[data-home-hero="focused-hub"] .home-billboard .bb-thumbs { bottom: calc(-1 * min(120px, 13vw)); }
+}
+
+@media (max-width: 620px) {
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .nav .brand,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .nav .brand { display: none; }
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .nav-items,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .nav-items { left: var(--gutter); right: calc(var(--gutter) + 52px); transform: none; max-width: none; }
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-hero,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-hero { margin-top: calc(108px * var(--s)); }
+  :root[data-web-pack="curated"][data-theme="scenix-glass"] .feature-copy,
+  :root[data-web-pack="curated"][data-theme="scenix-kids"] .feature-copy { max-width: 68%; }
+  :root[data-web-pack="curated"][data-theme="scenix-ps5"] .bb-thumbs { display: none; }
+  :root[data-web-pack="curated"][data-theme="scenix-ps5"] .billboard .bb { bottom: calc(50px * var(--s)); }
+  .screen.home[data-home-hero="focused-hub"] .home-billboard .bb-thumbs { display: none; }
+  .screen.home[data-home-hero="focused-hub"] .home-billboard .bb { bottom: calc(50px * var(--s)); }
+}
+
+/* ===========================================================================
+   Home-owned navigation
+
+   `utility` and `none` are composition contracts, not a request to hide a bar
+   and strand its routes. Home supplies these semantic controls while the shell
+   removes the duplicate host bar only for that route. Existing pack material
+   selectors still colour the familiar `.nav`, `.brand`, `.nav-item` and
+   `.avatar-chip` parts; these rules only put them in the declared Home geometry.
+   =========================================================================== */
+
+.screen.home .home-owned-nav.nav {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  z-index: 22;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  padding: 0 var(--gutter);
+  background: transparent;
+}
+.screen.home .home-owned-nav .home-owned-brand {
+  position: relative;
+  flex: none;
+  justify-self: start;
+  width: fit-content;
+}
+.screen.home .home-owned-nav .home-owned-sections,
+.screen.home .home-owned-nav .home-owned-utilities {
+  position: static;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  transform: none;
+}
+.screen.home .home-owned-nav .home-owned-sections {
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-behavior: auto;
+}
+.screen.home .home-owned-nav .home-owned-utilities {
+  justify-self: end;
+  gap: calc(7px * var(--s));
+  white-space: nowrap;
+}
+.screen.home .home-owned-nav .home-owned-profile.avatar-chip {
+  position: static;
+  top: auto;
+  right: auto;
+  display: inline-flex;
+  width: auto;
+  min-width: calc(48px * var(--s));
+  height: calc(48px * var(--s));
+  padding: calc(3px * var(--s));
+  align-items: center;
+  gap: calc(8px * var(--s));
+}
+.screen.home .home-owned-nav .home-owned-profile .a {
+  width: calc(40px * var(--s));
+  height: calc(40px * var(--s));
+  flex: none;
+}
+.screen.home .home-owned-nav .home-owned-profile-name {
+  max-width: min(18vw, calc(172px * var(--s)));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: calc(8px * var(--s));
+  font-size: var(--t-meta);
+  font-weight: 700;
+}
+.screen.home .home-owned-nav .home-owned-action {
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+.screen.home .home-owned-nav .home-owned-search .ico,
+.screen.home .home-owned-nav .home-owned-settings .ico,
+.screen.home .home-owned-nav .home-owned-list .ico { pointer-events: none; }
+
+/* The glass/kids family owns a complete header: brand, section capsule and household controls.
+   It remains in normal flow so the feature plates always start beneath its focusable targets. */
+.screen.home[data-home-navigation="none"] .home-owned-nav {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  min-height: var(--theme-space-nav-band, var(--theme-space-kids-nav-h, var(--nav-h)));
+  padding-top: calc(20px * var(--s));
+  gap: calc(14px * var(--s));
+}
+.screen.home[data-home-navigation="none"] .home-owned-sections {
+  justify-content: center;
+  gap: calc(2px * var(--s));
+}
+.screen.home[data-home-navigation="none"] .home-owned-utilities { align-self: center; }
+.screen.home[data-home-navigation="none"] .feature-hero { margin-top: calc(28px * var(--s)); }
+
+/* The console grammar keeps system actions and contextual filters on the hero itself. It is
+   absolute only inside Home — it scrolls away with that composition and never changes later routes. */
+.screen.home[data-home-navigation="utility"] .home-owned-nav {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: grid;
+  grid-template-areas:
+    'brand utilities'
+    'sections sections';
+  grid-template-columns: 1fr auto;
+  min-height: calc(150px * var(--s));
+  padding-top: calc(20px * var(--s));
+  align-content: start;
+}
+.screen.home[data-home-navigation="utility"] .home-owned-brand {
+  grid-area: brand;
+  align-self: center;
+}
+.screen.home[data-home-navigation="utility"] .home-owned-sections {
+  grid-area: sections;
+  justify-self: start;
+  margin-top: calc(22px * var(--s));
+  gap: calc(4px * var(--s));
+}
+.screen.home[data-home-navigation="utility"] .home-owned-utilities {
+  grid-area: utilities;
+  align-self: center;
+}
+.screen.home[data-home-navigation="utility"] .home-owned-section {
+  padding: calc(8px * var(--s)) calc(14px * var(--s));
+  font-size: var(--t-meta);
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.screen.home[data-home-navigation="utility"] .home-owned-section.on {
+  border: calc(2px * var(--s)) solid var(--brand);
+  background: transparent;
+}
+.screen.home[data-home-navigation="utility"] .home-owned-profile-name { display: none; }
+/* With no hero there is nothing beneath the absolute console strip to establish clearance. Keep
+   setup copy below its second (section) row instead of letting an All control sit over the heading. */
+.screen.home[data-home-navigation="utility"] .firstrun { padding-top: calc(216px * var(--s)); }
+
+@media (max-width: 900px) {
+  .screen.home[data-home-navigation="none"] .home-owned-nav {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: calc(8px * var(--s));
+  }
+  .screen.home[data-home-navigation="none"] .home-owned-sections { justify-content: start; }
+  .screen.home[data-home-navigation="utility"] .home-owned-nav { min-height: calc(136px * var(--s)); }
+}
+
+@media (max-width: 620px) {
+  .screen.home[data-home-navigation="none"] .home-owned-nav {
+    min-height: calc(74px * var(--s));
+    padding-top: calc(12px * var(--s));
+  }
+  .screen.home[data-home-navigation="none"] .home-owned-brand,
+  .screen.home[data-home-navigation="none"] .home-owned-profile-name { display: none; }
+  .screen.home[data-home-navigation="none"] .home-owned-sections { max-width: none; }
+  .screen.home[data-home-navigation="none"] .home-owned-section { flex: none; }
+  .screen.home[data-home-navigation="none"] .feature-hero { margin-top: calc(18px * var(--s)); }
+  .screen.home[data-home-navigation="utility"] .home-owned-nav { min-height: calc(122px * var(--s)); }
+  .screen.home[data-home-navigation="utility"] .home-owned-section { padding-inline: calc(10px * var(--s)); }
+}
