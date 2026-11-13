@@ -119,6 +119,9 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
     private var category = 0
     private lateinit var categoryStrip: LinearLayout
     private var categoryStops: List<TextView> = emptyList()
+    // Each stop's pill lives on a wrapper cell: Focus.attach may only ever draw its ring as the
+    // cell's foreground, never touch the pill background.
+    private var categoryCells: List<FrameLayout> = emptyList()
 
 
 
@@ -179,7 +182,17 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         contentScroll.addView(rows)
         body.addView(contentScroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         phoneRail = buildPhoneRail()
-        body.addView(phoneRail, LinearLayout.LayoutParams(
+        // The rail sits fixed beside a scrolling column; at large UI zoom its copy can outgrow the
+        // screen. A plain non-focusable scroll container keeps the pairing text reachable instead
+        // of cut mid-sentence at the bezel — on touch devices it scrolls, on TV the content fits.
+        body.addView(ScrollView(this).apply {
+            isFocusable = false
+            isVerticalScrollBarEnabled = false
+            setFillViewport(true)
+            addView(phoneRail, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }, LinearLayout.LayoutParams(
             maxOf(app.theme.px(384f), 320), ViewGroup.LayoutParams.MATCH_PARENT,
         ))
         page.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -541,6 +554,7 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
     /** The horizontal category strip — built once, recoloured on every switch. */
     private fun buildCategoryStrip() {
         val stops = ArrayList<TextView>(categoryLabels.size)
+        val cells = ArrayList<FrameLayout>(categoryLabels.size)
         for ((index, label) in categoryLabels.withIndex()) {
             val stop = Views.text(
                 app, "li", 19f, app.theme.ink2, label,
@@ -549,36 +563,57 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
                 isFocusable = true
                 isClickable = true
                 setPadding(app.theme.px(22f), app.theme.px(13f), app.theme.px(22f), app.theme.px(13f))
-                setOnClickListener {
-                    if (category == index) return@setOnClickListener
-                    // A tab switch is a new panel: it opens at its top, not at the old scroll place.
-                    category = index
-                    deferredFocusKey = null
-                    deferredScrollY = 0
-                    paint()
-                    firstRow?.post { firstRow?.requestFocus() }
-                }
-                Focus.attach(this, this, app, app.theme.px(10f), scale = false, elevate = false)
+                setOnClickListener { selectCategory(index) }
             }
+            // Focus.attach captures the ring host's background at attach time and restores it on
+            // blur. With the pill ON the text view, that restore wiped a tab's pill the moment
+            // focus walked over it — the faded wordless tab in the household's screenshot. The
+            // pill lives on the cell instead; Focus only ever draws its ring as the cell's
+            // foreground, so refreshCategoryStrip stays the sole owner of the pill.
+            val cell = FrameLayout(this).apply {
+                clipChildren = false
+                clipToPadding = false
+            }
+            cell.addView(stop, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+            Focus.attach(stop, cell, app, app.theme.px(10f), scale = false, elevate = false)
             stops += stop
+            cells += cell
             categoryStrip.addView(
-                stop,
+                cell,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { rightMargin = app.theme.px(10f) },
             )
         }
         categoryStops = stops
+        categoryCells = cells
         refreshCategoryStrip()
     }
 
+    /**
+     * Move the panel to another category. A tab switch is a new panel: it opens at its top, not at
+     * the old scroll place. paint() re-anchors focus on the first row of the new panel, which is
+     * where a viewer reading down looks next — from there DOWN walks the rows and LEFT/RIGHT keeps
+     * switching tabs, so the strip answers wherever the ring stands.
+     */
+    private fun selectCategory(index: Int) {
+        if (index !in categoryLabels.indices) return
+        if (category == index) return
+        category = index
+        deferredFocusKey = null
+        deferredScrollY = 0
+        paint()
+    }
+
     private fun refreshCategoryStrip() {
-        for ((index, stop) in categoryStops.withIndex()) {
+        for ((index, cell) in categoryCells.withIndex()) {
             val active = index == category
-            stop.background = Views.rounded(
+            cell.background = Views.rounded(
                 if (active) app.theme.brand else app.theme.surface2, app.theme.px(10f),
             )
-            stop.setTextColor(if (active) app.theme.bg else app.theme.ink2)
+            categoryStops.getOrNull(index)?.setTextColor(if (active) app.theme.bg else app.theme.ink2)
         }
     }
 
@@ -1423,6 +1458,16 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
                 }
             }
         }
+        // LEFT/RIGHT anywhere in the panel switch category tabs — the strip is the section nav,
+        // and rows answering sideways too is what the home pills already teach. Modals own their
+        // horizontal keys above; here every row spans the column, so a sideways key would
+        // otherwise just die against the edge. At the strip's ends the key is simply swallowed.
+        if (picker == null && event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> { selectCategory(category - 1); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { selectCategory(category + 1); return true }
+            }
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -2017,8 +2062,9 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         )
         remoteQrHost = FrameLayout(this).apply {
             // Reserve the code's square before the async session answers, so the rail never jumps
-            // when the bitmap replaces the placeholder.
-            minimumHeight = maxOf(app.theme.px(300f), 260)
+            // when the bitmap replaces the placeholder. The square is sized to leave the help text
+            // inside the screen at the household's 150% UI zoom.
+            minimumHeight = maxOf(app.theme.px(240f), 220)
         }
         rail.addView(remoteQrHost, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2040,9 +2086,8 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         ).apply { topMargin = app.theme.px(4f) })
         rail.addView(
             Views.text(app, "meta", 13f, app.theme.ink3,
-                "D-pad, OK/Back, typing and dictation work from the phone — on this screen or any " +
-                    "other, while Scenix is open on this TV.",
-                gravity = Gravity.CENTER, maxLines = 4),
+                "D-pad, OK/Back and typing work from the phone on any screen.",
+                gravity = Gravity.CENTER, maxLines = 2),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { topMargin = app.theme.px(8f) },
@@ -2062,7 +2107,7 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
             return
         }
         val url = pairing.url
-        val bitmap = url?.let { PhonePairing.renderQr(it, maxOf(app.theme.px(340f), 300)) }
+        val bitmap = url?.let { PhonePairing.renderQr(it, maxOf(app.theme.px(300f), 260)) }
         if (bitmap != null) {
             val plate = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -2078,7 +2123,7 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
                     "QR code to open Scenix Settings on a phone"
                 scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
             }
-            val side = maxOf(app.theme.px(300f), 260)
+            val side = maxOf(app.theme.px(240f), 220)
             plate.addView(image, LinearLayout.LayoutParams(side, side))
             host.addView(plate, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
