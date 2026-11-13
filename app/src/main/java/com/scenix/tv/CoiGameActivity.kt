@@ -734,6 +734,13 @@ class CoiGameActivity : Activity() {
             }
             if (hint?.visibility == View.VISIBLE) hint?.visibility = View.GONE
         }
+        // Same stage-owns-BACK rule as the WebView player: the engine may answer the key itself,
+        // and then the popup escape below never runs. Take it first, on the up-press only.
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+            if (event.action == android.view.KeyEvent.ACTION_UP && !event.isCanceled && !isFinishing)
+                onBackPressed()
+            return true
+        }
         return super.dispatchKeyEvent(event)
     }
 

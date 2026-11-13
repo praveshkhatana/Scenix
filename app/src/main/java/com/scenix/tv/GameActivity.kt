@@ -409,7 +409,23 @@ class GameActivity : Activity() {
                 return true
             }
         }
+        // BACK belongs to the stage, not to the page: as soon as a portal pushes a history state
+        // the WebView starts swallowing this key for its own back-navigation, and onBackPressed
+        // never runs — a popup over the game then leaves the remote with no way out at all. So
+        // the activity takes the key before the WebView sees it and does its own back pass.
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) handleBack()
+            return true
+        }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun handleBack() {
+        when {
+            errorBox.visibility == View.VISIBLE -> finish()
+            !hudVisible -> closePopupOrHud()
+            else -> finish()
+        }
     }
 
     /** One finger gesture along the WebView: swipe for arrows, tap for OK. */
@@ -449,17 +465,13 @@ class GameActivity : Activity() {
      * which are unreachable when the remote only taps screen-center — and only if nothing closes
      * does it bring up the bar; exactly one more press leaves, anywhere in the UI.
      */
-    override fun onBackPressed() {
-        when {
-            errorBox.visibility == View.VISIBLE -> finish()
-            !hudVisible -> closePopupOrHud()
-            else -> super.onBackPressed()
-        }
-    }
+    override fun onBackPressed() = handleBack()
 
     private fun closePopupOrHud() {
+        android.util.Log.i("ScenixGame", "back->closePopupOrHud hud=$hudVisible stage=$stageUp")
         try {
             web.evaluateJavascript(CLOSE_JS) { r ->
+                android.util.Log.i("ScenixGame", "close verdict r=${r?.take(20)}")
                 if (!isFinishing && r == "\"true\"") android.util.Log.i("ScenixGame", "closepopup clicked")
                 else showHud()
             }
