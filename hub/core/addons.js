@@ -951,6 +951,32 @@ function noteRateLimited(url) {
   if (!was || was <= Date.now()) log('ADDON RATE LIMITED', h, 'refused with 429 - waiting ' + Math.round(calm / 60000) + ' min before asking again');
 }
 
+/*
+ * The sibling rule for hosts that do not answer at all: connection refused, a dead catalog serving
+ * HTML where JSON was promised, a TLS handshake that never completes. Without this, every keypress
+ * re-pays the full fetch timeout for each broken source — measured as most of the play path's wait
+ * when two aggregators in the household list were gone. A host that fails once goes quiet for a
+ * minute (answers already in cache are still served from it); after that one call probes it again.
+ */
+const FAIL_COOLDOWN_MS = Number(process.env.ADDON_FAIL_COOLDOWN_MS || 60 * 1000);
+const failing = new Map(); // host -> until (ms). Set on fetch/parse failure; probed again after.
+function failingHost(url) {
+  let h = '';
+  try { h = new URL(String(url)).host; } catch (e) { return ''; }
+  const until = failing.get(h);
+  if (until == null) return '';
+  if (until <= Date.now()) { failing.delete(h); return ''; }
+  return h;
+}
+function noteFailing(url) {
+  let h = '';
+  try { h = new URL(String(url)).host; } catch (e) { return; }
+  const was = failing.get(h);
+  const calm = was && was > Date.now() ? Math.min(5 * 60 * 1000, (was - Date.now()) + FAIL_COOLDOWN_MS) : FAIL_COOLDOWN_MS;
+  failing.set(h, Date.now() + calm);
+  if (!was || was <= Date.now()) log('ADDON HOST DOWN', h, 'not answering - waiting ' + Math.round(calm / 1000) + 's before asking again');
+}
+
 function getJson(url, {
   wait = false, staleOk = false, timeoutMs = FETCH_TIMEOUT_MS, tag = '', ok404 = false,
   redirectPolicy = DEFAULT_REDIRECT_POLICY, policy: requestedPolicy,
@@ -961,13 +987,16 @@ function getJson(url, {
   if (hit && Date.now() - hit.at < ttlFor(hit.body)) return Promise.resolve(hit.body);
   // Rate-limit by endpoint host, but retain redirect-policy cache partitioning. A reviewed source can
   // therefore never consume a response fetched through the public redirect policy, even while a host
-  // is cooling down after a 429.
-  if (!inflight.has(key) && !rateLimitedHost(url)) {
+  // is cooling down after a 429. A host already in its failure cooldown gets no new fetch either — only
+  // keys with nothing cached fall silent, since cached answers above still age normally.
+  if (!inflight.has(key) && !rateLimitedHost(url) && !(hit == null && failingHost(url))) {
     const p = get(url, timeoutMs, ok404, { redirectPolicy: policy })
       .then((body) => {
         const parsed = JSON.parse(body);
         cache.set(key, { at: Date.now(), body: parsed });
         scheduleCacheSave();
+        let host = ''; try { host = new URL(String(url)).host; } catch (e) {}
+        if (host) failing.delete(host); // the probe answered; the whole host is back
         return parsed;
       })
       .catch((e) => {
@@ -975,7 +1004,7 @@ function getJson(url, {
         // is exactly how one of these hunts went blind, so name the failure by whatever it does carry.
         const msg = e.message || e.code || e.name || String(e);
         if (tag) log('ADDON UPSTREAM FAIL', tag, publicEndpoint(url), msg);
-        if (/HTTP 429/.test(msg)) noteRateLimited(url);
+        if (/HTTP 429/.test(msg)) noteRateLimited(url); else noteFailing(url);
         return hit ? hit.body : null;
       })
       .finally(() => inflight.delete(key));
@@ -1011,25 +1040,65 @@ function loadPersistedCache() {
 }
 loadPersistedCache();
 
+/*
+ * The per-title cache is tens of megabytes by the end of a viewing week. Writing it used to mean one
+ * synchronous JSON.stringify plus writeFileSync a half-second after EVERY new answer — which froze the
+ * event loop for seconds on the household box while that evening's play and home requests were in
+ * flight. The file is a restart convenience, not a live object: answers live in memory, so the disk
+ * copy only has to be durable eventually. It is now written at most once every SAVE_MIN_MS, never
+ * while another write is still running, and in chunks handed back to the event loop between writes,
+ * so a save can never make a request wait on it.
+ */
+const SAVE_MIN_MS = Number(process.env.ADDON_CACHE_SAVE_MIN_MS || 30 * 1000);
 let saveTimer = null;
-function scheduleCacheSave() {  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
+let saveDirty = false;
+let saveRunning = false;
+let lastSavedAt = 0;
+
+function scheduleCacheSave() {
+  saveDirty = true;
+  if (saveTimer) return;
+  const wait = Math.max(500, SAVE_MIN_MS - (Date.now() - lastSavedAt));
+  saveTimer = setTimeout(() => { saveTimer = null; persistCache(); }, wait);
+  if (saveTimer.unref) saveTimer.unref();
+}
+
+function fsWrite(fd, chunk) {
+  return new Promise((resolve, reject) => fs.write(fd, chunk, (e, n) => e ? reject(e) : resolve(n)));
+}
+function yieldLoop() { return new Promise((resolve) => setImmediate(resolve)); }
+
+async function persistCache() {
+  if (saveRunning || !saveDirty) return;
+  saveRunning = true;
+  saveDirty = false;
+  try {
+    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+    const tmp = CACHE_FILE + '.tmp';
+    const fd = await new Promise((resolve, reject) =>
+      fs.open(tmp, 'w', (e, f) => e ? reject(e) : resolve(f)));
     try {
-      const out = {};
+      let buf = '{';
+      let first = true;
       for (const [url, entry] of cache) {
         // Catalog bodies are re-fetched at boot anyway; per-title responses are what make a restart warm.
-        if (/\/(meta|stream|subtitles)\//.test(url)) out[url] = entry;
+        if (!/\/(meta|stream|subtitles)\//.test(url)) continue;
+        buf += (first ? '' : ',') + JSON.stringify(url) + ':' + JSON.stringify(entry);
+        first = false;
+        if (buf.length > 512 * 1024) { await fsWrite(fd, buf); buf = ''; await yieldLoop(); }
       }
-      fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-      const tmp = CACHE_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(out));
-      fs.renameSync(tmp, CACHE_FILE);
-    } catch (e) {
-      // losing the cache write costs a round trip later, nothing else
+      await fsWrite(fd, buf + '}');
+    } finally {
+      await new Promise((resolve) => fs.close(fd, resolve));
     }
-  }, 500);
-  if (saveTimer.unref) saveTimer.unref();
+    fs.renameSync(tmp, CACHE_FILE);
+    lastSavedAt = Date.now();
+  } catch (e) {
+    // losing the cache write costs a round trip later, nothing else
+  } finally {
+    saveRunning = false;
+    if (saveDirty) scheduleCacheSave();
+  }
 }
 
 /**

@@ -676,21 +676,55 @@ const itemCache = new Map();
   }
 })();
 
+// Same rule as the add-on cache: this file is a restart convenience, not a live object, and a
+// synchronously stringified write after every row froze the event loop mid-request. At most one save
+// per ITEM_SAVE_MIN_MS, never while another is in flight, and skipped entirely when nothing changed.
+const ITEM_SAVE_MIN_MS = Number(process.env.SCENIX_ITEM_SAVE_MIN_MS || 30 * 1000);
 let itemCacheSave = null;
+let itemSaveDirty = false;
+let itemSaveRunning = false;
+let itemLastSavedAt = 0;
 function scheduleItemCacheSave() {
-  if (itemCacheSave) clearTimeout(itemCacheSave);
-  itemCacheSave = setTimeout(() => {
-    itemCacheSave = null;
-    try {
-      fs.mkdirSync(path.dirname(ITEM_CACHE_FILE), { recursive: true });
-      const out = {};
-      for (const [id, it] of itemCache) out[id] = it;
-      const tmp = ITEM_CACHE_FILE + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(out));
-      fs.renameSync(tmp, ITEM_CACHE_FILE);
-    } catch (e) { /* a tile that fails to persist cold-reopens once; the row will remember it again */ }
-  }, 800);
+  itemSaveDirty = true;
+  if (itemCacheSave) return;
+  const wait = Math.max(500, ITEM_SAVE_MIN_MS - (Date.now() - itemLastSavedAt));
+  itemCacheSave = setTimeout(() => { itemCacheSave = null; persistItemCache(); }, wait);
   if (itemCacheSave.unref) itemCacheSave.unref();
+}
+
+async function fsWriteChunk(fd, chunk) {
+  await new Promise((resolve, reject) => fs.write(fd, chunk, (e) => e ? reject(e) : resolve()));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function persistItemCache() {
+  if (itemSaveRunning || !itemSaveDirty) return;
+  itemSaveRunning = true;
+  itemSaveDirty = false;
+  try {
+    fs.mkdirSync(path.dirname(ITEM_CACHE_FILE), { recursive: true });
+    const tmp = ITEM_CACHE_FILE + '.tmp';
+    const fd = await new Promise((resolve, reject) =>
+      fs.open(tmp, 'w', (e, f) => e ? reject(e) : resolve(f)));
+    try {
+      let buf = '{';
+      let first = true;
+      for (const [id, it] of itemCache) {
+        buf += (first ? '' : ',') + JSON.stringify(id) + ':' + JSON.stringify(it);
+        first = false;
+        if (buf.length > 256 * 1024) { await fsWriteChunk(fd, buf); buf = ''; }
+      }
+      await fsWriteChunk(fd, buf + '}');
+    } finally {
+      await new Promise((resolve) => fs.close(fd, resolve));
+    }
+    fs.renameSync(tmp, ITEM_CACHE_FILE);
+    itemLastSavedAt = Date.now();
+  } catch (e) { /* a tile that fails to persist cold-reopens once; the row will remember it again */ }
+  finally {
+    itemSaveRunning = false;
+    if (itemSaveDirty) scheduleItemCacheSave();
+  }
 }
 
 function rememberItems(items) {
@@ -1348,6 +1382,7 @@ function readBody(req) {
 
 let healthCache = null;
 let healthCacheAt = 0;
+let healthInflight = null; // the single build in flight, shared by concurrent /healthz callers
 
 async function healthBody() {
   if (healthCache && Date.now() - healthCacheAt < HEALTH_CACHE_MS) return healthCache;
@@ -5031,7 +5066,11 @@ async function handle(req, res) {
 
     // ---- health ----
     if (path === '/healthz') {
-      return send(res, 200, await healthBody());
+      // The body is memoised for HEALTH_CACHE_MS, but two pollers landing inside the same gap used to
+      // each build a fresh one — every row through the pipeline, twice, while the TV waited. One
+      // in-flight build serves them all.
+      if (!healthInflight) healthInflight = healthBody().finally(() => { healthInflight = null; });
+      return send(res, 200, await healthInflight);
     }
 
     // ---- legacy addon-compat (byte-compatible with the predecessor addon) ----
