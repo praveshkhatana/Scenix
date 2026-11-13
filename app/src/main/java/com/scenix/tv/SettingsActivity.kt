@@ -111,6 +111,15 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
     private var remoteQrHost: FrameLayout? = null
     private var remotePairing: PhoneRemote.Pairing? = null
 
+    // ---- categories ----------------------------------------------------------------------------
+    // The same horizontal stop grammar as Home's section pills: pick a category, its panel replaces
+    // the one above. The household PIN gate travels with every guarded panel, so unlocking once
+    // unlocks them for the whole visit exactly as the single long page did.
+    private val categoryLabels = listOf("General", "Household", "Sources", "Network", "Advanced")
+    private var category = 0
+    private lateinit var categoryStrip: LinearLayout
+    private var categoryStops: List<TextView> = emptyList()
+
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -130,6 +139,21 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         }
         val bar = topBar()
         page.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, app.theme.px(96f)))
+        // Console grammar: Settings opens on the same horizontal section strip Home paints, and each
+        // stop swaps the panel below it. One long scroll of everything was the shape the household
+        // never finished reading; this is the shape they already know from the home screen.
+        categoryStrip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        page.addView(categoryStrip, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            leftMargin = app.theme.gutter
+            topMargin = app.theme.px(4f)
+            bottomMargin = app.theme.px(6f)
+        })
         // The settings column and the phone rail are siblings. The rail never scrolls away, so the
         // QR is already on screen when Settings opens, and the remote can still walk the whole
         // column with UP/DOWN without ever being asked to find the pairing card.
@@ -161,6 +185,7 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         page.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        buildCategoryStrip()
         Motion.enter(app.theme, root)
         load()
     }
@@ -333,8 +358,14 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         controlsByKey.clear()
         val p = prefs ?: return
 
-        paintSafeGroups(p)
-        paintGuardedGroups()
+        refreshCategoryStrip()
+        when (category) {
+            0 -> paintSafeGroups(p)
+            1 -> paintHouseholdGroup()
+            2 -> paintSourcesGroup()
+            3 -> guarded { paintNetworkRows() }
+            else -> guarded { paintAdvancedRows() }
+        }
 
         val target = controlsByKey[keepKey] ?: firstRow
         rows.post {
@@ -461,14 +492,20 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
      * sources, network and advanced controls are not hidden by a visual trick — they do not exist in
      * the view tree until [isSourcesUnlocked] is true.
      */
-    private fun paintGuardedGroups() {
-        addGroup("Household & sources")
+    /**
+     * The guarded panels: one row until the household PIN (or the act of creating one) opens them.
+     * The sources, home, network and advanced controls are not hidden by a visual trick — they do not
+     * exist in the view tree until [isSourcesUnlocked] is true. Unlocking once holds for every guarded
+     * panel across the whole visit, so splitting the old single page into categories changed nothing
+     * about who may change what.
+     */
+    private fun guarded(build: () -> Unit): Boolean {
         if (!isTrustedAdult()) {
             addAvailabilityNotice(
                 "Adult profile required",
                 "Switch to an adult profile to manage household settings.",
             )
-            return
+            return false
         }
         if (!householdSettingsReady || householdRefreshPending) {
             addAvailabilityNotice(
@@ -478,7 +515,7 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
             addRow("Refresh household access", "Try again", "Get a current Hub snapshot", chevron = true) {
                 load()
             }
-            return
+            return false
         }
         if (!isSourcesUnlocked()) {
             val pinSet = lockInfo?.optBoolean("pinSet") == true
@@ -487,25 +524,77 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
             addRow(
                 "Open household settings",
                 if (needsSetup) "Set a PIN" else "PIN protected",
-                "Sources, network and advanced controls",
+                "Sources, home shelves, network and advanced controls",
                 chevron = true,
             ) { requireSources { paint() } }
             addAvailabilityNotice(
                 "One PIN for the household",
-                if (needsSetup) "Create a PIN here; it guards this shelf from now on."
-                else "Enter the household PIN to reveal sources, network and advanced controls.",
+                if (needsSetup) "Create a PIN here; it guards these panels from now on."
+                else "Enter the household PIN to reveal sources, home shelves, network and advanced controls.",
             )
-            return
+            return false
         }
+        build()
+        return true
+    }
 
-        addSourcesRows()
-        paintHomeLibraryRows()
-        paintNetworkRows()
-        paintAdvancedRows()
-        addAvailabilityNotice(
-            "Unlocked for this visit",
-            "The guarded shelf locks again when Settings closes.",
-        )
+    /** The horizontal category strip — built once, recoloured on every switch. */
+    private fun buildCategoryStrip() {
+        val stops = ArrayList<TextView>(categoryLabels.size)
+        for ((index, label) in categoryLabels.withIndex()) {
+            val stop = Views.text(
+                app, "li", 19f, app.theme.ink2, label,
+                bold = true, gravity = Gravity.CENTER, maxLines = 1,
+            ).apply {
+                isFocusable = true
+                isClickable = true
+                setPadding(app.theme.px(22f), app.theme.px(13f), app.theme.px(22f), app.theme.px(13f))
+                setOnClickListener {
+                    if (category == index) return@setOnClickListener
+                    // A tab switch is a new panel: it opens at its top, not at the old scroll place.
+                    category = index
+                    deferredFocusKey = null
+                    deferredScrollY = 0
+                    paint()
+                    firstRow?.post { firstRow?.requestFocus() }
+                }
+                Focus.attach(this, this, app, app.theme.px(10f), scale = false, elevate = false)
+            }
+            stops += stop
+            categoryStrip.addView(
+                stop,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { rightMargin = app.theme.px(10f) },
+            )
+        }
+        categoryStops = stops
+        refreshCategoryStrip()
+    }
+
+    private fun refreshCategoryStrip() {
+        for ((index, stop) in categoryStops.withIndex()) {
+            val active = index == category
+            stop.background = Views.rounded(
+                if (active) app.theme.brand else app.theme.surface2, app.theme.px(10f),
+            )
+            stop.setTextColor(if (active) app.theme.bg else app.theme.ink2)
+        }
+    }
+
+    /** What the house shows: shelves, categories, playlists, the library's name. */
+    private fun paintHouseholdGroup() {
+        if (guarded { paintHomeLibraryRows() }) {
+            addAvailabilityNotice(
+                "Unlocked for this visit",
+                "The guarded panels lock again when Settings closes.",
+            )
+        }
+    }
+
+    /** The add-ons this hub reads — the same panel the owner used to reach at the bottom of the page. */
+    private fun paintSourcesGroup() {
+        guarded { addSourcesRows() }
     }
 
     /** What the house shows: shelves, categories, the shared playlist, the library's name. */
