@@ -2003,9 +2003,6 @@ class SettingsActivity : Activity(), PhoneRemote.TextTarget {
         remoteStatusView?.text = pairing.status
     }
 
-    private fun remoteUrl(origin: String): String =
-        origin.trimEnd('/') + "/remote?t=" + remoteToken + "&c=" + remoteCode
-
     /**
      * The phone's typed text feeds the PIN pad while it is open; otherwise the remote's default
      * applies (an on-screen field, or Search), which is what a viewer holding the phone means.

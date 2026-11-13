@@ -84,6 +84,7 @@ class PhoneRemote(context: Context, private val app: AppContext) {
     fun noteForeground(inFront: Boolean) {
         foreground += if (inFront) 1 else -1
         if (foreground < 0) foreground = 0
+        android.util.Log.d("ScenixRemote", "foreground=$foreground inFront=$inFront")
         if (foreground == 0) {
             // Nobody is watching this TV: end the session honestly so an abandoned phone page says
             // "the TV closed this remote" rather than pretending to still be driven.
@@ -117,6 +118,7 @@ class PhoneRemote(context: Context, private val app: AppContext) {
                 code = root.optString("code", code).uppercase()
                 open = true
                 last = 0
+                android.util.Log.i("ScenixRemote", "phone remote open: ${pairingUrl()}")
             } else {
                 // An older compatible Hub has no remote route. The QR still has a job: it opens the
                 // web Settings page, so pairing is never a dead end on an older home.
