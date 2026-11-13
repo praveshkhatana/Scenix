@@ -5851,11 +5851,12 @@ class PlayerActivity : Activity() {
         private const val GLYPH_EXPAND = 11
         /**
          * How many times a warming answer is asked again. A cold torrent's file list comes from the
-         * swarm and a hub that is already streaming may take half a minute to produce it; ten asks,
-         * each up to ~6 s at the hub plus the hint's wait, covers that without becoming a spinner
-         * nobody can tell apart from a hang. A copy the hub has judged dead is not retried at all.
+         * swarm and a hub that is already streaming may take half a minute to produce it; measured on
+         * the household box, copies still reading their metadata at the tenth ask often started at the
+         * twelfth or thirteenth - giving up earlier traded a patient spinner for a failover onto an
+         * even colder copy that pays the whole walk again. A dead copy is not retried at all.
          */
-        private const val WARM_TRIES = 10
+        private const val WARM_TRIES = 14
         private const val MAX_FAILOVERS = 3
         /** How many times the live wall is asked for after it answers empty. */
         private const val LIVE_RING_TRIES = 3

@@ -381,6 +381,9 @@ function withinTimeout(promise, timeoutMs, message) {
   });
 }
 
+const DNS_CACHE_MS = Number(process.env.ADDON_DNS_CACHE_MS || 60 * 1000);
+const dnsAnswers = new Map(); // host -> { at, answers } - IPv4-first, briefly trusted.
+
 async function resolvePublicAddresses(value, timeoutMs = FETCH_TIMEOUT_MS) {
   const parsed = httpUrlFor(value);
   const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
@@ -391,6 +394,12 @@ async function resolvePublicAddresses(value, timeoutMs = FETCH_TIMEOUT_MS) {
     if (!isPublicAddress(host)) throw blockedAddonUrl('addon host is not public');
     return [{ address: host, family: net.isIP(host) }];
   }
+  // DNS results are cached briefly and served IPv4-first. Cloudflare-fronted add-on hosts rotate
+  // their A/AAAA sets, and a home box whose IPv6 route is dead pays a full connect failure - or a
+  // whole fetch timeout when the pinned lookup takes the AAAA that came back first. The getaddrinfo
+  // round trip is also thread-pool work every add-on call was paying during heavy proxy streaming.
+  const cached = dnsAnswers.get(host);
+  if (cached && Date.now() - cached.at < DNS_CACHE_MS) return cached.answers;
   let answers;
   try {
     answers = await withinTimeout(dns.promises.lookup(host, { all: true, verbatim: true }),
@@ -401,7 +410,11 @@ async function resolvePublicAddresses(value, timeoutMs = FETCH_TIMEOUT_MS) {
   if (!Array.isArray(answers) || !answers.length || answers.some((answer) => !isPublicAddress(answer.address))) {
     throw blockedAddonUrl('addon host did not resolve to a public address');
   }
-  return answers.map((answer) => ({ address: answer.address, family: answer.family }));
+  const ordered = answers
+    .map((answer) => ({ address: answer.address, family: answer.family }))
+    .sort((a, b) => (a.family === b.family ? 0 : a.family === 4 ? -1 : 1));
+  dnsAnswers.set(host, { at: Date.now(), answers: ordered });
+  return ordered;
 }
 
 function pinnedLookup(addresses) {
@@ -987,9 +1000,12 @@ function getJson(url, {
   if (hit && Date.now() - hit.at < ttlFor(hit.body)) return Promise.resolve(hit.body);
   // Rate-limit by endpoint host, but retain redirect-policy cache partitioning. A reviewed source can
   // therefore never consume a response fetched through the public redirect policy, even while a host
-  // is cooling down after a 429. A host already in its failure cooldown gets no new fetch either — only
-  // keys with nothing cached fall silent, since cached answers above still age normally.
-  if (!inflight.has(key) && !rateLimitedHost(url) && !(hit == null && failingHost(url))) {
+  // is cooling down after a 429. A host already in its failure cooldown gets no new fetch either -
+  // not even for keys whose cached answer has gone stale. Measured on the household box during a
+  // cold copy's peer-warming: the saturated line made strem.io time out again at every probe, and
+  // the earlier "only keys with nothing cached fall silent" reading re-probed it on every request
+  // that carried stale data - each probe paying another full timeout while viewers watched a spinner.
+  if (!inflight.has(key) && !rateLimitedHost(url) && !failingHost(url)) {
     const p = get(url, timeoutMs, ok404, { redirectPolicy: policy })
       .then((body) => {
         const parsed = JSON.parse(body);
