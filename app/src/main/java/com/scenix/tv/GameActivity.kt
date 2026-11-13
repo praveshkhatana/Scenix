@@ -437,7 +437,7 @@ class GameActivity : Activity() {
                     // driving, a centre tap whenever nothing is focused to click.
                     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                         web.evaluateJavascript(OK_CONTROL_JS) { r ->
-                            if (!isFinishing && r != "\"clicked\"") finger(k)
+                            if (!isFinishing && r == "\"plain\"") finger(k)
                         }
                     }
                     return true
