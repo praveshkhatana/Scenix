@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -59,6 +60,11 @@ class DetailActivity : Activity() {
     private lateinit var scroll: ScrollView
     private val api by lazy { BrowseApi(applicationContext, (application as ScenixApp).prefs) }
     private var item: JSONObject? = null
+
+    // The console title page keeps a live clock in its status strip, exactly as the game hub does.
+    private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+    private val clockFormat = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    private var clockTick: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -216,6 +222,15 @@ class DetailActivity : Activity() {
         val match = record.optInt("match", 0)
         val isNew = record.optBoolean("isNew", false)
         val logoUrl = s(record, "logo", "").takeIf { it.isNotBlank() }
+
+        // A console pack does not get its hero page restyled — it gets the game page itself:
+        // art pushed to the right behind a left-to-right wash, an eyebrow and a giant title on
+        // calm surface, fact columns beneath, and the PLAY STATUS plate anchored bottom-right.
+        if (theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.FOCUSED_HUB &&
+            app.theme.homeLayout.family != com.scenix.tv.core.HomeLayoutSpec.Family.KIDS) {
+            paintConsole(record)
+            return
+        }
 
         // The Kids stage is a wall page, not a dark cinema sheet. Its reference detail puts the
         // words on the yellow wall at the left and the art as a tall panel at the right — the
@@ -463,42 +478,9 @@ class DetailActivity : Activity() {
         actions.addView(listBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = theme.px(16f)
         })
-        val ps5Hero = theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.FOCUSED_HUB
-        if (ps5Hero) {
-            // The console's own detail grammar: the actions are not floating pills but a plate —
-            // a PLAY STATUS caption line and white-framed boxes, the START-the-game pattern,
-            // stacked in reading order so OK always means "act on this row".
-            val plate = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            val capRow = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            }
-            val capL = Views.text(app, "meta", 13f, com.scenix.tv.core.Console.ink2, "PLAY STATUS", bold = true)
-            capL.letterSpacing = 0.10f
-            val capR = Views.text(app, "meta", 13f, com.scenix.tv.core.Console.ink,
-                if (posMs > 0L) runtime(posMs) else "READY", bold = true)
-            capR.letterSpacing = 0.10f
-            capRow.addView(capL, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            capRow.addView(capR)
-            plate.addView(capRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            while (actions.childCount > 0) {
-                val box = actions.getChildAt(0) as TextView
-                actions.removeView(box)
-                box.setTextColor(com.scenix.tv.core.Console.ink)
-                box.gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                box.setPadding(theme.px(26f), theme.px(18f), theme.px(22f), theme.px(18f))
-                box.background = Views.rounded(Color.TRANSPARENT, theme.px(8f), theme.px(2f), com.scenix.tv.core.Console.lineStrong)
-                plate.addView(box, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = theme.px(12f)
-                })
-            }
-            words.addView(plate, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = theme.px(24f)
-            })
-        } else {
-            words.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = theme.px(24f)
-            })
-        }
+        words.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = theme.px(24f)
+        })
 
         // The second band is the title's opinion of itself: trailer, seen, like, love, dislike,
         // share. Reactions live on the hub beside progress and My List (see hub/core/taste.js), so
@@ -647,6 +629,349 @@ class DetailActivity : Activity() {
         }
         relatedRow(record, theme)
         scroll.postDelayed({ play.requestFocus() }, 150L)
+    }
+
+    // ---- the console title page ---------------------------------------------------------------
+    // The game hub IS this pack's detail screen; a film gets the same stage, the same wash, the
+    // same hairline, the same fact columns and the same bottom-right plate — only the facts and
+    // the action words change.
+
+    private fun paintConsole(record: JSONObject) {
+        val theme = app.theme
+        val c = com.scenix.tv.core.Console
+        val title = s(record, "title", "")
+        val backdrop = s(record, "backdrop", "").ifBlank { s(record, "poster", "") }
+        val poster = s(record, "poster", "")
+        val type = s(record, "type", "movie")
+        val series = type == "series"
+        val year = record.optInt("year", 0)
+        val maturity = s(record, "maturity", "")
+        val duration = record.optLong("durationMs", 0L)
+        val match = record.optInt("match", 0)
+        val overview = s(record, "overview", "")
+        val episodes = record.optJSONArray("episodes")
+        val progress = record.optJSONObject("progress")
+        val posMs = progress?.optLong("positionMs", 0L) ?: 0L
+        val progressEpisode = progress?.optJSONObject("episode")
+        val resumeSeason = progressEpisode?.optInt("season", 0) ?: 0
+        val resumeEpisode = progressEpisode?.optInt("episode", 0) ?: 0
+        val first = if (episodes != null && episodes.length() > 0) episodes.optJSONObject(0) else null
+        val playSeason = if (resumeSeason > 0) resumeSeason else first?.optInt("season", 0) ?: 0
+        val playEpisode = if (resumeEpisode > 0) resumeEpisode else first?.optInt("episode", 0) ?: 0
+
+        fun full() = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        val root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#0B0D11")) }
+        val stage = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setBackgroundColor(c.surface)
+        }
+        root.addView(stage, full())
+        BrowseImages.load(stage, backdrop.ifBlank { poster }, theme.px(1600f))
+        // The exact four-stop wash of the game page: dense through the reading column, almost
+        // clear by the right edge where the key art stays alive.
+        root.addView(View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(
+                    Color.argb(236, 6, 8, 12), Color.argb(210, 6, 8, 12),
+                    Color.argb(120, 6, 8, 12), Color.argb(10, 6, 8, 12),
+                ),
+            )
+        }, full())
+        root.addView(View(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(Color.argb(200, 4, 6, 10), Color.TRANSPARENT),
+            )
+        }, full())
+        // The console splits the screen at the hairline. At the TV's 1.5 zoom the raw console
+        // metrics run past that split (the plate ate the fourth fact column and the overview),
+        // so both sides are capped to their own half first: facts stop before the divider, the
+        // plate lives to the right of it.
+        val screenW = resources.displayMetrics.widthPixels
+        val dividerX = (screenW * 0.58f).toInt()
+        val colW = dividerX - theme.gutter - theme.px(36f)
+        val railW = minOf(theme.px(560f), screenW - dividerX - theme.gutter)
+        val edge = View(this).apply { setBackgroundColor(Color.argb(46, 255, 255, 255)) }
+        root.addView(edge, FrameLayout.LayoutParams(theme.px(1f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = dividerX
+        })
+
+        // Status strip: clock, connection, and the zone this title belongs to.
+        val strip = FrameLayout(this)
+        val stripLeft = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val clock = Views.text(app, "meta", 18f, c.ink, clockFormat.format(java.util.Date()), bold = true)
+        stripLeft.addView(clock)
+        clockTick = object : Runnable {
+            override fun run() {
+                clock.text = clockFormat.format(java.util.Date())
+                ticker.postDelayed(this, 30_000L)
+            }
+        }
+        ticker.postDelayed(clockTick!!, 30_000L)
+        stripLeft.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_wifi)
+            setColorFilter(c.ink, android.graphics.PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "Connected"
+        }, LinearLayout.LayoutParams(theme.px(28f), theme.px(28f)).apply { marginStart = theme.px(12f) })
+        stripLeft.addView(Views.text(app, "meta", 13f, c.ink3, if (series) "SERIES" else "MOVIE", bold = true).apply {
+            letterSpacing = 0.22f
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { marginStart = theme.px(16f) })
+        strip.addView(stripLeft, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
+        ).apply { gravity = Gravity.START or Gravity.CENTER_VERTICAL })
+        root.addView(strip, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(72f),
+        ).apply {
+            gravity = Gravity.TOP
+            leftMargin = theme.gutter
+            rightMargin = theme.gutter
+            topMargin = theme.px(20f)
+        })
+
+        root.addView(Views.text(app, "meta", 12f, c.ink3, if (series) "SCENIX SERIES" else "SCENIX MOVIE", bold = true).apply {
+            letterSpacing = 0.30f
+        }, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = theme.gutter
+            topMargin = theme.px(212f)
+        })
+
+        val headline = Views.text(app, "display", 62f, c.ink, title, bold = true, maxLines = 2)
+        root.addView(headline, FrameLayout.LayoutParams(
+            minOf(theme.px(1040f), colW), ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = theme.gutter
+            topMargin = theme.px(240f)
+        })
+
+        // Facts where the game page prints PLAYED FOR / SESSIONS / CONTROLLER / ENGINE: the same
+        // capped labels and big values, filled with what a title actually offers a viewer.
+        fun consoleStat(label: String, value: String): View {
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(Views.text(app, "meta", 11f, c.ink3, label, bold = true).apply {
+                letterSpacing = 0.12f
+            })
+            col.addView(Views.text(app, "li", 30f, c.ink, value, bold = true).apply {
+                setPadding(0, theme.px(6f), 0, 0)
+            })
+            col.layoutParams = LinearLayout.LayoutParams(minOf(theme.px(236f), colW / 4), ViewGroup.LayoutParams.WRAP_CONTENT)
+            return col
+        }
+        var seasonCount = 0
+        var episodeCount = 0
+        if (episodes != null) {
+            episodeCount = episodes.length()
+            val seenSeasons = HashSet<Int>()
+            for (i in 0 until episodes.length()) {
+                val n = episodes.optJSONObject(i)?.optInt("season", 0) ?: 0
+                if (n > 0) seenSeasons.add(n)
+            }
+            seasonCount = seenSeasons.size
+        }
+        val factsBlock = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val facts = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+        }
+        facts.addView(consoleStat("MATCH", if (match > 0) "$match%" else "—"))
+        if (series) {
+            facts.addView(consoleStat("SEASONS", if (seasonCount > 0) seasonCount.toString() else "—"))
+            facts.addView(consoleStat("EPISODES", if (episodeCount > 0) episodeCount.toString() else "—"))
+            facts.addView(consoleStat("RATED", maturity.ifBlank { "—" }))
+        } else {
+            facts.addView(consoleStat("RELEASED", if (year > 0) year.toString() else "—"))
+            facts.addView(consoleStat("RATED", maturity.ifBlank { "—" }))
+            facts.addView(consoleStat("LENGTH", if (duration > 0) runtime(duration) else "—"))
+        }
+        factsBlock.addView(facts, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        val advisories = record.optJSONArray("advisories")
+        val adviceText = if (advisories != null && advisories.length() > 0)
+            (0 until advisories.length()).map { sa(advisories, it, "") }
+                .filter { it.isNotBlank() && !it.equals("null", true) }
+                .joinToString(" · ") else ""
+        if (adviceText.isNotBlank()) {
+            factsBlock.addView(Views.text(app, "meta", 12f, c.ink3, adviceText.uppercase(), bold = true).apply {
+                letterSpacing = 0.14f
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = theme.px(40f) })
+        }
+        if (overview.isNotBlank() && !overview.equals("null", true)) {
+            factsBlock.addView(Views.text(app, "sub", 19f, c.ink2, overview, maxLines = 4),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = theme.px(if (adviceText.isNotBlank()) 24f else 40f)
+                })
+        }
+        root.addView(factsBlock, FrameLayout.LayoutParams(
+            colW, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = theme.gutter
+            topMargin = theme.px(360f)
+        })
+
+        // The plate: same bottom-right anchor, caption rule and outlined boxes as START THE GAME.
+        fun consolePlate(focused: Boolean) = Views.rounded(
+            if (focused) Color.argb(28, 255, 255, 255) else Color.TRANSPARENT,
+            theme.px(2f),
+            theme.px(2f),
+            if (focused) Color.WHITE else c.lineStrong,
+        )
+        fun actionBox(label: String, click: () -> Unit): TextView {
+            val box = Views.text(app, "li", 19f, c.ink, label, bold = true, gravity = Gravity.CENTER_VERTICAL).apply {
+                letterSpacing = 0.06f
+                isFocusable = true
+                isClickable = true
+                contentDescription = label
+                setPadding(theme.px(28f), 0, theme.px(24f), 0)
+                background = consolePlate(false)
+                setOnClickListener { click() }
+                setOnFocusChangeListener { v, focused -> v.background = consolePlate(focused) }
+            }
+            return box
+        }
+        val rail = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+        }
+        val progressHead = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        progressHead.addView(Views.text(app, "meta", 11f, c.ink2, "PLAY STATUS", bold = true).apply {
+            letterSpacing = 0.16f
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        progressHead.addView(Views.text(app, "meta", 12f, c.ink, if (posMs > 0L) runtime(posMs) else "READY", bold = true).apply {
+            letterSpacing = 0.12f
+        })
+        rail.addView(progressHead, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
+        rail.addView(View(this).apply {
+            background = Views.rounded(c.ink, theme.px(2f))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(5f),
+        ).apply { topMargin = theme.px(9f) })
+
+        val playBox = actionBox(if (posMs > 0L) "RESUME" else "PLAY") {
+            startPlay(playSeason, playEpisode)
+        }
+        rail.addView(playBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(86f),
+        ).apply { topMargin = theme.px(24f) })
+        // The play glyph in the box's right shoulder, drawn as its own disc — the hub's exact move.
+        val glyph = Views.text(app, "meta", 13f, c.ink, "▶", bold = true, gravity = Gravity.CENTER).apply {
+            background = Views.rounded(Color.TRANSPARENT, theme.px(999f), theme.px(2f), c.ink)
+        }
+        rail.addView(glyph, LinearLayout.LayoutParams(theme.px(36f), theme.px(36f)).apply {
+            gravity = Gravity.END
+            topMargin = -theme.px(61f)
+            rightMargin = theme.px(24f)
+        })
+
+        if (posMs > 0L) {
+            rail.addView(actionBox("START OVER") {
+                api.resetProgress(profileId, identity) { }
+                progress?.put("positionMs", 0L)
+                progress?.put("watchedMs", 0L)
+                startPlay(playSeason, playEpisode, fromStart = true)
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, theme.px(72f),
+            ).apply { topMargin = theme.px(14f) })
+        }
+        var onList = if (record.has("inList")) record.optBoolean("inList")
+        else app.prefs.myList(profileId).contains(identity)
+        val listBox = actionBox(if (onList) "✓ IN MY LIST" else "+ MY LIST") {}
+        listBox.setOnClickListener {
+            // Optimistic flip, hub confirms, a refusal flips back — the same contract as the pills.
+            onList = !onList
+            listBox.text = if (onList) "✓ IN MY LIST" else "+ MY LIST"
+            val ids = app.prefs.myList(profileId)
+            if (onList) { if (!ids.contains(identity)) ids.add(identity) } else ids.remove(identity)
+            app.prefs.setMyList(profileId, ids)
+            api.setMyList(profileId, identity, onList) { confirmed ->
+                if (confirmed != onList) {
+                    onList = confirmed
+                    runOnUiThread { listBox.text = if (onList) "✓ IN MY LIST" else "+ MY LIST" }
+                    val back = app.prefs.myList(profileId)
+                    if (onList) { if (!back.contains(identity)) back.add(identity) } else back.remove(identity)
+                    app.prefs.setMyList(profileId, back)
+                }
+            }
+        }
+        rail.addView(listBox, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, theme.px(72f),
+        ).apply { topMargin = theme.px(14f) })
+
+        root.addView(rail, FrameLayout.LayoutParams(
+            railW, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = theme.gutter
+            bottomMargin = theme.px(112f)
+        })
+
+        // The console's key legend.
+        val legend = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        for ((glyphText, label) in listOf("≡" to "OPTIONS", "⏎" to "SELECT", "←" to "BACK")) {
+            val group = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(theme.px(12f), 0, 0, 0)
+            }
+            group.addView(Views.text(app, "badge", 12f, c.ink2, glyphText, bold = true,
+                gravity = Gravity.CENTER).apply {
+                background = Views.rounded(Color.TRANSPARENT, theme.px(999f), theme.px(1f), c.line)
+            }, LinearLayout.LayoutParams(theme.px(28f), theme.px(28f)))
+            group.addView(Views.text(app, "meta", 12f, c.ink3, label, bold = true).apply {
+                letterSpacing = 0.14f
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = theme.px(8f) })
+            legend.addView(group)
+        }
+        root.addView(legend, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = theme.gutter
+            bottomMargin = theme.px(34f)
+        })
+
+        setContentView(root)
+        Motion.enter(theme, root)
+        playBox.post { playBox.requestFocus() }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_MENU &&
+            app.theme.homeLayout.hero == com.scenix.tv.core.HomeLayoutSpec.Hero.FOCUSED_HUB) {
+            startActivity(Intent(this, SettingsActivity::class.java)
+                .putExtra(SettingsActivity.EXTRA_PROFILE, profileId))
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onDestroy() {
+        clockTick?.let { ticker.removeCallbacks(it) }
+        super.onDestroy()
     }
 
     /**

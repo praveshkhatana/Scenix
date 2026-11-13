@@ -64,6 +64,10 @@ class GameHubActivity : Activity() {
 
     private val ticker = Handler(Looper.getMainLooper())
     private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    // Assigned in onCreate once the window has a width; an Activity has no Resources in its
+    // constructor, so these must not initialize off displayMetrics.
+    private var consoleColW = 0
+    private var consoleRailW = 0
     private var clockTick: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -117,11 +121,16 @@ class GameHubActivity : Activity() {
         }, match())
 
         // The reference divides the reading column from the art with a hairline; it is placed at
-        // the same proportion after the window has a width.
+        // the same proportion after the window has a width. At the TV's 1.5 zoom the raw console
+        // metrics run past that split, so facts and plate are capped to their own side first.
+        val screenW = resources.displayMetrics.widthPixels
+        val dividerX = (screenW * 0.58f).toInt()
+        consoleColW = dividerX - theme.gutter - theme.px(36f)
+        consoleRailW = minOf(theme.px(560f), screenW - dividerX - theme.gutter)
         val edge = View(this).apply { setBackgroundColor(Color.argb(46, 255, 255, 255)) }
         root.addView(edge, FrameLayout.LayoutParams(theme.px(1f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
             gravity = Gravity.TOP or Gravity.START
-            leftMargin = (resources.displayMetrics.widthPixels * 0.58f).toInt()
+            leftMargin = dividerX
         })
 
         root.addView(makeStatusStrip(), FrameLayout.LayoutParams(
@@ -164,7 +173,7 @@ class GameHubActivity : Activity() {
 
         val headline = Views.text(app, "display", 62f, Console.ink, title, bold = true, maxLines = 2)
         root.addView(headline, FrameLayout.LayoutParams(
-            theme.px(1040f), ViewGroup.LayoutParams.WRAP_CONTENT,
+            minOf(theme.px(1040f), consoleColW), ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             leftMargin = theme.gutter
@@ -199,13 +208,10 @@ class GameHubActivity : Activity() {
     )
 
     private fun contentParams() = FrameLayout.LayoutParams(
-        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        consoleColW, ViewGroup.LayoutParams.WRAP_CONTENT,
     ).apply {
         gravity = Gravity.TOP or Gravity.START
         leftMargin = app.theme.gutter
-        // The console's left gutter is mirrored on the right: a MATCH_PARENT block that stopped at
-        // the screen edge made every row bleed on one side only.
-        rightMargin = app.theme.gutter
         topMargin = app.theme.px(360f)
     }
 
@@ -342,7 +348,7 @@ class GameHubActivity : Activity() {
         col.addView(Views.text(app, "li", 30f, Console.ink, value, bold = true).apply {
             setPadding(0, theme.px(6f), 0, 0)
         })
-        col.layoutParams = LinearLayout.LayoutParams(theme.px(236f), ViewGroup.LayoutParams.WRAP_CONTENT)
+        col.layoutParams = LinearLayout.LayoutParams(minOf(theme.px(236f), consoleColW / 4), ViewGroup.LayoutParams.WRAP_CONTENT)
         return col
     }
 
@@ -514,7 +520,7 @@ class GameHubActivity : Activity() {
         })
 
         root.addView(rail, FrameLayout.LayoutParams(
-            theme.px(560f), ViewGroup.LayoutParams.WRAP_CONTENT,
+            consoleRailW, ViewGroup.LayoutParams.WRAP_CONTENT,
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.END
             rightMargin = theme.gutter
