@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b0c0f">
 <title>Scenix Remote</title>
 <style>
@@ -21,7 +21,7 @@
     --radius: 18px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; margin: 0; }
+  html { height: auto; }
   body {
     background:
       radial-gradient(120% 60% at 50% 0%, #20242e 0%, transparent 62%),
@@ -35,8 +35,13 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    /* The page is at least a screen tall but never locked to one: when the on-screen keyboard
+       shrinks the viewport, a 100%-high body squeezed its children until the D-pad overflowed
+       upward and painted over the typing row. Let the page scroll instead. */
+    min-height: 100vh;
+    min-height: 100dvh;
   }
-  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0; }
   .eyebrow {
     font-size: 11px; letter-spacing: .17em; font-weight: 800; color: var(--accent);
     text-transform: uppercase;
@@ -56,7 +61,7 @@
   .typebar {
     display: grid; grid-template-columns: 1fr auto auto; gap: 9px; align-items: stretch;
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 9px;
+    padding: 9px; flex-shrink: 0;
   }
   .mic {
     width: 46px; border: 1px solid var(--line); border-radius: 13px;
@@ -82,7 +87,10 @@
   }
   .send:active { transform: scale(.97); }
 
-  .padwrap { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; min-height: 0; }
+  /* Auto margins centre the pad block when a tall screen leaves slack, but unlike the old
+     stretched-and-centred wrapper they collapse to nothing when space is tight — the controls
+     then simply extend the page downward for scrolling, never upward over the typing row. */
+  .padwrap { display: flex; flex-direction: column; gap: 14px; margin-block: auto; flex-shrink: 0; }
   .pad {
     display: grid;
     grid-template-columns: repeat(3, minmax(64px, 1fr));
@@ -135,9 +143,9 @@
 
 <div id="state"><span id="dot"></span><span id="stateText">Connecting…</span></div>
 
-<div class="typebar">
+<div class="typebar" id="typebar">
   <input id="text" type="text" inputmode="text" enterkeyhint="send" autocomplete="off"
-         autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type or dictate to the TV…">
+         autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Type to the TV…">
   <button class="mic" id="mic" type="button" aria-label="Dictate">🎙</button>
   <button class="send" id="sendText" type="button">Send</button>
 </div>
@@ -238,6 +246,14 @@
     });
   }
   document.getElementById('sendText').addEventListener('click', sendText);
+  // When the on-screen keyboard takes half the screen, keep the row being typed in visible:
+  // once the viewport has settled after focus, pull the typing row into view.
+  var typebar = document.getElementById('typebar');
+  input.addEventListener('focus', function () {
+    setTimeout(function () {
+      if (document.activeElement === input) typebar.scrollIntoView({ block: 'nearest' });
+    }, 300);
+  });
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
