@@ -100,8 +100,8 @@ async function builtinRows() {
     .slice(0, 14);
   if (marquee.length) out.push({ id: 'games-featured', title: 'Play now with a controller', card: 'game', items: marquee });
 
-  const shelf = (id, title, pool, n = 30) => {
-    const items = dedupe(pool).slice(0, n);
+  const shelf = (id, title, pool, n = Infinity) => {
+    const items = dedupe(pool).slice(0, n); // the whole shelf reaches the TV: a game row is a scrollable rail, not a trailer
     if (items.length >= 6) out.push({ id, title, card: 'game', items, total: dedupe(pool).length });
   };
 
@@ -201,7 +201,7 @@ async function addonShelves(addonList) {
             id: 'ga-' + a.id + '-' + (r.id || i),
             title: String(r.title || a.name || 'Games'),
             card: 'game',
-            items: items.slice(0, 60),
+            items,
             total: items.length,
           });
         }

@@ -511,6 +511,12 @@ class CoiGameActivity : Activity() {
 
             "dom" -> android.util.Log.i(TAG, "carve dom: ${m["val"]}")
 
+            "closed" -> if (m["val"]?.toString() == "yes") {
+                closingAsked = false
+                main.removeCallbacks(closeProbe)
+                android.util.Log.i(TAG, "closepopup clicked")
+            }
+
             // The page explained in its own words why its game will not boot on this engine
             // (no WebGPU, no adapter). Show that line — it beats a black canvas and a guess.
             // Latched: a canvas pass must not re-raise the hint, and page-stop/paint events must
@@ -605,13 +611,33 @@ class CoiGameActivity : Activity() {
         loader.finish()
     }
 
-    /** Back is a game's most dangerous button: the first press brings up the bar, one more leaves. */
+    /** Back is a game's most dangerous button: the first press tries to close a portal popup
+     *  (its own ×/Skip control, unreachable by a screen-center tap) and only if nothing closes
+     *  does it bring up the bar; one more press leaves. */
     override fun onBackPressed() {
         when {
             errorBox.visibility == View.VISIBLE -> finish()
-            !hudVisible -> showHud()
+            !hudVisible -> closePopupOrHud()
             else -> finish()
         }
+    }
+
+    private var closingAsked = false
+    private val closeProbe = Runnable {
+        if (closingAsked) {
+            closingAsked = false
+            if (!hudVisible && !isFinishing) showHud()
+        }
+    }
+    private fun closePopupOrHud() {
+        val p = carvePort
+        if (p == null) { showHud(); return }
+        try { p.postMessage(org.json.JSONObject().put("what", "close")) } catch (t: Throwable) { showHud(); return }
+        // Frames answer over the same port with 'closed'; a frame that clicked something cancels
+        // this probe, one that found nothing lets it bring the bar up as the press always did.
+        closingAsked = true
+        main.removeCallbacks(closeProbe)
+        main.postDelayed(closeProbe, 900)
     }
 
     /** The bar back presses summon: what this game needs, how to pair it, how to leave. */

@@ -444,14 +444,27 @@ class GameActivity : Activity() {
     }
 
     /**
-     * Back is a game's most dangerous button: it quits without asking. The first press brings up the
-     * bar and says what pressing again will do — exactly one more press leaves, anywhere in the UI.
+     * Back is a game's most dangerous button: it quits without asking. The first press tries to
+     * close a popup the portal dropped over the game — portals leave their own ×/Skip controls,
+     * which are unreachable when the remote only taps screen-center — and only if nothing closes
+     * does it bring up the bar; exactly one more press leaves, anywhere in the UI.
      */
     override fun onBackPressed() {
         when {
             errorBox.visibility == View.VISIBLE -> finish()
-            !hudVisible -> showHud()
+            !hudVisible -> closePopupOrHud()
             else -> super.onBackPressed()
+        }
+    }
+
+    private fun closePopupOrHud() {
+        try {
+            web.evaluateJavascript(CLOSE_JS) { r ->
+                if (!isFinishing && r == "\"true\"") android.util.Log.i("ScenixGame", "closepopup clicked")
+                else showHud()
+            }
+        } catch (t: Throwable) {
+            showHud()
         }
     }
 
@@ -756,6 +769,43 @@ class GameActivity : Activity() {
   }catch(x){}
   return (ok?'carved':'none')+(refuse?'|refuse:'+refuse:'');
  }catch(e){}
+})()
+"""
+
+        /**
+         * A portal's popup (install-our-app gate, interstitial promo) survives the carve because
+         * big overlays are gates, not banners — and on a TV nobody can reach its ×: OK taps only
+         * screen-center. This clicks the overlay's own close/skip control, whatever the portal
+         * class-names it, and says whether one was found. Game menus are left alone: their
+         * buttons say Continue/Play, which is not a dismissal word.
+         */
+        const val CLOSE_JS = """
+(function(){
+ try{
+  var v=window,W=v.innerWidth||1,H=v.innerHeight||1;
+  function vis(e){try{var b=e.getBoundingClientRect();
+   if(b.width<10||b.height<10)return false;
+   var cs=v.getComputedStyle(e);
+   return cs.display!=='none'&&cs.visibility!=='hidden'&&(parseFloat(cs.opacity)||1)>0.05&&
+     b.top<H&&b.bottom>0&&b.left<W&&b.right>0;}catch(x){return false;}}
+  function big(e){var b=e.getBoundingClientRect();return b.width>=W*0.4&&b.height>=H*0.3;}
+  var cands=document.querySelectorAll('button,a,[role="button"],[aria-label],[class*="close"],[class*="skip"],[id*="close"],[id*="skip"]');
+  var best=null,bestZ=-1;
+  for(var i=0;i<cands.length;i++){var e=cands[i];
+   if(!vis(e))continue;
+   var t=(e.textContent||'').replace(/\s+/g,' ').trim().slice(0,40);
+   var cls='';try{cls=(typeof e.className==='string'?e.className:'')+' '+(e.id||'')+' '+(e.getAttribute('aria-label')||'');}catch(x){}
+   var hit=/^(\u00d7|\u2715|x|close|no thanks|maybe later|skip ad|skip|dismiss|got it|no thanks!?)$/i.test(t)||/(close|skip|dismiss)/i.test(cls);
+   if(!hit)continue;
+   var on=false,p=e;
+   for(var d=0;p&&d<6;d++,p=p.parentElement){if(p.nodeType===1&&vis(p)&&big(p)){on=true;break;}}
+   if(!on&&!big(e))continue;
+   var z=0;try{z=parseInt(v.getComputedStyle(e).zIndex,10)||0;}catch(x){}
+   if(z>bestZ){bestZ=z;best=e;}
+  }
+  if(best){best.click();return 'true';}
+  return 'false';
+ }catch(x){return 'false';}
 })()
 """
 

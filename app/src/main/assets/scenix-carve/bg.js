@@ -63,6 +63,13 @@
       appPort = browser.runtime.connectNative("carve");
       appPort.onMessage.addListener(function (m) {
         if (m && m.what === "coiHosts") addCoiHosts(m.val);
+        // The app's escape hatch travels the other way: BACK asks every frame's carve script
+        // to click a portal popup's own close/skip control; the frames answer with 'closed'.
+        if (m && m.what === "close") {
+          for (var i = 0; i < contentPorts.length; i++) {
+            try { contentPorts[i].postMessage({ what: "close" }); } catch (e) {}
+          }
+        }
       });
       appPort.onDisconnect.addListener(function (d) {
         lastWhy = (d && d.error && d.error.message) || "closed";
@@ -84,9 +91,15 @@
       }
     } catch (e) {}
   }
+  var contentPorts = [];
   browser.runtime.onConnect.addListener(function (port) {
     if (port.name !== "carve") return;
     port.onMessage.addListener(relay);
+    contentPorts.push(port);
+    port.onDisconnect.addListener(function () {
+      var i = contentPorts.indexOf(port);
+      if (i >= 0) contentPorts.splice(i, 1);
+    });
   });
   // The content script's fallback is an unnamed sendMessage; relay it too so a first
   // connectNative that raced engine startup still gets another chance per message.
