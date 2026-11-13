@@ -62,6 +62,12 @@ class GameActivity : Activity() {
     // True from the first pass that found the game's stage: the remote becomes a finger only
     // once there is a stage to touch.
     private var stageUp = false
+    // True when the page keeps its menus in real DOM controls (a <button> PLAY, menu links) rather
+    // than painting them into the canvas. For those pages the remote must act as a KEYBOARD: the
+    // D-pad moves the browser's own focus onto the button and OK clicks it — a synthesised centre
+    // tap would land in the middle of the screen, miles away from it. Touch-only portals (the game
+    // lives in an invisible cross-origin frame) keep the finger wrapper. Probed with each carve.
+    private var domNav = false
     private var hidHud = Runnable { hideHud() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -362,6 +368,22 @@ class GameActivity : Activity() {
                         android.util.Log.i("ScenixGame", "never started")
                         toast("This portal hasn't started its game on this TV — try another title.")
                     }
+                    // Which input language does this page speak? If it keeps real controls in the
+                    // DOM (a <button> PLAY in the corner), the remote drives them as a keyboard —
+                    // the D-pad moves browser focus and OK clicks what it lands on. The probe also
+                    // parks focus on the biggest control, so the very first OK press already hits.
+                    // Sticky once engaged: these are ports whose menus then move INTO the canvas,
+                    // which still listens for the same real keys — counting back to zero must not
+                    // flip the page mid-game onto a language it stopped answering. Touch-only
+                    // portals hide their game in an unreachable cross-origin frame, show no
+                    // controls at all, and keep the finger wrapper.
+                    view.evaluateJavascript(DOMNAV_JS) { nav ->
+                        val n = nav?.filter { it.isDigit() }?.toIntOrNull() ?: 0
+                        if (n > 0 && !domNav) {
+                            domNav = true
+                            android.util.Log.i("ScenixGame", "domnav=true controls=$n")
+                        }
+                    }
                     main.postDelayed(this, if (carved > 0) 5000 else 3000)
                 }
             }
@@ -405,6 +427,21 @@ class GameActivity : Activity() {
             if (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT ||
                 k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN ||
                 k == KeyEvent.KEYCODE_DPAD_CENTER) {
+                // A page that keeps its menus in real controls (a <button> PLAY in a corner) is
+                // driven as a keyboard: the D-pad moves the browser's own focus and OK clicks what
+                // sits under it — a synthesised centre tap would land miles from that button.
+                if (domNav) {
+                    if (k != KeyEvent.KEYCODE_DPAD_CENTER) return super.dispatchKeyEvent(event)
+                    // OK with the game itself (not one of its controls) under the cursor must still
+                    // poke the canvas, so these pages keep both languages: keys for their menus and
+                    // driving, a centre tap whenever nothing is focused to click.
+                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                        web.evaluateJavascript(OK_CONTROL_JS) { r ->
+                            if (!isFinishing && r != "\"clicked\"") finger(k)
+                        }
+                    }
+                    return true
+                }
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) finger(k)
                 return true
             }
@@ -782,6 +819,68 @@ class GameActivity : Activity() {
   return (ok?'carved':'none')+(refuse?'|refuse:'+refuse:'');
  }catch(e){}
 })()
+"""
+
+        /** OK in keyboard mode. If the cursor sits on a real control (a link, a menu button) we
+         *  click THAT. Ports often grab focus for their own canvas the moment they load, so we
+         *  also honour the promise of the splash: whatever the page calls Play/Start/Continue in
+         *  its DOM, click it. Only when the page offers nothing by name does OK fall back to a
+         *  centre poke of the canvas. */
+        const val OK_CONTROL_JS = """
+        (function(){try{
+         var a=document.activeElement;
+         function act(e){if(!e)return false;try{e.click();return true;}catch(x){return false;}}
+         if(a&&a!==document.body&&a!==document.documentElement&&!/^(CANVAS|IFRAME|VIDEO)$/.test(a.tagName)&&
+            (/^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/.test(a.tagName)||a.getAttribute('role')==='button'))
+          return act(a)?'focused':'plain';
+         function vis(e){try{var b=e.getBoundingClientRect();if(b.width<24||b.height<24)return false;
+          var cs=getComputedStyle(e);return cs.display!=='none'&&cs.visibility!=='hidden'&&((parseFloat(cs.opacity)||1)>0.05);}catch(x){return false;}}
+         function pick(doc){try{
+          var q=doc.querySelectorAll('button,[role="button"],a[href]');
+          for(var i=0;i<q.length;i++){var e=q[i];if(!vis(e))continue;
+           var t=(e.textContent||'').replace(/\s+/g,' ').trim();
+           if(/^(play|start|continue)$/i.test(t))return e;}
+         }catch(x){}return null;}
+         var e=pick(document);
+         if(!e)for(var f of document.querySelectorAll('iframe')){try{if(f.contentDocument&&(e=pick(f.contentDocument)))break;}catch(x){}}
+         return e?(act(e)?'playbutton':'plain'):'plain';
+        }catch(x){return 'plain';}})()
+"""
+
+        /**
+         * Which input language does this page speak? Some ports keep their menus in real controls
+         * — a <button> PLAY parked in a corner. For those the remote acts as a keyboard: the D-pad
+         * moves the browser's own focus and OK clicks what it lands on, because our synthesised
+         * centre tap hits the middle of the screen, miles from that button. Count the visible
+         * controls in the top document and every frame we can see into; when there are any, park
+         * the focus on the biggest one right away so the very first OK press already lands on it.
+         * Touch-only portals hide their game in a cross-origin frame this can't see into, and stay
+         * on the finger side untouched.
+         */
+        const val DOMNAV_JS = """
+        (function(){
+         try{
+          var els=[];
+          function vis(e){try{var b=e.getBoundingClientRect();
+           if(b.width<24||b.height<24)return false;
+           var cs=getComputedStyle(e);
+           return cs.display!=='none'&&cs.visibility!=='hidden'&&(parseFloat(cs.opacity)||1)>0.05;}catch(x){return false;}}
+          function scan(d){try{
+           d.querySelectorAll('button,[role="button"],a[href],input[type=button],input[type=submit],select,[onclick]')
+            .forEach(function(e){if(vis(e))els.push(e);});}catch(x){}}
+          scan(document);
+          document.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)scan(f.contentDocument);}catch(x){}});
+          if(!els.length)return 0;
+          var top=document.activeElement;
+          if(!top||top===document.body||top===document.documentElement){
+           var best=els[0];
+           els.forEach(function(e){var A=e.getBoundingClientRect(),B=best.getBoundingClientRect();
+            if(A.width*A.height>B.width*B.height)best=e;});
+           try{best.focus({preventScroll:true});}catch(x){try{best.focus();}catch(y){}}
+          }
+          return els.length;
+         }catch(x){return 0;}
+        })()
 """
 
         /**
