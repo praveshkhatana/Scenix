@@ -95,6 +95,14 @@ async function builtinRows() {
   ].filter((g) => g.verified).map((g) => card(g, 'tested'));
   if (verified.length) out.push({ id: 'games-tested', title: 'Verified on our TV', card: 'game', items: verified });
 
+  // Everything else the one-by-one playtest has already stepped through, pass or fail: a running
+  // tally so the TV shows the work as it happens, not only its survivors. scripts/sync-verified.py
+  // folds each sweep receipt into the data ("tested": true) and promotes honest passes to verified.
+  const tested = [
+    ...load('curated.json'), ...load('ported2browser.json'), ...load('crazygames.json'),
+  ].filter((g) => g.tested && !g.verified).map((g) => card(g, 'tested'));
+  if (tested.length) out.push({ id: 'games-swept', title: 'Checked on our box', card: 'game', items: tested });
+
   // The marquee shelf: the biggest ports that answer a controller, fighting/racing/action first —
   // the genres where a gamepad is the whole point.
   const padReady = p2b.filter((g) => g.pad);
