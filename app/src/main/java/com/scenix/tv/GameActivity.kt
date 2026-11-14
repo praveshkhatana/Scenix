@@ -64,6 +64,9 @@ class GameActivity : Activity() {
     /** The hub's stable game id: the key the page's session history is stored under. */
     private var sessionIdentity = ""
     private var hudVisible = false
+    // True once the viewer has walked the bar with an arrow. Before that its focus ring sits
+    // on Connect because showHud put it there — OK must not click a button nobody chose.
+    private var hudBarUsed = false
     // True from the first pass that found the game's stage: the remote becomes a finger only
     // once there is a stage to touch.
     private var stageUp = false
@@ -408,6 +411,7 @@ class GameActivity : Activity() {
 
     private fun showHud() {
         hudVisible = true
+        hudBarUsed = false
         hud.alpha = 0f
         hud.visibility = View.VISIBLE
         hud.animate().alpha(1f).setDuration(140).start()
@@ -426,11 +430,25 @@ class GameActivity : Activity() {
         web.requestFocus()
     }
 
-    /** Any key while the bar is up keeps it up; keys themselves still fall through to the game. */
+    /**
+     * Any key while the bar is up keeps it up. An arrow walks the bar; an OK nobody walked to
+     * means "back to the game" — the bar closes and the key reaches the stage as a centre tap.
+     */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val kc = event.keyCode
+        val centerKey = kc == KeyEvent.KEYCODE_DPAD_CENTER || kc == KeyEvent.KEYCODE_ENTER ||
+            kc == KeyEvent.KEYCODE_NUMPAD_ENTER
+        val arrowKey = kc == KeyEvent.KEYCODE_DPAD_LEFT || kc == KeyEvent.KEYCODE_DPAD_RIGHT ||
+            kc == KeyEvent.KEYCODE_DPAD_UP || kc == KeyEvent.KEYCODE_DPAD_DOWN
         if (event.action == KeyEvent.ACTION_DOWN && hudVisible) {
             main.removeCallbacks(hidHud)
             main.postDelayed(hidHud, 7000)
+            // The ring landed on Connect by itself, not because anyone chose it. Until someone
+            // actually walks the bar with an arrow, OK over a live stage must not click that
+            // button — a BACK over a canvas-drawn popup (no DOM × to close) would otherwise
+            // leave the remote holding a dead button over a game that only answers touch.
+            if (arrowKey) hudBarUsed = true
+            else if (centerKey && !hudBarUsed && stageUp && !isFinishing) hideHud()
         }
         // The remote as a finger. Portal games are built for thumbs: they watch touch, not keys,
         // and the game often lives in a frame our script can't even see into. So once the stage
@@ -439,26 +457,23 @@ class GameActivity : Activity() {
         // a game gets one input language, not two at once. Emulator/console ports read real
         // gamepads through the Gamepad API; those keep working untouched.
         if (!hudVisible && stageUp && !isFinishing) {
-            val k = event.keyCode
-            if (k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT ||
-                k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN ||
-                k == KeyEvent.KEYCODE_DPAD_CENTER) {
+            if (arrowKey || centerKey) {
                 // A page that keeps its menus in real controls (a <button> PLAY in a corner) is
                 // driven as a keyboard: the D-pad moves the browser's own focus and OK clicks what
                 // sits under it — a synthesised centre tap would land miles from that button.
                 if (domNav) {
-                    if (k != KeyEvent.KEYCODE_DPAD_CENTER) return super.dispatchKeyEvent(event)
+                    if (!centerKey) return super.dispatchKeyEvent(event)
                     // OK with the game itself (not one of its controls) under the cursor must still
                     // poke the canvas, so these pages keep both languages: keys for their menus and
                     // driving, a centre tap whenever nothing is focused to click.
                     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                         web.evaluateJavascript(OK_CONTROL_JS) { r ->
-                            if (!isFinishing && r == "\"plain\"") finger(k)
+                            if (!isFinishing && r == "\"plain\"") finger(kc)
                         }
                     }
                     return true
                 }
-                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) finger(k)
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) finger(kc)
                 return true
             }
         }
@@ -490,7 +505,9 @@ class GameActivity : Activity() {
         val dx = minOf(w * 0.22f, 260f)
         val dy = minOf(h * 0.22f, 260f)
         val points: Array<FloatArray> = when (k) {
-            KeyEvent.KEYCODE_DPAD_CENTER -> arrayOf(floatArrayOf(cx, cy), floatArrayOf(cx, cy))
+            // Some remotes deliver their middle button as ENTER rather than DPAD_CENTER.
+            in intArrayOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER) -> arrayOf(floatArrayOf(cx, cy), floatArrayOf(cx, cy))
             KeyEvent.KEYCODE_DPAD_LEFT -> Array(5) { i -> floatArrayOf(cx + dx - dx * 2 * i / 4f, cy) }
             KeyEvent.KEYCODE_DPAD_RIGHT -> Array(5) { i -> floatArrayOf(cx - dx + dx * 2 * i / 4f, cy) }
             KeyEvent.KEYCODE_DPAD_UP -> Array(5) { i -> floatArrayOf(cx, cy + dy - dy * 2 * i / 4f) }
