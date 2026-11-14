@@ -2,7 +2,7 @@
 // no Hilt/Retrofit/kotlinx-serialization: Sony BRAVIA, Android 11, armeabi-v7a, 2 GB RAM.
 plugins {
     id 'com.android.application' version '8.5.2'
-    id 'org.jetbrains.kotlin.android' version '1.9.24'
+    id 'org.jetbrains.kotlin.android' version '2.4.21'
 }
 
 // ---- the character faces, not a web UI ---------------------------------------------------------
