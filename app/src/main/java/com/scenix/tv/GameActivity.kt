@@ -67,6 +67,12 @@ class GameActivity : Activity() {
     // True once the viewer has walked the bar with an arrow. Before that its focus ring sits
     // on Connect because showHud put it there — OK must not click a button nobody chose.
     private var hudBarUsed = false
+    // Which point OK pokes next on a touch-only stage. Canvas popups (a death screen, a "press
+    // to play" splash) paint their buttons wherever they like and no script can see into them,
+    // so blind OK walks a ladder: centre first, then the bottom band where mobile popups keep
+    // their CTA, left/right of it. Any swipe or a closed popup means we're back in the game's
+    // own flow and the ladder restarts at centre.
+    private var pokeStep = 0
     // True from the first pass that found the game's stage: the remote becomes a finger only
     // once there is a stage to touch.
     private var stageUp = false
@@ -463,12 +469,14 @@ class GameActivity : Activity() {
                 // sits under it — a synthesised centre tap would land miles from that button.
                 if (domNav) {
                     if (!centerKey) return super.dispatchKeyEvent(event)
-                    // OK with the game itself (not one of its controls) under the cursor must still
-                    // poke the canvas, so these pages keep both languages: keys for their menus and
-                    // driving, a centre tap whenever nothing is focused to click.
+                    // With no DOM control under the cursor the menu has moved INTO the canvas —
+                    // and this page demonstrably listens for real keys, because the arrows are
+                    // walking that menu. So OK must send a real key too, not a touch poke: an SDL/
+                    // emulator port's confirm handler never sees our synthesised tap land on its
+                    // highlight. Enter is the confirm every such port maps.
                     if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                         web.evaluateJavascript(OK_CONTROL_JS) { r ->
-                            if (!isFinishing && r == "\"plain\"") finger(kc)
+                            if (!isFinishing && r == "\"plain\"") sendEnterToGame()
                         }
                     }
                     return true
@@ -506,12 +514,22 @@ class GameActivity : Activity() {
         val dy = minOf(h * 0.22f, 260f)
         val points: Array<FloatArray> = when (k) {
             // Some remotes deliver their middle button as ENTER rather than DPAD_CENTER.
+            // A canvas popup's PLAY button is rarely at screen centre, and no script can see
+            // into the canvas to find it — so blind OK presses step down a ladder instead of
+            // poking the same dead point: centre first, then the bottom band where mobile
+            // popups park their continue/confirm, left and right of it. Any swipe restarts
+            // the ladder, because then we're playing, not hunting a popup.
             in intArrayOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER,
-                KeyEvent.KEYCODE_NUMPAD_ENTER) -> arrayOf(floatArrayOf(cx, cy), floatArrayOf(cx, cy))
-            KeyEvent.KEYCODE_DPAD_LEFT -> Array(5) { i -> floatArrayOf(cx + dx - dx * 2 * i / 4f, cy) }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> Array(5) { i -> floatArrayOf(cx - dx + dx * 2 * i / 4f, cy) }
-            KeyEvent.KEYCODE_DPAD_UP -> Array(5) { i -> floatArrayOf(cx, cy + dy - dy * 2 * i / 4f) }
-            else -> Array(5) { i -> floatArrayOf(cx, cy - dy + dy * 2 * i / 4f) }
+                KeyEvent.KEYCODE_NUMPAD_ENTER) -> {
+                val f = POKE_LADDER[minOf(pokeStep, POKE_LADDER.size - 1)]
+                pokeStep = minOf(pokeStep + 1, POKE_LADDER.size - 1)
+                val px = w * f[0]; val py = h * f[1]
+                arrayOf(floatArrayOf(px, py), floatArrayOf(px, py))
+            }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { pokeStep = 0; Array(5) { i -> floatArrayOf(cx + dx - dx * 2 * i / 4f, cy) } }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { pokeStep = 0; Array(5) { i -> floatArrayOf(cx - dx + dx * 2 * i / 4f, cy) } }
+            KeyEvent.KEYCODE_DPAD_UP -> { pokeStep = 0; Array(5) { i -> floatArrayOf(cx, cy + dy - dy * 2 * i / 4f) } }
+            else -> { pokeStep = 0; Array(5) { i -> floatArrayOf(cx, cy - dy + dy * 2 * i / 4f) } }
         }
         val t0 = android.os.SystemClock.uptimeMillis()
         for (step in points.indices) {
@@ -542,8 +560,11 @@ class GameActivity : Activity() {
         try {
             web.evaluateJavascript(CLOSE_JS) { r ->
                 android.util.Log.i("ScenixGame", "close verdict r=${r?.take(20)}")
-                if (!isFinishing && r == "\"true\"") android.util.Log.i("ScenixGame", "closepopup clicked")
-                else showHud()
+                if (!isFinishing && r == "\"true\"") {
+                    // A real close happened — the popup hunt is over, aim OK at the centre again.
+                    pokeStep = 0
+                    android.util.Log.i("ScenixGame", "closepopup clicked")
+                } else showHud()
             }
         } catch (t: Throwable) {
             showHud()
@@ -572,6 +593,22 @@ class GameActivity : Activity() {
             if (padReady) "No controller yet — remote plays menus" else "Plays with the remote"
         else "Controller connected ✓"
         padChip.setTextColor(if (controllers().isEmpty()) theme.ink2 else theme.ink)
+    }
+
+    /**
+     * One trusted Enter press into the page. A keyboard-driven port's menu highlight answers the
+     * Enter key; the synthesised touch our wrapper sends never reaches that handler. Chromium
+     * turns a dispatched DPAD_CENTER into a real DOM Enter on whatever element is focused, so
+     * this is indistinguishable from a viewer pressing a keyboard Enter.
+     */
+    private fun sendEnterToGame() {
+        val t = android.os.SystemClock.uptimeMillis()
+        web.dispatchKeyEvent(
+            KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+        main.postDelayed({
+            if (!isFinishing) web.dispatchKeyEvent(
+                KeyEvent(t, t + 80, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
+        }, 80)
     }
 
     /** Say out loud when a pad arrives or leaves mid-game; nobody should have to guess. */
@@ -856,6 +893,13 @@ class GameActivity : Activity() {
  }catch(e){}
 })()
 """
+
+        /** Where a blind OK pokes on a touch-only stage, one step per press: centre first, then
+         *  the bottom band where canvas-drawn popups park their PLAY/continue button. Fractions
+         *  of the WebView so it survives any screen size. */
+        val POKE_LADDER = arrayOf(
+            floatArrayOf(0.5f, 0.5f), floatArrayOf(0.57f, 0.89f),
+            floatArrayOf(0.24f, 0.89f), floatArrayOf(0.80f, 0.89f))
 
         /** OK in keyboard mode. If the cursor sits on a real control (a link, a menu button) we
          *  click THAT. Ports often grab focus for their own canvas the moment they load, so we
