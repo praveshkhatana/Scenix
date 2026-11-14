@@ -25,6 +25,15 @@ def shot_stats(pid):
     color = sum(abs(r - g) + abs(g - b) for (r, g, b) in px) / len(px)
     return dict(mean=mean, bright=bright, color=color)
 
+# A green dot is a promise to the household, so pixels alone never earn one: an id enters this
+# list only after a human has looked at its end-frame screenshot. The metrics judge below only
+# decides whether a previously granted keeper survives a re-run (hard-black / engine-refused).
+EYE = os.path.join(os.path.dirname(__file__), "verified-by-eye.json")
+def eye_ids():
+    if not os.path.exists(EYE):
+        return set()
+    return set(json.load(open(EYE)))
+
 def judge(rec):
     s = shot_stats(rec["id"])
     verdict, changing = rec.get("verdict", ""), bool(rec.get("changing", False))
@@ -54,6 +63,7 @@ def main():
             latest[r["id"]] = r
         except Exception:
             pass
+    eye = eye_ids()
     by_src = {}
     for rec in latest.values():
         by_src.setdefault(rec.get("src", "curated.json"), []).append(rec)
@@ -73,15 +83,13 @@ def main():
                 if not e.get("tested"):
                     e["tested"] = True
                     touched = True
-                if ok and not e.get("verified"):
-                    e["verified"] = True
+                # The dot is owned by the by-eye list; metrics only veto old keepers on hard evidence.
+                hard = why in ("black-screen", "never-started") or why.startswith("loaderror")
+                want = (e.get("id") in eye) or (bool(rec.get("wasVerified")) and not hard)
+                if bool(e.get("verified")) != want:
+                    e["verified"] = want
                     touched = True
-                    report["verified_now"] += 1
-                if (not ok and e.get("verified") and why in ("black-screen", "loaderror err", "never-started")):
-                    # Only a hard-black or engine-refused verdict is strong enough to revoke a keeper.
-                    e["verified"] = False
-                    touched = True
-                    report["demoted"] += 1
+                    report["verified_now" if want else "demoted"] += 1
                 if ok:
                     report["tested"] += 1
                 break
